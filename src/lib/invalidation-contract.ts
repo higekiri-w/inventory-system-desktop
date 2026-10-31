@@ -4,7 +4,7 @@ import { queryKeys } from "./query-keys";
 
 export type InvalidationKey = QueryKey;
 
-/** D-052-C1〜C22: mutation 成功時に stale 化する consumer query の SSOT。 */
+/** D-052-C1〜C23: mutation 成功時に stale 化する consumer query の SSOT。 */
 export const invalidationContract = {
   productCreate: () => [
     queryKeys.productList.root(),
@@ -77,6 +77,17 @@ export const invalidationContract = {
   ],
   disposal: () => [
     queryKeys.disposals.root(),
+    queryKeys.inventoryRecords.root(),
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.stockMovements.root(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
+  ],
+  // D-052-C23（79 UI-16-D10）: 廃棄の C7 から disposals.root() を除いた集合
+  stockTransfer: () => [
     queryKeys.inventoryRecords.root(),
     queryKeys.productList.root(),
     queryKeys.lowStock(false),

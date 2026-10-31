@@ -62,6 +62,8 @@ export const queryKeys = {
       ["inventory-records", "manual-sale-detail", { recordId }] as const,
     disposalDetail: (recordId: number) =>
       ["inventory-records", "disposal-detail", { recordId }] as const,
+    transferDetail: (recordId: number) =>
+      ["inventory-records", "transfer-detail", { recordId }] as const,
     csvImportDetail: (importId: number) =>
       ["inventory-records", "csv-import-detail", { importId }] as const,
     // 55 UI-07-D18: 取消の前の読取り（開くたびに読む。C9 の inventoryRecords.root() が含む）
