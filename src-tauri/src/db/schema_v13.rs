@@ -137,7 +137,7 @@ pub(crate) fn apply_stock_transfer(conn: &Connection, version: i64) -> Result<()
         // 手順 5 の文はそのまま出す（22 §21 手順 5。起動の画面が DatabaseInit の文の後に添える）
         let message = match error {
             DbError::MigrationFailed(message) => message,
-            other => format!("v{version} 振替の種類の migration失敗: {other}"),
+            other => format!("v{version} 詰め替え・切り分けの種類の migration失敗: {other}"),
         };
         return Err(migration_tx::rollback_after_error(conn, message));
     }

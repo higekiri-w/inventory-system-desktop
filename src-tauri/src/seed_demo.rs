@@ -136,6 +136,9 @@ pub fn delete_all(conn: &Connection) -> Result<(), SeedError> {
         "disposal_records",
         "csv_import_errors",
         "csv_imports",
+        // transfer_items は products と transfer_records を参照する（D-143）
+        "transfer_items",
+        "transfer_records",
         "products",
         "suppliers",
     ];
@@ -634,5 +637,45 @@ mod tests {
             excluded.product_code == "D028-MISMATCH-B"
                 && matches!(excluded.reason, PluExcludedReason::GroupPriceMismatch)
         }));
+    }
+
+    #[test]
+    fn test_run_seed_reset_d143_sd1_clears_transfer_tables_after_transfer() {
+        // D-143 / Test Plan SD1: 振替の明細は products を参照するので、reset は振替の表を先に消す
+        use crate::biz::inventory_service::{create_transfer, TransferCreateRequest};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("seed-transfer.db");
+        let mut conn = init_database(db_path.to_str().unwrap()).unwrap();
+        run_seed(&mut conn, false).unwrap();
+        let codes: Vec<String> = conn
+            .prepare("SELECT product_code FROM products ORDER BY product_code LIMIT 2")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // 明細の型は inventory_service の外へ出していないので、CMD と同じ wire の形から作る
+        let req: TransferCreateRequest = serde_json::from_value(serde_json::json!({
+            "idempotency_key": "sd1",
+            "transfer_date": BASE_DATE,
+            "items": [
+                { "product_code": codes[0], "direction": "out", "quantity": 1 },
+                { "product_code": codes[1], "direction": "in", "quantity": 1 },
+            ],
+        }))
+        .unwrap();
+        create_transfer(&mut conn, req).unwrap();
+
+        run_seed(&mut conn, true).expect("振替の後の reset が成功する");
+
+        for table in ["transfer_items", "transfer_records"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
     }
 }
