@@ -54,7 +54,7 @@ struct BackupInfo {
 
 例: `inventory_backup_20260413_130000.db`
 
-名前の解析（一覧・掃除・今日の判定・作業名の掃除・媒体の写しの並び、PC の中と媒体の上で同じ関数）は、規約外の名前を `None` にし、panic しない。日時の部分は ASCII の数字と `_` だけなので、長さ・`_` の位置・ASCII かの確認を文字列の slice より前に行う（今の `extract_datetime_from_backup` は長さ 15 bytes の確認の後に `&stem[..8]` を切るので、`inventory_backup_あああああ.db` のような 15 bytes の多バイトの名前で文字境界の panic になる。`extract_date_from_backup` は `_` の位置を先に見るので起きない。D-114 で作業名の掃除がこの関数を使うので、runtime の lane で直す）
+名前の解析（一覧・掃除・今日の判定・作業名の掃除・媒体の写しの並び、PC の中と媒体の上で同じ関数）は、規約外の名前を `None` にし、panic しない。日時の部分は ASCII の数字と `_` だけなので、長さ・`_` の位置・ASCII かの確認を文字列の slice より前に行う（`extract_datetime_from_backup` は長さ・ASCII・`_` の位置を確かめてから切るので、`inventory_backup_あああああ.db` のような 15 bytes の多バイトの名前でも文字境界の panic にならない。`extract_date_from_backup` は `_` の位置を先に見る。D-114 の作業名の掃除も同じ関数を使う）
 
 ---
 
@@ -89,11 +89,16 @@ fn create_backup(
 
 **書く先の固定**（手順 0、MNT-01-D10。PC の中の保存先と媒体の root〈§71.11.3〉で同じ関数を使う）:
 
+```
+pub fn pin_to_volume(dir: &Path) -> std::io::Result<PinnedPath>
+pub fn pin_backup_dir(backup_dir: &Path) -> Result<PinnedPath, BackupDirError>
+```
+
 - `pin_to_volume(dir) -> Result<PinnedPath { normalized, actual }, io::Error>`: (1) `dir` を正規化する。Windows は `GetFullPathNameW`（絶対化、`.`・`..`・`/` の解決、末尾の空白・ピリオドの扱い。`\\?\` の path は文字の解釈を止めるので、正規化を先にしないと判定した folder と作る folder が別になる。https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file の Win32 File Namespaces）。Windows 以外は絶対化と `.`・`..` の字句の解決（同じ役割）。(2) 正規化した path のうち既に在る最も近い祖先を開き、実体の path を得る。Windows は `CreateFileW`（`FILE_FLAG_BACKUP_SEMANTICS`、`FILE_FLAG_OPEN_REPARSE_POINT` なし）で開いて `GetFinalPathNameByHandleW(…, VOLUME_NAME_GUID)` で `\\?\Volume{GUID}\…` を得て、handle を閉じる（https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew 、https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew ）。junction・symbolic link・mounted folder は辿った先の実体になる。handle は保たない（junction の target を指すので、保っても drive 文字の移動は防げない）。Windows 以外は `std::fs::canonicalize`（symbolic link を辿る）。(3) まだ無い末尾の component を、正規化した形のまま `Path::join` で付けて `actual` にする。どこかで失敗したら `Err`（固定できない）
 - `pin_backup_dir(backup_dir) -> Result<PinnedPath, BackupDirError>`（`BackupDirError::{Unpinnable, RegisterSd { sd_folder: PathBuf }}`）: `pin_to_volume` が `Err` なら `Unpinnable`。`normalized` の祖先（自身から drive の root まで）と `actual` の祖先（自身から volume の root まで）の両方で、どれかの直下に `CASIO\SR500_550_4000` が directory としてあれば `RegisterSd`（junction が SD を指す・junction が SD の上にある、のどちらも拒む）。`sd_folder` は見つけた `{祖先}\CASIO\SR500_550_4000` の path（`normalized` の側で見つけたらその path、`actual` の側だけで見つけたら実体の path）で、CMD が原因の folder として名指す（43 §43.6）
 - 作成・公開・掃除は `actual` で行い、返す `BackupResult.file_path`（wire・表示）は `{backup_dir}/{ファイル名}` のまま。drive 文字の割当ては抜き差しで変わり、volume GUID path は 1 つの volume しか指さない（https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-volume ）ので、判定の後に drive 文字が別の媒体（レジの SD を含む）へ移っても `actual` は元の volume しか指さず、元の volume が抜かれていれば書込みは失敗する（`DbError::QueryFailed`）
 - 固定できない保存先（Mount Manager を通らない仮想 drive・RAM disk・network。`GetFinalPathNameByHandleW` の Remarks は、Mount Manager に無い volume は `VOLUME_NAME_GUID` で失敗しうるとする）には書かない。手動の backup では CMD が原因を名指す固定の文を出す（43 §43.6、68 §68.11）。network の保存先は旧い形でも `VACUUM INTO` が失敗する既知の問題（`docs/backlog.md` の UNC の保留）で、固定の追加による退行ではない
-- test は Windows 以外の同じ関数を通す（symbolic link を junction の代わりにし、判定の後に link の指す先を替える注入で drive 文字の移動を模す。§71.8 の注入境界と同じ形）。`VACUUM INTO` が実体の path（`\\?\Volume{GUID}\…`）の作業名へ書けること（packet の Contract Probe の P7）と、FAT32・exFAT の取外し可能な drive で `GetFinalPathNameByHandleW(VOLUME_NAME_GUID)` が成功すること（同 P8）は、runtime の lane が Windows で確かめる。使う API が既存の feature `Win32_Storage_FileSystem` にあることは runtime の lane の build で確かめる
+- test は Windows 以外の同じ関数を通す（symbolic link を junction の代わりにし、判定の後に link の指す先を替える注入で drive 文字の移動を模す。§71.8 の注入境界と同じ形）。`VACUUM INTO` が実体の path（`\\?\Volume{GUID}\…`）の作業名へ書けて上書きしない公開で正式名へ移せること（P7）、取外し可能な drive と NTFS の folder で `GetFinalPathNameByHandleW(VOLUME_NAME_GUID)` が成功すること（P8）、公開の後の親 directory の sync（P9）、§71.12 の URI の open（P10）は、Windows に同梱の SQLite の probe で 2026-10-23 に FAT32・NTFS、2026-10-31 に exFAT で PASS（runtime (a) の packet `docs/plans/2026-10-23-backup-offsite-runtime-a.md` の Contract Probe）。実の binary での確かめは同じ packet の L3。使う API（`GetFullPathNameW`・`CreateFileW`・`GetFinalPathNameByHandleW`・`MoveFileExW`）は既存の feature `Win32_Storage_FileSystem` にある（`windows-sys 0.61.2` の source、2026-11-01）
 
 **エラーハンドリング**:
 - ディレクトリ作成失敗 → `DbError::QueryFailed` に変換して返す
@@ -369,7 +374,7 @@ fn check_auto_backup(
    - `None` or 値 ≠ "1" → `Ok(false)` を返す
 2. 今日の日付を `YYYYMMDD` 形式で取得
 3. `backup_dir` 内のファイルを走査し、今日のバックアップが存在するか確認
-   - ファイル名が §71.3 の規約に完全に合い（`inventory_backup_{今日のYYYYMMDD}_{HHMMSS}.db`）、日付が今日のものがあるか。判定は一覧・掃除と同じ `extract_datetime_from_backup` の完全一致で行う。作業名 `*.db.partial` と、規約に合わない名前（例 `inventory_backup_{今日}_manual.db`）は数えない（MNT-01-D7。今の実装は前方一致と `.db` の後方一致で見ており〈`backup.rs` の `collect_today_backup_names`〉、規約外の名前を数える。runtime の lane で完全一致に替える）
+   - ファイル名が §71.3 の規約に完全に合い（`inventory_backup_{今日のYYYYMMDD}_{HHMMSS}.db`）、日付が今日のものがあるか。判定は一覧・掃除と同じ `extract_datetime_from_backup` の完全一致で行う（`backup.rs` の `collect_today_backup_names`）。作業名 `*.db.partial` と、規約に合わない名前（例 `inventory_backup_{今日}_manual.db`）は数えない（MNT-01-D7）
    - directory iterator の個別 entry error → 「entryなし」に変換せず
      `DbError::QueryFailed` を返し、backup作成・cleanup判定へ進まない
 4. 今日のバックアップが1件もない場合:
@@ -534,7 +539,7 @@ pub fn resolve_backup_dir(conn: &DbConnection, app_data: &Path) -> Result<PathBu
 | retention 未設定（MNT-01-D3） | 設定行なしで既定 3 日が適用されることを検証（既存挙動の固定） |
 | resolve_backup_dir の DB error（MNT-01-D2） | `get_setting` の DB error 注入で `Err` が返ることを検証（未設定/空文字 → 既定 dir と区別） |
 
-**D-114 の追加（後続の runtime の lane の完了条件。test 名は runtime の lane が決め、`req901` と決定 ID を含める）**:
+**D-114 の追加（(a) の行は runtime の (a) が、PC の外の控えの行は (b) が入れる。test 名は runtime の lane が決め、`req901` と決定 ID を含める）**:
 
 | 対象 | 検証内容 |
 |---|---|
