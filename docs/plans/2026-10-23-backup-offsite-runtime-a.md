@@ -35,7 +35,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 
 ## Workflow State
 
-- Phase: plan-approved
+- Phase: implementing
 - Risk: R4
 - Plan Commit: e2ea774d4c6ca50f43676b85343f67e73d363c68
 - Amendments: none
@@ -56,6 +56,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 5. plan-gate のまま是正（round 2、2026-10-23、Coordinator、本 commit）: round 2（Claude 側 fresh Opus 5.5 と Codex）の reject を起草役が `a612a437` で直した（下の Review Response）。設計の方向は変えないので plan-gate に留める。exFAT の段（Contract Probe）の結果を待ち、round 3（天井、fresh Opus 5.5 + Codex）に出す。owner の方針（repo 外の回答台帳 TD-401、2026-10-23）で本 lane の優先度は下げ、round 3 は他の lane の後に回す。
 6. plan-gate のまま是正（round 3、2026-10-31、Coordinator の裁定）: round 3（fresh Opus 5.5 と Codex）の findings を一括の是正に振った（round の天井。下の Review Response）。Phase と Plan Commit は変えない。
 7. plan-gate → plan-approved（2026-11-01、Coordinator）: round 3 の一括の是正（`e2ea774d`）の closure は Codex（GPT-6 Astra）・fresh Opus 5.5 とも approve（P1/P2 0、P3 3 ずつ。PR #190 の comment「計画の review の closure（round 3 の一括の是正）」）。`scripts/plan-approve.sh` で Plan Commit を `e2ea774d` に固定した（`25adc8ee`）。旧形式の packet は Phase が承認の前の値の間は承認の前と扱われるので、Phase の行を本 commit で進めた。closure の P3 は計画の節に触れるので、実装の Writer の発注で補う（Review Response）。
+8. plan-approved → implementing（2026-11-01、Coordinator）: 実装の Writer を 2 回に分けて出す（S1〜S3 は発注 702、S4 は S1〜S3 の後の発注）。closure の P3 は発注で補う。
 
 ## Owner Effort Budget
 
