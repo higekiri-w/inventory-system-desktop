@@ -18,7 +18,7 @@ wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時�
 - Writer: Opus 5.5 subagent（起票は本 run の起草役。実装は座組表の Writer の行〈`subagent_type: writer`〉）
 - Plan Reviewer: fresh Opus 5.5 + Codex（座組表の Plan Reviewer の行。Codex が起動できない日は座組表の Codex 停止中の列）
 - Final Reviewer: Fable 5（Claude 側、R3）+ Codex（GPT-6.1 Sol 既定）。座組表（docs/AGENT_OPERATING_MANUAL.md ## 座組）どおり
-- Final Review Minimum: 1
+- Final Review Minimum: 2
 - Human Gate: ready,merge,manual
 - Branch: agent/daily-report-sheet-runtime
 
@@ -30,6 +30,7 @@ wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時�
 4. plan-draft のまま是正（round 1、2026-10-29、Coordinator の裁定）: Plan Review round 1（fresh Opus 5.5 と Codex、`REVIEWED_HEAD=ee8065b1`）の findings を Coordinator が全件受理し、発注 669 で起草役が packet・Matrix・設計正本を直した（下の Review Response）。Phase と Plan Commit は変えない。
 5. plan-draft → plan-approved（2026-10-29、Coordinator）: 計画の review の closure（round 2、`2fca3b18`）は fresh Opus 5.5・Codex とも approve（P1/P2 0、P3 だけ。PR #211 の comment「計画の review の closure（round 2）」）。`scripts/plan-approve.sh` で Plan Commit を `2fca3b18` に固定した（`f007d635`）。旧形式の packet は Phase が承認の前の値の間は承認の前と扱われる（`docs/DEV_WORKFLOW.md` の「承認の後の計画の変更」）ので、Phase の行を本 commit で進めた。implementing へは #172 の merge と同期の後に Coordinator が進める（packet の順）。
 6. plan-approved → implementing（2026-10-31、Coordinator）: #172 が main に入り（`25d106a9`）、`origin/main` を単段の merge で取り込んだ（`1f84ae13`。衝突は 37 の更新履歴の表だけで、両方の行を日付の順に残した）。AC10 の前提（#172 の merge の commit が HEAD の祖先）が成り立った。`Plan Commit` と `Amendments` は変えない。実装の Writer は発注 694。
+7. implementing のまま Gated Amendment（2026-11-01、Coordinator）: `Final Review Minimum` を 1 から 2 にする。S7 の L3 の合成 fixture（`tests/fixtures/daily-report-sheet/` の CSV 12 本）は `scripts/ci/classify-changes.sh` が知らない path で、classifier が安全側の全部の fallback（`unknown=true`・`workflow=true`）を返す。helper（`scripts/pr-gate.py`）は `workflow=true` の lane を Double Audit（Final Review Minimum 2）として扱い、packet の 1 と食い違って capture を止めた（`required Double Audit minimum is 2`）。Final Review は座組表どおり独立の 2 本（Codex と Fable 5）で行っているので、Minimum を 2 に上げて合わせる（緩める向きでない）。classifier に test の fixture の path を教える直しは gate の道具の変更で、本 lane の範囲の外（owner に別の lane の候補として諮る）。
 
 ## 本 commit で変えた正本
 
