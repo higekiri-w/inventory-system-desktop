@@ -201,3 +201,16 @@ describe("SC17: globals.css declares an unlayered corner mask for the list-shell
     }
   });
 });
+
+// UI-09a-D17・D18（日報の紙）: 値は 56 UI-09a-D18 から独立転記。
+describe("UI-09a: daily report sheet print rules", () => {
+  it("globals.css declares A4 page and hides app root in print (UI-09a)", () => {
+    expect(GLOBALS_CSS).toContain("size: A4 portrait;");
+    expect(GLOBALS_CSS).toContain("margin: 10mm;");
+    const printIndex = GLOBALS_CSS.indexOf("@media print {");
+    expect(printIndex).toBeGreaterThan(-1);
+    const printBlock = GLOBALS_CSS.slice(printIndex);
+    expect(printBlock).toMatch(/#root\s*\{\s*display:\s*none;\s*\}/);
+    expect(printBlock).toContain("overflow: visible;");
+  });
+});
