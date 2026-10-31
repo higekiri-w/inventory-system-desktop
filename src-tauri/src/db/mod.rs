@@ -24,6 +24,7 @@ mod schema_v10;
 #[cfg(test)]
 pub(crate) use schema_v10::{insert_pre_vb_product, VB_VERSION};
 mod schema_v11;
+mod schema_v12;
 mod schema_v2;
 mod schema_v3;
 mod schema_v4;

@@ -134,7 +134,7 @@ Z001/Z002/Z005 の1営業日分ファイル束を1つの日報取込みとして
 | report_date | TEXT | NOT NULL | 対象営業日（YYYY-MM-DD） |
 | source_adapter | TEXT | NOT NULL, CHECK(source_adapter IN ('casio_sr_s4000')) | 取込み元adapter。外部レジ差し替え時の境界 |
 | bundle_hash | TEXT | NOT NULL, INDEX | Z001/Z002/Z005の生バイトhashを安定順で束ねたSHA-256。重複取込み判定に使う |
-| settlement_no | INTEGER | NULLABLE | 束の精算回数（3 本とも読めてそろうときだけ。IO-07-D5）。同じ精算を別の bytes で二重に取り込まない照合に使う（BIZ-08-D4、D-111。追加の migration は runtime の lane。既存行は NULL） |
+| settlement_no | INTEGER | NULLABLE | 束の精算回数（3 本とも読めてそろうときだけ。IO-07-D5）。同じ精算を別の bytes で二重に取り込まない照合に使う（BIZ-08-D4、D-111。列を足す migration は [22 §17](../function-design/22-mnt-migration.md#17-mnt-03-追加-日報の束の精算回数の列の-migrationd-111)。既存行は NULL） |
 | source_files_json | TEXT | NOT NULL | ファイル名、個別hash、サイズ、adapter内source名（Z001/Z002/Z005）のJSON。SD の file（SD の候補からの束と、手で選んだ SD 上の file）は、各要素に SD の相対 path（`sd_relative_path`）と PC 側の写しの app data からの相対 path（`copy_path`、BIZ-08-D5）も持つ（無い要素も読む）。BIZ-08 の内部の serialize 用の型で書き、wire 型 `DailyReportSourceFileInfo` に field を足さない（37 §37.4 手順 6）。実CSV本文は保存しない（写しは DB の外の file） |
 | gross_amount | INTEGER | NULLABLE | Z001/Z005から導出できる総売上額。未確定・欠損時はNULL |
 | net_amount | INTEGER | NULLABLE | 返品・値引等を反映した日報上の純売上額。未確定・欠損時はNULL |
@@ -489,4 +489,5 @@ CSV取込み: 2026/03/21の精算データ
 |---|---|---|
 | 2026-08-16 | PR #79 | D-071 / SPEC-SDI-D1〜D8: business dateをgroup keyとし、両pipelineのinsert-only TX、active snapshot再検証、per-import rollbackを正本化。 |
 | 2026-10-06 | sd-direct-read（design、D-111） | `daily_report_imports.settlement_no` と同じ精算の二重取込みの拒否（BIZ-08-D4）。入力の標準をレジの SD の直読みにした。 |
+| 2026-10-17 | sd-direct-read-runtime（起票） | `settlement_no` の列を足す migration を [22 §17](../function-design/22-mnt-migration.md#17-mnt-03-追加-日報の束の精算回数の列の-migrationd-111) に置いた。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | 「SD の一括取込みと EJ の控えの契約」（`ej_records`）を proposed で足した。 |

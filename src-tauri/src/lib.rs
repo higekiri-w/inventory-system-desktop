@@ -324,6 +324,8 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::daily_report_import_cmd::commit_daily_report_import,
         cmd::daily_report_import_cmd::rollback_daily_report_import,
         cmd::daily_report_import_cmd::list_daily_report_imports,
+        cmd::daily_report_import_cmd::scan_register_sd,
+        cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
         // CMD-08: PLU書出し
         cmd::plu_export_cmd::prepare_plu_export,
         cmd::plu_export_cmd::confirm_plu_export_saved,
@@ -1497,6 +1499,7 @@ pub fn run() {
                 db: Mutex::new(conn),
                 preview_cache: Mutex::new(HashMap::new()),
                 daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
             });
 
             Ok(())
@@ -1551,6 +1554,8 @@ pub fn run() {
             cmd::daily_report_import_cmd::commit_daily_report_import,
             cmd::daily_report_import_cmd::rollback_daily_report_import,
             cmd::daily_report_import_cmd::list_daily_report_imports,
+            cmd::daily_report_import_cmd::scan_register_sd,
+            cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
             // CMD-08: PLU書出し
             cmd::plu_export_cmd::prepare_plu_export,
             cmd::plu_export_cmd::confirm_plu_export_saved,

@@ -210,6 +210,8 @@ pub struct NewDailyReportImport {
     pub net_amount: Option<i64>,
     pub status: String,
     pub note: Option<String>,
+    /// 束の精算回数（IO-07-D5）。None は NULL（24 §14.14、BIZ-08-D4）
+    pub settlement_no: Option<i64>,
 }
 
 /// daily_report_summary_lines INSERT用
@@ -734,8 +736,8 @@ pub fn insert_daily_report_import(
     conn.execute(
         "INSERT INTO daily_report_imports (
             report_date, source_adapter, bundle_hash, source_files_json,
-            gross_amount, net_amount, status, imported_at, note
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            gross_amount, net_amount, status, imported_at, note, settlement_no
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             record.report_date,
             record.source_adapter,
@@ -746,6 +748,7 @@ pub fn insert_daily_report_import(
             record.status,
             now,
             record.note,
+            record.settlement_no,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -904,6 +907,38 @@ pub fn find_daily_report_imports_by_report_date(
         imports.push(row?);
     }
     Ok(imports)
+}
+
+/// 同じ対象日・同じ精算回数で bundle_hash の違う completed の日報取込みの id（BIZ-08-D4）
+///
+/// 24-io-csv-import-repo.md §14.18a。settlement_no が NULL の行は `= ?` に当たらず照合されない
+pub fn find_same_settlement_daily_report_import(
+    conn: &DbConnection,
+    report_date: &str,
+    settlement_no: i64,
+    bundle_hash: &str,
+) -> Result<Option<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM daily_report_imports
+         WHERE report_date = ?1 AND settlement_no = ?2 AND bundle_hash <> ?3 AND status = 'completed'
+         ORDER BY id DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![report_date, settlement_no, bundle_hash])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// completed の日報取込みの対象日の最大（SD の scan の窓の始まり、37 §37.9 手順 2）
+pub(crate) fn latest_completed_daily_report_date(
+    conn: &DbConnection,
+) -> Result<Option<String>, DbError> {
+    Ok(conn.query_row(
+        "SELECT MAX(report_date) FROM daily_report_imports WHERE status = 'completed'",
+        [],
+        |row| row.get(0),
+    )?)
 }
 
 /// daily_report_imports を rolled_back に更新する
@@ -2174,6 +2209,7 @@ mod tests {
             net_amount: Some(11000),
             status: status.to_string(),
             note: Some("synthetic fixture".to_string()),
+            settlement_no: None,
         }
     }
 
@@ -3520,5 +3556,83 @@ mod tests {
             .map(|import| import.daily_report_import_id)
             .collect();
         assert_eq!(ids_b, day_b);
+    }
+
+    fn settlement_no_of(conn: &DbConnection, id: i64) -> Option<i64> {
+        conn.query_row(
+            "SELECT settlement_no FROM daily_report_imports WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_req401_insert_daily_report_import_stores_settlement_no() {
+        // REQ-401 / 24 §14.14: settlement_no を保存し、None は NULL
+        let (_dir, conn) = setup_test_db();
+        let mut with = new_daily_report_import("2026-10-06", "H1", "completed");
+        with.settlement_no = Some(5);
+        let with_id = insert_daily_report_import(&conn, &with).unwrap();
+        let without_id = insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-06", "H2", "completed"),
+        )
+        .unwrap();
+        assert_eq!(settlement_no_of(&conn, with_id), Some(5));
+        assert_eq!(settlement_no_of(&conn, without_id), None);
+    }
+
+    #[test]
+    fn test_req401_find_same_settlement_daily_report_import_matches_only_completed_other_hash() {
+        // REQ-401 / 24 §14.18a / BIZ-08-D4: completed・同じ精算回数・別の hash だけを返す
+        let (_dir, conn) = setup_test_db();
+        let insert = |hash: &str, status: &str, settlement_no: Option<i64>| {
+            let mut record = new_daily_report_import("2026-10-06", hash, status);
+            record.settlement_no = settlement_no;
+            insert_daily_report_import(&conn, &record).unwrap()
+        };
+        let h1 = insert("H1", "completed", Some(5));
+        insert("H2", "rolled_back", Some(5));
+        insert("H3", "completed", None);
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 5, "H1").unwrap(),
+            None
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 5, "H9").unwrap(),
+            Some(h1)
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 6, "H9").unwrap(),
+            None
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-07", 5, "H9").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_req401_latest_completed_daily_report_date_ignores_rolled_back() {
+        // REQ-401 / 37 §37.9 手順 2: 窓は completed の最大の対象日から（rolled_back だけの日は数えない）
+        let (_dir, conn) = setup_test_db();
+        assert_eq!(latest_completed_daily_report_date(&conn).unwrap(), None);
+        insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-01", "A", "completed"),
+        )
+        .unwrap();
+        insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-09", "B", "rolled_back"),
+        )
+        .unwrap();
+        assert_eq!(
+            latest_completed_daily_report_date(&conn)
+                .unwrap()
+                .as_deref(),
+            Some("2026-10-01")
+        );
     }
 }

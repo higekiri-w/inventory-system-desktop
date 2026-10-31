@@ -73,6 +73,8 @@ pub struct DailyReportParseResult {
     pub payment_lines: Vec<DailyReportPaymentLine>,
     pub department_lines: Vec<DailyReportDepartmentLine>,
     pub parse_errors: Vec<DailyReportParseError>,
+    /// 束の精算回数（IO-07-D5）。3 本とも読めて値がそろい、`i64` に収まる束だけ `Some`
+    pub settlement_no: Option<i64>,
 }
 
 pub fn parse_daily_report_bundle(files: Vec<DailyReportSourceFile>) -> DailyReportParseResult {
@@ -83,6 +85,7 @@ pub fn parse_daily_report_bundle(files: Vec<DailyReportSourceFile>) -> DailyRepo
         payment_lines: Vec::new(),
         department_lines: Vec::new(),
         parse_errors: Vec::new(),
+        settlement_no: None,
     };
 
     let mut seen_sources = HashSet::new();
@@ -219,6 +222,13 @@ pub fn parse_daily_report_bundle(files: Vec<DailyReportSourceFile>) -> DailyRepo
             "settlement_mismatch",
             "Z001/Z002/Z005の精算回数が一致しません",
         ));
+    }
+    // IO-07-D5: 3 本とも読めてそろう束だけ。i64 に収まらない値は読めないのと同じ
+    if settlement_readable == 3 && settlement_numbers.len() == 1 {
+        result.settlement_no = settlement_numbers
+            .into_iter()
+            .next()
+            .and_then(|number| i64::try_from(number).ok());
     }
 
     result
@@ -1367,5 +1377,117 @@ mod tests {
                 "payment_7"
             ]
         );
+    }
+
+    /// 3 本とも同じ精算回数の行を持つ束
+    fn settlement_bundle(numbers: [&str; 3]) -> DailyReportParseResult {
+        let date = "2026-09-28";
+        parse_daily_report_bundle(vec![
+            report_file(
+                "Z001_s.CSV",
+                date,
+                &settlement_line(numbers[0]),
+                &[("0001", "総売", "3", "100"), ("0002", "純売", "3", "90")],
+            ),
+            report_file(
+                "Z002_s.CSV",
+                date,
+                &settlement_line(numbers[1]),
+                &[("0001", "現金", "3", "90")],
+            ),
+            report_file(
+                "Z005_s.CSV",
+                date,
+                &settlement_line(numbers[2]),
+                &[("0001", "部門A", "3", "90")],
+            ),
+        ])
+    }
+
+    #[test]
+    fn test_req401_settlement_no_is_some_when_all_three_agree() {
+        // REQ-401 / IO-07-D5: 3 本とも読めてそろう束だけ Some（先頭の 0 は値に影響しない）
+        let result = settlement_bundle(["0005", "5", "05"]);
+        assert!(result.parse_errors.is_empty(), "{:?}", result.parse_errors);
+        assert_eq!(result.settlement_no, Some(5));
+    }
+
+    #[test]
+    fn test_req401_settlement_no_is_none_when_any_unreadable() {
+        // REQ-401 / IO-07-D5: Z001 だけ読め、Z002 / Z005 が layout B（精算回数の行が無い）の束は None
+        let date = "2026-09-28";
+        let z001 = report_file(
+            "Z001_b.CSV",
+            date,
+            &settlement_line("0005"),
+            &[("0001", "総売", "3", "100"), ("0002", "純売", "3", "90")],
+        );
+        let z002 = source_file(
+            "Z002_b.CSV",
+            "\"出力\",\"PC\"\"内容\",\"日計\"\"日付\",\"2026-09-28\"\"レコード\",\"キャラクター\",\"個数/件数\",\"金額\"\"0001\",\"現金\",\"3\",\"90\"",
+        );
+        let z005 = source_file(
+            "Z005_b.CSV",
+            "\"出力\",\"PC\"\"内容\",\"日計\"\"日付\",\"2026-09-28\"\"レコード\",\"キャラクター\",\"個数\",\"金額\"\"0001\",\"部門A\",\"3\",\"90\"",
+        );
+        let result = parse_daily_report_bundle(vec![z001, z002, z005]);
+        assert!(result.parse_errors.is_empty(), "{:?}", result.parse_errors);
+        assert_eq!(result.settlement_no, None);
+        // 1 本だけ精算回数の行を欠く layout A の束も None
+        let mut missing = settlement_bundle(["0005", "0005", "0005"]);
+        assert_eq!(missing.settlement_no, Some(5));
+        missing = parse_daily_report_bundle(vec![
+            report_file(
+                "Z001_m.CSV",
+                date,
+                &settlement_line("0005"),
+                &[("0001", "総売", "3", "100"), ("0002", "純売", "3", "90")],
+            ),
+            report_file(
+                "Z002_m.CSV",
+                date,
+                &settlement_line("0005"),
+                &[("0001", "現金", "3", "90")],
+            ),
+            report_file("Z005_m.CSV", date, "", &[("0001", "部門A", "3", "90")]),
+        ]);
+        assert!(
+            missing.parse_errors.is_empty(),
+            "{:?}",
+            missing.parse_errors
+        );
+        assert_eq!(missing.settlement_no, None);
+    }
+
+    #[test]
+    fn test_req401_settlement_no_is_none_on_mismatch() {
+        // REQ-401 / IO-07-D5: settlement_mismatch の束は None
+        let result = settlement_bundle(["0005", "0005", "0006"]);
+        assert!(has_error_type(&result, "settlement_mismatch"));
+        assert_eq!(result.settlement_no, None);
+    }
+
+    #[test]
+    fn test_req401_settlement_no_out_of_i64_is_none_and_zero_is_some() {
+        // REQ-401 / IO-07-D5: i64 に収まらない値は None（負の値に化けない）、i64::MAX と 0 は Some
+        let over = settlement_bundle([
+            "9223372036854775808",
+            "9223372036854775808",
+            "9223372036854775808",
+        ]);
+        assert!(over.parse_errors.is_empty(), "{:?}", over.parse_errors);
+        assert_eq!(over.settlement_no, None);
+
+        let max = settlement_bundle([
+            "9223372036854775807",
+            "9223372036854775807",
+            "9223372036854775807",
+        ]);
+        assert!(max.parse_errors.is_empty(), "{:?}", max.parse_errors);
+        assert_eq!(max.settlement_no, Some(i64::MAX));
+
+        let zero = settlement_bundle(["0000", "0000", "0000"]);
+        assert!(zero.parse_errors.is_empty(), "{:?}", zero.parse_errors);
+        assert_eq!(zero.settlement_no, Some(0));
     }
 }

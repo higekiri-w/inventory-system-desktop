@@ -743,6 +743,7 @@ mod tests {
                 net_amount: Some(11000),
                 status: "completed".to_string(),
                 note: None,
+                settlement_no: None,
             },
         )
         .unwrap()
@@ -1274,6 +1275,8 @@ mod tests {
             DailyReportInputFile {
                 filename: name.to_string(),
                 bytes: encoded.to_vec(),
+                sd_relative_path: None,
+                source_path: None,
             }
         }
         let (_dir, mut conn) = setup_test_db();
@@ -1295,7 +1298,8 @@ mod tests {
                 ],
             )
             .unwrap();
-            commit_daily_report_import(&mut conn, parsed.cached_preview, false).unwrap();
+            commit_daily_report_import(&mut conn, parsed.cached_preview, false, _dir.path())
+                .unwrap();
         };
 
         import_day("2026-03-20", "1.3");
@@ -1459,11 +1463,14 @@ mod tests {
                     DailyReportInputFile {
                         bytes: std::fs::read(dir.join(&filename)).unwrap(),
                         filename,
+                        sd_relative_path: None,
+                        source_path: None,
                     }
                 })
                 .collect();
             let parsed = parse_and_validate_daily_report(&conn, files).unwrap();
-            commit_daily_report_import(&mut conn, parsed.cached_preview, additional).unwrap();
+            commit_daily_report_import(&mut conn, parsed.cached_preview, additional, _dir.path())
+                .unwrap();
         }
         let labels = [
             "総売",

@@ -17,6 +17,7 @@ src-tauri/src/
     schema_v9.rs  -- 在庫の並びの鍵・計数の表・写しの列（§19 の vL）
     schema_v10.rs -- 原価を1/100円の列へ（§16 の vB）
     schema_v11.rs -- Z004の精算の鍵・売上の連動・棚卸しの完了の列（§20 の vZ）
+    schema_v12.rs -- 日報の束の精算回数の列（§17 の vS）
 ```
 
 ### 3.2 migrate
@@ -417,6 +418,21 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 更新の後に入れたデータは戻らない（手順 5 で保全した file にだけ残る）。逆変換の migration は作らない。vB は行の無い DB にだけ当たるので、この手順の対象にしない（上の vB の「止まった後の進め方」）。
 
 **テスト**（vB の分は `schema_v10.rs` の test と、作り直しの手順の起動の test〈`lib.rs` の `test_startup_req903_` の 4 本〉）: vU は、12 個の code がすべて入り一覧に無い値（`kg`）が CHECK で拒まれること、作り直しの前後で全列の値・index・FK が同じこと、手順 6 の失敗で表・版が戻り foreign_keys が元の値に戻ること。vU の上限の検査: 各列が端の値（数量 `9999999`・`-9999999`〈`sale_records.quantity`〉、在庫 `999999999`・`-999999999`、変動 `1999999998`、売価 `999999`、原価 `999999`・`-999999`・NULL〈`valuation_cost_price`〉、`stocktakes.total_cost` `9007199254740991`）の旧 DB は通って vU が成功し、どれか 1 列が 1 つ外（数量 `10000000`、在庫 `1000000000`、変動 `1999999999`、売価 `1000000`、原価 `1000000`、`total_cost` `9007199254740992`）の旧 DB は、表・値・版・foreign_keys が何も変わらず `MigrationFailed`（message に表名・列名）。上限の外が明細・履歴の列（`inventory_movements.stock_after`、`price_history.old_selling`、`price_history.old_cost`）だけにある DB も同じく止まる。記録ごとの和: 上限の明細（数量 `9999999`、原価 `999999`）900 行の入庫は通り（和 `8999990100000900`）、901 行（`9009990089000901`）は止まる。行 0 の表で成功。回復の手順（管理者の手順書を合成の DB で 1 度通す）: 手順 3 で遺物（`.restore_manifest` か `.restore_backup`）がある状態、手順 4 で版が新しすぎる backup・`integrity_check` が `ok` でない backup しか無い状態のどちらで止まっても、元の名前の `{db_path}`・`-wal`・`-shm` と遺物の file は中身も名前も変わらない（手順 5 の移動の前に止まる）。vB は、v1 から vB までを空の DB に当てた後に 6 列が `_centi` の名前で古い名前が無いこと、手順 4 の後の CHECK が巻・cm を外した後の一覧（個数の単位 9 個と `m`）を受け `roll`・`cm`・`kg` を拒むこと、手順 4 の後の `products` の定義（全列の名前・型・NOT NULL・既定値の並び、`products` 自身の外部キー、index）が、改名した `cost_price_centi` の名前だけを除いて手順 4 の前と同じで、§19 の写しの 3 列の CHECK と `tax_rate` の CHECK が効き、`products` を参照する表の外部キーが残ること、起点の検査で 5 つの表のどれか 1 つに 1 行だけある DB（表ごとに 1 case）と 2 つの表に行のある DB が `MigrationFailed`（message に手順 2 の文と、行のある表名の全部）で schema・版・foreign_keys が何も変わらないこと、再実行で重複適用しないこと。作り直しの手順（一時の `{app_data}` と作業フォルダを `prepare_database_with_init` に渡す起動の test）: (i) 作業フォルダに行のある旧 DB があり `{app_data}` にも行のある DB がある状態、(ii) `{app_data}` に確定済み（phase = committed）の manifest と行のある DB がある状態のそれぞれから、手順 3 のとおり `{app_data}` を丸ごとと作業フォルダの旧 DB を移して起動すると、取込みが起きず、空の DB で vB まで当たり、新しい DB の `operation_logs` に `backup_restore` の行が無いこと。対照として、作業フォルダの旧 DB を移し忘れた状態では取り込まれて vB が止まること。(iii) 同じ起動で v8 が COMMIT した後に vB で止まった DB（既定でない `backup_path` を持つ）では、手順 1 (b) の写しの読取りで保存先が取れ、元の DB の file が変わらないこと。vB を登録すると、行を入れてから最新の版まで `migrate()` する既存の test（原価の lane の Test Design Matrix の「既存の test の移し方」に一覧）が vB で止まるので、それらの test は版の上限を取る test 用の migrate（指定した版までだけ当てる）に替え、期待は変えない（回帰の検査を弱めない）。
+
+## 17. MNT-03 追加: 日報の束の精算回数の列の migration（D-111）
+
+**MNT-03-D15 / IO-07-D5 / BIZ-08-D4 / D-111**: `daily_report_imports` に NULL を許す列 `settlement_no INTEGER` を足す migration（以下 vS）。列の意味の正本は [db-design/pos-tables.md](../db-design/pos-tables.md) §12b、保存と照合は [37](37-biz-daily-report-import-service.md) §37.4 手順 4a・6 と [24](24-io-csv-import-repo.md) §14.14・§14.18a。版の番号は v12（`src-tauri/src/db/schema_v12.rs`。2026-10-24 に §20 の vZ〈PR #188〉が先に merge して v11 を取ったので、下の規則で v12 に取り直した。merge の時点で先に別の migration が入っていれば同じ規則で取り直す）。棚卸しの数の置き場と在庫の求め直しの runtime の (b) の最初の lane（b1）の migration（vZ）も次の版を取るので、先に merge した側が若い番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録を取り直す（`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。§18 の JAN の別名・PLU の書出しの見直しの runtime の migration も同じ）。test の版の期待は取り直さずに済む形にする: 全部の migration を当てて最新の版を期待する既存の test（`init_database`・`migration::migrate`・起動の `prepare_database_with` の後の `MAX(version)` と `schema_versions` の行数）は、版の数値・版の定数でなく `app_max_version()`（`src-tauri/src/db/migration.rs`）と比べ、ある版の後の schema・振舞いを見る test（vB の後の全 object の SQL 等）は §16 の「版の上限を取る test 用の migrate」（`migrate_up_to(&conn, <その版の定数>)`）で当てる。vS の lane がこの形に直す test の一覧と洗い直しの command は SD 直読みの runtime の packet の S2。先に merge した lane が最新の版を版の定数（例 vZ の定数）か数値で期待する test を残していれば、後から merge する lane がそれを `app_max_version()` に替える。
+
+**手順**（`MigrationKind::Sql`。実行器が BEGIN → SQL → schema_versions の INSERT → COMMIT を持つ）:
+
+1. `ALTER TABLE daily_report_imports ADD COLUMN settlement_no INTEGER`
+
+- 既存の行は NULL のまま（D-111 より前の取込みと layout B。値を推測して埋めない。BIZ-08-D4 は NULL の行を照合しない）。backfill・範囲の検査・表の作り直しは要らない（足すのは NULL を許す列だけで、既存の値を変えない）。CHECK・index は足さない（照合は `report_date` の既存の index で絞れる件数で、利用者は 1 人）。
+- 新しい DB も v4 で表を作ってから vS で列を足す（v4 の CREATE 文〈`schema_v4.rs`〉は書き換えない）。
+- 失敗は実行器の TX で戻り、版は記録されない（§3.2）。vS を適用した DB は vS を知らない旧版のアプリでは開けない（MNT-03-D11 の `SchemaNewerThanApp`）。旧版へ戻す手順は §16 の「回復」と同じ（更新の前の backup に戻す）。
+- DB の作り直しとの関係（§16 の「DB の作り直しと順」）: vS は行のある DB にもそのまま当たり、作り直しを要さない。vB（§16 の手順 2）・v9（§19 の手順 1）・vZ の止まる検査は `daily_report_imports` を見ないので、vS とそれらはどちらが先でも互いに止めない。作り直しで移すアプリの data の folder には、SD から読んだ原本の写し（`pos-sources/`、[29 §29.8](29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）も入る（§16 の「作り直しの手順」は folder ごと移す）。
+
+**MIGRATIONS 登録順**: `migration.rs` の migrations() は merge の時点の最後の版の後に vS を登録する。description は `日報の束の精算回数の列（daily_report_imports.settlement_no）`、kind は `MigrationKind::Sql`。実装は、日報の行がある直前の版の DB からの適用で既存の行の `settlement_no` が NULL になること、`pragma_table_info('daily_report_imports')` に列があり型が `INTEGER`・NULL を許すこと、再実行で vS を重複して適用しないこと、`settlement_no` の値つきの INSERT が読めることを検証する（test `migration::adds_daily_report_settlement_no_nullable`）。
 
 ## 18. MNT-03 追加: 前の JAN の別名の migration（proposed・未実装、D-122）
 

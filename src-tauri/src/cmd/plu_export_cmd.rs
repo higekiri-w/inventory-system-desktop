@@ -238,6 +238,7 @@ mod tests {
                 db: Mutex::new(conn),
                 preview_cache: Mutex::new(HashMap::new()),
                 daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
             })
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,8 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
     ...actual,
     commands: {
       parseAndValidateDailyReport: vi.fn(),
+      parseAndValidateDailyReportFromSd: vi.fn(),
+      scanRegisterSd: vi.fn(),
       commitDailyReportImport: vi.fn(),
       rollbackDailyReportImport: vi.fn(),
     },
@@ -99,43 +101,39 @@ beforeEach(() => {
 });
 
 describe("DailyReportImportPage flow_req401", () => {
-  it("REQ-401: shows inline selection error for 2 files and clears it after 3 files parse", async () => {
+  it("REQ-401 / UI-07-D16: 2 files cannot be confirmed; the 3rd file enables parse with source paths", async () => {
     const user = userEvent.setup();
     mockOpen
       .mockResolvedValueOnce(["C:\\tmp\\Z001_260321.CSV", "C:\\tmp\\Z002_260321.CSV"])
-      .mockResolvedValueOnce([
-        "C:\\tmp\\Z001_260321.CSV",
-        "C:\\tmp\\Z002_260321.CSV",
-        "C:\\tmp\\Z005_260321.CSV",
-      ]);
+      .mockResolvedValueOnce(["C:\\tmp\\Z005_260321.CSV"]);
 
     renderWithClient(<DailyReportImportPage />);
 
-    await user.click(screen.getByRole("button", { name: "日報ファイルを選択" }));
+    await user.click(screen.getByRole("button", { name: "ファイルを選んで取り込む" }));
 
-    expect(
-      await screen.findByText(
-        "Z001/Z002/Z005 の3ファイルを選択してください（選択されたのは2ファイルです）",
-      ),
-    ).toBeInTheDocument();
-    expect(mockToast.error).toHaveBeenCalledWith("Z001/Z002/Z005 の3ファイルを選択してください");
-    expect(mockReadFile).not.toHaveBeenCalled();
+    const list = await screen.findByRole("list", { name: "選んだファイル" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "確認する" })).toBeDisabled();
     expect(mockParse).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "日報ファイルを選択" }));
+    await user.click(screen.getByRole("button", { name: "ファイルを選んで取り込む" }));
+    await waitFor(() => {
+      expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    });
+    const confirm = screen.getByRole("button", { name: "確認する" });
+    expect(confirm).toBeEnabled();
+    expect(mockParse).not.toHaveBeenCalled();
+    expect(mockToast.error).not.toHaveBeenCalled();
+
+    await user.click(confirm);
 
     await waitFor(() => {
       expect(screen.getByText("取込み内容")).toBeInTheDocument();
     });
-    expect(
-      screen.queryByText(
-        "Z001/Z002/Z005 の3ファイルを選択してください（選択されたのは2ファイルです）",
-      ),
-    ).not.toBeInTheDocument();
     expect(mockParse).toHaveBeenCalledWith([
-      { filename: "Z001_260321.CSV", file_bytes: [1] },
-      { filename: "Z002_260321.CSV", file_bytes: [2] },
-      { filename: "Z005_260321.CSV", file_bytes: [5] },
+      { filename: "Z001_260321.CSV", file_bytes: [1], source_path: "C:\\tmp\\Z001_260321.CSV" },
+      { filename: "Z002_260321.CSV", file_bytes: [2], source_path: "C:\\tmp\\Z002_260321.CSV" },
+      { filename: "Z005_260321.CSV", file_bytes: [5], source_path: "C:\\tmp\\Z005_260321.CSV" },
     ]);
   });
 });

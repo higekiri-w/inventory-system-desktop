@@ -328,7 +328,8 @@ mod tests {
     fn test_vz_req903_fresh_db_has_columns_checks_and_indexes() {
         // REQ-903 / MNT-03-D18 手順 3〜5 / SPEC-STK-CNT-D1・D9 / Matrix M1
         let (_dir, conn) = setup_latest();
-        assert_eq!(version(&conn), (VZ_VERSION, VZ_VERSION));
+        let latest = crate::db::migration::app_max_version();
+        assert_eq!(version(&conn), (latest, latest)); // 最新の版まで当たる（22 §17）
         let columns = |table: &str| -> Vec<Vec<Value>> {
             dump(
                 &conn,

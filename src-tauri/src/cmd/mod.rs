@@ -18,7 +18,9 @@ pub mod settings_cmd;
 pub mod stocktake_cmd;
 
 use crate::biz::csv_import_service::CachedPreview;
-use crate::biz::daily_report_import_service::CachedDailyReportPreview;
+use crate::biz::daily_report_import_service::{
+    CachedDailyReportPreview, DailyReportSdScanSnapshot,
+};
 use crate::biz::{BizError, DbConnection};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -38,6 +40,8 @@ pub struct AppState {
     pub preview_cache: Mutex<HashMap<String, CachedPreview>>,
     /// 日報取込みPreviewキャッシュ（token → CachedDailyReportPreview）
     pub daily_report_preview_cache: Mutex<HashMap<String, CachedDailyReportPreview>>,
+    /// レジの SD の scan の snapshot（scan_token → snapshot。最新の 1 つだけ、CMD-12-D1）
+    pub register_sd_scan_cache: Mutex<HashMap<String, DailyReportSdScanSnapshot>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +149,13 @@ impl From<BizError> for CmdError {
                 detail,
             );
         }
+        // 45 §45.7: 写しの失敗は internal（UI が preview に戻り、同じ token で再試行できる）
+        if let BizError::SourceCopyFailed(kind) = &err {
+            return CmdError::internal(
+                "SD から読んだファイルの写しを PC に保存できなかったため、取り込みませんでした。PC の空き容量を確かめて、もう一度取り込んでください。",
+                format!("{kind:?}"),
+            );
+        }
         tracing::error!(error = %err, "CMD層エラー");
         match err {
             BizError::ValidationFailed(msg) => CmdError {
@@ -179,7 +190,9 @@ impl From<BizError> for CmdError {
                 stocktake_recovery: None,
                 related_csv_import_id: None,
             },
-            BizError::DatabaseError(_) => unreachable!("handled before generic logging"),
+            BizError::DatabaseError(_) | BizError::SourceCopyFailed(_) => {
+                unreachable!("handled before generic logging")
+            }
             BizError::ImportError(msg) => CmdError {
                 kind: CmdErrorKind::ImportError,
                 message: msg,

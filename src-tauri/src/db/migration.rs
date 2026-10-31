@@ -12,6 +12,7 @@ use super::migration_tx;
 use super::schema_v1;
 use super::schema_v10;
 use super::schema_v11;
+use super::schema_v12;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -95,6 +96,11 @@ fn migrations() -> Vec<Migration> {
             version: 11,
             description: "Z004の精算の鍵・売上の連動・棚卸しの完了の列（D-118 (b1)）",
             kind: MigrationKind::Custom(schema_v11::apply_v11_z004_settlement_key),
+        },
+        Migration {
+            version: 12,
+            description: "日報の束の精算回数の列（daily_report_imports.settlement_no）",
+            kind: MigrationKind::Sql(schema_v12::get_v12_daily_report_settlement_no_schema()),
         },
     ]
 }

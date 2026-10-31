@@ -184,6 +184,10 @@ export const commands = {
 	commitDailyReportImport: (previewToken: string, additionalImportConfirmed: boolean) => typedError<DailyReportImportResult, CmdError>(__TAURI_INVOKE("commit_daily_report_import", { previewToken, additionalImportConfirmed })),
 	rollbackDailyReportImport: (dailyReportImportId: number) => typedError<DailyReportRollbackResult, CmdError>(__TAURI_INVOKE("rollback_daily_report_import", { dailyReportImportId })),
 	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImport>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
+	// §45.6a（CMD-12-D1）: レジの SD を BIZ-08 §37.9 で読み、候補と scan_token を返す
+	scanRegisterSd: (selectedPath: string | null) => typedError<RegisterSdScanResponse, CmdError>(__TAURI_INVOKE("scan_register_sd", { selectedPath })),
+	// §45.6b（CMD-12-D1）: scan の snapshot の 1 候補から preview を作る。snapshot は消さない
+	parseAndValidateDailyReportFromSd: (scanToken: string, candidateKey: string) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report_from_sd", { scanToken, candidateKey })),
 	/**
 	 *  PLUファイルを生成して返す。DB状態は更新しない。
 	 *
@@ -635,6 +639,25 @@ export type DailyReportRollbackResult = {
 	rolled_back_at: string | null,
 };
 
+export type DailyReportSdCandidate = {
+	candidate_key: string,
+	path_date: string,
+	report_date: string | null,
+	source_filenames: string[],
+	status: DailyReportSdCandidateStatus,
+};
+
+export type DailyReportSdCandidateStatus = "NotImported" | "Imported" | "SameSettlementImported" | "Incomplete" | "Unreadable";
+
+export type DailyReportSdScan = {
+	volume_label: string,
+	// YYYY-MM-DD（窓の始まり）
+	scanned_from: string,
+	candidates: DailyReportSdCandidate[],
+	// 名前の規則に合わず読まなかった file の数（IO-09-D2）
+	skipped_unknown_count: number,
+};
+
 export type DailyReportSourceFileInfo = {
 	source: DailyReportSourceKind,
 	filename: string,
@@ -645,6 +668,8 @@ export type DailyReportSourceFileInfo = {
 export type DailyReportSourceFileRequest = {
 	filename: string,
 	file_bytes: number[],
+	// native dialog で選んだ file の path（UI-07-D16、§45.3）。省略と空文字は None
+	source_path?: string | null,
 };
 
 export type DailyReportSourceKind = "Z001" | "Z002" | "Z005";
@@ -1493,6 +1518,12 @@ export type RecountReason = "undetermined_settlement" | "same_date_movement" | "
 
 // 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
 export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake";
+
+// §45.6a の応答
+export type RegisterSdScanResponse = {
+	scan: DailyReportSdScan,
+	scan_token: string,
+};
 
 export type RestoreBackupRequest = {
 	backup_path: string,

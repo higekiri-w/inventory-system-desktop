@@ -155,7 +155,11 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
     // SALES 日報パーサー: 実装済み
     map.insert(
         "29-io-daily-report-parser.md",
-        vec!["io::daily_report_parser"],
+        vec![
+            "io::daily_report_parser",
+            "io::register_sd",
+            "io::pos_source_copy",
+        ],
     );
 
     map.insert("29-io-ej-parser.md", vec!["io::ej_parser"]);
@@ -204,6 +208,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "biz::daily_report_import_service::commit",
             "biz::daily_report_import_service::rollback",
             "biz::daily_report_import_service::list",
+            "biz::daily_report_import_service::scan",
         ],
     );
 

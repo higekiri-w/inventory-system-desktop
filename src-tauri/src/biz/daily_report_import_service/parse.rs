@@ -4,7 +4,8 @@ use crate::biz::daily_report_import_service::{
     DailyReportDuplicateStatus, DailyReportFileInfo, DailyReportInputFile,
     DailyReportParseValidateResult, DailyReportPaymentLinePreview, DailyReportPreviewData,
     DailyReportSourceFileInfo, DailyReportTotals, DailyReportWarning,
-    SameDateDailyReportImportSummary,
+    SameDateDailyReportImportSummary, SdSourceFileForCopy, SAME_SETTLEMENT_MESSAGE,
+    SD_WITHOUT_SETTLEMENT_MESSAGE,
 };
 use crate::biz::BizError;
 use crate::constants;
@@ -13,15 +14,30 @@ use crate::db::sales_repo;
 use crate::db::system_repo::{self, NewOperationLog};
 use crate::db::DbConnection;
 use crate::io::daily_report_parser::{self, DailyReportSourceFile, DailyReportSourceKind};
+use crate::io::register_sd::{self, RegisterSdError, RegisterSdRoot};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Instant;
 
 const SETTLEMENT_MISMATCH_MESSAGE: &str = "別の精算の日報ファイルが混ざっています。ファイル名の「Z001」「Z002」「Z005」より後ろが同じ 3 つを選び直してください。";
 
+const SD_LOOKUP_FAILED_MESSAGE: &str =
+    "選んだファイルがレジの SD の上にあるかを確かめられませんでした。もう一度選んでください。";
+const SELECTED_FILE_MISSING_MESSAGE: &str = "選んだファイルが見つからなくなりました。SD から選んだときは、SD をこの PC に差したまま、もう一度選んでください。";
+
+/// 37 §37.3。手順 1a の root の列は IO-09 `find_register_sd_roots` から取る
 pub fn parse_and_validate_daily_report(
     conn: &DbConnection,
     files: Vec<DailyReportInputFile>,
+) -> Result<DailyReportParseValidateResult, BizError> {
+    parse_and_validate_daily_report_with_sd_lookup(conn, files, register_sd::find_register_sd_roots)
+}
+
+/// 37 §37.3。手順 1a の root の列を取る処理を引数で受ける（test は一時 directory の root か失敗を渡す）
+pub fn parse_and_validate_daily_report_with_sd_lookup(
+    conn: &DbConnection,
+    mut files: Vec<DailyReportInputFile>,
+    find_sd_roots: impl FnOnce() -> Result<Vec<RegisterSdRoot>, RegisterSdError>,
 ) -> Result<DailyReportParseValidateResult, BizError> {
     if files
         .iter()
@@ -31,6 +47,17 @@ pub fn parse_and_validate_daily_report(
             "ファイルサイズが上限（20MB）を超えています".to_string(),
         ));
     }
+
+    resolve_selected_file_origins(&mut files, find_sd_roots)?;
+    // 手順 9 の sd_source_files のため、SD の file の (file 名, 相対 path, bytes) を先に取っておく
+    let sd_files: Vec<(String, String, Vec<u8>)> = files
+        .iter()
+        .filter_map(|file| {
+            file.sd_relative_path
+                .clone()
+                .map(|relative| (file.filename.clone(), relative, file.bytes.clone()))
+        })
+        .collect();
 
     let source_files = files
         .into_iter()
@@ -69,6 +96,14 @@ pub fn parse_and_validate_daily_report(
             "日報対象日が未来の日付です: {}",
             report_date
         )));
+    }
+    // BIZ-08-D6: SD の経路は精算回数のある束だけ
+    let settlement_no = parse_result.settlement_no;
+    if !sd_files.is_empty() && settlement_no.is_none() {
+        log_parse_failure(conn, SD_WITHOUT_SETTLEMENT_MESSAGE);
+        return Err(BizError::ImportError(
+            SD_WITHOUT_SETTLEMENT_MESSAGE.to_string(),
+        ));
     }
 
     let bundle_hash = build_bundle_hash(&parse_result.source_files);
@@ -138,6 +173,20 @@ pub fn parse_and_validate_daily_report(
         .collect();
 
     let blocking = sales_repo::find_blocking_daily_report_by_bundle_hash(conn, &bundle_hash)?;
+    // BIZ-08-D4: 同じ精算を別の bytes で取り込まない（追加確認で通さない）
+    if let (None, Some(settlement_no)) = (&blocking, settlement_no) {
+        if sales_repo::find_same_settlement_daily_report_import(
+            conn,
+            &report_date,
+            settlement_no,
+            &bundle_hash,
+        )?
+        .is_some()
+        {
+            log_parse_failure(conn, SAME_SETTLEMENT_MESSAGE);
+            return Err(BizError::ImportError(SAME_SETTLEMENT_MESSAGE.to_string()));
+        }
+    }
     let same_date = sales_repo::find_daily_report_imports_by_report_date(conn, &report_date)?;
     let same_date_imports = same_date
         .iter()
@@ -213,9 +262,27 @@ pub fn parse_and_validate_daily_report(
         duplicate_check,
         preview_created_at: chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
     };
+    // 手順 9: SD の file だけを IO-07 が判定した系列と組にして持つ
+    let sd_source_files = sd_files
+        .into_iter()
+        .filter_map(|(filename, sd_relative_path, bytes)| {
+            let source = parse_result
+                .source_files
+                .iter()
+                .find(|parsed| parsed.filename == filename)?
+                .source;
+            Some(SdSourceFileForCopy {
+                source,
+                sd_relative_path,
+                bytes,
+            })
+        })
+        .collect();
     let cached_preview = CachedDailyReportPreview {
         created_at: Instant::now(),
         preview_data: preview_data.clone(),
+        settlement_no,
+        sd_source_files,
         summary_lines,
         payment_lines: payment_summary,
         department_lines,
@@ -231,6 +298,36 @@ pub fn parse_and_validate_daily_report(
         preview_data,
         cached_preview,
     })
+}
+
+/// 手順 1a: 手で選んだ file が SD の上かを決める（preview の時の 1 回だけ）
+fn resolve_selected_file_origins(
+    files: &mut [DailyReportInputFile],
+    find_sd_roots: impl FnOnce() -> Result<Vec<RegisterSdRoot>, RegisterSdError>,
+) -> Result<(), BizError> {
+    if !files
+        .iter()
+        .any(|file| file.sd_relative_path.is_none() && file.source_path.is_some())
+    {
+        return Ok(());
+    }
+    let roots = find_sd_roots().map_err(|error| {
+        tracing::warn!(error = ?error, "SD の root を確かめられませんでした");
+        BizError::ImportError(SD_LOOKUP_FAILED_MESSAGE.to_string())
+    })?;
+    for file in files.iter_mut() {
+        let (None, Some(source_path)) = (&file.sd_relative_path, &file.source_path) else {
+            continue;
+        };
+        match register_sd::locate_in_register_sd_roots(&roots, source_path) {
+            Some(located) => file.sd_relative_path = Some(located.relative_path),
+            None => register_sd::check_selected_file_present(source_path).map_err(|error| {
+                tracing::warn!(error = ?error, "選んだファイルが見つかりません");
+                BizError::ImportError(SELECTED_FILE_MISSING_MESSAGE.to_string())
+            })?,
+        }
+    }
+    Ok(())
 }
 
 fn source_filenames(source_files_json: &str) -> Result<Vec<String>, BizError> {
@@ -249,7 +346,9 @@ fn source_filenames(source_files_json: &str) -> Result<Vec<String>, BizError> {
         .collect()
 }
 
-fn build_bundle_hash(sources: &[daily_report_parser::ParsedDailyReportSourceFile]) -> String {
+pub(super) fn build_bundle_hash(
+    sources: &[daily_report_parser::ParsedDailyReportSourceFile],
+) -> String {
     let mut parts: Vec<_> = sources.iter().collect();
     parts.sort_by_key(|source| source_kind_order(source.source));
     let joined = parts
@@ -267,7 +366,7 @@ fn build_bundle_hash(sources: &[daily_report_parser::ParsedDailyReportSourceFile
     format!("{:x}", hasher.finalize())
 }
 
-fn log_parse_failure(conn: &DbConnection, message: &str) {
+pub(super) fn log_parse_failure(conn: &DbConnection, message: &str) {
     let log = NewOperationLog {
         operation_type: "daily_report_parse_failed".to_string(),
         summary: message.to_string(),
@@ -278,7 +377,7 @@ fn log_parse_failure(conn: &DbConnection, message: &str) {
     }
 }
 
-fn log_parse_diagnostics(errors: &[daily_report_parser::DailyReportParseError]) {
+pub(super) fn log_parse_diagnostics(errors: &[daily_report_parser::DailyReportParseError]) {
     for error in errors {
         tracing::warn!(
             source_file = ?error.source_file,

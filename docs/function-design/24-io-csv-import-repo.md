@@ -575,6 +575,22 @@ fn exists_same_date_daily_report_import_without_settlement_no(
 
 ---
 
+### 14.18c latest_completed_daily_report_date（D-111、BIZ-08-D3）
+
+**関数要求**: completed の日報取込みの対象日（`report_date`）の最大を返す。SD の scan の窓の始まり（[37](37-biz-daily-report-import-service.md) §37.9 手順 2）の専用で、呼び手は `biz::daily_report_import_service` の scan（`src-tauri/src/biz/daily_report_import_service/scan.rs`）だけ。wire に出さない。BIZ からだけ呼ぶので `pub(crate)`（`src-tauri/tests/design_compliance_test.rs` の照合は `pub` だけを見るので allowlist には足さない）。
+
+**シグネチャ**:
+```
+pub(crate) fn latest_completed_daily_report_date(conn: &DbConnection) -> Result<Option<String>, DbError>
+```
+
+**SQL方針**:
+`SELECT MAX(report_date) FROM daily_report_imports WHERE status = 'completed'`。completed が 1 件も無ければ `None`。取り消した（`rolled_back`）取込みだけの日は数えない（§14.18 と同じ `status` の条件。`sales_repo.rs` の test `test_req401_latest_completed_daily_report_date_ignores_rolled_back`）。
+
+返すのは保存された文字列のままで、日付として解くのと `today` − 30 日との早い方を選ぶのは BIZ の scan が行う（解けない値は warn を残して既定の窓にする。`scan.rs` の手順 2）。
+
+---
+
 ### 14.19 rollback_daily_report_import
 
 **関数要求**: `daily_report_imports` を `rolled_back` に更新する。

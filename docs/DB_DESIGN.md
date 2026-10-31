@@ -81,7 +81,7 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 - 不整合が起きた場合は操作ログに記録して警告
 
 ### POS日報と商品別売上のデータ境界（D-025 / 2026-06-30）
-- `daily_report_imports` と配下の `daily_report_*_lines` は、アプリがレジの SD から直接読む（D-111 の採用済みの方針。予備は利用者が選ぶファイル。今の build は利用者が選ぶファイルから取り込み、SD 直読みは Draft PR #172 の runtime）`Z001` / `Z002` / `Z005` の日報集計を、アプリ内部の日報モデルに変換して保存する。別layoutの受理はadapter互換性であり、通常のoperator手順は増やさない。
+- `daily_report_imports` と配下の `daily_report_*_lines` は、アプリがレジの SD から直接読む（D-111。予備は利用者が選ぶファイル）`Z001` / `Z002` / `Z005` の日報集計を、アプリ内部の日報モデルに変換して保存する。別layoutの受理はadapter互換性であり、通常のoperator手順は増やさない。
 - `sale_records` は、Z004または手動販売出庫から得られる商品別売上の正本である。Z001/Z002/Z005は商品コード・JAN単位の明細ではないため、`sale_records` や `inventory_movements` へ擬似展開しない。
 - 日報取込みの rollback は日報取込みレコードを `rolled_back` にする論理取消に限定する。在庫変動を作らないため、在庫補正や movement void は発生しない。
 - レジ依存のファイル名、列名、文字コード、改行、PCツール手順は POS adapter の責務とし、DBには app core が使う report_date / section / label / amount / quantity_hundredths（個数の 100 倍の整数）/ count / department mapping だけを保存する。

@@ -272,7 +272,7 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 **タスク要求**: レジ（CASIO SR-S4000）の SD を取外し可能な drive から探すか利用者が選んだ folder から解決し、`CASIO\SR500_550_4000\XZ` と `XZ_BKUP` の売上の file（Z・EJ）の名前を列挙し、指定された file の生バイトを読取り専用で読んで形（CP932 strict・BOM・CRLF だけ・最終改行）を測る。手で選んだ file の path が自動で見つけた SD の root の下にあるかを path だけで決め（`locate_in_register_sd_roots`）、下に無い file がその時点で在るかを metadata で確かめる（`check_selected_file_present`）。SD へは書かない。業務ロジックなし（function-design は [29 §29.7](../function-design/29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）
 
-**理由**: 毎日の売上データは CV17 の取込みに依らずにアプリが SD から直接読む（D-111 の採用済みの方針。runtime は未実装〈Draft PR #172〉で、今の日報の取込みは利用者が選ぶ file から入る）。SD の配置・名前・読み方はレジ依存なので IO adapter に閉じる（D-023）。どの file を候補にするか・取込み済みかは BIZ-08（§37.9）が決める
+**理由**: 毎日の売上データは CV17 の取込みに依らずにアプリが SD から直接読む（D-111）。SD の配置・名前・読み方はレジ依存なので IO adapter に閉じる（D-023）。どの file を候補にするか・取込み済みかは BIZ-08（§37.9）が決める
 
 **【データ構造】**
 
@@ -291,4 +291,4 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 **タスク要求**: 取り込む束の file の生バイトを、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/{SD の相対 path}` に書く。同じ bytes があれば書かず、違う bytes があれば上書きせずに hash を付けた名前にする。保存先の directory を作ってから一時 file に書いて rename する。SD には書かない。業務ロジックなし（function-design は [29 §29.8](../function-design/29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）
 
-**理由**（D-111。runtime は未実装〈Draft PR #172〉）: (a) の段階（SD 直読みの runtime の lane）では SD は動かさず、CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは BIZ-08-D5
+**理由**（D-111）: (a) の段階（SD 直読みの runtime の lane）では SD は動かさず、CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは BIZ-08-D5

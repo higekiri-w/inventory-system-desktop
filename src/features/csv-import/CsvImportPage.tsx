@@ -47,9 +47,11 @@ const DEFAULT_TAB: CsvImportTab = "daily-report";
 const Z004_TAB: CsvImportTab = "z004";
 
 export function CsvImportPage({ tab }: CsvImportPageProps) {
-  // §55.7: Z004 の取消の応答を待つ間はタブを切り替えない（router の遷移でなく blocker が効かず、
-  // 選ばれていないタブは unmount されて flow ごと消える）
+  // §55.7: Z004 の取消の応答を待つ間と、日報の取込み・取消の応答を待つ間（UI-07-D15 (6)）は
+  // タブを切り替えない（router の遷移でなく blocker が効かず、選ばれていないタブは unmount されて flow ごと消える）
   const [isRollingBack, setIsRollingBack] = useState(false);
+  const [isDailyReportBlocking, setIsDailyReportBlocking] = useState(false);
+  const tabsLocked = isRollingBack || isDailyReportBlocking;
   return (
     <PageShell>
       <PageHeader
@@ -58,15 +60,15 @@ export function CsvImportPage({ tab }: CsvImportPageProps) {
       />
       <Tabs defaultValue={tab ?? DEFAULT_TAB} className="w-full">
         <TabsList>
-          <TabsTrigger value={DEFAULT_TAB} disabled={isRollingBack}>
+          <TabsTrigger value={DEFAULT_TAB} disabled={tabsLocked}>
             日報取込み
           </TabsTrigger>
-          <TabsTrigger value={Z004_TAB} disabled={isRollingBack}>
+          <TabsTrigger value={Z004_TAB} disabled={tabsLocked}>
             商品別CSV取込み（Z004）
           </TabsTrigger>
         </TabsList>
         <TabsContent value={DEFAULT_TAB}>
-          <DailyReportImportPage />
+          <DailyReportImportPage onBlockingChange={setIsDailyReportBlocking} />
         </TabsContent>
         <TabsContent value={Z004_TAB} className="space-y-4">
           {/* 結果の画面を離れた後に誤った版に気づいたときの入口（55 §55.11、65 §65.5a） */}

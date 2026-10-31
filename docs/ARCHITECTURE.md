@@ -100,7 +100,7 @@ POS連携は、レジ固有の adapter とアプリ内共通モデルの境界�
 | Product-sales import | `Z004` after PLU registration | 商品別売上、`pos_stock_sync`に基づく在庫増減・rollback（実装済み。店舗採取layout Aは二形状対応済み） |
 | Optional report tabs | `Z006` / `Z009` / `Z011` | 初期非スコープ。グループ、時間帯別、担当者別の具体的な個人店ニーズが出た時だけ追加 |
 | Operation procedure | SDカード、PCツール、バックアップ、実機確認 | operator workflow、証跡、安全手順 |
-| Register SD source | SD の `CASIO\SR500_550_4000\XZ` / `XZ_BKUP` の配置と名前（IO-09） | 取込みの候補の束（BIZ-08 §37.9）。毎日の売上はアプリが SD を直接読む（D-111 の採用済みの方針。runtime は未実装〈Draft PR #172〉）。CV17 を PLU の書込みだけに使うのは取込み済みを `XZ_BKUP` へ移すアプリの操作（後続の lane）の後で、それまでは店の CV17 の取込みも続く（D-111 の運用の制約） |
+| Register SD source | SD の `CASIO\SR500_550_4000\XZ` / `XZ_BKUP` の配置と名前（IO-09） | 取込みの候補の束（BIZ-08 §37.9）。毎日の売上はアプリが SD を直接読む（D-111）。CV17 を PLU の書込みだけに使うのは取込み済みを `XZ_BKUP` へ移すアプリの操作（後続の lane）の後で、それまでは店の CV17 の取込みも続く（D-111 の運用の制約） |
 
 `Z001` / `Z002` / `Z004` / `Z005` / `Z006` / `Z009` / `Z011`、CV17、SR-S4000 は CASIO adapter details として扱う。BIZ/CMD/UI の安定 contract へ直接漏らす場合は、該当 source design doc に理由、代替案、将来レジ変更時の影響を記録する。
 
@@ -197,8 +197,8 @@ REQ-403（POS 部門別売上照合）は UI-13 / REQ-904 の在庫整合性と�
 | IO-06 | 画像ファイル管理 | レシート画像の保存（アプリ管理下の相対パス）、パス管理 |
 | IO-07 | POS日報bundleパーサー | CASIO SR-S4000 adapter のZ001/Z002/Z005パース。CP932/NEL対応、3ファイル束のsource判定、日報サマリ/支払/部門別行への正規化。業務ロジックなし |
 | IO-08 | EJパーサー | CASIO SR-S4000 adapter の電子ジャーナル（EJ）1 file を記録の列へ構造復元。24バイト固定幅・CP932・CRLF、本文による記録の種類の判定と位置による行分類、記録内照合がそろう取引だけ明細と値引きを復元し、それ以外は記録単位で復元不能として返す。番号の連続・区間の完全性・商品同定・時刻は判断しない。業務ロジックなし |
-| IO-09 | レジの SD の列挙と読取り | レジの SD の root を探し（取外し可能な drive の `CASIO\SR500_550_4000`）、`XZ` / `XZ_BKUP` の Z・EJ の名前を列挙し、指定 file を読取り専用で読んで形を測る。SD に書かない。業務ロジックなし（D-111。runtime は未実装〈Draft PR #172〉） |
-| IO-10 | SD から読んだ原本の写しの保存 | 取り込む束の file を、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/` へ SD の相対 path を保った名前で、上書きせずに書く（一時 file から rename）。SD には書かない。業務ロジックなし（D-111。runtime は未実装〈Draft PR #172〉） |
+| IO-09 | レジの SD の列挙と読取り | レジの SD の root を探し（取外し可能な drive の `CASIO\SR500_550_4000`）、`XZ` / `XZ_BKUP` の Z・EJ の名前を列挙し、指定 file を読取り専用で読んで形を測る。SD に書かない。業務ロジックなし（D-111） |
+| IO-10 | SD から読んだ原本の写しの保存 | 取り込む束の file を、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/` へ SD の相対 path を保った名前で、上書きせずに書く（一時 file から rename）。SD には書かない。業務ロジックなし（D-111） |
 
 ### MNT層（保守/診断）
 
@@ -233,8 +233,8 @@ REQ-403（POS 部門別売上照合）は UI-13 / REQ-904 の在庫整合性と�
 第4段階: POS連携
   IO-02 → BIZ-03 → CMD-07 → UI-07（Z004商品別CSV取込み）
   IO-07 → BIZ-08 → CMD-12 → UI-07（日報取込み）
-  IO-09 → BIZ-08 → CMD-12 → UI-07（SD から読む日報の候補、D-111。runtime は未実装〈Draft PR #172〉）
-  IO-10 ← BIZ-08 commit（取り込む束の原本の写し、D-111。runtime は未実装〈Draft PR #172〉）
+  IO-09 → BIZ-08 → CMD-12 → UI-07（SD から読む日報の候補、D-111）
+  IO-10 ← BIZ-08 commit（取り込む束の原本の写し、D-111）
   IO-04 → BIZ-04 → CMD-08 → UI-08（PLU書出し）
   （レジ連携が動く。日次運用が回る状態）
 
