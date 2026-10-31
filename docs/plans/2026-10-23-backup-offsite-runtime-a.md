@@ -35,7 +35,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 
 ## Workflow State
 
-- Phase: plan-gate
+- Phase: plan-approved
 - Risk: R4
 - Plan Commit: e2ea774d4c6ca50f43676b85343f67e73d363c68
 - Amendments: none
@@ -55,6 +55,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 4. plan-gate のまま是正（round 1、2026-10-23、Coordinator、本 commit）: round 1（Claude 側 fresh Opus 5.5 だけ。Codex は利用上限で 2026-10-24 まで使えず、`docs/AGENT_OPERATING_MANUAL.md` §3.3）の reject を起草役が `b8b201a5` で直した（下の Review Response）。設計の方向は変えないので plan-gate に留め、round 2（fresh Opus 5.5 + Codex）で再 review する（`docs/DEV_WORKFLOW.md` Workflow State「a plan-gate rejection corrected in place stays at plan-gate」）。
 5. plan-gate のまま是正（round 2、2026-10-23、Coordinator、本 commit）: round 2（Claude 側 fresh Opus 5.5 と Codex）の reject を起草役が `a612a437` で直した（下の Review Response）。設計の方向は変えないので plan-gate に留める。exFAT の段（Contract Probe）の結果を待ち、round 3（天井、fresh Opus 5.5 + Codex）に出す。owner の方針（repo 外の回答台帳 TD-401、2026-10-23）で本 lane の優先度は下げ、round 3 は他の lane の後に回す。
 6. plan-gate のまま是正（round 3、2026-10-31、Coordinator の裁定）: round 3（fresh Opus 5.5 と Codex）の findings を一括の是正に振った（round の天井。下の Review Response）。Phase と Plan Commit は変えない。
+7. plan-gate → plan-approved（2026-11-01、Coordinator）: round 3 の一括の是正（`e2ea774d`）の closure は Codex（GPT-6 Astra）・fresh Opus 5.5 とも approve（P1/P2 0、P3 3 ずつ。PR #190 の comment「計画の review の closure（round 3 の一括の是正）」）。`scripts/plan-approve.sh` で Plan Commit を `e2ea774d` に固定した（`25adc8ee`）。旧形式の packet は Phase が承認の前の値の間は承認の前と扱われるので、Phase の行を本 commit で進めた。closure の P3 は計画の節に触れるので、実装の Writer の発注で補う（Review Response）。
 
 ## Owner Effort Budget
 
@@ -423,3 +424,5 @@ round 3（`d9ed69c3`、round の天井）: Codex（GPT-6 Astra high）= request 
 - Codex P2-4: rollback を同期した main の上での (a) だけの revert に揃え、`eed07d37` の版への入れ直しを外して名前の規約の証拠に限った。
 - Codex P3（exFAT）: probe の PASS の記録に揃え、残りを Matrix の Residual Test Gaps の実の binary の exFAT に集めた。Codex P3（座組・並走・節の参照）は Opus の 2・5・6 と同じ是正。
 - Opus P3: (1) `io/mod.rs` を触らず `crate::io::REGISTER_SD_FOLDER` を `use`、Matrix の Adjacent Pattern に guard test。(2) #188・#172 の並走の記述を着地の事実に。(3) AC4 の baseline を 2026-10-31 の実測に。(4) AC5 の前に `npm run generate:routes`。(5) Final Reviewer を座組表へ。(6) 消えた DEV_WORKFLOW の節への参照を今の節か本 packet の 1 文へ。(7) Matrix の確かめの間の disabled の assert。(8) Test Plan に任意の msvc の cross check。(9) Contract Audit 段 3 の (N) を予算の表へ。
+
+round 3 の一括の是正の closure（`e2ea774d`、2026-11-01）: Codex（GPT-6 Astra）= approve（P1 0 / P2 0 / P3 3）、fresh Opus 5.5 = approve（P1 0 / P2 0 / P3 3）。P2 は 4 件とも閉じた（Opus は停止の理由の規則を小さな状態のモデルで全探索し、違反 0）。P3（68 UI-11b-D13 と packet の S4 の「選択の理由を外すのは resume だけ」の言い方が hold の移管と食い違う、`handleRestore` の外側の `try` で release が 2 回走りうる〈release は settle の直後に 1 回〉、Matrix の確かめの間の assert に `inspectBackup` の未解決の間を足す、hook が mount されない時の即時解決の条件、merge 済みの lane の重なりの表の行ほか）は計画の節に触れるので、実装の Writer の発注で補う。
