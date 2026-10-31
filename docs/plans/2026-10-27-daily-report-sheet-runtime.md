@@ -489,7 +489,17 @@ agent 側で解く問い: Contract Probe の P1・P5（L3）、P8（plan-gate �
 
 ## Implementation Results
 
-（実装の後に書く）
+実装（2026-10-31、Writer の発注 694、Coordinator が報告から書いた）: `72f2953d`（S1・BIZ-08-D2a）、`ce339bbc`（S2〜S4、bindings の再生成）、`1152a394`（S5）、`90a67497`（S6・S7、90 の再生成、L3 の合成 fixture）。AC1〜AC9（AC9 は `cargo check --release` まで）と AC11 の自己確認を Writer が実行した。Matrix の Would fail if… から 5 つの mutation（上限の比べ・`credit` の分岐・D2 の 2 と 3・代表の行の選び方・0 件で印刷を止める）を当てて、対象の test が red になることを確かめた。
+
+計画の文と違えた所と理由（Coordinator が受理。Final Review の対象）:
+
+- 24 §14.21a の DB の DTO: 正本は IO-07 の型（`DailyReportSourceKind`）を持つ形だったが、`src-tauri/tests/architecture_test.rs` が `db/` から `io/` への依存を禁じる。`DailyReportSheetLinesRow` を `import_ids` と帳票ごとの 3 つの列（`summary_lines`・`payment_lines`・`department_lines`）にし、24 の同じ段をその形に直した。読む範囲・並び・`import_ids` の契約は変えていない。
+- 紙を描く場所: `DailySalesPage` でなく `ExportBar` が、印刷する間だけ `document.body` の直下へ portal で描く（親の query の再描画より先に `window.print()` が走って古い内容を印刷する欠陥を test が捕まえたため、`refetch()` の結果を印刷の state に持たせた）。56 §56.1 のファイル構成を合わせた。そのため「日報を印刷」を押さずに Ctrl+P で印刷すると白紙になる（L3 の依頼で owner に諮る）。
+- AC5: `rg -c 'get_daily_report_sheet' src-tauri/src/lib.rs` は 3（期待 2）。登録の 2 か所に加え、`lib.rs` の CMD-09 の command の一覧の doc comment の 1 行。一覧を欠かさないため残した。
+- 印刷の CSS: 画面用の `html, body { height: 100%; overflow: hidden }` を `@media print` で外した（UI_TECH_STACK §6.5.5）。
+- 29 IO-07-D6: 数の形で `i64` に収まらない値も上限の越え（`number_too_large`）にした。
+- `docs/architecture/biz-task-specs.md` の BIZ-08 の行（計画の closure の P3）: 予定 path の一覧の外。
+- 計画の closure の P3 の (a)（JAN の作り方）・(b)（部門の知らせ 60 件）・(d)（Boundary の表の誤記の訂正を Test Plan に）は発注のとおり。
 
 ## Review Response
 
