@@ -20,6 +20,7 @@ pub enum MovementType {
     Return,
     Disposal,
     Stocktake,
+    Transfer,
 }
 
 impl MovementType {
@@ -31,6 +32,7 @@ impl MovementType {
             MovementType::Return => "return",
             MovementType::Disposal => "disposal",
             MovementType::Stocktake => "stocktake",
+            MovementType::Transfer => "transfer",
         }
     }
 }
@@ -43,6 +45,7 @@ pub(super) fn parse_movement_type(value: String) -> rusqlite::Result<MovementTyp
         "return" => Ok(MovementType::Return),
         "disposal" => Ok(MovementType::Disposal),
         "stocktake" => Ok(MovementType::Stocktake),
+        "transfer" => Ok(MovementType::Transfer),
         _ => Err(rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,
@@ -61,6 +64,7 @@ pub enum ReferenceType {
     ReturnRecord,
     DisposalRecord,
     Stocktake,
+    TransferRecord,
 }
 
 impl ReferenceType {
@@ -72,6 +76,7 @@ impl ReferenceType {
             ReferenceType::ReturnRecord => "return_record",
             ReferenceType::DisposalRecord => "disposal_record",
             ReferenceType::Stocktake => "stocktake",
+            ReferenceType::TransferRecord => "transfer_record",
         }
     }
 }
@@ -84,6 +89,7 @@ pub(super) fn parse_reference_type(value: Option<String>) -> Option<ReferenceTyp
         Some("return_record") => Some(ReferenceType::ReturnRecord),
         Some("disposal_record") => Some(ReferenceType::DisposalRecord),
         Some("stocktake") => Some(ReferenceType::Stocktake),
+        Some("transfer_record") => Some(ReferenceType::TransferRecord),
         Some(_) | None => None,
     }
 }
@@ -511,6 +517,7 @@ mod tests {
         assert_eq!(MovementType::Return.as_str(), "return");
         assert_eq!(MovementType::Disposal.as_str(), "disposal");
         assert_eq!(MovementType::Stocktake.as_str(), "stocktake");
+        assert_eq!(MovementType::Transfer.as_str(), "transfer"); // D-143 / Test Plan T3
     }
 
     #[test]
@@ -523,6 +530,7 @@ mod tests {
         assert_eq!(ReferenceType::ReturnRecord.as_str(), "return_record");
         assert_eq!(ReferenceType::DisposalRecord.as_str(), "disposal_record");
         assert_eq!(ReferenceType::Stocktake.as_str(), "stocktake");
+        assert_eq!(ReferenceType::TransferRecord.as_str(), "transfer_record"); // D-143 / Test Plan T3
     }
 
     #[test]
