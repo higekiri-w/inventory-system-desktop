@@ -7,6 +7,7 @@ use crate::db::manual_sale_repo::ManualSaleReason;
 use crate::db::product_repo::{ProductStockUnit, ProductTaxRate};
 use crate::db::return_repo::{ReturnDirection, ReturnExchangeType};
 use crate::db::sales_repo::CsvImportStatus;
+use crate::db::transfer_repo::TransferDirection;
 
 /// `ProductStockUnit` の variant と wire の文字列の対（SPEC-UNIT-D1 の表の順）
 const PRODUCT_STOCK_UNIT_WIRE: [(ProductStockUnit, &str); 10] = [
@@ -136,6 +137,14 @@ fn test_request_response_enum_wire_roundtrip_req202_req203_req204_req401_req502(
         (MovementType::Return, "return"),
         (MovementType::Disposal, "disposal"),
         (MovementType::Stocktake, "stocktake"),
+        (MovementType::Transfer, "transfer"),
+    ] {
+        assert_roundtrip(value, wire);
+    }
+    // D-143 / Test Plan E1
+    for (value, wire) in [
+        (TransferDirection::Out, "out"),
+        (TransferDirection::In, "in"),
     ] {
         assert_roundtrip(value, wire);
     }
@@ -150,6 +159,7 @@ fn test_response_only_enum_wire_serialize_req303_req501() {
         (ReferenceType::ReturnRecord, "return_record"),
         (ReferenceType::DisposalRecord, "disposal_record"),
         (ReferenceType::Stocktake, "stocktake"),
+        (ReferenceType::TransferRecord, "transfer_record"),
     ] {
         assert_serialize(value, wire);
     }
@@ -255,6 +265,7 @@ fn test_request_enum_invalid_literals_are_rejected_req202_req203_req204_req303_r
     rejects!(ExportMode);
     rejects!(SalesMode);
     rejects!(MovementType);
+    rejects!(TransferDirection);
 
     #[derive(serde::Deserialize)]
     struct Query {
@@ -314,10 +325,85 @@ fn test_canonical_wire_matches_serde_req202_req203_req204_req303_req401() {
     parity!(MovementType::Return);
     parity!(MovementType::Disposal);
     parity!(MovementType::Stocktake);
+    parity!(MovementType::Transfer);
     parity!(ReferenceType::CsvImport);
     parity!(ReferenceType::ManualSale);
     parity!(ReferenceType::ReceivingRecord);
     parity!(ReferenceType::ReturnRecord);
     parity!(ReferenceType::DisposalRecord);
     parity!(ReferenceType::Stocktake);
+    parity!(ReferenceType::TransferRecord);
+    parity!(TransferDirection::Out);
+    parity!(TransferDirection::In);
+}
+
+/// 表の定義（`sqlite_master.sql`）の `{column} IN (...)` の値の一覧
+fn check_values(conn: &rusqlite::Connection, table: &str, column: &str) -> Vec<String> {
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let start = sql
+        .find(&format!("CHECK({column} IN ("))
+        .unwrap_or_else(|| panic!("{table}.{column} の CHECK が無い: {sql}"))
+        + format!("CHECK({column} IN (").len();
+    let end = start + sql[start..].find(')').unwrap();
+    sql[start..end]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_string())
+        .collect()
+}
+
+#[test]
+fn test_db_check_matches_enum_values_d143_e1() {
+    // D-061・D-064 / D-143 / Test Plan E1: wire の値の集合と DB の CHECK の値の集合が同じ
+    let conn = crate::db::init_database(":memory:").unwrap();
+    let movement_types = [
+        MovementType::SaleAuto,
+        MovementType::SaleManual,
+        MovementType::Receiving,
+        MovementType::Return,
+        MovementType::Disposal,
+        MovementType::Stocktake,
+        MovementType::Transfer,
+    ];
+    let reference_types = [
+        ReferenceType::CsvImport,
+        ReferenceType::ManualSale,
+        ReferenceType::ReceivingRecord,
+        ReferenceType::ReturnRecord,
+        ReferenceType::DisposalRecord,
+        ReferenceType::Stocktake,
+        ReferenceType::TransferRecord,
+    ];
+    let directions = [TransferDirection::Out, TransferDirection::In];
+    fn sorted(mut values: Vec<String>) -> Vec<String> {
+        values.sort();
+        values
+    }
+    assert_eq!(
+        sorted(check_values(&conn, "inventory_movements", "movement_type")),
+        sorted(
+            movement_types
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect()
+        )
+    );
+    assert_eq!(
+        sorted(check_values(&conn, "inventory_movements", "reference_type")),
+        sorted(
+            reference_types
+                .iter()
+                .map(|v| v.as_str().to_string())
+                .collect()
+        )
+    );
+    assert_eq!(
+        sorted(check_values(&conn, "transfer_items", "direction")),
+        sorted(directions.iter().map(|v| v.as_str().to_string()).collect())
+    );
 }
