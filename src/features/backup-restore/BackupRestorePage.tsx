@@ -8,7 +8,7 @@ import {
   Loader2,
   RotateCcw,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/patterns/PageHeader";
@@ -43,6 +43,7 @@ import {
   commands,
   type AppSetting,
   type BackupInfo,
+  type BackupInspection,
   type BackupResult,
   type CmdErrorKind,
 } from "@/lib/bindings";
@@ -53,7 +54,12 @@ import {
   clearRestoreSuccessPending,
   setRestoreSuccessPending,
 } from "@/lib/restore-success-notification";
-import { resumeAutoBackupCheck, suspendAutoBackupCheck } from "./useAutoBackupCheck";
+import {
+  holdAutoBackupCheckForRestore,
+  releaseAutoBackupCheckAfterRestore,
+  resumeAutoBackupCheck,
+  suspendAutoBackupCheckAndWait,
+} from "./useAutoBackupCheck";
 import { open } from "@tauri-apps/plugin-dialog";
 
 const BACKUP_SETTING_KEYS = new Set([
@@ -89,8 +95,27 @@ function restoreErrorId(error: unknown): string | null {
   return isInvokeError(error) ? (error.cmdError.error_id ?? null) : null;
 }
 
+// UI-11b-D15: 止める文言（§68.9 の文の完全一致）
+const BLOCKED_NEWER =
+  "この控えは、より新しい版のアプリで作られています。この版のアプリでは戻せません。新しい版のアプリを入れてから戻してください（今のデータは変わっていません）。";
+const BLOCKED_CORRUPT = "この控えは壊れているため戻せません。別の控えを選んでください。";
+const BLOCKED_UNREADABLE = "この控えを読めませんでした。別の控えを選んでください。";
+
+// §68.7 の restore_inspecting / restore_blocked / restore_detail
+type RestoreCheck =
+  | { status: "inspecting" }
+  | { status: "blocked"; message: string }
+  | { status: "restorable"; inspection: BackupInspection };
+
+function checkFromInspection(inspection: BackupInspection): RestoreCheck {
+  if (inspection.newer_than_app) return { status: "blocked", message: BLOCKED_NEWER };
+  if (!inspection.quick_check_ok) return { status: "blocked", message: BLOCKED_CORRUPT };
+  return { status: "restorable", inspection };
+}
+
 interface RestoreState {
   selected: BackupInfo | null;
+  check: RestoreCheck | null;
   preBackupFailed: boolean;
   breakGlassAccepted: boolean;
   confirmOpen: boolean;
@@ -98,6 +123,7 @@ interface RestoreState {
 
 const initialRestoreState: RestoreState = {
   selected: null,
+  check: null,
   preBackupFailed: false,
   breakGlassAccepted: false,
   confirmOpen: false,
@@ -151,7 +177,9 @@ export function BackupRestorePage() {
     ? formatBackupDate(restoreState.selected.created_at)
     : "";
   const isFatal = fatalRestoreKind !== null;
-  const isBusy = isCreatingBackup || isUpdatingSetting || isRunningPreBackup || isRestoring;
+  const isInspecting = restoreState.check?.status === "inspecting";
+  const isBusy =
+    isCreatingBackup || isUpdatingSetting || isRunningPreBackup || isRestoring || isInspecting;
   const controlsDisabled = isFatal || isBusy;
 
   const backupRows = useMemo(
@@ -163,6 +191,14 @@ export function BackupRestorePage() {
         isLatest: index === 0,
       })),
     [backups],
+  );
+
+  // UI-11b-D15: 画面を離れたら選択の理由を外す（復元の理由は module に残る）
+  useEffect(
+    () => () => {
+      resumeAutoBackupCheck();
+    },
+    [],
   );
 
   async function refetchBackupState() {
@@ -219,21 +255,41 @@ export function BackupRestorePage() {
     } catch (error) {
       setErrorMessage(describeError(error));
       toast.error("バックアップを作成できませんでした");
+      // §68.4 手順 4: 公開の後の失敗では確かめ済みの正式名が残りうるので、失敗でも取り直す
+      await queryClient.invalidateQueries({ queryKey: queryKeys.backupRestore.list() });
     } finally {
       setIsCreatingBackup(false);
     }
   }
 
-  function selectRestoreBackup(backup: BackupInfo) {
+  async function selectRestoreBackup(backup: BackupInfo) {
     setErrorMessage(null);
     setRestoreFailureErrorId(null);
     setStatusMessage(null);
-    setRestoreState({
-      selected: backup,
-      preBackupFailed: false,
-      breakGlassAccepted: false,
-      confirmOpen: false,
-    });
+    setRestoreState({ ...initialRestoreState, selected: backup, check: { status: "inspecting" } });
+    // UI-11b-D15: 確かめの前に共通の確認を止め、実行中の回を待つ（待つ間に届いた結果は捨てる）
+    await suspendAutoBackupCheckAndWait();
+    let check: RestoreCheck;
+    try {
+      const inspection = await unwrapResult(
+        commands.inspectBackup({ backup_path: backup.file_path }),
+        { source: "commands", cmd: "inspect_backup" },
+      );
+      check = checkFromInspection(inspection);
+    } catch {
+      // CmdError（読めない控え）も IPC の例外も同じ固定の文。CmdError の message は画面に出さない
+      check = { status: "blocked", message: BLOCKED_UNREADABLE };
+    }
+    setRestoreState((current) => (current.selected === backup ? { ...current, check } : current));
+  }
+
+  function handleCloseRestore() {
+    setRestoreState(initialRestoreState);
+    setErrorMessage(null);
+    setRestoreFailureErrorId(null);
+    resumeAutoBackupCheck();
+    // 停止の待ちで捨てた確認の `true` が作った backup を一覧に出す（§68.10）
+    void queryClient.invalidateQueries({ queryKey: queryKeys.backupRestore.list() });
   }
 
   async function handleStartRestoreConfirmation() {
@@ -269,14 +325,14 @@ export function BackupRestorePage() {
     setRestoreFailureErrorId(null);
     setStatusMessage(null);
     setRestoreState((current) => ({ ...current, confirmOpen: false }));
-    // UI-11b-D13: 復元の間は自動バックアップの確認を止める（実行中の確認の解決は待たない）
-    suspendAutoBackupCheck();
+    // UI-11b-D13: 復元の理由を立て、この画面の選択の理由を復元の理由へ移す
+    holdAutoBackupCheckForRestore();
+    let fatal = false;
     try {
       await unwrapResult(commands.restoreBackup({ backup_path: restoreState.selected.file_path }), {
         source: "commands",
         cmd: "restore_backup",
       });
-      resumeAutoBackupCheck();
       queryClient.clear();
       // UI-11b-D11: 遷移先ホームで success Alert を表示する in-memory one-shot flag。
       // navigate が reject された場合は次回到達での誤表示を防ぐため flag を消去する
@@ -297,16 +353,21 @@ export function BackupRestorePage() {
       setRestoreFailureErrorId(restoreErrorId(error));
       if (kind === "restore_failed_unrecoverable" || kind === "restore_durability_unknown") {
         // UI-11b-D13: fatal 2 種は再起動まで確認を止めたままにする
+        fatal = true;
         setFatalRestoreKind(kind);
         setErrorMessage(null);
       } else {
-        resumeAutoBackupCheck();
+        // §68.7: restore_failed_recovered・IPC の例外の後は未選択へ。再試行は選び直して確かめから
+        setRestoreState(initialRestoreState);
         setErrorMessage(
           "バックアップの復元に失敗しました。現在のデータには戻しています。もう一度お試しください。",
         );
         await refetchBackupState();
       }
     } finally {
+      // UI-11b-D13: 結果の後に 1 回だけ。成功の後の処理が throw して catch へ落ちても 2 回にしない。
+      // resume は呼ばない（離れた画面の handler が再訪した画面の選択の理由を外さない）
+      releaseAutoBackupCheckAfterRestore(fatal);
       setIsRestoring(false);
     }
   }
@@ -531,7 +592,7 @@ export function BackupRestorePage() {
                               variant="outline"
                               size="sm"
                               onClick={() => {
-                                selectRestoreBackup(backup);
+                                void selectRestoreBackup(backup);
                               }}
                               disabled={controlsDisabled}
                             >
@@ -563,48 +624,93 @@ export function BackupRestorePage() {
                       {restoreState.selected.file_path}
                     </p>
                   </div>
-                  <Alert variant="warning">
-                    <AlertTriangle />
-                    <AlertTitle>復元すると今の記録は戻せません</AlertTitle>
-                    <AlertDescription>
-                      この時点の状態に戻ります。この控えより後に記録した内容は消えます
-                    </AlertDescription>
-                  </Alert>
-                  {restoreState.preBackupFailed ? (
-                    <div className="space-y-3 rounded-md border p-3">
-                      <div className="flex items-start gap-3">
-                        <Checkbox
-                          id="break-glass-restore"
-                          checked={restoreState.breakGlassAccepted}
-                          onCheckedChange={(checked) => {
-                            setRestoreState((current) => ({
-                              ...current,
-                              breakGlassAccepted: checked === true,
-                            }));
-                          }}
-                        />
-                        <Label htmlFor="break-glass-restore">
-                          今の状態は保存できませんが、復元を続けます
-                        </Label>
+                  {restoreState.check?.status === "inspecting" ? (
+                    <p className="flex items-center gap-2 text-sm" role="status">
+                      <Loader2 className="animate-spin" aria-hidden="true" />
+                      控えを確かめています
+                    </p>
+                  ) : null}
+                  {restoreState.check?.status === "blocked" ? (
+                    <Alert variant="destructive">
+                      <AlertTitle>復元できません</AlertTitle>
+                      <AlertDescription>
+                        <p>{restoreState.check.message}</p>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                  {restoreState.check?.status === "restorable" ? (
+                    <>
+                      <div className="space-y-1 rounded-md border p-3">
+                        <p className="flex items-center gap-2 font-medium">
+                          <CheckCircle2 className="size-4 text-success" aria-hidden="true" />
+                          この控えは戻せます
+                        </p>
+                        {restoreState.check.inspection.product_count !== null ? (
+                          <p className="text-sm">
+                            商品の数: {restoreState.check.inspection.product_count} 件
+                          </p>
+                        ) : null}
+                        {restoreState.check.inspection.last_operation_at !== null ? (
+                          <p className="text-sm">
+                            最後の記録:{" "}
+                            {formatBackupDate(restoreState.check.inspection.last_operation_at)}
+                          </p>
+                        ) : null}
                       </div>
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          setRestoreState((current) => ({ ...current, confirmOpen: true }));
-                        }}
-                        disabled={!restoreState.breakGlassAccepted || controlsDisabled}
-                      >
-                        最終確認へ進む
-                      </Button>
-                    </div>
-                  ) : (
+                      <Alert variant="warning">
+                        <AlertTriangle />
+                        <AlertTitle>復元すると今の記録は戻せません</AlertTitle>
+                        <AlertDescription>
+                          この時点の状態に戻ります。この控えより後に記録した内容は消えます
+                        </AlertDescription>
+                      </Alert>
+                      {restoreState.preBackupFailed ? (
+                        <div className="space-y-3 rounded-md border p-3">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              id="break-glass-restore"
+                              checked={restoreState.breakGlassAccepted}
+                              onCheckedChange={(checked) => {
+                                setRestoreState((current) => ({
+                                  ...current,
+                                  breakGlassAccepted: checked === true,
+                                }));
+                              }}
+                            />
+                            <Label htmlFor="break-glass-restore">
+                              今の状態は保存できませんが、復元を続けます
+                            </Label>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => {
+                              setRestoreState((current) => ({ ...current, confirmOpen: true }));
+                            }}
+                            disabled={!restoreState.breakGlassAccepted || controlsDisabled}
+                          >
+                            最終確認へ進む
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          type="button"
+                          onClick={() => void handleStartRestoreConfirmation()}
+                          disabled={controlsDisabled}
+                        >
+                          {isRunningPreBackup ? <Loader2 className="animate-spin" /> : null}
+                          復元の確認へ進む
+                        </Button>
+                      )}
+                    </>
+                  ) : null}
+                  {isRestoring ? null : (
                     <Button
                       type="button"
-                      onClick={() => void handleStartRestoreConfirmation()}
+                      variant="outline"
+                      onClick={handleCloseRestore}
                       disabled={controlsDisabled}
                     >
-                      {isRunningPreBackup ? <Loader2 className="animate-spin" /> : null}
-                      復元の確認へ進む
+                      閉じる
                     </Button>
                   )}
                 </>
