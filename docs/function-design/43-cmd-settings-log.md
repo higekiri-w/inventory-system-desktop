@@ -215,6 +215,11 @@ fn get_effective_backup_dir(state: State<AppState>, app_handle: tauri::AppHandle
 | 43.8.6 | `reset_offsite_state` | なし → `OffsiteCheckResult` | DB の Mutex を取り、`get_backup_dir` で `backup_dir` を読み、`mnt::backup::create_backup(conn, &backup_dir)`（§43.6 と同じ。操作ログ `backup_create`）を行ってから lock を放し、`mnt::offsite::reset_offsite_state(&app_data_dir, &backup_dir)`（71 §71.11.5a）を呼ぶ。作成が失敗したら MNT の作り直しを呼ばず、§43.6 と同じ写像で返す（記録に触れない）。バックアップ画面の「記録を作り直す」（UI-11b-D14）が呼ぶ |
 | 43.8.7 | `stop_offsite_backup` | なし → `null` | `mnt::offsite::stop_offsite_backup(&app_data_dir)`（71 §71.11.5b）。DB を使わない（lock を取らない）。PC の中の backup に触れない。バックアップ画面の「PC の外の控えをやめる」（確認の後、UI-11b-D14）が呼ぶ。作り直しの command に mode を持たせず別にしたのは、やめるには backup の作成も媒体も要らず、mode にすると request DTO と CMD の分岐が増えるため |
 
+```
+#[tauri::command(async)]
+fn inspect_backup(request: InspectBackupRequest) -> Result<BackupInspection, CmdError>
+```
+
 **エラーの写像**（`CmdError.kind` の値は既存の `validation` / `internal` だけを使い、`CmdErrorKind` に値を足さない）:
 
 | MNT の失敗 | `CmdError` | 固定の文（UI が出す。UI-11b-D14〜D16） |
@@ -304,12 +309,13 @@ PR #164で`list_log_operation_types`を含む10コマンドすべてを `#[spect
     cmd::settings_cmd::check_auto_backup,
     cmd::settings_cmd::list_backups,
     cmd::settings_cmd::get_effective_backup_dir,
+    cmd::settings_cmd::inspect_backup,   // §43.8.5、#[tauri::command(async)]
     cmd::settings_cmd::restore_backup,
     cmd::settings_cmd::save_receipt_image,
 ])
 ```
 
-D-114 の 6 command（§43.8.2〜§43.8.7）は後続の runtime の lane で、`#[tauri::command(async)]`（§43.8.2 の「実行の thread」）+ `#[specta::specta]` を付け、`generate_handler!` と `collect_commands!` の両方へ登録する（`scripts/check-command-drift.sh` が 4 つの集合の一致を見る）。
+D-114 の 6 command（§43.8.2〜§43.8.7）は `#[tauri::command(async)]`（§43.8.2 の「実行の thread」）+ `#[specta::specta]` を付け、`generate_handler!` と `collect_commands!` の両方へ登録する（`scripts/check-command-drift.sh` が 4 つの集合の一致を見る）。`inspect_backup`（§43.8.5）は runtime (a) で登録済み。残りの 5 command（§43.8.2〜§43.8.4・§43.8.6・§43.8.7）は PC の外の控えの runtime (b) で登録する。
 
 ---
 

@@ -359,6 +359,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::settings_cmd::check_auto_backup,
         cmd::settings_cmd::list_backups,
         cmd::settings_cmd::get_effective_backup_dir,
+        cmd::settings_cmd::inspect_backup,
         cmd::settings_cmd::restore_backup,
         cmd::settings_cmd::save_receipt_image,
     ]);
@@ -1590,6 +1591,7 @@ pub fn run() {
             cmd::settings_cmd::check_auto_backup,
             cmd::settings_cmd::list_backups,
             cmd::settings_cmd::get_effective_backup_dir,
+            cmd::settings_cmd::inspect_backup,
             cmd::settings_cmd::restore_backup,
             cmd::settings_cmd::save_receipt_image,
         ])
