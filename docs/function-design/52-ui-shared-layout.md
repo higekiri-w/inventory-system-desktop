@@ -28,7 +28,7 @@ UI 層の関数設計書は業務ロジック有無で 2 段階のテンプレ�
 | ファイル | 責務 |
 |---|---|
 | `src/config/navigation.ts` | NavStatus / NavItem / NavArea 型定義 + navigation 定数（4 エリア × 22 項目）。アイコンは lucide-react を import |
-| `src/components/layout/RootLayout.tsx` | 2 カラム grid + Outlet + Toaster + Devtools + ウィンドウタイトル更新 useEffect（§52.5）+ 自動バックアップ確認 hook の呼出し（UI-11b-D13。hook 本体と state は backup-restore feature が持つ） |
+| `src/components/layout/RootLayout.tsx` | 2 カラム grid + Outlet + Toaster + Devtools + ウィンドウタイトル更新 useEffect（§52.5）+ 自動バックアップ確認 hook の呼出し（UI-11b-D13。hook 本体と state は backup-restore feature が持つ）+ 印刷の案内の 1 行（[56](56-ui-daily-sales.md) UI-09a-D18。component は daily-sales feature が持つ） |
 | `src/components/layout/Sidebar.tsx` | aside + SidebarHeader + min-h-0 ScrollArea + 4 エリアの map（SidebarArea を呼ぶ） + DisplayScaleControl |
 | `src/components/layout/SidebarArea.tsx` | 1 エリア描画。h2 + アイコン + SidebarLink × N + Separator |
 | `src/components/layout/SidebarLink.tsx` | active/pending status 分岐。`activeMatch` を持たない項目は `<Link>` + `activeOptions={{ exact: true, includeSearch: false }}`（search params 付き URL でも path 一致のみで active 判定、TanStack デフォルト `includeSearch:true` は search 完全一致を要求し active が外れる）+ shared stone selection tone。`activeMatch` を持つ項目（在庫照会・在庫少一覧、同じ `to="/stock"` を共有）は `includeSearch` 意味論に依存せず、router の現在 pathname + search state を明示比較して排他的に active 判定する（UI-12-D1、§52.6。route 文字列のコンポーネント内ハードコード禁止）。pending=`<span role="link" aria-disabled="true" tabIndex={-1}>` + sr-only "（未実装）"、cursor-not-allowed + opacity-60。focusable な link（active / inactive）には UI_TECH_STACK §5.4 系統①の focus ring `focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50` を付与する（pending は `tabIndex={-1}` で focus 対象外。2026-08-03、batch A packet 起源） |

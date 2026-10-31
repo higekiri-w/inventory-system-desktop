@@ -79,7 +79,7 @@ Risk: R3
 
 Reason:
 `docs/DEV_WORKFLOW.md` Risk Tiers の R3 の行のうち「report output」（日報の紙の内容と並び）、「POS CSV」（日報の parser の `credit` の規則と数の上限〈IO-07-D4a・D6〉）、「Tauri command DTO」（`get_daily_report_sheet` と DTO 3 つ）、「operator workflow」（締めの後の印刷、日次売上の支払集計の足し方と文）に当たる。R4 ではない: 読み取りだけで（紙は保存しない、SALES-SHEET-D6）、DB の列・migration・データの寿命に触れず、parser の上限は取込みを拒む向きだけで保存済みの値を変えず、実データを repo に入れない（test と L3 の入力は合成）。
-製品の code・test・docs と合成の fixture だけで、`scripts/ci/classify-changes.sh` の workflow の一覧（`AGENTS.md`・`CLAUDE.md`・`docs/DEV_WORKFLOW.md`・`docs/ci.md`・`docs/AGENT_OPERATING_MANUAL.md`・`docs/code_review.md`・`docs/quality/review-checklist.md`・`docs/project-profile.md`・`docs/agent-guidance/*`・`docs/templates/*`・`.agents/*`・`.claude/{rules,commands,skills}/*`・PR template）と `scripts/*`・`.github/*` に当たる予定 path は無い。ただし S7 の合成 fixture の CSV（`tests/fixtures/daily-report-sheet/`）は classifier が知らない path で、classifier は安全側の全部の fallback（`unknown=true`・`workflow=true`、全部の area の job を回す）を返す。そのため helper は本 lane を Double Audit として扱い、Final Review Minimum は 2（Workflow State の遷移 7 の Gated Amendment。座組表どおり Claude 側 Fable 5 と Codex の 2 本。`workflow=true` なので Codex が使えない日に Claude 側 2 本で代える形は使えない）。operator に見える状態の lifecycle（紙の内容の読込み → 押したときの読み直し → 印刷）を足す点も Double Audit に当たる。Windows の実機の印刷を確かめるので Human Gate に `manual`。
+製品の code・test・docs と合成の fixture だけで、`scripts/ci/classify-changes.sh` の workflow の一覧（`AGENTS.md`・`CLAUDE.md`・`docs/DEV_WORKFLOW.md`・`docs/ci.md`・`docs/AGENT_OPERATING_MANUAL.md`・`docs/code_review.md`・`docs/quality/review-checklist.md`・`docs/project-profile.md`・`docs/agent-guidance/*`・`docs/templates/*`・`.agents/*`・`.claude/{rules,commands,skills}/*`・PR template）と `scripts/*`・`.github/*` に当たる予定 path は無い。ただし S7 の合成 fixture の CSV（`tests/fixtures/daily-report-sheet/`）は classifier が知らない path で、classifier は安全側の全部の fallback（`unknown=true`・`workflow=true`、全部の area の job を回す）を返す。そのため helper は本 lane を Double Audit として扱い、Final Review Minimum は 2（Workflow State の遷移 7 の Gated Amendment。座組表どおり Claude 側 Fable 5 と Codex の 2 本。`workflow=true` なので Codex が使えない日に Claude 側 2 本で代える形は使えない）。operator に見える状態の lifecycle（紙の内容の読込み → 押したときの読み直し → 印刷）を足す点も 2 本目を勧める場合に当たる。Windows の実機の印刷を確かめるので Human Gate に `manual`。
 
 ## Goal
 
@@ -501,6 +501,15 @@ agent 側で解く問い: Contract Probe の P1・P5（L3）、P8（plan-gate �
 - 29 IO-07-D6: 数の形で `i64` に収まらない値も上限の越え（`number_too_large`）にした。
 - `docs/architecture/biz-task-specs.md` の BIZ-08 の行（計画の closure の P3）: 予定 path の一覧の外。
 - 計画の closure の P3 の (a)（JAN の作り方）・(b)（部門の知らせ 60 件）・(d)（Boundary の表の誤記の訂正を Test Plan に）は発注のとおり。
+
+Final Review round 1 の是正（2026-11-01、Writer の発注 704。裁定は PR #211 の issuecomment-6545220040）:
+
+| 受理した finding（出所） | commit | 直した所 |
+|---|---|---|
+| 桁あふれの後ろに不正な文字がある数が `number_too_large` になる（Codex P2） | `1ee81e34` | `parse_optional_i64` が parse の前に数の形を確かめる（29 IO-07-D6）。`parse_optional_hundredths` は既に形を先に見ることを同じ test で確かめた |
+| 紙の時刻が読み直しの後の時刻になる（Codex P2） | `f124adcc` | `handlePrint` が読み直しの前に押した時刻を取る（56 UI-09a-D17） |
+| Ctrl+P で理由の表示なしに白紙が出る（Fable・Codex P3） | `f124adcc`、docs の commit | `#root` の外へ portal する案内の 1 行（`PrintUnsupportedNotice`、`RootLayout` に置く）。紙を描く間は描かない。56 UI-09a-D18 に 1 文。上の「紙を描く場所」の項の白紙はこれで解消 |
+| Risk の Reason の「Double Audit に当たる」の言い過ぎ（701b の Codex・Opus P3） | docs の commit | 「2 本目を勧める場合に当たる」に直した |
 
 ## Review Response
 
