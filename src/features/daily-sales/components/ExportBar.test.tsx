@@ -13,6 +13,7 @@ import { renderWithRouter } from "@/test/render-with-router";
 
 import { useDailyReportSheet } from "../hooks/useDailyReportSheet";
 import { ExportBar } from "./ExportBar";
+import { PrintUnsupportedNotice } from "./PrintUnsupportedNotice";
 
 vi.mock("@/lib/bindings", () => ({
   commands: {
@@ -23,6 +24,9 @@ vi.mock("@/lib/bindings", () => ({
 const mockGetSheet = vi.mocked(commands.getDailyReportSheet);
 
 const NOT_IMPORTED = "この日のレジ日報は未取込みのため、印刷できません。";
+// 56 UI-09a-D18 の Ctrl+P の案内
+const PRINT_NOTICE =
+  "この画面の印刷には対応していません。日報は日次売上の画面の「日報を印刷」から印刷してください。";
 const LABEL_CHANGED_LINE =
   "支払集計（Z002）：この日の精算の間で、帳票の行の名称か並びが変わっています。同じ名称の行が 2 行あれば、別々に足しています。";
 const UNSUMMED_LINE =
@@ -79,6 +83,7 @@ function renderBar() {
   return renderWithRouter(
     <QueryClientProvider client={qc}>
       <Harness />
+      <PrintUnsupportedNotice />
     </QueryClientProvider>,
   );
 }
@@ -180,6 +185,66 @@ describe("ExportBar UI-09a-D17", () => {
     expect(printedText).toContain("600");
     expect(printedText).not.toContain("100");
     expect(printedText).toContain("印刷 2026-03-21 18:05");
+  });
+
+  it("print time is the click time even when refetch crosses a minute (UI-09a)", async () => {
+    // UI-09a-D17: 紙の時刻は押した時刻。読み直しの間に分をまたいでも、読み直しの後の時刻を出さない
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 21, 18, 5, 30));
+    let resolveRefetch: (value: ReturnType<typeof ok>) => void = () => undefined;
+    mockGetSheet.mockResolvedValueOnce(ok(buildSheet())).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRefetch = resolve;
+      }),
+    );
+    let printedText = "";
+    printSpy.mockImplementation(() => {
+      printedText = screen.getByTestId("daily-report-sheet").textContent ?? "";
+    });
+    renderBar();
+    const button = await printButton();
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-disabled", "false");
+    });
+
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(mockGetSheet).toHaveBeenCalledTimes(2);
+    });
+    vi.setSystemTime(new Date(2026, 2, 21, 18, 6, 10));
+    resolveRefetch(ok(buildSheet()));
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(printedText).toContain("印刷 2026-03-21 18:05");
+    expect(printedText).not.toContain("18:06");
+  });
+
+  it("print notice is hidden only while the sheet is drawn (UI-09a-D18)", async () => {
+    mockGetSheet.mockResolvedValue(ok(buildSheet()));
+    let noticeAtPrint: HTMLElement | null = null;
+    let sheetAtPrint: HTMLElement | null = null;
+    printSpy.mockImplementation(() => {
+      noticeAtPrint = screen.queryByText(PRINT_NOTICE);
+      sheetAtPrint = screen.queryByTestId("daily-report-sheet");
+    });
+    renderBar();
+    // 紙を描いていない時は案内が DOM にあり、印刷のときだけ出す class を持つ
+    expect(await screen.findByText(PRINT_NOTICE)).toHaveClass("hidden", "print:block");
+    const button = await printButton();
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-disabled", "false");
+    });
+
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+    // 紙を描いている間（印刷の時点）は案内が無い
+    expect(sheetAtPrint).not.toBeNull();
+    expect(noticeAtPrint).toBeNull();
+    // 印刷の後は案内が戻る
+    expect(await screen.findByText(PRINT_NOTICE)).toBeInTheDocument();
   });
 
   it("ExportBar shows skipped PLU rows with link (UI-09a)", async () => {
