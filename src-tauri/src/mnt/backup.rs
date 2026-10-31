@@ -348,19 +348,20 @@ fn final_path(existing: &Path) -> std::io::Result<PathBuf> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_GUID,
+        CreateFileW, GetFinalPathNameByHandleW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_GUID,
     };
     let wide: Vec<u16> = existing
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    // FILE_FLAG_OPEN_REPARSE_POINT を付けない: junction・link・mounted folder は辿った先になる
+    // FILE_FLAG_OPEN_REPARSE_POINT を付けない: junction・link・mounted folder は辿った先になる。
+    // access は 0（Contract Probe の P8 が PASS した形: access 0・share 3 種・BACKUP_SEMANTICS）
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            FILE_READ_ATTRIBUTES,
+            0,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             std::ptr::null(),
             OPEN_EXISTING,
@@ -540,7 +541,7 @@ pub fn inspect_backup(backup_path: &Path) -> Result<BackupInspection, DbError> {
     if !newer_than_app {
         let required: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'                  AND name IN ('products', 'operation_logs', 'app_settings')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('products', 'operation_logs', 'app_settings')",
                 [],
                 |row| row.get(0),
             )
