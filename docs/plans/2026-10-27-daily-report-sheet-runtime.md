@@ -13,7 +13,7 @@ wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時�
 - Phase: implementing
 - Risk: R3
 - Plan Commit: 2fca3b1836ffce0a4f120d2123d86dabe893ff5b
-- Amendments: none
+- Amendments: 934aac23d7064840b6bd954b6b21d422eddceee8
 - Coordinator: Opus 5.5 main session
 - Writer: Opus 5.5 subagent（起票は本 run の起草役。実装は座組表の Writer の行〈`subagent_type: writer`〉）
 - Plan Reviewer: fresh Opus 5.5 + Codex（座組表の Plan Reviewer の行。Codex が起動できない日は座組表の Codex 停止中の列）
