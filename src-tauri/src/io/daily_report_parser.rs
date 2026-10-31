@@ -540,6 +540,12 @@ fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
     if cleaned.is_empty() {
         return Ok(None);
     }
+    // 先に数の形（任意の符号 1 つ ＋ 1 桁以上の ASCII 数字。`parse::<i64>` が受ける形）を確かめる。
+    // `parse` は桁あふれを後ろの文字より先に返すので、形を見ずに overflow を上限の越えにしない
+    let digits = cleaned.strip_prefix(['+', '-']).unwrap_or(&cleaned);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(NumberError::Invalid);
+    }
     let parsed = cleaned.parse::<i64>().map_err(|error| match error.kind() {
         std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
             NumberError::TooLarge
@@ -1661,5 +1667,98 @@ mod tests {
             .parse_errors
             .iter()
             .all(|error| !error.error_message.contains("10000000")));
+    }
+
+    #[test]
+    fn test_parse_daily_report_req401_overflow_digits_with_bad_tail_is_invalid_number() {
+        // REQ-401 / IO-07-D6: 数の形をしていない値は桁があふれていても形の誤り（invalid_number）。
+        // 数の形で i64 に収まらない値だけが上限の越え（number_too_large）。error_type は 29 §29.5
+        let s = settlement_line("0001");
+        let bundle = |amount: &str, count: &str, quantity: &str| {
+            parse_daily_report_bundle(vec![
+                report_file(
+                    "Z001_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "総売", "3", amount), ("0002", "純売", "7", "90")],
+                ),
+                report_file(
+                    "Z002_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "現金", count, "100")],
+                ),
+                report_file(
+                    "Z005_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "部門A", quantity, "100")],
+                ),
+            ])
+        };
+        let errors_of =
+            |result: &DailyReportParseResult| -> Vec<(Option<DailyReportSourceKind>, String)> {
+                result
+                    .parse_errors
+                    .iter()
+                    .map(|error| (error.source_file, error.error_type.clone()))
+                    .collect()
+            };
+
+        for (amount, count, quantity) in [
+            (
+                "100000000000000000000x",
+                "-100000000000000000000x",
+                "100000000000000000000x",
+            ),
+            (
+                "100000000000000000000.5",
+                "100000000000000000000.5",
+                "-100000000000000000000x",
+            ),
+        ] {
+            let result = bundle(amount, count, quantity);
+            assert_eq!(
+                errors_of(&result),
+                [
+                    (
+                        Some(DailyReportSourceKind::Z001),
+                        "invalid_number".to_string()
+                    ),
+                    (
+                        Some(DailyReportSourceKind::Z002),
+                        "invalid_number".to_string()
+                    ),
+                    (
+                        Some(DailyReportSourceKind::Z005),
+                        "invalid_number".to_string()
+                    ),
+                ],
+                "{amount} / {count} / {quantity}"
+            );
+        }
+
+        let result = bundle(
+            "100000000000000000000",
+            "-100000000000000000000",
+            "100000000000000000000",
+        );
+        assert_eq!(
+            errors_of(&result),
+            [
+                (
+                    Some(DailyReportSourceKind::Z001),
+                    "number_too_large".to_string()
+                ),
+                (
+                    Some(DailyReportSourceKind::Z002),
+                    "number_too_large".to_string()
+                ),
+                (
+                    Some(DailyReportSourceKind::Z005),
+                    "number_too_large".to_string()
+                ),
+            ]
+        );
     }
 }
