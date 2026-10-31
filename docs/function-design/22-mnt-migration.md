@@ -18,7 +18,7 @@ src-tauri/src/
     schema_v10.rs -- 原価を1/100円の列へ（§16 の vB）
     schema_v11.rs -- Z004の精算の鍵・売上の連動・棚卸しの完了の列（§20 の vZ）
     schema_v12.rs -- 日報の束の精算回数の列（§17 の vS）
-    schema_v13.rs -- 振替の種類と振替の記録の表（§21 の vT。proposed・未実装。先に merge する側が小さい番号を取る、§21）
+    schema_v13.rs -- 振替の種類と振替の記録の表（§21 の vT。先に merge する側が小さい番号を取る、§21）
 ```
 
 ### 3.2 migrate
@@ -495,7 +495,7 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **テスト**（b1 の lane の完了条件。test の名前と期待は b1 の packet の Test Design Matrix の M の行）: 空の DB と、入庫・返品交換・手動販売・廃棄・初期在庫の movement と demo の seed の形の売上の movement（`sale_auto`、`reference_type` が NULL）を持つ直前の版の DB の両方で vZ が成功し、各 movement の全列と id が同じで、`sqlite_sequence` が作り直しの前の値のまま。手順 1 の条件（`stocktakes`・`csv_imports`・`reference_type` が `csv_import`・`phase = 1`、1 つずつ）で schema・値・版が何も変わらず `MigrationFailed`（message に `作り直し` と表名）。vZ の後に `reference_type` が `csv_import` で `phase = 0` の行と、`phase = 1` で `reference_type` が `csv_import` でない行の INSERT が CHECK で拒まれ、`csv_import`・`phase = 1`・`settlement_no` ありの行は入る。`csv_imports` の `machine_no` が NULL・空、`settlement_no` が NULL・負の INSERT が CHECK で拒まれる。`sale_records` の `stock_linked` の既定が 0 で 2 を拒む。`stock_counts` の `seen_import_id` は fresh の NULL と 1 以上を受け、default の行の値と 0 を拒み、行のある `stock_counts` にも足せる。最新の版まで当てた後に §18 の 3 つの trigger があればそれも残る。最新の版を期待する既存の test の書き換えは packet の Test Matrix の「既存の test の移し方」の T1。
 
-## 21. MNT-03 追加: 振替（詰め替え・切り分け）の種類と振替の記録の表の migration（D-143、proposed・未実装）
+## 21. MNT-03 追加: 振替（詰め替え・切り分け）の種類と振替の記録の表の migration（D-143）
 
 **MNT-03-D22 / D-143**: 在庫の振替の lane（Plan Packet `docs/plans/2026-10-29-stock-transfer.md`）の migration（以下 vT）。列と表の意味の正本は [tracking](../db-design/tracking-system-tables.md) の §14 と [transaction](../db-design/transaction-tables.md) の §11a-11b。起票の時の版の番号は v13（起票の 2026-10-27 の main の最大は v11、v12 は SD 直読みの runtime〈PR #172〉の migration〈その branch の 22 §17 の vS〉）。先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録を取り直す（§20 と #172 の §17 と同じ規則、`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。`migrate` は版の欠けを確かめず今の版より大きい migration だけを当てる〈`db/migration.rs` の `migrate`〉ので、main に欠けを残すと後から足した小さい版が当たらない）。欠けは `migration.rs` の unit test（`migrations()` の版が 1 から欠けの無い昇順の連番であること。本 lane が S1 で足す、packet の Test Plan の M7）が、どちらの merge 順でもその head の CI で止める。そのため branch の上の vT の番号は、その head の base（`origin/main`）の最大 + 1 でないと CI が通らない（#172 の v12 が base に無い間は 12。#172 が先に merge すれば 13）。description は `振替の種類と振替の記録の表（D-143）`、kind は `MigrationKind::Custom`、file は `src-tauri/src/db/schema_v13.rs`（取り直したら版の番号に合わせる）。
 

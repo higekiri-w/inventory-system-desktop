@@ -439,13 +439,13 @@ Phase 2 完了判断で daily 5 画面の追加実装は不要。H-6 5 画面通
 - UI-03 返品・交換（REQ-202、レジ戻し済みフラグ + レシート添付）。詳細な route / command / validation / L3 確認項目は `docs/function-design/63-ui-return-exchange.md` を正とする。
 - UI-04 手動販売出庫（REQ-203。PLU 未登録の新商品と、[10](function-design/10-common-rules.md) SPEC-UNIT-D4 の店に聞いてから決める項の既定 (a) の間の長さの商品）
 - UI-05 廃棄・破損（REQ-204）
-- UI-16 詰め替え・切り分け（D-143、proposed・未実装。要求の ID は runtime の lane が足す）
+- UI-16 詰め替え・切り分け（REQ-210、D-143）
 
 UI-04 は `/inventory/manual-sale` で、レジCSVに入らない販売を手入力し、在庫減算と売上記録を同時に残す。PLU 登録済み商品の場合は二重記録を避けるため確認を挟み、保存後は日次売上へ遷移して「手動」Badge を確認できる導線を置く。画面下部には保存直後確認用の `直近の手動販売出庫` を置き、`すべての履歴を見る` と `詳細を見る` から入出庫履歴 / 手動販売詳細へ遷移できるようにする。保存成功、PLU確認待ち、保存系エラーはページ先頭側に出るため、保存応答後はページ先頭へスクロールする。詳細な route / command / validation / recent list / L3 確認項目は `docs/function-design/62-ui-manual-sale.md` を正とする。
 
 UI-05 は `/inventory/disposal` で、廃棄・破損による在庫減算とロス記録を残す。保存結果や保存系エラーはページ先頭側に出るため、保存成功または command 失敗時はページ先頭へスクロールする。詳細な route / command / validation / L3 確認項目は `docs/function-design/64-ui-disposal.md` を正とする。
 
-UI-16 は `/inventory/transfer` で、仕入れた品を別の商品にしたとき（反物 → 端切れ、大袋 → 小袋）に、「減らす商品」と「増やす商品」の 2 つの表で数を入れ、1 つの記録として両方の在庫を同時に動かす（D-143、proposed・未実装）。画面の語は「詰め替え・切り分け」で、原価は扱わない。サイドバーは入出庫の廃棄・破損の次。記録の詳細は `/inventory/transfer/records/$recordId`（UI-16b）で、入出庫履歴の種別と在庫変動履歴の種別にも同じ語で出る。詳細な route / command / validation / L3 確認項目は `docs/function-design/79-ui-stock-transfer.md` を正とする。
+UI-16 は `/inventory/transfer` で、仕入れた品を別の商品にしたとき（反物 → 端切れ、大袋 → 小袋）に、「減らす商品」と「増やす商品」の 2 つの表で数を入れ、1 つの記録として両方の在庫を同時に動かす（D-143）。画面の語は「詰め替え・切り分け」で、原価は扱わない。サイドバーは入出庫の廃棄・破損の次。記録の詳細は `/inventory/transfer/records/$recordId`（UI-16b）で、入出庫履歴の種別と在庫変動履歴の種別にも同じ語で出る。詳細な route / command / validation / L3 確認項目は `docs/function-design/79-ui-stock-transfer.md` を正とする。
 
 **Phase 4: 在庫特殊 + システム管理7画面（完了）**
 - UI-06c 在庫変動履歴（REQ-303）を実装済み。在庫少一覧（REQ-302）は D-047 により UI-06a `status=low_stock` フィルタへの deep-link で完了済み、独立画面なし

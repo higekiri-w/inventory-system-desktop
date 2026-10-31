@@ -364,7 +364,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn test_create_transfer_d143_b1_signs_reference_and_business_date() {
+    fn test_create_transfer_req210_d143_b1_signs_reference_and_business_date() {
         // D-143 (1)(2) / 31 §12.6b 手順 8 / Test Plan B1
         let (_dir, mut conn) = setup_test_db();
         create_test_product(&conn, "TR-A", 10);
@@ -877,7 +877,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_inventory_records_d143_r1_transfer_record_type() {
+    fn test_list_inventory_records_req210_d143_r1_transfer_record_type() {
         // 21 §10.5a・44 §23.7 / Test Plan R1
         let (_dir, mut conn) = setup_test_db();
         let record_id = seed_transfer_and_disposal(&mut conn);

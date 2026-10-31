@@ -418,3 +418,33 @@ L3 は lane の runtime の変更が止まった後に 1 回だけ頼む（`docs
 - 店の運用の細部と発言の原文は書かず、owner の決定は repo 外の回答台帳の ID で引く。
 - 開発・試験 DB: vT は値のある開発・試験 DB（owner の PC の L3 用の DB を含む）にもそのまま当たり、`inventory_movements` を作り直す。vT を含む build を owner の PC で初めて起動する前に、上の Recovery の「写し方」で vT の前の snapshot（今の版のアプリ〈base の build〉の「今すぐバックアップを作成」の 1 file。WAL の確定済みの変更を含む）を作り、Coordinator が repo の外へ写して版と `integrity_check` を確かめる（DB の file だけを写す形は使わない）。写し方の誤りが見つかったとき・版の番号を取り直したとき・owner が機能を戻すと決めたときに戻す元になる（上の Recovery）。予行の写しは Coordinator の WSL の repo の外（Linux の app_data_dir と日付の付いた folder）だけに置き、commit しない。予行の起動の自動バックアップは止める（起動の前に予行の写しの `app_settings` の `backup_enabled` を `'0'` にする。上の Recovery の予行）: 止めないと、写した DB の `backup_path` によって vT の後の DB の写しが作業 checkout の中に書かれうる。owner の Windows の data folder の file は予行で置き換えない。D-123 の作り直しは要らないが、作り直す場合も古い file は消さずに移す（22 §16 の作り直しの手順）。
 - 導入の後に main へ入る場合: 本 lane は導入の前の関門で、初回の導入の版に入る見込み（店の DB は空から作られ、vT は行の無い `inventory_movements` を作り直す）。本 lane が導入の後に main へ入ることになったら、店の DB は値のある本番の DB になるので、その版の配布の前に、(1) 店の PC の DB の backup が確かめ済みであること（[71](../function-design/71-mnt-backup.md) の起動の時の backup と確かめ）、(2) 店の DB の snapshot（上の Recovery の「写し方」）での vT の予行（上の Recovery の予行と同じ手順と全列の比べ）、(3) 上の Recovery の手順を店の PC で管理者が行えること、を Ready の前の条件に足す Gated Amendment を出す（`r4` の承認の範囲を本番の DB に広げるので、owner に改めて諮る）。
+
+## Implementation Results
+
+この節は計画の節ではない（実装の後の記録）。Scope・AC・Contract Ledger・Recovery・Data Safety の文は変えていない。
+
+### commit
+
+- S1: `4574ecf6` feat(inventory): 振替の migration と記録の repository を足す
+- S2: `c9764872` feat(inventory): 振替の作成と記録の読取りの BIZ を足す
+- S3: `2d98d818` feat(inventory): 振替の command と wire を足す
+- S4: `c5efe375` feat(inventory): 詰め替え・切り分けの作成画面と記録の詳細を足す
+- S5: この節を足した commit（docs: 振替の正本を現行の記述に直し、REQ-210 を足す）
+
+vT の版は v13（file `src-tauri/src/db/schema_v13.rs`、`migration.rs` の登録の版 13）。base の `origin/main`（`25d106a9`）の `migrations()` の最大は 12（#172 の vS）で、22 §21 の N と同じ。正本（22・DB_DESIGN・tracking・transaction・21）の版の番号と file 名も v13 / `schema_v13.rs` で揃っている。
+
+### Scope の文と違えた点と理由
+
+- `src-tauri/src/db/mod.rs`: Scope の S1 は `pub mod schema_v{N};` だが、既存の `schema_v*` に揃えて `mod schema_v13;`（非公開）にした。`migration.rs` だけが使い、外へ出す理由が無い（Coordinator が受理）。
+- `src-tauri/tests/architecture_test.rs`: D-083 の allowlist に `TransferRecordDetail` の re-export の 1 行を足した（予定 path の一覧に無い。CMD が BIZ の再 export で詳細の型を返すため。Coordinator が受理）。
+- `src-tauri/src/biz/inventory_service/transfer.rs`: B1 と R1 の test の名前に `req210` を入れた（`test_create_transfer_req210_d143_b1_…`・`test_list_inventory_records_req210_d143_r1_…`）。`generate_traceability` は Rust の test を `fn test_…` の名前の `_reqNNN` で REQ に結ぶので、入れないと 90 の REQ-210 の Rust 側が「—」になる。Test Plan の行の ID（`d143_b1`・`d143_r1`）は保った。
+- `src/lib/query-keys.ts`（予定 path の一覧に無い）: `inventoryRecords.transferDetail(recordId)` を足した。記録の詳細の query の key（ほかの記録の詳細と同じ形で、C23 の `inventoryRecords.root()` に含まれる）。
+- `src/features/stock-transfer/StockTransferNavigation.test.tsx`（新設、予定 path の一覧に無い）: U1 の「router の上で active」の test。`navigation.test.ts` は `.ts` で JSX を書けないので、実 router と `SidebarArea` を使う test を別 file にした（`navigation.test.ts` には配置と値の test を足した）。
+- `src/test/page-root-pageshell-sweep.test.ts`（T2 の一覧に無い）: PageShell を使う page の数の期待を 28 file / 43 箇所から 30 file / 47 箇所に直した（`StockTransferPage` の 1 と `TransferRecordDetailPage` の 3）。
+- 保存結果の行ごとの「在庫を見る」（79 UI-16-D8、64 UI-05-D11 と同じ先）: 64 の先 `/products?q=<商品コード>&selected=<商品コード>` は D-138 の未実装で、今の `/products` の search の schema に `selected` が無い。今ある `q` だけを渡す `/products?q=<商品コード>` にした（D-138 の runtime で `selected` を足す）。
+- `docs/spec/requirements-coverage.md`: Scope の S5 は「同じ行」を足すとするが、足していない。この ledger は owner 保管原典の 42 ID だけを持ち、「上記 42 件との差集合は常に空」（同 file の完全性契約）で、Design Phase 補足 ID（REQ-106・107・206〜209）も載っていない。REQ-210 も同じ扱いにした（Coordinator の裁定待ち）。
+- `src/routeTree.gen.ts` は `.gitignore` の対象で追跡されない。AC の `git diff --exit-code src/routeTree.gen.ts` は常に 0 になり、生成の確かめは `npm run typecheck`（`pretypecheck` が `generate:routes` を回す）と `npm run build` が担う。
+
+### この変更で不要になった記述
+
+`rg -n 'proposed・未実装' docs --glob '!docs/archive/**' --glob '!docs/plans/**' | rg -c -e 'D-143' -e '振替' -e 'transfer' -e '詰め替え'` が出力 0 行・exit 1（AC9）。31 の「入出庫 4 業務」「4 つの `create_*`」（振替を含む 5 つに）、10 の「4 つの create」（ほかの 4 つ）と「5 経路」（6 経路）、74 の許可リストの括弧書き、66 の「振替の runtime が足す」、79・65・tracking・DB_DESIGN・SCREEN_DESIGN の「要求の ID は runtime の lane が足す」を現行の記述に直した。65・79 の変更履歴の起票の行の「proposed・未実装」は「runtime の前の設計」と言い換えた（AC9 が変更履歴を除かないため）。

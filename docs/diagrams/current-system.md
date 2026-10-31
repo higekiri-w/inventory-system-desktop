@@ -89,7 +89,7 @@ flowchart TD
   RECORD -->|検証済みreturnTo| MOVES
   HUB[入出庫履歴 / 検索・page] -->|returnTo| RECORD
   RECORD -->|検証済みreturnTo| HUB
-  RECENT[入庫・返品・手動販売・廃棄の直近記録] -->|returnTo| RECORD
+  RECENT[入庫・返品・手動販売・廃棄・詰め替え切り分けの直近記録] -->|returnTo| RECORD
   RECORD -->|検証済みreturnTo| RECENT
   LOGS[操作ログ] -.->|明示的なrecord_typeとrecord_idがあるとき| RECORD
   RECORD -.->|検証済みreturnTo| LOGS
@@ -104,7 +104,7 @@ flowchart TD
 | 入出庫履歴→記録詳細→戻る | `returnTo` にsearch/pageを保存。検証に失敗した場合は `/inventory/records` |
 | 在庫変動履歴→元記録詳細→戻る | `returnTo` に商品・日付・種別・pageを保存 |
 | 作業画面の直近記録→詳細→戻る | 元の作業URLへ戻る。URLにない未保存フォームの復元までは保証しない |
-| 保存結果→詳細 | 入庫・返品交換・手動販売・廃棄のいずれも直接リンクあり（廃棄は PR #71〈2026-09-16〉で追加、UI-05-D17） |
+| 保存結果→詳細 | 入庫・返品交換・手動販売・廃棄・詰め替え切り分けのいずれも直接リンクあり（廃棄は PR #71〈2026-09-16〉で追加、UI-05-D17。詰め替え・切り分けは UI-16-D11） |
 | 記録詳細→商品別在庫変動履歴 | 商品コードを渡す。来た記録の詳細へ戻る専用stackではない |
 | 在庫変動履歴→在庫照会 | 在庫照会へ戻る = `returnTo`（在庫照会からの遷移元 URL）へ戻る。欠落時は商品コードで検索した在庫照会へ fallback（PR #75 で NAV-1 解消） |
 | 商品一覧→登録/修正→戻る | 商品画面の `returnTo` を使用。業務記録詳細のfallbackとは別契約 |
@@ -132,12 +132,14 @@ routeの末尾 `/` は統一して省略（ルート `/` 自体を除く）。`$
 | 返品・交換 | `/inventory/return` | Sidebar |
 | 手動販売出庫 | `/inventory/manual-sale` | Sidebar |
 | 廃棄・破損 | `/inventory/disposal` | Sidebar |
+| 詰め替え・切り分け | `/inventory/transfer` | Sidebar |
 | 入出庫履歴 | `/inventory/records` | Sidebar、各作業の「すべての履歴を見る」 |
 | 在庫変動履歴 | `/stock/$code/movements` | 商品詳細、各業務記録詳細 |
 | 入庫詳細 | `/inventory/receiving/records/$recordId` | 入出庫履歴、直近記録、保存結果、元記録リンク |
 | 返品・交換詳細 | `/inventory/return/records/$recordId` | 同上 |
 | 手動販売詳細 | `/inventory/manual-sale/records/$recordId` | 同上 |
 | 廃棄・破損詳細 | `/inventory/disposal/records/$recordId` | 同上 |
+| 詰め替え・切り分け詳細 | `/inventory/transfer/records/$recordId` | 同上 |
 | 商品別CSV詳細 | `/csv-import/records/$importId` | 入出庫履歴、元記録リンク。取込み結果に直接リンクはない |
 | 棚卸し詳細 | `/stocktake/records/$stocktakeId` | 入出庫履歴、元記録リンク。棚卸し結果に直接リンクはない |
 | 棚卸し | `/stocktake` | Sidebar。開始前/進行中/完了は画面内state |

@@ -215,7 +215,7 @@ CSV取込みで拾えない販売を補完記録する。使い道は PLU 未登
 
 ## 11a-11b. transfer_records + transfer_items（振替〈詰め替え・切り分け〉の記録）
 
-D-143（proposed・未実装。migration v13、[22 §21](../function-design/22-mnt-migration.md)）。画面は [79](../function-design/79-ui-stock-transfer.md)、BIZ は [31](../function-design/31-biz-inventory-service.md) の `create_transfer`。
+D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。画面は [79](../function-design/79-ui-stock-transfer.md)、BIZ は [31](../function-design/31-biz-inventory-service.md) の `create_transfer`。
 
 ### 役割
 仕入れた品を別の商品に詰め替え・切り分けた記録（反物 → 端切れ、大袋 → 小袋）。1 つの記録で、減らす商品（元）の在庫を減らし、増やす商品（先）の在庫を増やす。ロス（廃棄）でも仕入れ（入庫）でもない動きを、それらと分けて残す。

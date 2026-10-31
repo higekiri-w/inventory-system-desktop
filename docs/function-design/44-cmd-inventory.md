@@ -10,7 +10,7 @@ src-tauri/src/
     return_cmd.rs        -- 返品・交換コマンド（CMD-03）
     manual_sale_cmd.rs   -- 手動販売出庫コマンド（CMD-04）
     disposal_cmd.rs      -- 廃棄・破損コマンド（CMD-05）
-    transfer_cmd.rs      -- 振替（詰め替え・切り分け）コマンド（CMD-13、§23.7a。D-143、proposed・未実装）
+    transfer_cmd.rs      -- 振替（詰め替え・切り分け）コマンド（CMD-13、§23.7a。D-143）
     inventory_cmd.rs     -- 在庫照会コマンド（CMD-06）
   biz/
     inventory_service/
@@ -478,7 +478,7 @@ fn list_inventory_records(
 **入力型**: BIZ層の `InventoryRecordQuery` をそのまま使用
 ```
 struct InventoryRecordQuery {
-    record_type: Option<String>,      // None | "all" | "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "csv_import" | "stocktake"（振替の runtime で "transfer_record" を足す。§23.7a、D-143、proposed・未実装）
+    record_type: Option<String>,      // None | "all" | "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "transfer_record" | "csv_import" | "stocktake"（"transfer_record" は振替。§23.7a、D-143）
     date_from: Option<String>,        // YYYY-MM-DD
     date_to: Option<String>,          // YYYY-MM-DD
     record_id: Option<i64>,
@@ -669,9 +669,9 @@ struct DisposalRecordDetailItem {
 
 ---
 
-### 23.7a CMD-13: 振替（詰め替え・切り分け）コマンド群（D-143、proposed・未実装）
+### 23.7a CMD-13: 振替（詰め替え・切り分け）コマンド群（D-143）
 
-BIZ は [31](31-biz-inventory-service.md) §12.6b、IO は [21](21-io-inventory-repo.md) §10.5a、画面は [79](79-ui-stock-transfer.md)。一覧の command は作らない: 作成の画面の「最近の振替」と入出庫履歴は `list_inventory_records`（§23.7）に `record_type: "transfer_record"` を渡して読む（§23.7 の `list_inventory_records` の受ける種別に `transfer_record` を足す）。
+BIZ は [31](31-biz-inventory-service.md) §12.6b、IO は [21](21-io-inventory-repo.md) §10.5a、画面は [79](79-ui-stock-transfer.md)。一覧の command は作らない: 作成の画面の「最近の振替」と入出庫履歴は `list_inventory_records`（§23.7）に `record_type: "transfer_record"` を渡して読む（§23.7 の `list_inventory_records` の受ける種別に `transfer_record` がある）。
 
 #### create_transfer
 

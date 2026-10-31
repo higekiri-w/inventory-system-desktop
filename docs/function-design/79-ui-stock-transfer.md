@@ -1,10 +1,10 @@
 # 79. UI-16: 詰め替え・切り分け（振替）
 
-> **状態**: D-143、proposed・未実装（[decision-log](../decision-log.md) D-143、Plan Packet `docs/plans/2026-10-29-stock-transfer.md`）。画面の語は全て「詰め替え・切り分け」で、「振替」は設計の中の名前（DB の `transfer`・`transfer_record`、BIZ の `create_transfer`）。
+> **状態**: D-143、実装済み（[decision-log](../decision-log.md) D-143、Plan Packet `docs/plans/2026-10-29-stock-transfer.md`）。画面の語は全て「詰め替え・切り分け」で、「振替」は設計の中の名前（DB の `transfer`・`transfer_record`、BIZ の `create_transfer`）。
 >
 > **計数の置き場と在庫の求め直し（D-118）**: この画面の日付の欄の意味は「品を詰め替え・切り分けた日」。在庫が計数に入っているかは、この日付で ADR D3 の窓（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）を決める。振替の movement は入出庫の movement と同じ規則で求め直す（[31](31-biz-inventory-service.md) §12.6b）。同じ日付に既定の計数のある商品は要再確認になり、棚卸しの画面の要再確認の一覧と商品の画面の範囲の表示に出る（ほかの入出庫の画面と同じ。この画面の保存の結果には要再確認の案内を足さない）。
 
-> 対応仕様: UI-16 / UI-16b（要求の ID は振替の runtime の lane が要求の一覧に足し、この行へ書く。D-143）
+> 対応仕様: REQ-210 / UI-16 / UI-16b（D-143）
 >
 > 入力ドキュメント: `docs/function-design/21-io-inventory-repo.md` §10.5a、`docs/function-design/31-biz-inventory-service.md` §12.6b、`docs/function-design/44-cmd-inventory.md` §23.7a、`docs/function-design/64-ui-disposal.md`（同じ形の作成画面）、`docs/function-design/65-inventory-record-traceability.md` TRACE-D14、`docs/function-design/10-common-rules.md` SPEC-UNIT-D2・D3・D11、`docs/SCREEN_DESIGN.md`、`docs/UI_TECH_STACK.md`
 
@@ -31,7 +31,7 @@
 | D-143 / submit | UI-16-D7 | 保存中は日付・2 つの表・2 つの商品追加欄・戻る/リセットを disabled にする。非同期の商品検索の結果の採否は UI-05-D15 と同じ event 境界の lock を 1 つ持ち、2 つの商品追加欄が同じ lock を読む。 | backend は単一 TX。片方の欄の検索の結果が保存の後に行を足さないようにする。 |
 | D-143 / result | UI-16-D8 | 保存成功後は record_id、減らした商品と増やした商品の一覧（商品コード・商品名・数量と単位と、行ごとの「在庫を見る」。[64](64-ui-disposal.md) UI-05-D11 と同じ先）、stock_warnings（在庫が負になった商品）、`idempotent_replay` の有無を出し、「続けて詰め替え・切り分け」「詳細を見る」を出す。 | 保存の後に元と先の在庫を 1 回で確かめられるようにする。 |
 | D-143 / list | UI-16-D9 | 画面下部に最近の記録を `listInventoryRecords({ record_type: "transfer_record", page: 1, per_page: 10 })` で出す（日付・記録ID・代表商品・記録日時・「詳細を見る」）。「すべての履歴を見る」は `/inventory/records?recordType=transfer_record`。per_page は 10 で、CMD・BIZ の上限 200（[65](65-inventory-record-traceability.md) §65.4.2）を越えない。 | 他の作成画面の recent list と同じ役割（[65](65-inventory-record-traceability.md) TRACE-D1・D7）。 |
-| D-143 / cache | UI-16-D10 | 保存成功時の invalidation は D-052 の C23（`invalidationContract.stockTransfer`）。集合は廃棄の C7 から `disposals.root()` を除いたもの（`inventoryRecords.root()`・`productList.root()`・`lowStock(false)`・`stockInquiryRoot()`・`stockMovements.root()`・`productForm.root()`・`stocktake.itemsRoot()`・`stocktake.recheckList()`）で、正本は `src/lib/invalidation-contract.ts` と decision-log D-052 の Contract 行（runtime の lane が足す）。 | 振替が書く表（`transfer_*`・`inventory_movements`・`products` の写し）を読む consumer は廃棄と同じで、廃棄の一覧だけを読まない（UI_TECH_STACK §2.5 の導出）。 |
+| D-143 / cache | UI-16-D10 | 保存成功時の invalidation は D-052 の C23（`invalidationContract.stockTransfer`）。集合は廃棄の C7 から `disposals.root()` を除いたもの（`inventoryRecords.root()`・`productList.root()`・`lowStock(false)`・`stockInquiryRoot()`・`stockMovements.root()`・`productForm.root()`・`stocktake.itemsRoot()`・`stocktake.recheckList()`）で、正本は `src/lib/invalidation-contract.ts` と decision-log D-052 の Contract 行。 | 振替が書く表（`transfer_*`・`inventory_movements`・`products` の写し）を読む consumer は廃棄と同じで、廃棄の一覧だけを読まない（UI_TECH_STACK §2.5 の導出）。 |
 | D-143 / return | UI-16-D11 | 保存結果と recent list の「詳細を見る」は、現在の `/inventory/transfer` URL を `returnTo` として詳細へ送る（DSR-18、[65](65-inventory-record-traceability.md) TRACE-D11）。 | 他の作成画面と同じ戻り方。 |
 | D-143 / L3 | UI-16-D12 | Windows native L3 で owner が見る: サイドバーから開く、2 つの表へのスキャン相当の Enter 追加、長さの商品の m の入力と表示、もう片方の表にある商品の追加を止める案内、保存中の disable、保存結果と「在庫を見る」、recent list と詳細、在庫変動履歴の種別と元記録。 | 新しい作成画面で、2 つの表の入力の分かりやすさは CI で判断できない（`docs/DEV_WORKFLOW.md` Human Visual Confirmation）。 |
 
@@ -150,4 +150,5 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 
 | 日付 | 版 | 内容 |
 |---|---|---|
-| 2026-10-27 | stock-transfer の起票（D-143） | 新設（proposed・未実装）。route、2 つの表の明細、数量と単位、原価を持たないこと、冪等キー、invalidation C23、recent list、記録の詳細、L3 の確認対象を決めた。 |
+| 2026-10-27 | stock-transfer の起票（D-143） | 新設（runtime の前の設計）。route、2 つの表の明細、数量と単位、原価を持たないこと、冪等キー、invalidation C23、recent list、記録の詳細、L3 の確認対象を決めた。 |
+| 2026-10-31 | stock-transfer の runtime（PR #216） | 実装に合わせて状態を現行にし、`> 対応仕様:` に REQ-210 を書いた。 |

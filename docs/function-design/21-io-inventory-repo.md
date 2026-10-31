@@ -397,7 +397,7 @@ fn get_disposal_record_detail(
 4. inventory_movements から `reference_type='disposal_record'` かつ `reference_id=record_id` かつ `is_voided=0` の行を取得する
 5. movements は BIZ 層で source link を補完するため、IO 層では `source=None` のまま返す
 
-### 10.5a transfer_repo — 振替（詰め替え・切り分け）リポジトリ（D-143、proposed・未実装）
+### 10.5a transfer_repo — 振替（詰め替え・切り分け）リポジトリ（D-143）
 
 表は [transaction](../db-design/transaction-tables.md) の §11a-11b（migration v13、[22 §21](22-mnt-migration.md)）。新しい module `db::transfer_repo`（`src-tauri/src/db/transfer_repo.rs`）。在庫の変動は BIZ の `apply_stock_change` が `inventory_repo::insert_movement` で書き、この module は書かない。`inventory_repo` の `MovementType` に `Transfer`（`"transfer"`）、`ReferenceType` に `TransferRecord`（`"transfer_record"`）を足し、`parse_movement_type`・`parse_reference_type` に同じ値を足す（DB の CHECK と同じ値の集合。D-061・D-064）。入出庫履歴の一覧（下の `list_inventory_records`）は記録の種類の表に `transfer_record`（ヘッダ `transfer_records`・明細 `transfer_items`・日付 `transfer_date`・詳細の route `/inventory/transfer/records`）を 1 行足すだけで、件数は明細の数（入庫・廃棄と同じ）。一覧の振替専用の関数は作らない（作成の画面の「最近の振替」は `list_inventory_records` を種類で絞って読む。[79](79-ui-stock-transfer.md)）。
 

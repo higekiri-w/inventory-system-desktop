@@ -33,8 +33,8 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 | 9 | manual_sale_items | トランザクション | REQ-203 | 手動販売出庫明細（商品ごと） |
 | 10 | disposal_records | トランザクション | REQ-204 | 廃棄・破損記録ヘッダ |
 | 11 | disposal_items | トランザクション | REQ-204 | 廃棄・破損記録明細（商品ごと） |
-| 11a | transfer_records | トランザクション | — | 振替（詰め替え・切り分け）の記録ヘッダ（D-143、migration v13、proposed・未実装。要求の ID は runtime の lane が足す） |
-| 11b | transfer_items | トランザクション | — | 振替の記録明細（商品ごと。減らす / 増やす の向き） |
+| 11a | transfer_records | トランザクション | REQ-210 | 振替（詰め替え・切り分け）の記録ヘッダ（D-143、migration v13） |
+| 11b | transfer_items | トランザクション | REQ-210 | 振替の記録明細（商品ごと。減らす / 増やす の向き） |
 | 12 | csv_imports | POS連携 | REQ-401 | CSV取込み履歴 |
 | 12a | csv_import_errors | POS連携 | REQ-401 | CSV取込みエラー・スキップ行 |
 | 12b | daily_report_imports | POS連携 | REQ-401 | 日報取込み履歴（Z001/Z002/Z005の束） |
@@ -109,8 +109,8 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 - products.tax_rate: CHECK(tax_rate IN ('10','8','0'))
 - products.stock_unit: CHECK(stock_unit IN ('pcs','sheet','hon','bag','box','kumi','set','ball','cho','m'))（D-113・D-128。vB〈v10〉で巻・cm を外した。[master-tables](db-design/master-tables.md) の「単位と原価の精度の契約」）
 - sale_records.source: CHECK(source IN ('auto','manual'))
-- inventory_movements.movement_type: CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake'))（v13 で `'transfer'` を足す。D-143、proposed・未実装）
-- inventory_movements.reference_type: CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake') OR reference_type IS NULL)（v13 で `'transfer_record'` を足す。D-143）
+- inventory_movements.movement_type: CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake','transfer'))（v13 で `'transfer'` を足した。D-143）
+- inventory_movements.reference_type: CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake','transfer_record') OR reference_type IS NULL)（v13 で `'transfer_record'` を足した。D-143）
 - transfer_items.direction: CHECK(direction IN ('out','in'))（v13、D-143）
 - return_records.return_type: CHECK(return_type IN ('return','exchange'))
 - return_items.direction: CHECK(direction IN ('in','out'))
@@ -167,7 +167,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - return_create
 - manual_sale_create
 - disposal_create
-- transfer_create（D-143、proposed・未実装）
+- transfer_create（D-143）
 - stocktake_start, stocktake_complete
 - plu_export
 - backup_create, backup_restore
