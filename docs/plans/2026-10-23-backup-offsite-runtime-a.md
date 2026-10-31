@@ -37,7 +37,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 
 - Phase: plan-gate
 - Risk: R4
-- Plan Commit: pending
+- Plan Commit: e2ea774d4c6ca50f43676b85343f67e73d363c68
 - Amendments: none
 - Coordinator: Opus 5.5 main session
 - Writer: Opus 5.5 subagent（起票は本 run。実装の Writer は plan-approved の後に Coordinator が発注で決める）
