@@ -398,9 +398,19 @@ Contract Audit の段 4（Plan Review round 3 の是正で足した契約の文�
 
 ## Implementation Results
 
-Fill after implementation.
-
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
+
+PR: #190。
+
+- S1〜S3（発注 702）: `97385877`（作業名 → 確かめ → 上書きしない公開、書く先の固定）と `61f73bc1`（手動の backup の固定の文、`inspect_backup` の command・登録・bindings・traceability）。
+- S4（発注 705）: 件名「復元の前に控えを確かめ、確かめの間は自動の確認を止める」の commit。一覧の行の入口の控えの確かめ（`restore_inspecting`・`restore_blocked`・`restore_detail`）、復元の card の「閉じる」、停止の 2 つの理由と module scope の `inFlight`、`restore_failed_recovered`・IPC の例外の後の未選択、手動 backup の失敗の後の一覧の取り直し。Matrix の UI の行の test を `useAutoBackupCheck.test.tsx`・`BackupRestorePage.test.tsx`・`BackupRestorePage.flow.test.tsx` に置いた。
+- 702 の裁定 (4)（件名「媒体の固定の open を probe と同じ access にする」の commit）: `pin_to_volume` の Windows の `final_path` の `CreateFileW` の access を `FILE_READ_ATTRIBUTES` から 0 にし、Contract Probe の P8 が PASS した形（access 0・share 3 種・`FILE_FLAG_BACKUP_SEMANTICS`・`VOLUME_NAME_GUID`）に揃えた。Linux では compile されないので、初回の compile は L3 の compile の段。
+- 702 の裁定 (8): 43 §43.11 の command の数の固定をやめ、71 MNT-01-D7 の Why を決定の前の形として過去にした。
+- 計画の review の closure（round 3）の P3 を実装と正本で補った。次の 2 つは Scope の文の言い方と実装が違い、Scope の文は Findings Freeze の follow-up として残す（Scope・AC・Contract Ledger・Data Safety の文は変えていない）:
+  - 停止の理由の移管（Opus P3 1・Codex P3 1）: 実装は「`holdAutoBackupCheckForRestore()` が選択の理由を復元の理由へ移し、それ以外は resume が選択の理由だけ、release が復元の理由だけを扱う」形。Scope の S4 の箇条の「選択の理由（…「閉じる」・unmount だけが外す）」「画面の unmount・再訪・「閉じる」・前の復元の結果は相手の理由を外さない」と、`useAutoBackupCheck.ts` の行の「どれも自分の理由だけを変え、相手の理由に触れない」は移管を数えない言い方のまま。68 UI-11b-D13 と Matrix は移管の形に直した。
+  - 停止の待ちの即時解決（Codex P3 2）: 実装は `inFlight === null` のときだけすぐ解決し、hook が unmount されていても実行中の回が残れば待つ。Scope の `useAutoBackupCheck.ts` の行の「hook が mount されていないときはすぐ解決する」は、この条件を分けない言い方のまま。Matrix の hook の行は直した。
+  - release は 1 回（Opus P3 2）: `handleRestore` は fatal を局所の値で決め、外側の `finally` で `releaseAutoBackupCheckAfterRestore(fatal)` を 1 回だけ呼ぶ（成功の後の処理が throw して fatal でない `catch` へ落ちても 2 回にならない）。Scope の文との差は無い。
+  - 確かめの間の assert（Opus P3 3）: `inspectBackup` を止めた間も文言と disabled が続く assert を足した。
 
 ## Review Response
 

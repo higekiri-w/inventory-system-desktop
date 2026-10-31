@@ -119,7 +119,7 @@ pub fn pin_backup_dir(backup_dir: &Path) -> Result<PinnedPath, BackupDirError>
 **MNT-01-D7: backup は確かめてから正式名にする（作成途中・壊れた file を成功の世代に入れない、D-114）**
 
 - 決定: `VACUUM INTO` は作業名 `{ファイル名}.partial` へ書き、共有の検査（§71.12 の「使える控え」: このアプリの backup であること・版・`PRAGMA quick_check` = `ok`）に通してから、`sync_all` → 正式名へ上書きしない公開（§71.4.1）→ 親 directory の sync の順で公開する。同じ名前の正式名が既にあれば既存を残して失敗にする。一覧（§71.6）・掃除（§71.5）・今日の backup の判定（§71.8 手順 3）・PC の外の控え（§71.11）は正式名（§71.3 の規約に完全に合う名前）だけを見る
-- Why: 今は `VACUUM INTO` が正式名へ直接書くので、途中で止まると壊れた file が正式名で残り、`check_auto_backup` が「今日の backup あり」と数えてその日の backup を作らず、一覧で復元の候補にも出る。「file がある」と「使える backup」を分けないと、PC の外へ写す控えも壊れた file になりうる
+- Why: この決定の前は `VACUUM INTO` が正式名へ直接書いていたので、途中で止まると壊れた file が正式名で残り、`check_auto_backup` が「今日の backup あり」と数えてその日の backup を作らず、一覧で復元の候補にも出ていた。「file がある」と「使える backup」を分けないと、PC の外へ写す控えも壊れた file になりうる
 - Rejected alternatives: 正式名へ書いた後に検査し、だめなら消す（検査の前に中断すると壊れた file が正式名で残る）／ `std::fs::rename` で公開する（既存の同じ名前の backup を置き換える。§71.4.1）／ 公開の直前に存在を確かめてから rename する（確かめと rename の間の競合が残る）／ `PRAGMA integrity_check`（全件の検査で遅い。`quick_check` で page と構造の破損を見れば足り、索引の内容の不一致は `VACUUM INTO` が作り直すので起きにくい）／ 検査をしない（上の Why）
 - Compatibility: file 名の規約・`BackupResult` / `BackupInfo` の形・操作ログの形は変えない。MNT-01-D6 の「生成済み file が残る可能性」は、未検査の残りについては作業名の file に限られる。公開の後の失敗（metadata の取得・親 directory の sync）では、検査済みの正式名が残りうる（§71.4 のエラーハンドリング）
 - 見直し契機: backup の作り方を `rusqlite::backup` 等の接続 API へ替えるとき

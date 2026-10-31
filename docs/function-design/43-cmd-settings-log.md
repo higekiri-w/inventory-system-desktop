@@ -295,7 +295,7 @@ fn save_receipt_image(
 
 ### 43.11 lib.rs invoke_handler への登録
 
-PR #164で`list_log_operation_types`を含む10コマンドすべてを `#[specta::specta]` 化済み。`tauri::generate_handler!` と `tauri_specta::collect_commands!` の両方へ登録し、UI は generated `commands.*` を使う。
+PR #164 以降、この文書の command はすべて `#[specta::specta]` を付ける。`tauri::generate_handler!` と `tauri_specta::collect_commands!` の両方へ登録し、UI は generated `commands.*` を使う。
 
 ```
 .invoke_handler(tauri::generate_handler![
