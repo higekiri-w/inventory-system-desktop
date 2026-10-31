@@ -592,9 +592,9 @@ CMD層の `CmdError` は `kind: string` / `message: string` / `field?` / `error_
 
 **cross-language validation 定数（D-054）**: file サイズ上限等、frontend と backend が同値を要する validation 定数は `src-tauri/src/constants.rs` を SSOT とし、bindings 生成で `bindings.ts` に export された値を frontend が import する。frontend 側の local 複製は禁止（静的 sweep test で検出）。L1 の bindings clean diff 検査が cross-language 同期の機械検査を兼ねる。
 
-#### 6.5.5 印刷（proposed・未実装、D-120）
+#### 6.5.5 印刷（D-120）
 
-- **手段**: WebView の印刷（`window.print()`）と CSS の `@page { size: A4 portrait; margin: 10mm }`・`@media print` で、紙に出す部分だけを印刷する。印刷先・枚数・用紙は OS の印刷の dialog で選び、アプリにプリンタの設定の画面を作らない。最初の利用は日次売上の日報の紙（[56](function-design/56-ui-daily-sales.md) の UI-09a-D17・D18）
+- **手段**: WebView の印刷（`window.print()`）と CSS の `@page { size: A4 portrait; margin: 10mm }`・`@media print` で、紙に出す部分だけを印刷する（`src/styles/globals.css`。印刷のときは `#root` を隠し、画面用の `html`・`body` の高さの固定と `overflow: hidden` を外して 2 枚目以降を切らない）。印刷先・枚数・用紙は OS の印刷の dialog で選び、アプリにプリンタの設定の画面を作らない。最初の利用は日次売上の日報の紙（[56](function-design/56-ui-daily-sales.md) の UI-09a-D17・D18）
 - **未確認の前提**: Windows の WebView2（§6.5.1）で `window.print()` が OS の印刷の dialog を出し、`@page` の用紙の向きと余白の指定が効くこと。日報の紙の runtime の lane が、実装の後の L3（packet の Matrix の L3-1）で、開発の build を Windows で動かして確かめる（`window.print()` の道は code が小さく〈CSS と 1 つの呼出し〉、確かめるには Windows の build と owner の操作が要るので、L3 の 1 回にまとめる。2026-10-29、日報の紙の runtime の Plan Review round 1）
 - **効かないときの代わり**: Rust 側の CMD が同じ紙の内容を 1 つの HTML の file にしてアプリの data の folder の固定の file（毎回上書き。どの印刷かは紙の中の印刷の時刻で見分ける）に書き、導入済みの `tauri-plugin-opener`（`Cargo.lock` で 2.5.3）の Rust の API `OpenerExt::opener().open_path`（`with` を渡さない）で、その PC で `.html` に関連付けられた既定のアプリで開き、そこで印刷する。`open_path` はブラウザを指定せず file の関連付けの先のアプリで開く（2.5.3 の source の doc: 「Open a path with a default or specific program」。関連付けがエディタなら HTML のソースが開く）ので、採る条件は店の PC の `.html` の関連付けが印刷できるブラウザであることを Contract Probe で確かめること。Rust の API は IPC の capability を通らないので、capability を足さない（frontend の `opener:default` は URL と file の場所の表示だけで、local の file を開く許可を持たない）。HTML に入れる値は全部 HTML escape する。採るときは command を 42 に足す Gated Amendment を出す（56 UI-09a-D18）。書込みか `open_path` が失敗したら CMD は error を返し、UI は成功と扱わない（`open_path` の成功は OS に開くよう渡せたことだけで、印刷できたかは確かめない）。新しい依存は足さない
 - **採らない**: PDF を作る依存の追加、Excel の file の出力（店が開いて印刷する手順が残る）、OS の印刷の API を Rust から呼ぶこと（OS ごとの code が要る）
@@ -847,6 +847,7 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 
 | 日付 | 内容 | 担当 |
 |------|------|------|
+| 2026-10-31 | §6.5.5 の proposed の注記を外し、印刷の CSS の置き場（`globals.css` の `@page` と `@media print`）を書いた（日報の紙の runtime の実装、D-120） | Claude（Opus 5.5） |
 | 2026-10-29 | §6.5.5 の未確認の前提（WebView2 の印刷）を確かめる時を、日報の紙の runtime の lane の「実装の前」から「実装の後の L3（L3-1）」に直した（同 lane の Plan Review round 1） | Claude |
 | 2026-10-27 | UI-USW-D1 の `useBlocker` の直接使用の例外を、hook の列挙から 55 §55.7 の進行中の処理のガードの hook という持ち主で決める言い方に置き換え（z004-rollback-entry、PR #197 の Gated Amendment 3。取消の応答を待つ間のガードの hook を足しても列挙を継ぎ足さない。D-127） | Claude |
 | 2026-09-24 | デザインの決まりの組み直し（decision-log D-091）に合わせ、§1 デザインシステム表のカラーパレット行とアイコンサイズ行、哲学のスタック節（原則と根拠の出典へ改題）、§4 の索引表を design-system の README・00 の色の役割表・04 の原則・03 の出典へ向けた | Claude（Opus 5.5） |

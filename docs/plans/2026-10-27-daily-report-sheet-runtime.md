@@ -397,6 +397,7 @@ Test Design Matrix: [2026-10-27-daily-report-sheet-runtime](test-matrices/2026-1
 - main wiring/integration checks: 日次売上 → `useDailyReportSheet` → `commands.getDailyReportSheet` → CMD → BIZ → IO（`sales_cmd.rs` の command の test と ExportBar の component test）、印刷の dialog（L3-1）。
 - L3（Human Gate の manual）: 項目ごとの到達経路・入力物・依存は Matrix の Manual。受理される入力物は `tests/fixtures/daily-report-z001/`（2 回取り込んだ日 `2026-03-24`）と `tests/fixtures/daily-report-sheet/`（商品の一括 import の CSV、足さない日 `2026-03-25`、改ページの日 `2026-03-26`、`2026-03-24` と `2026-03-26` の Z004。S7）で、Coordinator が Ready の依頼と同時に取り込む順の手順（Matrix の Manual の (1)〜(6)。owner に DB への直接の挿入を求めない）を渡す（CP932・CRLF の実 encoding、`docs/DEV_WORKFLOW.md` Human Visual Confirmation）。Writer は L3 の前に `cargo check --release`。
 - Human visual confirmation（画面の変更）: 日次売上（`/reports/daily`）の印刷ボタンと押せない状態の文、支払集計の注記の見出しと文、2 回以上の日の文。Windows の native の L3 も要る（印刷）。
+- Boundary の表の「0 と負の値」は「0 と、絶対値が上限以内の負の値」の誤記（計画の closure の Codex の P3。正本と Matrix は正しい）。
 
 ## Review Focus
 

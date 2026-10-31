@@ -204,7 +204,7 @@ Z002由来の取引キー・支払・現金等の集計行を保存する。日�
 ### 設計意図
 - 改行・文字コード処理はIO parserで閉じる。持ち帰った Z 帳票と SD の file は CRLF だけで、NEL / raw 0x85 の行終端の実例は無い（2026-10 の見直しの事実の一覧。0x85 は CP932 の 2 バイト文字の中にだけ現れる）。正規化は防御として残す。
 - 支払・取引キーはreporting/accounting意味を持つが、在庫引落しの根拠にはならない。
-- **同じ日の取込みをまたいで足す鍵（proposed・未実装、D-120）**: `payment_key` は保存を続けるが、足す鍵には使わない。日次売上の支払集計と日報の紙は、位置（`sort_order`）と名称（`label` の前後の空白を除いた文字列）の組で見分けて足す（行がずれ、1 本の中に同じ名称が 2 行ある日は足さない。規則の正本は [34](../function-design/34-biz-sales-service.md) SALES-SHEET-D2、画面の側は [34](../function-design/34-biz-sales-service.md) §19.3 手順 3。IO の [24](../function-design/24-io-csv-import-repo.md) §14.21 手順 3 は行を足さずに返す）。並び順から作る `payment_N` で足すと、精算の間で名称が変わった日に別の項目を 1 行に足す。§12c の Z001 と §12e の Z005 の行も、日報の紙では同じ組で足す（日次売上の画面の Z001 は取込みごと〈D-096〉、Z005 は部門ごと〈24 §14.21 手順 4〉のまま）。列・制約・migration は変えない。
+- **同じ日の取込みをまたいで足す鍵（D-120）**: `payment_key` は保存を続けるが、足す鍵には使わない。日次売上の支払集計と日報の紙は、位置（`sort_order`）と名称（`label` の前後の空白を除いた文字列）の組で見分けて足す（行がずれ、1 本の中に同じ名称が 2 行ある日は足さない。規則の正本は [34](../function-design/34-biz-sales-service.md) SALES-SHEET-D2、画面の側は [34](../function-design/34-biz-sales-service.md) §19.3 手順 3。IO の [24](../function-design/24-io-csv-import-repo.md) §14.21 手順 3 は行を足さずに返す）。並び順から作る `payment_N` で足すと、精算の間で名称が変わった日に別の項目を 1 行に足す。§12c の Z001 と §12e の Z005 の行も、日報の紙では同じ組で足す（日次売上の画面の Z001 は取込みごと〈D-096〉、Z005 は部門ごと〈24 §14.21 手順 4〉のまま）。列・制約・migration は変えない。
 
 ---
 
@@ -491,3 +491,4 @@ CSV取込み: 2026/03/21の精算データ
 | 2026-10-06 | sd-direct-read（design、D-111） | `daily_report_imports.settlement_no` と同じ精算の二重取込みの拒否（BIZ-08-D4）。入力の標準をレジの SD の直読みにした。 |
 | 2026-10-17 | sd-direct-read-runtime（起票） | `settlement_no` の列を足す migration を [22 §17](../function-design/22-mnt-migration.md#17-mnt-03-追加-日報の束の精算回数の列の-migrationd-111) に置いた。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | 「SD の一括取込みと EJ の控えの契約」（`ej_records`）を proposed で足した。 |
+| 2026-10-31 | 日報の紙の runtime（実装、D-120） | §12d の「同じ日の取込みをまたいで足す鍵」の proposed の注記を外した。 |

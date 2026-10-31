@@ -104,6 +104,8 @@ assert の単位で分ける（2026-10-29、Plan Review round 1 の是正。fixt
 
 範囲の外の 2 本（NULL・代表）の旧い期待が持っていた検出力（NULL を 0 にしない、代表を最小 `sort_order`・最小の行 id にする、溢れを黙って wrap しない）は、右の列の範囲の中の BIZ の test が同じ規則で持つ。新しい BIZ の test の名前は Writer が既存の命名に揃えて直してよい（例 `test_daily_sales_payment_out_of_range_null_fixture_req501`）が、上の入力と期待は変えない。
 
+実装（2026-10-31）で「BIZ の期待」の列を持つ test は、上から `test_daily_sales_payment_out_of_range_all_active_parents_req501`・`test_daily_sales_payment_out_of_range_null_fixture_req501`・`test_daily_sales_payment_out_of_range_identities_req501`（`sales_service.rs`。fixture は IO の test と同じ）。
+
 在ることは 2026-10-27 に `rg -n 'fn test_[a-z0-9_]*' -o src-tauri/src/db/sales_repo.rs` で確かめた。#172 の merge の後に同じ command で取り直す。
 
 ## State Lifecycle Matrix
@@ -177,7 +179,7 @@ assert の単位で分ける（2026-10-29、Plan Review round 1 の是正。fixt
 
 L3 は本 PR が merge の train の先頭に来て、最新の `origin/main` を取り込んだ head で 1 回に頼む（D-124）。owner の操作は「PR の head の build を Windows で開き、Coordinator が渡す手順の順に fixture を取り込み、印刷して PASS / FAIL と記号で答える」の 1 回。
 
-取り込む順（Coordinator が Windows の path を省略せずに渡す。owner は取込みの画面で file を選ぶだけで、DB への直接の挿入〈`tests/fixtures/z004/setup-products.sql` 等〉を求めない。L3 Eligibility の (3)）: 作り直した空の DB で、(1) 商品の一括 import で `tests/fixtures/daily-report-sheet/products-sheet.csv` → (2) 売上データ取込みの日報で `tests/fixtures/daily-report-z001/` の `2026-03-24` の 2 束を順に → (3) 売上データ取込みの Z004 で `tests/fixtures/daily-report-sheet/Z004_260324.CSV` → (4) 日報で `tests/fixtures/daily-report-sheet/` の `2026-03-25` の 2 束を順に → (5) 日報で同じ folder の `2026-03-26` の 1 束 → (6) Z004 で `Z004_260326.CSV`。入力物の形は Plan Packet の S7 と fixture の README（全て合成・CP932・CRLF。日報の束と Z004 は layout A で、Z004 は精算の識別メタ〈マシンNo. `0001`・精算回数〉を持つ）。
+取り込む順（Coordinator が Windows の path を省略せずに渡す。owner は取込みの画面で file を選ぶだけで、DB への直接の挿入〈`tests/fixtures/z004/setup-products.sql` 等〉を求めない。L3 Eligibility の (3)）: 作り直した空の DB で、(1) 商品の一括 import で `tests/fixtures/daily-report-sheet/products-sheet.csv` → (2) 売上データ取込みの日報で `tests/fixtures/daily-report-z001/` の `2026-03-24` の 2 束を順に → (3) 売上データ取込みの Z004 で `tests/fixtures/daily-report-sheet/Z004_260324.CSV` → (4) 日報で `tests/fixtures/daily-report-sheet/` の `2026-03-25` の 2 束を順に → (5) 日報で同じ folder の `2026-03-26` の 1 束 → (6) Z004 で `Z004_260326.CSV`。入力物の形は Plan Packet の S7 と fixture の README（全て合成・CP932・CRLF。日報の束と Z004 は layout A で、Z004 は精算の識別メタ〈マシンNo. `0001`・精算回数〉を持つ）。(5) の束の Z005 の 60 行（`部門01` の形）は合成の部門名で空の DB の部門に当たらず、取込みの確認の画面に「確認が必要な部門があります」の知らせが 60 件並び、日次売上にも「部門マスタと対応していない部門が 60 件あります（部門名のまま表示しています）」が出る。合成の名前のためで想定どおりなので、そのまま取り込む（計画の closure の P3）。
 
 | 項目 | 到達経路 | 入力物 | 依存する既知の backlog | 確かめること（PASS の基準） |
 |---|---|---|---|---|

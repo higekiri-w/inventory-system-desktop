@@ -212,11 +212,11 @@ fn get_daily_sales(conn: &DbConnection, date: &str) -> Result<DailySalesReport, 
    - sales_repo::get_completed_daily_report_aggregate(conn, date) → Option<OfficialDailyReportRow>（IO の DB DTO）を、`map_official_daily_report` で `OfficialDailyReportSummary` へ写す。warning は BIZ がここで作る
    - `report_date=date AND status='completed'` の親を全件対象とし、`source_import_count` に親件数を返す。単一parent IDはwireへ返さない（`summary_imports` の要素の取込み ID は除く、D-096）
    - 親gross/netは合計する。ただし対象親のいずれかがNULLなら集約値もNULLとし、不完全値を確定値に見せない
-   - paymentは SALES-SHEET-D2 の規則（位置と名称の組で見分け、1・2 は組で足し、3 は足さない）で（proposed・未実装、D-120。今の実装は `payment_key` で集約し、並び順から作る `payment_N` が名称の違う行を 1 行に足しうる）。IO は支払の行を足さずに返し（[24 §14.21](24-io-csv-import-repo.md) 手順 3）、BIZ-05 が §19.3a の紙と同じ 1 つの関数で D2 を当てて足す（紙と画面で足し方の実装を 2 つ持たない。D2 の足す値の溢れは紙と同じ `BizError::ValidationFailed`「売上集計の計算でオーバーフローが発生しました」。D-142 の上限の下では届かない）。group の代表（返す `label` と `payment_key`）は group の中の最小 `sort_order`、同値なら最小の行 id の行。返す `payment_key` の意味と wire の型は変えない（同じ `payment_key` の group が 2 つ返りうる。画面は行の key を `payment_key` と配列の index から作る、56）。今と同じ行と値になるのは、その日の全取込みで「位置と前後の空白を除いた名称の組」の集合が同じで、1 取込みの中に同じ `payment_key` の行が無く、各組の保存済みの `payment_key` も全取込みで同じ入力に限る（互換の範囲の正本はこの段。D2 の 3 は組の集合が一致しない日だけなので、この範囲の日には起きない）。ただし範囲の中でも、ある組のある値に NULL があり、取込みの id の昇順で最初の NULL より前の和が溢れる入力は、今は `DbError::QueryFailed`、新しい規則では NULL になる（D2 の「足す値」の (a)）。NULL の無い値の和が溢れる入力は、今は `DbError::QueryFailed`、新しい規則では `BizError::ValidationFailed`（どちらも画面は表示を止める）。範囲の外の入力は新しい規則の値になる: 1 取込みの中に同じ `payment_key` の行が 2 つある入力は、今は 1 行に足され、新しい規則では位置ごとの 2 行に分かれる。同じ組の行の保存済みの `payment_key` が取込みで違う入力（IO-07-D4a の前の parser が `credit` とし、後の parser が `payment_N` とした、同じ位置・同じ名称の行が同じ日にある）は、今は `payment_key` ごとの 2 行に分かれ、新しい規則では組で足した 1 行になる。departmentは `department_id`、未対応行は `normalized_department_name` fallback `raw_department_name` で集約する。amountは合計し、optional quantity/countは対象行のいずれかがNULLなら集約値もNULLとする
+   - paymentは SALES-SHEET-D2 の規則（位置と名称の組で見分け、1・2 は組で足し、3 は足さない）で足す（D-120・D-142。前の実装は `payment_key` で集約し、並び順から作る `payment_N` が名称の違う行を 1 行に足しえた）。関数は `sales_service.rs` の `apply_sheet_rule` で、画面の支払集計と紙が同じものを呼ぶ。IO は支払の行を足さずに返し（[24 §14.21](24-io-csv-import-repo.md) 手順 3）、BIZ-05 が §19.3a の紙と同じ 1 つの関数で D2 を当てて足す（紙と画面で足し方の実装を 2 つ持たない。D2 の足す値の溢れは紙と同じ `BizError::ValidationFailed`「売上集計の計算でオーバーフローが発生しました」。D-142 の上限の下では届かない）。group の代表（返す `label` と `payment_key`）は group の中の最小 `sort_order`、同値なら最小の行 id の行。返す `payment_key` の意味と wire の型は変えない（同じ `payment_key` の group が 2 つ返りうる。画面は行の key を `payment_key` と配列の index から作る、56）。今と同じ行と値になるのは、その日の全取込みで「位置と前後の空白を除いた名称の組」の集合が同じで、1 取込みの中に同じ `payment_key` の行が無く、各組の保存済みの `payment_key` も全取込みで同じ入力に限る（互換の範囲の正本はこの段。D2 の 3 は組の集合が一致しない日だけなので、この範囲の日には起きない）。ただし範囲の中でも、ある組のある値に NULL があり、取込みの id の昇順で最初の NULL より前の和が溢れる入力は、今は `DbError::QueryFailed`、新しい規則では NULL になる（D2 の「足す値」の (a)）。NULL の無い値の和が溢れる入力は、今は `DbError::QueryFailed`、新しい規則では `BizError::ValidationFailed`（どちらも画面は表示を止める）。範囲の外の入力は新しい規則の値になる: 1 取込みの中に同じ `payment_key` の行が 2 つある入力は、今は 1 行に足され、新しい規則では位置ごとの 2 行に分かれる。同じ組の行の保存済みの `payment_key` が取込みで違う入力（IO-07-D4a の前の parser が `credit` とし、後の parser が `payment_N` とした、同じ位置・同じ名称の行が同じ日にある）は、今は `payment_key` ごとの 2 行に分かれ、新しい規則では組で足した 1 行になる。departmentは `department_id`、未対応行は `normalized_department_name` fallback `raw_department_name` で集約する。amountは合計し、optional quantity/countは対象行のいずれかがNULLなら集約値もNULLとする
    - labelとsortはgroup内の最小 `sort_order`、同値なら最小row IDの行を決定的な代表とする
    - 日報未取込みでも正常。`official_daily_report=None` とし、UIは「日報未取込み」と表示できる
    - SALES2-D5: 集約後の `department_id IS NULL` groupが n 件ある場合、`warnings` に「部門マスタと対応していない部門が n 件あります（部門名のまま表示しています）」を1件だけ追加する。importごとに警告を重複させない。NULL groupがなければ空配列
-   - 支払に SALES-SHEET-D2 のどれを当てたか（上の段の関数の結果。1 は `Summed`、2 は `LabelChanged`、3 は `Unsummed`）で、`warnings` に次の 1 件を足す（部門の warning の後。proposed・未実装、D-120。wire の型は変えない）。2 の日（`LabelChanged`）は「支払集計（Z002）は、この日の精算の間で行の名称か並びが変わっています。同じ名称の行が 2 行あれば、別々に足しています」。3 の日（`Unsummed`）は「支払集計（Z002）は、この日の精算の間で行の名称か並びが変わり、1 回の精算の中に同じ名称の行が 2 行以上あるため、足さずに取込みの古い順に並べています。紙（日報を印刷）で取込みごとに見られます」だけ（2 の文を重ねない）。1 の日（`Summed`）は足さない
+   - 支払に SALES-SHEET-D2 のどれを当てたか（上の段の関数の結果。1 は `Summed`、2 は `LabelChanged`、3 は `Unsummed`）で、`warnings` に次の 1 件を足す（部門の warning の後。D-120。wire の型は変えない）。2 の日（`LabelChanged`）は「支払集計（Z002）は、この日の精算の間で行の名称か並びが変わっています。同じ名称の行が 2 行あれば、別々に足しています」。3 の日（`Unsummed`）は「支払集計（Z002）は、この日の精算の間で行の名称か並びが変わり、1 回の精算の中に同じ名称の行が 2 行以上あるため、足さずに取込みの古い順に並べています。紙（日報を印刷）で取込みごとに見られます」だけ（2 の文を重ねない）。1 の日（`Summed`）は足さない
    - Z001の行は合算しない。IO が同じ親の集合について親ごとに返す取込み（`OfficialDailyReportRow.summary_imports`）を、並びと値を変えずに `OfficialDailySummaryImport` / `OfficialDailySummaryLine` へ写し、`summary_imports` に取込みの古い順で返す（D-096、[24 §14.21](24-io-csv-import-repo.md#1421-get_completed_daily_report_aggregate)）
 
 4. **部門小計の計算**
@@ -266,7 +266,7 @@ Ok(DailySalesReport {
 
 ---
 
-### 19.3a get_daily_report_sheet（日報の紙、proposed・未実装、D-120）
+### 19.3a get_daily_report_sheet（日報の紙、D-120）
 
 **関数要求**: 指定日のレジの日報を、印刷する 1 枚の紙の内容にして返す。その日の完了した日報の取込みを全部足し、PLU の売上はその日に売れた行だけを付ける。読み取りだけで、何も保存しない。
 
@@ -289,7 +289,7 @@ Ok(DailySalesReport {
 - **SALES-SHEET-D5（失敗と空の日）**: 失敗の順は、日付の検査 → 読取り（日報の行・PLU の行・Z004 の取込みの数の 3 つ。`DbError`）→ 足し算（溢れ）。処理ステップもこの順にする。どれかで失敗したら紙の内容を返さない（一部だけの紙を作らない）。完了した日報の取込みが 0 件の日は error にせず、`import_count = 0` と空の行で返す（UI は印刷を止める。UI-09a-D17）。
 - **SALES-SHEET-D6（保存しない）**: 紙の内容は DB に保存せず、呼ぶたびにその時点の取込みから作る。印刷した後に取込みを取り消すか追加すると、次に作る紙は変わる（紙の印刷日時で見分ける。UI-09a-D17）。
 
-**型定義（proposed）**:
+**型定義**:
 
 ```
 struct DailyReportSheet {
@@ -321,7 +321,7 @@ struct DailyReportSheetPluImport {
 
 `DailyReportSourceKind` は IO-07 の型（`Z001` / `Z002` / `Z005`、[29 §29.2](29-io-daily-report-parser.md#292-型定義)）で、wire にはすでに `DailyReportSourceFileInfo.source` として出ている。
 
-**シグネチャ（proposed）**:
+**シグネチャ**:
 ```
 fn get_daily_report_sheet(conn: &DbConnection, date: &str) -> Result<DailyReportSheet, BizError>
 ```
@@ -341,7 +341,7 @@ fn get_daily_report_sheet(conn: &DbConnection, date: &str) -> Result<DailyReport
 - 足し算の溢れ → `BizError::ValidationFailed`（本書冒頭の「数量と単位」の溢れと同じ扱い）
 - DB読み取り失敗 → `BizError::DatabaseError(DbError)`
 
-**テスト（runtime の lane）**: 同じ日の 2 取込みで、位置と名称が同じ行が足される（Z001 の総売の個数 `1.3` + `2` → `3.3`）。一方の取込みで金額が NULL の組は NULL。同じ位置で名称が違う 2 行は別の行に残り、`label_changed_sources` にその帳票が入る。行が 1 つずれた 2 取込み（片方だけ途中に 1 行多い）では、同じ名称が位置ごとに 2 行に分かれ、`label_changed_sources` にその帳票が入る。2 取込みの組の集合が同じ日は `label_changed_sources` が空で、1 本の中に同じ名称が 2 行あっても組で足す。行がずれ、片方の取込みに同じ名称が 2 行ある日（SALES-SHEET-D2 の 3 の例）は、その帳票だけ足さずに取込みごとの行（`import_seq` 1・2）で返し、`unsummed_sources` と `label_changed_sources` にその帳票が入り、ほかの帳票は足す。同じ日の 3 取込みの 2 本目にその帳票の行が無いとき、3 本目の行の `import_seq` は 3。組の集合が一致せず、同じ名称の 2 行が名称の空の行だけの日は 2 のまま足す。名称が空で値が 0 の行は載らず、名称が空で値のある行は載る。取込みが 0 件の日は `import_count = 0` で行が空。取り消した取込みの行は入らない。PLU の部分に手動販売の行と数量・金額とも 0 の行が入らない。足し算の溢れは `ValidationFailed` で、紙の内容を返さない。取込みの id の順に金額が `i64::MAX`・`1`・`-i64::MAX` の組は `ValidationFailed`（並べ替えて `1` にしない）、`i64::MAX`・`1`・NULL の組は NULL（溢れより NULL が先）。
+**テスト**: 同じ日の 2 取込みで、位置と名称が同じ行が足される（Z001 の総売の個数 `1.3` + `2` → `3.3`）。一方の取込みで金額が NULL の組は NULL。同じ位置で名称が違う 2 行は別の行に残り、`label_changed_sources` にその帳票が入る。行が 1 つずれた 2 取込み（片方だけ途中に 1 行多い）では、同じ名称が位置ごとに 2 行に分かれ、`label_changed_sources` にその帳票が入る。2 取込みの組の集合が同じ日は `label_changed_sources` が空で、1 本の中に同じ名称が 2 行あっても組で足す。行がずれ、片方の取込みに同じ名称が 2 行ある日（SALES-SHEET-D2 の 3 の例）は、その帳票だけ足さずに取込みごとの行（`import_seq` 1・2）で返し、`unsummed_sources` と `label_changed_sources` にその帳票が入り、ほかの帳票は足す。同じ日の 3 取込みの 2 本目にその帳票の行が無いとき、3 本目の行の `import_seq` は 3。組の集合が一致せず、同じ名称の 2 行が名称の空の行だけの日は 2 のまま足す。名称が空で値が 0 の行は載らず、名称が空で値のある行は載る。取込みが 0 件の日は `import_count = 0` で行が空。取り消した取込みの行は入らない。PLU の部分に手動販売の行と数量・金額とも 0 の行が入らない。足し算の溢れは `ValidationFailed` で、紙の内容を返さない。取込みの id の順に金額が `i64::MAX`・`1`・`-i64::MAX` の組は `ValidationFailed`（並べ替えて `1` にしない）、`i64::MAX`・`1`・NULL の組は NULL（溢れより NULL が先）。
 
 ---
 
@@ -519,3 +519,4 @@ fn export_sales_csv(
 | 2026-10-06 | z001-display（runtime、起票） | §19.2 の `OfficialDailyReportSummary` の field の並びを code（`sales_service.rs` の struct）と生成 bindings に合わせた（`source_import_count` を先頭へ。PR #114 Final Review の P3、[Plan Packet](../archive/plans/2026-10-06-z001-display.md)）。 |
 | 2026-10-27 | 日報の紙の runtime（起票、D-142） | 冒頭の「数量と単位」にレジの日報の値の範囲（IO-07-D6 の上限で収め、読取りで検査しない）を足した。§19.3 手順 3 の支払を、IO が足さずに返した行に BIZ-05 が紙と同じ 1 つの関数で SALES-SHEET-D2 を当てる形にし、互換の範囲の正本を 24 §14.21 手順 3 からこの段へ移した。D2 の足す値の溢れを紙と画面とも `ValidationFailed` にした（proposed・未実装）。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §19.3a の「精算をまたいで足してよい根拠」の未確認の前提（行ごとにレジスターツールの値と同じか）を確かめる場を、runtime の lane の L3 から紙の切替えの前の UI-09a-D19 の (2) へ移した（D-142 の (5)）。 |
+| 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §19.3 手順 3 と §19.3a の proposed の注記を外し、D2 の関数（`apply_sheet_rule`）の置き場を書いた。 |
