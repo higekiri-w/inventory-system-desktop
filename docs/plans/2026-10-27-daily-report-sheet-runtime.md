@@ -10,7 +10,7 @@ wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時�
 
 ## Workflow State
 
-- Phase: plan-approved
+- Phase: implementing
 - Risk: R3
 - Plan Commit: 2fca3b1836ffce0a4f120d2123d86dabe893ff5b
 - Amendments: none
@@ -29,6 +29,7 @@ wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時�
 3. design → plan-draft（2026-10-27、起草役、同じ commit）: 設計の出力は D-120・D-142 と上の正本にあり、未解決の設計の問いは無い。owner の判断事項（下の Open Questions の O1〜O4）は推奨の既定で書き進め、答えで変わる所を名指した。残る外部前提（Contract Probe の P1・P2・P5・P8）は実装の前・L3・D19 で確かめるもので、設計の問いではない。plan-gate へは Coordinator が #172 の merge と main の同期の後に進める。
 4. plan-draft のまま是正（round 1、2026-10-29、Coordinator の裁定）: Plan Review round 1（fresh Opus 5.5 と Codex、`REVIEWED_HEAD=ee8065b1`）の findings を Coordinator が全件受理し、発注 669 で起草役が packet・Matrix・設計正本を直した（下の Review Response）。Phase と Plan Commit は変えない。
 5. plan-draft → plan-approved（2026-10-29、Coordinator）: 計画の review の closure（round 2、`2fca3b18`）は fresh Opus 5.5・Codex とも approve（P1/P2 0、P3 だけ。PR #211 の comment「計画の review の closure（round 2）」）。`scripts/plan-approve.sh` で Plan Commit を `2fca3b18` に固定した（`f007d635`）。旧形式の packet は Phase が承認の前の値の間は承認の前と扱われる（`docs/DEV_WORKFLOW.md` の「承認の後の計画の変更」）ので、Phase の行を本 commit で進めた。implementing へは #172 の merge と同期の後に Coordinator が進める（packet の順）。
+6. plan-approved → implementing（2026-10-31、Coordinator）: #172 が main に入り（`25d106a9`）、`origin/main` を単段の merge で取り込んだ（`1f84ae13`。衝突は 37 の更新履歴の表だけで、両方の行を日付の順に残した）。AC10 の前提（#172 の merge の commit が HEAD の祖先）が成り立った。`Plan Commit` と `Amendments` は変えない。実装の Writer は発注 694。
 
 ## 本 commit で変えた正本
 
