@@ -4,7 +4,7 @@
 // 期待の文字列は 56 UI-09a-D17 の表から転記する（production の定数を import しない）。
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/lib/bindings";
@@ -245,6 +245,56 @@ describe("ExportBar UI-09a-D17", () => {
     expect(noticeAtPrint).toBeNull();
     // 印刷の後は案内が戻る
     expect(await screen.findByText(PRINT_NOTICE)).toBeInTheDocument();
+  });
+
+  it("print notice returns when the page is left while refetching (UI-09a-D18)", async () => {
+    // 読み直しを待つ間に画面を離れたら、読み直しの結果を採らず案内を消さない
+    let resolveRefetch: (value: ReturnType<typeof ok>) => void = () => undefined;
+    const refetchPromise = new Promise<ReturnType<typeof ok>>((resolve) => {
+      resolveRefetch = resolve;
+    });
+    mockGetSheet.mockResolvedValueOnce(ok(buildSheet())).mockReturnValueOnce(refetchPromise);
+    const bar = renderBar();
+    // 案内は ExportBar と別に描く（RootLayout と同じく、日次売上の画面を離れても残る）
+    render(<PrintUnsupportedNotice />);
+    const button = await printButton();
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-disabled", "false");
+    });
+
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(mockGetSheet).toHaveBeenCalledTimes(2);
+    });
+    bar.unmount();
+    await act(async () => {
+      resolveRefetch(ok(buildSheet()));
+      await refetchPromise;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(screen.getByText(PRINT_NOTICE)).toBeInTheDocument();
+  });
+
+  it("print notice returns when window.print throws (UI-09a-D18)", async () => {
+    // effect の throw は error の境界が ExportBar を外し、外したときの cleanup が案内を戻す
+    mockGetSheet.mockResolvedValue(ok(buildSheet()));
+    printSpy.mockImplementation(() => {
+      throw new Error("print failed");
+    });
+    renderBar();
+    render(<PrintUnsupportedNotice />);
+    const button = await printButton();
+    await waitFor(() => {
+      expect(button).toHaveAttribute("aria-disabled", "false");
+    });
+
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(printSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findAllByText(PRINT_NOTICE)).not.toHaveLength(0);
   });
 
   it("ExportBar shows skipped PLU rows with link (UI-09a)", async () => {

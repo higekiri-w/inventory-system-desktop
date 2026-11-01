@@ -3,12 +3,13 @@
 // CSV 出力 button + 日報の印刷ボタン（UI-09a-D17）。押せない理由はボタンの下に文で出す（Tooltip だけにしない）。
 // 押したときは (1) 紙の内容を読み直し、(2) 失敗か 0 件なら印刷せず、(3) 読み直した値と押した時刻で
 // 紙を描き直し、(4) DOM に反映された後に window.print() を呼ぶ（SALES-SHEET-D6）。押した時刻は (1) の前に取る。
-// 紙を描く間は Ctrl+P の案内（PrintUnsupportedNotice）を消す（UI-09a-D18）。
+// 紙を描く間は Ctrl+P の案内（PrintUnsupportedNotice）を消す（UI-09a-D18）。読み直しを待つ間に画面を離れたら
+// 読み直しの結果を採らず、案内を消さない（案内を戻す者がいなくなり、どの画面の Ctrl+P も白紙になるため）。
 // 設計: docs/function-design/56-ui-daily-sales.md UI-09a-D17・D18、§56.7
 
 import { Link } from "@tanstack/react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { DailyReportSheet as Sheet, DailyReportSourceKind } from "@/lib/bindings";
@@ -36,9 +37,14 @@ export function ExportBar({ onExportCsv, isExporting, date, sheetQuery }: Export
     setDailyReportSheetPrinting(false);
   }, [printing]);
 
-  // 印刷の前に画面を離れても案内を消したままにしない
+  // 画面を離れた後は読み直しの結果を採らない（handlePrint が await の後に見る）。
+  // 紙を描いた後に離れても、案内を消したままにしない。window.print() が throw したときも
+  // error の境界が ExportBar を外すので、ここで戻る
+  const mounted = useRef(false);
   useEffect(() => {
+    mounted.current = true;
     return () => {
+      mounted.current = false;
       setDailyReportSheetPrinting(false);
     };
   }, []);
@@ -52,6 +58,7 @@ export function ExportBar({ onExportCsv, isExporting, date, sheetQuery }: Export
     const printedAt = new Date();
     setIsRefetching(true);
     const result = await sheetQuery.refetch();
+    if (!mounted.current) return;
     setIsRefetching(false);
     if (result.isError || result.data === undefined || result.data.import_count === 0) return;
     // 紙を描く前に Ctrl+P の案内を消す（紙と案内を同じ印刷に出さない、UI-09a-D18）
