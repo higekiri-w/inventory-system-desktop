@@ -1,6 +1,6 @@
 # Plan Packet: 日報の紙の runtime（日報を 1 日 1 枚の紙にして印刷する、D-120 の実装）
 
-wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時に起票した 4 本の 1 本。owner の方針「質問なしで進められるだけ進める」〈repo 外の回答台帳 TD-401〉と並列の候補の目星〈TD-447〉）。設計は merge 済み（PR #173、[decision-log](../decision-log.md) D-120。設計 lane の packet と Matrix は `docs/archive/plans/2026-10-17-daily-report-sheet-design.md`・`docs/archive/plans/test-matrices/2026-10-17-daily-report-sheet-design.md`）で、本 lane はその契約を実装する。起票で新しい決定 D-142（日次売上と日報の紙の値の安全な整数の範囲と、支払の合算を BIZ の 1 つの関数に置くこと）を決め、正本を本 commit で直した（下の「本 commit で変えた正本」）。branch は `agent/daily-report-sheet-runtime`（起点 main `50f97a76`）。
+wave に属さない単独の lane（2026-10-27 起票。Coordinator が同時に起票した 4 本の 1 本。owner の方針〈repo 外の回答台帳 TD-401〉と並列の候補の目星〈TD-447〉）。設計は merge 済み（PR #173、[decision-log](../decision-log.md) D-120。設計 lane の packet と Matrix は `docs/archive/plans/2026-10-17-daily-report-sheet-design.md`・`docs/archive/plans/test-matrices/2026-10-17-daily-report-sheet-design.md`）で、本 lane はその契約を実装する。起票で新しい決定 D-142（日次売上と日報の紙の値の安全な整数の範囲と、支払の合算を BIZ の 1 つの関数に置くこと）を決め、正本を本 commit で直した（下の「本 commit で変えた正本」）。branch は `agent/daily-report-sheet-runtime`（起点 main `50f97a76`）。
 
 **実装は SD 直読みの runtime（PR #172、`agent/sd-direct-read-runtime`）の merge の後**。#172 は同じ file（`sales_repo.rs`・`sales_service.rs`・`sales_cmd.rs`・`daily_report_parser.rs`・`lib.rs`・`bindings.ts`）の test の fixture の型（`NewDailyReportImport.settlement_no`・`DailyReportInputFile.sd_relative_path` 等）と `commit_daily_report_import` の引数を変えるので、本 lane の test はその後の形で書く。**#172 の merge の後に `origin/main` を単段で同期してから plan-gate へ進める**（下の「並走との重なり」）。
 
@@ -510,6 +510,13 @@ Final Review round 1 の是正（2026-11-01、Writer の発注 704。裁定は P
 | 紙の時刻が読み直しの後の時刻になる（Codex P2） | `f124adcc` | `handlePrint` が読み直しの前に押した時刻を取る（56 UI-09a-D17） |
 | Ctrl+P で理由の表示なしに白紙が出る（Fable・Codex P3） | `f124adcc`、docs の commit | `#root` の外へ portal する案内の 1 行（`PrintUnsupportedNotice`、`RootLayout` に置く）。紙を描く間は描かない。56 UI-09a-D18 に 1 文。上の「紙を描く場所」の項の白紙はこれで解消 |
 | Risk の Reason の「Double Audit に当たる」の言い過ぎ（701b の Codex・Opus P3） | docs の commit | 「2 本目を勧める場合に当たる」に直した |
+
+Final Review round 2 の是正（2026-11-01、Writer の発注 710）:
+
+| 受理した finding（出所） | commit | 直した所 |
+|---|---|---|
+| 読み直しを待つ間に画面を離れると Ctrl+P の案内が戻らない（Codex P2） | `821c8dc5` | `ExportBar` が外れた後は読み直しの結果を採らない（`useRef` の印を cleanup で落とし、`await` の後に見る）。`window.print()` が throw する組は error の境界が `ExportBar` を外し、外したときの cleanup で案内が戻ることを test で固定した（`try`/`finally` は足していない。56 UI-09a-D18） |
+| packet の冒頭が owner の方針の原文を引く（Codex P3） | docs の commit | ID の参照（TD-401）だけにした（AC11・Data Safety） |
 
 ## Review Response
 
