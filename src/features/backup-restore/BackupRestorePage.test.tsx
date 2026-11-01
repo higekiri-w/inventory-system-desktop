@@ -597,7 +597,7 @@ describe("復元の前の控えの確かめ (REQ-901 / UI-11b-D15)", () => {
     expect(screen.getByText("最後の記録: 7月3日 20:47")).toBeInTheDocument();
   });
 
-  it("REQ-901 / UI-11b-D13: 成功の後の処理が throw しても release は 1 回（別の復元の停止を外さない）", async () => {
+  it("REQ-901 / UI-11b-D13 / §68.7: 成功の後の処理が throw しても release は 1 回（別の復元の停止を外さない）で、失敗と表示しない", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const { clearSpy } = renderWithClient(<PageWithAutoBackupCheck />);
@@ -616,9 +616,14 @@ describe("復元の前の控えの確かめ (REQ-901 / UI-11b-D15)", () => {
       expect(screen.getByRole("button", { name: "この控えに戻す" })).toBeEnabled();
     });
     const callsAfterRestore = mockCheckAutoBackup.mock.calls.length;
+    // §68.7: CMD の Ok の後の失敗は復元の失敗・元に戻した、と表示しない。成功の feedback を出す
+    expect(screen.queryByText(/バックアップの復元に失敗しました/)).not.toBeInTheDocument();
+    expect(mockToastSuccess).toHaveBeenCalledWith("バックアップから復元しました");
+    expect(consumeRestoreSuccessPending()).toBe(false);
 
     await vi.advanceTimersByTimeAsync(120_000);
 
+    // release が 1 回だけ: 2 回なら別の復元の理由まで外れて確認が走る
     expect(mockCheckAutoBackup).toHaveBeenCalledTimes(callsAfterRestore);
   });
 

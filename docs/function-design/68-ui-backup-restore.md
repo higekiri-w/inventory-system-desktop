@@ -148,7 +148,7 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 | `pre_backup_failed` | 事前バックアップ失敗 | `restore_confirm` / `restore_detail` / `ready` | break-glass checkbox を表示。checkbox 未チェックでは進行不可。「閉じる」で `ready`。 |
 | `restore_confirm` | 最終 AlertDialog | `restoring` / `restore_detail` | 「元に戻せません」と日時を再掲。実行ボタンに日時を含める。 |
 | `restoring` | `restoreBackup` | `restore_succeeded` / `restore_failed_recovered` / `restore_failed_unrecoverable` | 画面内操作を disabled。 |
-| `restore_succeeded` | CMD が Ok を返す | home route | Query cache を `clear` し、ホームへ遷移して success Alert（one-shot、UI-11b-D11）。 |
+| `restore_succeeded` | CMD が Ok を返す | home route | Query cache を `clear` し、ホームへ遷移して success Alert（one-shot、UI-11b-D11）。Ok の後の `clear`・flag・遷移が失敗しても復元の失敗と表示しない（flag を消し、成功の toast を出す。navigate の reject と同じ fallback）。 |
 | `restore_failed_recovered` | CMD が **recoverable 分類**の Err を返す（DB 接続再確立済み） | `ready` | 復元失敗を表示し、一覧を再取得して再試行可能にする。復元の card は未選択へ戻す（再試行は一覧の行を選び直して確かめから。IPC の例外も同じ）。 |
 | `restore_failed_unrecoverable` | CMD が **unrecoverable 分類**の Err を返す | terminal | DSR-03 上部帯の full-page destructive Alert、全操作 disabled、「アプリを閉じて、もう一度開いてください」。 |
 

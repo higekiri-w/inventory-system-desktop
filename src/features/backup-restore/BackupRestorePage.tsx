@@ -328,27 +328,28 @@ export function BackupRestorePage() {
     // UI-11b-D13: 復元の理由を立て、この画面の選択の理由を復元の理由へ移す
     holdAutoBackupCheckForRestore();
     let fatal = false;
+    // §68.7: CMD の Ok で成功を確定する。その後の画面の更新の失敗を復元の失敗と取り違えない
+    let restored = false;
     try {
       await unwrapResult(commands.restoreBackup({ backup_path: restoreState.selected.file_path }), {
         source: "commands",
         cmd: "restore_backup",
       });
+      restored = true;
       queryClient.clear();
-      // UI-11b-D11: 遷移先ホームで success Alert を表示する in-memory one-shot flag。
-      // navigate が reject された場合は次回到達での誤表示を防ぐため flag を消去する
-      // (復元自体は成功しているため、navigate 失敗を復元失敗 UI へは伝播させない)。
+      // UI-11b-D11: 遷移先ホームで success Alert を表示する in-memory one-shot flag
       setRestoreSuccessPending();
-      try {
-        await navigate({ to: "/" });
-      } catch (navigateError) {
-        clearRestoreSuccessPending();
-        console.warn("復元成功後のホーム遷移に失敗しました:", navigateError);
-        // navigate 失敗時は home Alert が出せないため、成功 feedback が operator に
-        // 一切届かなくなる（無通知への劣化）のを避けるフォールバックとしてのみ toast を出す。
-        // primary path（navigate 成功時）は home Alert に一本化し、二重通知にしない。
-        toast.success("バックアップから復元しました");
-      }
+      await navigate({ to: "/" });
     } catch (error) {
+      if (restored) {
+        // 復元は成功している（成功の後の clear・flag・navigate の失敗）。失敗の表示・state にせず、
+        // 次回到達での誤表示を防ぐため flag を消し、home Alert を出せない代わりに成功の toast を出す
+        // （無通知への劣化を防ぐ fallback。primary path の navigate 成功時は home Alert に一本化）
+        clearRestoreSuccessPending();
+        console.warn("復元成功後の画面の更新に失敗しました:", error);
+        toast.success("バックアップから復元しました");
+        return;
+      }
       const kind = restoreErrorKind(error);
       setRestoreFailureErrorId(restoreErrorId(error));
       if (kind === "restore_failed_unrecoverable" || kind === "restore_durability_unknown") {
