@@ -1342,6 +1342,12 @@ export type ProductCreateRequest = {
 	supplier_id: number | null,
 	pos_stock_sync: boolean,
 	plu_target: boolean,
+	/**
+	 *  BIZ-01-D11: JAN を持ったまま独自コードで登録し、同じ JAN の商品の群に加える。
+	 *  商品フォームは `JanInUse` を受けた確認のダイアログからだけ true を送る（51 UI-01b-D26）。
+	 *  jan_code が None なら意味を持たない
+	 */
+	shared_jan_custom_code: boolean,
 };
 
 // 商品登録結果（FUNC-4.2）

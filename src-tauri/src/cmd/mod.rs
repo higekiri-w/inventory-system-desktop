@@ -190,6 +190,15 @@ impl From<BizError> for CmdError {
                 stocktake_recovery: None,
                 related_csv_import_id: None,
             },
+            // BIZ-01-D11: 商品フォームは kind と field で分け、message を解析しない（40）
+            BizError::JanInUse(message) => CmdError {
+                kind: CmdErrorKind::Duplicate,
+                message,
+                field: Some("jan_code".to_string()),
+                error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
+            },
             BizError::DatabaseError(_) | BizError::SourceCopyFailed(_) => {
                 unreachable!("handled before generic logging")
             }
@@ -325,6 +334,18 @@ mod tests {
         let cmd_err: CmdError = biz_err.into();
         assert_eq!(cmd_err.kind, CmdErrorKind::Duplicate);
         assert!(cmd_err.message.contains("TEST-001"));
+        // 商品フォームは field jan_code の有無で JanInUse と分ける（40、UI-01b-D26）
+        assert!(cmd_err.field.is_none());
+    }
+
+    #[test]
+    fn test_cmd_error_req905_from_jan_in_use() {
+        // REQ-905 / BIZ-01-D11（40）: JanInUse は kind duplicate・field jan_code、message は BIZ の文のまま
+        let message = "この JAN（4901234567887）はほかの商品が使っています: P-901「赤」";
+        let cmd_err: CmdError = BizError::JanInUse(message.to_string()).into();
+        assert_eq!(cmd_err.kind, CmdErrorKind::Duplicate);
+        assert_eq!(cmd_err.field.as_deref(), Some("jan_code"));
+        assert_eq!(cmd_err.message, message);
     }
 
     #[test]
@@ -440,6 +461,7 @@ mod tests {
             },
             BizError::NotFound("n".to_string()),
             BizError::DuplicateProductCode("d".to_string()),
+            BizError::JanInUse("j".to_string()),
             BizError::DatabaseError(DbError::NotFound),
             BizError::ImportError("i".to_string()),
             BizError::ExportError("e".to_string()),

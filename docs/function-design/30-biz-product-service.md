@@ -5,7 +5,7 @@
 [棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2・D4・D8）の BIZ-01 の側。旧 ADR（時点証拠）の版・非連動化の記録・`ej_unverified` による有効化の拒否と既定値 false・本番前 preflight は持たない（置き換えた）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは 1 つ目の項目（`ProductUpdates.stock_quantity` を外し、初期在庫の movement〈業務日は登録した TX の PC の今日〉と `recompute_stock`）。共有 JAN と在庫連動を始める検査の項目は b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入った。
 
 - 汎用 `ProductUpdates` の `stock_quantity` 欄は外した（[20](20-io-product-repo.md)。production で `Some` を渡す呼出しは無かった）。create と商品一括 import の新規行は、初期数量を初期在庫の movement（`business_date` = 登録日、`phase=0`）として同じ TX で INSERT し、[31](31-biz-inventory-service.md) の `recompute_stock` で写しを書く。商品一括 import の既存商品の上書きは在庫を変えない（今のまま）。
-- 共有 JAN（SPEC-STK-CNT-D4）: 不変条件は 1 つ。変更の後に、在庫連動の商品と同じ JAN を持つ別の商品があってはならない。create・update（在庫連動の変更。update は JAN を変えない: `ProductUpdateRequest` に `jan_code` は無く、商品フォームの edit の JAN 欄は読取専用〈BIZ-01-D1 の「edit は jan_code 変更不可」、[51](51-ui-product-form.md) UI-01b-D5〉。update の検査は在庫連動を始める〈false → true〉保存だけで、ほかの欄だけの保存は組を新しく作らないので検査しない〈移行の前からある組の商品の修正も通る。組は [36](36-biz-integrity-check.md) の整合性の画面で知らせる〉）・商品一括 import（新規の行と、JAN と在庫連動を書く上書きの行。JAN が変わる経路は上書きの行だけ）の TX の中で、変更の後の状態でこれを検査し、どの経路でも、どちらの商品を変える場合でも（例: 一括 import の上書きで在庫連動の商品 A の JAN を非連動の C と同じ値に変える、一括 import の上書きで非連動の C の JAN を A と同じ値に変える、商品の修正か一括 import の上書きで C を在庫連動にする）拒否する（JAN の経路の書き分けは b1 の Plan Review round 1 の是正、2026-10-22）（既存の `validation` kind、field `pos_stock_sync` か `jan_code`、message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」。`ValidationFailedAt`。回復型〈`stocktake_guard`〉には載せない）。商品一括 import では当該行だけを error 行にし、他の正常行は続ける。preview だけの検証で確定を通さない。
+- 共有 JAN（SPEC-STK-CNT-D4）: 不変条件は 1 つ。変更の後に、在庫連動の商品と同じ JAN を持つ別の商品があってはならない。create・update（在庫連動の変更。update は JAN を変えない: `ProductUpdateRequest` に `jan_code` は無く、商品フォームの edit の JAN 欄は読取専用〈BIZ-01-D1 の「edit は jan_code 変更不可」、[51](51-ui-product-form.md) UI-01b-D5〉。update の検査は在庫連動を始める〈false → true〉保存だけで、ほかの欄だけの保存は組を新しく作らないので検査しない〈移行の前からある組の商品の修正も通る。組は [36](36-biz-integrity-check.md) の整合性の画面で知らせる〉）・商品一括 import（新規の行と、JAN と在庫連動を書く上書きの行。JAN が変わる経路は上書きの行だけ）の TX の中で、変更の後の状態でこれを検査し、どの経路でも、どちらの商品を変える場合でも（例: 一括 import の上書きで在庫連動の商品 A の JAN を非連動の C と同じ値に変える、一括 import の上書きで非連動の C の JAN を A と同じ値に変える、商品の修正か一括 import の上書きで C を在庫連動にする）拒否する（JAN の経路の書き分けは b1 の Plan Review round 1 の是正、2026-10-22）（既存の `validation` kind、field `pos_stock_sync`〈create は §4.2 の step 3b、update は §4.4 の在庫連動を始める保存。JAN が他の商品にある新規登録は step 3a の `JanInUse` が先に止めるので、field `jan_code` で返す経路は無い。BIZ-01-D11〉、message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」。`ValidationFailedAt`。回復型〈`stocktake_guard`〉には載せない）。商品一括 import では当該行だけを error 行にし、他の正常行は続ける。preview だけの検証で確定を通さない。
 - 商品一括 import の判定の状態と確定の拒否（b1 の Plan Review round 2 の是正、2026-10-22。下の在庫連動を始める検査も同じ）: preview は、新規の行（valid_rows）を CSV の順に、DB の今の状態に先の新規の行の変更を当てた状態で判定し（同じ CSV の新規の行どうしで、在庫連動の商品と同じ JAN の別の商品ができる組は、後の行が error 行）、重複の行（上書きの候補）は、DB の今の状態に全ての新規の行の変更を当てた状態で判定する（確定は新規の行の後に上書きの行を処理する。[60](60-ui-product-import.md) の送る行の並び。ほかの重複の行は上書きするかが preview の時点で分からないので当てない。§4.9.2 の preview の判定と同じ）。確定は送られた行の順に、TX の中のその時点の状態（先に処理した行の変更を含む）で同じ検査をし、当たる行が 1 つでもあれば（preview の後に DB が変わったか、上書きを選んだ行どうしが当たった場合だけ起きる）、何も書かずに `BizError::ValidationFailed`（field なし）で確定全体を戻す。message は最初に当たった行を名指す: 「商品 {商品コード} の行: {preview の行の error と同じ文}。読み込みの後に登録か売上が変わったか、上書きを選んだほかの行と重なったため、取込みを止めました（どの行も取り込んでいません）。その行をスキップにするか、ファイルを選び直してもう一度読み込んでください」。形は §4.9 の単位の再検証（BIZ-01-D8）と §4.9.2 の J3・J4・J7 と同じ（行を名指して確定全体を戻し、preview へ導く）で、結果の型 `ImportResult`（TS 名 `ProductImportResult`）と画面の結果は変えない。当たった行だけを飛ばして他を確定する形は採らない（結果の型に行の拒否の一覧を足し、結果の画面を作り直すことになり、確定の後に利用者が何を取り込まなかったかを別の画面で読み直すことになる）。
 - 在庫連動を始める（SPEC-STK-CNT-D8）: 既存の商品の false → true は、連動なしで取り込んだ Z004 の売上（`sale_records`、`is_voided=0`、`stock_linked=0`、個数 ≠ 0 か金額 ≠ 0）が全て効く計数に確実に入っている（ADR D3 の判定表で「入る」）ときだけ許す。「入っていない」か「決まらない」売上があるとき、効く計数が衝突しているとき、効く計数が無く連動なしの売上が 1 件でもあるときは `recount_required` で拒否し、message「連動しない間の売上があります。今の数を入れてから在庫連動にしてください」と回復先（[40](40-cmd-product.md) の回復型。進行中の棚卸しにその商品の明細があれば action `active_count`、なければ `count_now`）を返す。効く計数が無い商品は、連動なしの売上が 1 件でもあれば拒否する。在庫連動を始める保存が共有 JAN の不変条件と `recount_required` の両方に当たるときは、共有 JAN の拒否を先に返す（数えても直らない拒否を先に名指す。商品の修正と一括 import の行の両方。b1 の Plan Review round 2 の是正）。true → false は記録も確認も要らない。`pos_stock_sync` の既定値（新規の商品・商品一括 import の省略時の true、DB の `DEFAULT 1`）は変えない。
 
@@ -57,10 +57,11 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
 - supplier_id: Option<i64>
 - pos_stock_sync: bool
 - plu_target: bool（D-028: スキャニングPLU書出し対象フラグ。UI-01b が jan_code の 13 桁数字判定から初期値を提案し、利用者が変更した確定値を渡す。pos_stock_sync と同じ「UI で初期値提案 + 変更可」パターン）
+- shared_jan_custom_code: bool（BIZ-01-D11。true は「JAN を持ったまま独自コードで登録し、同じ JAN の商品の群に加える」。UI-01b は step 3a の `JanInUse` を受けた確認のダイアログからだけ true を送る〈[51](51-ui-product-form.md) UI-01b-D26〉。jan_code が None なら意味を持たない〈今どおり発番〉）
 
 **ProductCreateResult構造体**:
 - product_code: String（発番された場合は独自コード）
-- warnings: Vec<String>
+- warnings: Vec<String>（step 3a2 で在庫連動を外した商品ごとの知らせ。それ以外は空）
 
 **処理ステップ**:
 1. **バリデーション**
@@ -83,12 +84,19 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
    - 実装時の差分: 元の設計ではステップ3だったが、generate_custom_code 内の increment_next_seq が DB を更新するため TX 内に含める必要あり
 
 3. **product_codeの決定**（TX内）
-   a. jan_codeがSome:
-      - product_code = jan_code.clone()
-      - product_repo::find_by_product_code() で重複チェック → 既存あり → BizError::DuplicateProductCode(product_code)
+   a. jan_codeがSome で shared_jan_custom_code = false（BIZ-01-D11）:
+      - product_repo::find_by_jan_code(J) と product_repo::find_by_product_code(J) で、JAN が J の商品と商品コードが J の商品を集める（J は jan_code の値。商品コードの昇順、同じ商品は 1 つ）
+      - 1 件でもあれば → BizError::JanInUse(message)（message は BIZ-01-D11 の形で全ての商品を名指す）。何も書かない
+      - 無ければ product_code = jan_code.clone()（JAN が他の商品に無いときは JAN を商品コードにする今の形、repo 外の回答台帳 TD-338）
+   a2. jan_codeがSome で shared_jan_custom_code = true（BIZ-01-D11）:
+      - generate_custom_code(&tx, department_id) を呼ぶ（後述）→ product_code を取得。jan_code は J のまま持つ
+      - product_repo::find_by_jan_code(J) の商品のうち pos_stock_sync = true の各商品（商品コードの昇順。廃番の商品を含む）を、product_repo::update_product（`ProductUpdates { pos_stock_sync: Some(false), .. }`）で在庫連動なしにし、商品ごとに `recompute_stock`（[31](31-biz-inventory-service.md)。在庫連動の切替の TX はその商品を求め直す、ADR SPEC-STK-CNT-D2 の表の「在庫連動の切替」の行。§4.4 の update と同じ）と操作ログ（operation_type = "product_update"、summary = "商品を更新しました: {商品コード}"、detail_json = `{"pos_stock_sync":{"old":true,"new":false}}`。BIZ-01-D7 の形）を書き、warnings に「同じ JAN の商品 {商品コード}「{商品名}」の「POS販売で在庫を減らす」を「減らさない」にしました」を足す（文は商品フォームの画面の語。BIZ-01-D11 の message の形の項）
+      - JAN が J の商品が無くても（読んだ後に変わった等）失敗にせず、独自コードで登録する（外す商品は 0、warnings は空）
    b. jan_codeがNone:
       - generate_custom_code(&tx, department_id) を呼ぶ（後述）→ product_codeを取得
       - jan_code = None のまま
+
+3b. **共有 JAN の不変条件**（冒頭の「計数の置き場と在庫の求め直しの契約」の共有 JAN の項、ADR SPEC-STK-CNT-D4）: step 3 の後の状態（step 3a2 で外した後）で検査し、当たれば BizError::ValidationFailedAt（message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」、field `pos_stock_sync`）。step 3a で JAN が他の商品に無いことを確かめ、step 3a2 で同じ JAN の商品を在庫連動なしにするので、当たるのは step 3a2 の経路で新しい商品を在庫連動にして送ったときだけ（UI-01b は送らない）
 
 4. **productsにINSERT**
    - NewProduct構造体を構築してproduct_repo::insert_product()を呼ぶ
@@ -116,13 +124,26 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
 8. **COMMIT**
 
 9. **結果返却**
-   - ProductCreateResult { product_code, warnings: [] }
+   - ProductCreateResult { product_code, warnings }（warnings は step 3a2 で足したもの。それ以外の経路は空）
 
 **エラーハンドリング**:
 - バリデーション失敗 → BizError::ValidationFailed(message)。トランザクション開始前なのでROLLBACK不要
-- 重複コード → BizError::DuplicateProductCode(code)。TX内で発生 → RAII自動ROLLBACK。JAN の重複で起きる。独自コードは §4.3 が既存の番号を飛ばすため（BIZ-01-D6）、既存の商品に当たって止まることはない
+- JAN を他の商品が使っている（step 3a）→ BizError::JanInUse(message)。TX内で、まだ何も書いていない → RAII自動ROLLBACK
+- 共有 JAN の不変条件（step 3b）→ BizError::ValidationFailedAt。step 3a2 で外した在庫連動と next_seq の引上げも RAII自動ROLLBACK で戻る
+- 重複コード → BizError::DuplicateProductCode(code)。TX内で発生 → RAII自動ROLLBACK。JAN が他の商品にあるときは step 3a が先に `JanInUse` を返すので、起きるのは INSERT の一意制約に当たったとき（step 3a の後に同じ商品コードが入った等）だけ。独自コードは §4.3 が既存の番号を飛ばすため（BIZ-01-D6）、既存の商品に当たって止まることはない
 - DB操作失敗（INSERT等）→ RAII自動ROLLBACK → BizError::DatabaseError(DbError)
 - 棚卸しアイテム追加失敗 → RAII自動ROLLBACK → BizError::DatabaseError(DbError)
+
+**設計判断（BIZ-01-D11、JAN が他の商品にあるときは知らせ、独自コードで群に加える道を出す、2026-10-27、D-141）**: 新規登録で入れた JAN を他の商品が使っているとき（JAN が同じ商品か、商品コードがその JAN の商品）、黙って JAN を商品コードにせず、`JanInUse` で使っている商品を名指して止める。利用者が独自コードで登録すると選んだら（`shared_jan_custom_code = true`）、独自コードを振り、JAN を持たせ、同じ JAN の在庫連動の商品を同じ TX で在庫連動なしにする（repo 外の回答台帳 TD-349。後から加える色に独自コードを振り、同じ JAN を各色に持たせる形。TD-352 の「群は全色を独自コード」とは下の例外の項だけ違う）。
+- message の形: 「この JAN（{J}）はほかの商品が使っています: {商品コード}「{商品名}」、…」。各商品の後ろに、次の印を 1 つの括弧に「・」でつないで付ける（当たらない商品には括弧を付けない）: JAN が J でなく商品コードだけが J なら「商品コードだけ同じ」、在庫連動なら「POS販売で在庫を減らす」、廃番なら「廃番」（この順。例「（商品コードだけ同じ・POS販売で在庫を減らす）」「（POS販売で在庫を減らす・廃番）」）。並びは商品コードの昇順。件数で省かない（群は色の数で、画面のダイアログが全てを出す）。CMD は kind `duplicate`・field `jan_code` で返す（[40](40-cmd-product.md)）。
+- 文の語: `JanInUse` の message と step 3a2 の warnings は、商品フォームの画面の語（在庫の節の欄の名「POS販売で在庫を減らす」と値「減らす」「減らさない」、[51](51-ui-product-form.md) の冒頭の `recount_required` の項）で書き、画面に無い「在庫連動」を使わない。読むのは商品フォームだけ（`rg -n 'createProduct' src --glob '!src/lib/bindings.ts' --glob '!*.test.*'` が `ProductFormPage.tsx` と `product-form-request.ts`〈request の組み立て〉だけ、`create_product` の BIZ の呼出し側は `cmd/product_cmd.rs` だけ。2026-10-29）なので、BIZ の文を画面の語にしても他の画面へ波及しない。冒頭の共有 JAN の項の message（「在庫連動にできません」。商品フォームと商品一括 import の両方が読む）は本決定で変えない（[backlog](../backlog.md) の候補）。
+- TD-352 からの例外: 群の 1 色目を先に商品フォームで登録すると、JAN がほかの商品に無いので商品コードは JAN（J）になる（TD-338）。2 色目以降を本決定の道で加えても、1 色目の商品コードは J のまま残る（商品コードは主キーで、修正の画面でも読取専用〈[51](51-ui-product-form.md) UI-01b-D5〉。変えると全参照の書換えになる〈[master-tables](../db-design/master-tables.md) の困りそうなケースの SP-102-04 と同じ理由〉）。このため群の中で 1 色目だけが独自コードでなく、TD-352 の「全色を独自コード」の例外になる。既存の商品を独自コードへ振り直す処理は足さない。害: Z004 の照合は `jan_code` だけで行い、売上は群の先頭（商品コードの昇順）に記録し在庫を動かさない（[pos-tables](../db-design/pos-tables.md) の Z004 のマスタ照合、ADR D4）ので、商品コードが J のままでも在庫は黙ってずれない。例外を受け入れるかは owner の確認を待つ（packet の Q3。AI の review〈PR #212 の計画の review round 1〉から出た問い）。
+- 在庫連動を外す理由: 同じ JAN の商品はレジの売上でどれが売れたか見分けられず、ADR SPEC-STK-CNT-D4 の不変条件（在庫連動の商品と同じ JAN を持つ別の商品があってはならない）で、新しい商品も既存の商品も在庫連動にできない。外さずに拒むと、利用者は登録の画面を離れて既存の商品の修正で在庫連動を外し、入力をやり直すことになる（D-127 の「その場で直せる」に反する）。true → false は記録も確認も要らない変更（冒頭の節の「在庫連動を始める」の項）なので、登録の確認のダイアログで名指して同意を得たうえで、登録と同じ TX で外す。外した商品は operation log と warnings で名指す。
+- 却下 (a) 今の形（JAN を商品コードにし、JAN の商品コードがあるときだけ `DuplicateProductCode`）: 2 色目は商品 CSV でしか入れられない（TD-349 の起点）。JAN が別の商品コードの商品にだけあるときは、知らせも同意も無く、JAN を商品コードにした商品が群に加わる（後から加える色に独自コードを振る形にならない）。
+- 却下 (b) 知らせずに自動で独自コードにする: 同じ品を 2 つ登録する誤り（廃番にした商品の登録し直し等）に気づけない。
+- 却下 (c) 既存の在庫連動の商品は外さずに拒み、その商品の修正へ案内する: 上の在庫連動を外す理由。owner の判断を待つ選択肢として残す（[decision-log](../decision-log.md) D-141 の Alternatives）。
+- 却下 (d) D4 を緩め、既存の商品の在庫連動を残す: レジの売上で既存の商品の在庫だけが減り、別の色が売れても減る（黙ってずれる）。D4 の改訂は店内コードの lane の Revisit（ADR）で、本決定の範囲の外。
+- Revisit: 店内コードの lane で共有 JAN の群の扱い（ADR の Revisit）が変わったとき。商品フォームの edit で JAN を変えられるようにするとき（同じ知らせを edit にも置く）。
 
 ---
 
@@ -651,6 +672,7 @@ enum BizError {
     ValidationFailedAt { message: String, field: String },
     NotFound(String),
     DuplicateProductCode(String),
+    JanInUse(String),                 // BIZ-01-D11: 新規登録で入れた JAN を他の商品が使っている（message は BIZ が作る）
     DatabaseError(DbError),
     ImportError(String),
     IdempotencyConflict(String),

@@ -39,6 +39,10 @@ pub struct ProductCreateRequest {
     pub supplier_id: Option<i64>,
     pub pos_stock_sync: bool,
     pub plu_target: bool,
+    /// BIZ-01-D11: JAN を持ったまま独自コードで登録し、同じ JAN の商品の群に加える。
+    /// 商品フォームは `JanInUse` を受けた確認のダイアログからだけ true を送る（51 UI-01b-D26）。
+    /// jan_code が None なら意味を持たない
+    pub shared_jan_custom_code: bool,
 }
 
 /// 商品登録結果（FUNC-4.2）
@@ -226,13 +230,27 @@ pub fn create_product(
         .transaction()
         .map_err(|e| BizError::DatabaseError(DbError::from(e)))?;
 
-    // 3. product_code の決定（TX内）
+    // 3. product_code の決定（TX内。30 §4.2 手順 3a・3a2・3b、BIZ-01-D11）
+    let mut warnings = Vec::new();
     let product_code = match &req.jan_code {
+        Some(jan) if !req.shared_jan_custom_code => {
+            // 3a. JAN を他の商品が使っていれば名指して止める（何も書かない）
+            if let Some(message) = jan_in_use_message(&tx, jan)? {
+                return Err(BizError::JanInUse(message));
+            }
+            jan.clone()
+        }
         Some(jan) => {
-            let code = jan.clone();
-            // 事前重複チェック
-            if product_repo::find_by_product_code(&tx, &code)?.is_some() {
-                return Err(BizError::DuplicateProductCode(code));
+            // 3a2. 独自コードを振り、同じ JAN の在庫連動の商品を同じ TX で外す（BIZ-01-D7 のログと warnings）
+            let code = generate_custom_code(&tx, req.department_id)?;
+            for other in product_repo::find_by_jan_code(&tx, jan)? {
+                if other.pos_stock_sync {
+                    unlink_shared_jan_product(&tx, &other)?;
+                    warnings.push(format!(
+                        "同じ JAN の商品 {}「{}」の「POS販売で在庫を減らす」を「減らさない」にしました",
+                        other.product_code, other.name
+                    ));
+                }
             }
             code
         }
@@ -249,12 +267,7 @@ pub fn create_product(
     )? {
         return Err(BizError::ValidationFailedAt {
             message: shared_jan_message(&others),
-            field: if req.pos_stock_sync {
-                "pos_stock_sync"
-            } else {
-                "jan_code"
-            }
-            .to_string(),
+            field: "pos_stock_sync".to_string(),
         });
     }
 
@@ -343,8 +356,73 @@ pub fn create_product(
 
     Ok(ProductCreateResult {
         product_code,
-        warnings: vec![],
+        warnings,
     })
+}
+
+/// 新規登録で入れた JAN `jan` を、JAN か商品コードとして持つ商品を名指す文（BIZ-01-D11）。無ければ None。
+/// 並びは商品コードの昇順、印は「商品コードだけ同じ」「POS販売で在庫を減らす」「廃番」の順（商品フォームの画面の語）
+fn jan_in_use_message(conn: &DbConnection, jan: &str) -> Result<Option<String>, BizError> {
+    let mut users = product_repo::find_by_jan_code(conn, jan)?;
+    if let Some(found) = product_repo::find_by_product_code(conn, jan)? {
+        if found.product.jan_code.as_deref() != Some(jan) {
+            users.push(found.product);
+        }
+    }
+    if users.is_empty() {
+        return Ok(None);
+    }
+    users.sort_by(|a, b| a.product_code.cmp(&b.product_code));
+    let named: Vec<String> = users
+        .iter()
+        .map(|p| {
+            let marks: Vec<&str> = [
+                (p.jan_code.as_deref() != Some(jan), "商品コードだけ同じ"),
+                (p.pos_stock_sync, "POS販売で在庫を減らす"),
+                (p.is_discontinued, "廃番"),
+            ]
+            .into_iter()
+            .filter_map(|(hit, mark)| hit.then_some(mark))
+            .collect();
+            let suffix = if marks.is_empty() {
+                String::new()
+            } else {
+                format!("（{}）", marks.join("・"))
+            };
+            format!("{}「{}」{}", p.product_code, p.name, suffix)
+        })
+        .collect();
+    Ok(Some(format!(
+        "この JAN（{jan}）はほかの商品が使っています: {}",
+        named.join("、")
+    )))
+}
+
+/// 同じ JAN の群の在庫連動の商品を在庫連動なしにし、求め直し、BIZ-01-D7 の形のログを書く（30 §4.2 手順 3a2。
+/// §4.4 の update の在庫連動の切替と同じ形）
+fn unlink_shared_jan_product(
+    tx: &rusqlite::Transaction<'_>,
+    product: &product_repo::Product,
+) -> Result<(), BizError> {
+    product_repo::update_product(
+        tx,
+        &product.product_code,
+        &ProductUpdates {
+            pos_stock_sync: Some(false),
+            ..Default::default()
+        },
+    )?;
+    recompute_stock(tx, &product.product_code)?;
+    let detail = serde_json::json!({ "pos_stock_sync": { "old": true, "new": false } });
+    system_repo::insert_operation_log(
+        tx,
+        &NewOperationLog {
+            operation_type: "product_update".to_string(),
+            summary: format!("商品を更新しました: {}", product.product_code),
+            detail_json: Some(detail.to_string()),
+        },
+    )?;
+    Ok(())
 }
 
 /// 商品情報を更新する（FUNC-4.4）
@@ -2176,6 +2254,7 @@ mod tests {
             supplier_id: None,
             pos_stock_sync: true,
             plu_target: false,
+            shared_jan_custom_code: false,
         }
     }
 
@@ -2587,8 +2666,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_create_product_req101_duplicate_jan() {
-        // REQ-101: 商品登録 — JANコード重複はDuplicateProductCode
-        // 事前チェックで重複検出
+        // REQ-101 / BIZ-01-D11: 商品登録 — 同じ JAN の 2 つ目は JanInUse で、使っている商品を名指す
+        // （旧い期待の DuplicateProductCode は BIZ-01-D11 で置き換えた。D-141）
         let (_dir, mut conn) = setup_test_db();
         let mut req1 = default_create_request();
         req1.jan_code = Some("2000000000039".to_string());
@@ -2599,7 +2678,13 @@ mod tests {
         req2.jan_code = Some("2000000000039".to_string());
         req2.department_id = 3;
         let result = create_product(&mut conn, req2);
-        assert!(matches!(result, Err(BizError::DuplicateProductCode(_))));
+        match result {
+            Err(BizError::JanInUse(message)) => assert_eq!(
+                message,
+                "この JAN（2000000000039）はほかの商品が使っています: 2000000000039「テスト商品」（POS販売で在庫を減らす）"
+            ),
+            other => panic!("JanInUse を期待しました: {other:?}"),
+        }
     }
 
     #[test]
@@ -6971,32 +7056,40 @@ mod tests {
     #[test]
     #[serial]
     fn test_create_product_req101_rejects_shared_jan_with_stock_linked() {
-        // REQ-101 / ADR D4 / 30（b1 Matrix J1）: create は変更の後の状態で共有 JAN の不変条件を検査する
+        // REQ-101 / ADR D4 / 30（b1 Matrix J1、BIZ-01-D11 で置き換え）: JAN を他の商品が使っていれば
+        // step 3a の JanInUse が先に止める（旧い期待の field jan_code の経路は無くなった）。
+        // D4 の拒否は step 3a2 の経路（shared_jan_custom_code）で、変更の後の状態で検査する
         let (_dir, mut conn) = setup_test_db();
         let (linked_jan, unlinked_jan) = (jan(1), jan(2));
         seed_jan_product(&conn, "B-LINKED", Some(&linked_jan), true);
         seed_jan_product(&conn, "C-UNLINKED", Some(&unlinked_jan), false);
         let before = product_count(&conn);
-        // 在庫連動の商品と同じ JAN の新しい商品（連動しない）→ field jan_code
-        let (message, field) = rejected_at(create_product(
-            &mut conn,
-            ProductCreateRequest {
-                jan_code: Some(linked_jan.clone()),
-                pos_stock_sync: false,
-                ..default_create_request()
-            },
-        ));
-        assert_eq!(
-            message,
-            "同じ JAN の商品（B-LINKED）があるため、在庫連動にできません"
-        );
-        assert_eq!(field, "jan_code");
-        // 連動の新しい商品が別の商品と JAN を共有する → field pos_stock_sync
+        for (jan_code, linked) in [
+            (&linked_jan, false),
+            (&unlinked_jan, true),
+            (&unlinked_jan, false),
+        ] {
+            let result = create_product(
+                &mut conn,
+                ProductCreateRequest {
+                    jan_code: Some(jan_code.clone()),
+                    pos_stock_sync: linked,
+                    ..default_create_request()
+                },
+            );
+            assert!(
+                matches!(result, Err(BizError::JanInUse(_))),
+                "{jan_code} linked={linked}: {result:?}"
+            );
+        }
+        assert_eq!(product_count(&conn), before);
+        // 連動の新しい商品を群に加える → field pos_stock_sync（手順 3b）
         let (message, field) = rejected_at(create_product(
             &mut conn,
             ProductCreateRequest {
                 jan_code: Some(unlinked_jan.clone()),
                 pos_stock_sync: true,
+                shared_jan_custom_code: true,
                 ..default_create_request()
             },
         ));
@@ -7012,11 +7105,372 @@ mod tests {
             ProductCreateRequest {
                 jan_code: Some(unlinked_jan),
                 pos_stock_sync: false,
+                shared_jan_custom_code: true,
                 ..default_create_request()
             },
         )
         .unwrap();
         assert_eq!(product_count(&conn), before + 1);
+    }
+
+    // ===== BIZ-01-D11: JAN を他の商品が使っているときの知らせと独自コードの道（D-141、Matrix B1〜B10） =====
+
+    fn jan_in_use(result: Result<impl std::fmt::Debug, BizError>) -> String {
+        match result {
+            Err(BizError::JanInUse(message)) => message,
+            other => panic!("JanInUse を期待しました: {other:?}"),
+        }
+    }
+
+    fn count_rows(conn: &DbConnection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    fn operation_log_count(conn: &DbConnection) -> i64 {
+        count_rows(conn, "SELECT COUNT(*) FROM operation_logs")
+    }
+
+    fn is_linked(conn: &DbConnection, code: &str) -> bool {
+        product_repo::find_by_product_code(conn, code)
+            .unwrap()
+            .unwrap()
+            .product
+            .pos_stock_sync
+    }
+
+    fn rename_product(conn: &DbConnection, code: &str, name: &str, discontinued: bool) {
+        conn.execute(
+            "UPDATE products SET name = ?2, is_discontinued = ?3 WHERE product_code = ?1",
+            rusqlite::params![code, name, discontinued],
+        )
+        .unwrap();
+    }
+
+    fn shared_jan_request(jan_code: &str) -> ProductCreateRequest {
+        ProductCreateRequest {
+            jan_code: Some(jan_code.to_string()),
+            name: "2 色目".to_string(),
+            pos_stock_sync: false,
+            shared_jan_custom_code: true,
+            ..default_create_request()
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_rejects_jan_in_use_naming_all_products() {
+        // REQ-101 / BIZ-01-D11 (1)（Matrix B1）: JAN と商品コードの 2 つで集め、商品コードの昇順に、
+        // 印（商品コードだけ同じ・POS販売で在庫を減らす・廃番）をこの順に付けて全てを名指す。何も書かない
+        let (_dir, mut conn) = setup_test_db();
+        let (j, k) = (jan(11), jan(12));
+        seed_jan_product(&conn, &j, Some(&k), true);
+        rename_product(&conn, &j, "青の布", false);
+        seed_jan_product(&conn, "HZ-0003", Some(&j), false);
+        rename_product(&conn, "HZ-0003", "黄の布", true);
+        seed_jan_product(&conn, "HZ-0002", Some(&j), true);
+        rename_product(&conn, "HZ-0002", "赤の布", true);
+        seed_jan_product(&conn, "HZ-0001", Some(&j), false);
+        rename_product(&conn, "HZ-0001", "白の布", false);
+        let (products, seq, logs) = (
+            product_count(&conn),
+            next_seq_of(&conn, 2),
+            operation_log_count(&conn),
+        );
+
+        let message = jan_in_use(create_product(
+            &mut conn,
+            ProductCreateRequest {
+                jan_code: Some(j.clone()),
+                ..default_create_request()
+            },
+        ));
+
+        assert_eq!(
+            message,
+            format!(
+                "この JAN（{j}）はほかの商品が使っています: {j}「青の布」（商品コードだけ同じ・POS販売で在庫を減らす）、HZ-0001「白の布」、HZ-0002「赤の布」（POS販売で在庫を減らす・廃番）、HZ-0003「黄の布」（廃番）"
+            )
+        );
+        assert!(!message.contains("在庫連動"), "{message}");
+        assert_eq!(product_count(&conn), products);
+        assert_eq!(next_seq_of(&conn, 2), seq);
+        assert_eq!(operation_log_count(&conn), logs);
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_jan_in_use_by_product_code_only() {
+        // REQ-101 / BIZ-01-D11（Matrix B2）: 商品コードだけが J の商品も名指し、群（同じ jan_code）でないので外さない
+        let (_dir, mut conn) = setup_test_db();
+        let (j, k) = (jan(13), jan(14));
+        seed_jan_product(&conn, &j, Some(&k), true);
+        rename_product(&conn, &j, "青の布", false);
+
+        let message = jan_in_use(create_product(
+            &mut conn,
+            ProductCreateRequest {
+                jan_code: Some(j.clone()),
+                ..default_create_request()
+            },
+        ));
+        assert_eq!(
+            message,
+            format!(
+                "この JAN（{j}）はほかの商品が使っています: {j}「青の布」（商品コードだけ同じ・POS販売で在庫を減らす）"
+            )
+        );
+
+        let result = create_product(&mut conn, shared_jan_request(&j)).unwrap();
+        assert!(is_linked(&conn, &j), "商品コードだけ同じ商品は外さない");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_unlinks_group() {
+        // REQ-101 / BIZ-01-D11 (2)（Matrix B4）: 独自コードを振り JAN を持たせ、同じ JAN の在庫連動の商品だけを
+        // 同じ TX で外し、BIZ-01-D7 の形のログと warnings で名指す。既存の商品の商品コードは変えない（TD-352 からの例外）
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(15);
+        seed_jan_product(&conn, &j, Some(&j), true);
+        rename_product(&conn, &j, "赤の布", false);
+        seed_jan_product(&conn, "NU-0001", Some(&j), false);
+        rename_product(&conn, "NU-0001", "白の布", false);
+
+        let message = jan_in_use(create_product(
+            &mut conn,
+            ProductCreateRequest {
+                jan_code: Some(j.clone()),
+                ..default_create_request()
+            },
+        ));
+        assert_eq!(
+            message,
+            format!(
+                "この JAN（{j}）はほかの商品が使っています: {j}「赤の布」（POS販売で在庫を減らす）、NU-0001「白の布」"
+            )
+        );
+        let stock_before = count_rows(
+            &conn,
+            &format!("SELECT stock_quantity FROM products WHERE product_code = '{j}'"),
+        );
+
+        let result = create_product(&mut conn, shared_jan_request(&j)).unwrap();
+
+        assert_eq!(result.product_code, "HZ-0001");
+        let created = product_repo::find_by_product_code(&conn, "HZ-0001")
+            .unwrap()
+            .unwrap()
+            .product;
+        assert_eq!(created.jan_code.as_deref(), Some(j.as_str()));
+        assert!(!created.pos_stock_sync);
+        assert!(!is_linked(&conn, &j));
+        assert!(!is_linked(&conn, "NU-0001"));
+        // detail は BIZ-01-D7 の形（JSON の値で比べる。key の並びは update_product と同じ serde_json の順）
+        let logs: Vec<(String, serde_json::Value)> = conn
+            .prepare(
+                "SELECT summary, detail_json FROM operation_logs
+                 WHERE operation_type = 'product_update' ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                let detail: String = row.get(1)?;
+                Ok((row.get(0)?, serde_json::from_str(&detail).unwrap()))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            logs,
+            vec![(
+                format!("商品を更新しました: {j}"),
+                serde_json::json!({ "pos_stock_sync": { "old": true, "new": false } })
+            )]
+        );
+        assert_eq!(
+            result.warnings,
+            vec![format!(
+                "同じ JAN の商品 {j}「赤の布」の「POS販売で在庫を減らす」を「減らさない」にしました"
+            )]
+        );
+        assert_eq!(
+            count_rows(
+                &conn,
+                &format!("SELECT stock_quantity FROM products WHERE product_code = '{j}'"),
+            ),
+            stock_before
+        );
+        assert!(
+            product_repo::find_by_product_code(&conn, &j)
+                .unwrap()
+                .is_some(),
+            "1 色目の商品コードは J のまま"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_rejects_linked_new_and_rolls_back() {
+        // REQ-101 / 30 §4.2 手順 3b（Matrix B5）: 群に在庫連動の新しい商品を加えると field pos_stock_sync で拒み、
+        // 3a2 で外した在庫連動・next_seq・商品・ログが全て戻る
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(16);
+        seed_jan_product(&conn, &j, Some(&j), true);
+        let (products, seq, logs) = (
+            product_count(&conn),
+            next_seq_of(&conn, 2),
+            operation_log_count(&conn),
+        );
+
+        let (message, field) = rejected_at(create_product(
+            &mut conn,
+            ProductCreateRequest {
+                pos_stock_sync: true,
+                ..shared_jan_request(&j)
+            },
+        ));
+
+        assert_eq!(
+            message,
+            format!("同じ JAN の商品（{j}）があるため、在庫連動にできません")
+        );
+        assert_eq!(field, "pos_stock_sync");
+        assert!(is_linked(&conn, &j));
+        assert_eq!(product_count(&conn), products);
+        assert_eq!(next_seq_of(&conn, 2), seq);
+        assert_eq!(operation_log_count(&conn), logs);
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_requires_code_prefix() {
+        // REQ-101 / BIZ-01-D6・BIZ-01-D11（Matrix B6）: 接頭辞の無い部門は発番の前に止まり、外しは残らない
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(17);
+        seed_jan_product(&conn, &j, Some(&j), true);
+
+        let result = create_product(
+            &mut conn,
+            ProductCreateRequest {
+                department_id: 3, // 毛糸（code_prefix=NULL）
+                ..shared_jan_request(&j)
+            },
+        );
+
+        match result {
+            Err(BizError::ValidationFailed(message)) => {
+                assert_eq!(message, "この部門は独自コード発番に対応していません");
+            }
+            other => panic!("ValidationFailed を期待しました: {other:?}"),
+        }
+        assert!(is_linked(&conn, &j));
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_without_group() {
+        // REQ-101 / BIZ-01-D11（Matrix B7）: J をどの商品も使っていなくても失敗にせず独自コードで登録する（外す商品 0）
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(18);
+
+        let result = create_product(&mut conn, shared_jan_request(&j)).unwrap();
+
+        assert_eq!(result.product_code, "HZ-0001");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        let created = product_repo::find_by_product_code(&conn, "HZ-0001")
+            .unwrap()
+            .unwrap()
+            .product;
+        assert_eq!(created.jan_code.as_deref(), Some(j.as_str()));
+        assert_eq!(
+            count_rows(
+                &conn,
+                "SELECT COUNT(*) FROM operation_logs WHERE operation_type = 'product_update'"
+            ),
+            0
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_rolls_back_on_late_failure() {
+        // REQ-101 / 30 §4.2 エラーハンドリング（Matrix B8）: INSERT の後の失敗で、3a2 の外しも全て戻る
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(19);
+        seed_jan_product(&conn, &j, Some(&j), true);
+        let (products, seq, logs) = (
+            product_count(&conn),
+            next_seq_of(&conn, 2),
+            operation_log_count(&conn),
+        );
+        {
+            let _guard = failpoint::arm(&failpoint::CREATE_PRODUCT_AFTER_INSERT);
+            assert!(create_product(&mut conn, shared_jan_request(&j)).is_err());
+        }
+        assert!(is_linked(&conn, &j));
+        assert_eq!(product_count(&conn), products);
+        assert_eq!(next_seq_of(&conn, 2), seq);
+        assert_eq!(operation_log_count(&conn), logs);
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_ignored_without_jan() {
+        // REQ-101 / BIZ-01-D11（Matrix B9）: jan_code が None なら flag は意味を持たず、今どおり発番する
+        let (_dir, mut conn) = setup_test_db();
+        let result = create_product(
+            &mut conn,
+            ProductCreateRequest {
+                shared_jan_custom_code: true,
+                ..default_create_request()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.product_code, "HZ-0001");
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    }
+
+    #[test]
+    #[serial]
+    fn test_create_product_req101_shared_jan_custom_code_recomputes_unlinked() {
+        // REQ-101 / BIZ-01-D11 (2)・ADR SPEC-STK-CNT-D2（Matrix B10）: 外した商品を同じ TX で求め直す
+        // （写しをわざと記録からの期待値と食い違わせて観測する）
+        let (_dir, mut conn) = setup_test_db();
+        let j = jan(20);
+        seed_jan_product(&conn, &j, Some(&j), true);
+        inventory_repo::insert_movement(
+            &conn,
+            &NewMovement {
+                product_code: j.clone(),
+                movement_type: MovementType::Receiving,
+                quantity: 5,
+                stock_after: 5,
+                reference_type: None,
+                reference_id: None,
+                note: None,
+                business_date: "2026-10-01".to_string(),
+                settlement_no: None,
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE products SET stock_quantity = 77, stock_recheck = 1, stock_range_low = 70,
+                 stock_range_high = 80 WHERE product_code = ?1",
+            [&j],
+        )
+        .unwrap();
+
+        create_product(&mut conn, shared_jan_request(&j)).unwrap();
+
+        let copy: (i64, i64, Option<i64>, Option<i64>) = conn
+            .query_row(
+                "SELECT stock_quantity, stock_recheck, stock_range_low, stock_range_high
+                 FROM products WHERE product_code = ?1",
+                [&j],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(copy, (5, 0, None, None));
     }
 
     #[test]

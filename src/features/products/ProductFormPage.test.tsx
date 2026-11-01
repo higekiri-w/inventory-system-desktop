@@ -558,3 +558,255 @@ describe("ProductFormPage の現在庫（D-118 b2、51）", () => {
     expect(screen.queryByText("要再確認")).not.toBeInTheDocument();
   });
 });
+
+describe("ProductFormPage の JAN を他の商品が使っているときのダイアログ（UI-01b-D26、D-141）", () => {
+  const JAN = "4901234567887";
+  const NAME = "青の布 2 色目";
+  // BIZ の message（30 BIZ-01-D11）は mock の値をそのまま出す。画面の文は 51 の文字どおりの literal で確かめる
+  const JAN_IN_USE_MESSAGE = `この JAN（${JAN}）はほかの商品が使っています: P-901「赤」（POS販売で在庫を減らす）`;
+  const SECOND_TEXT =
+    "色やサイズの違う別の品なら、独自コードで登録できます。JAN はこの商品にも残ります。JAN が同じ商品はレジの売上でどれが売れたか見分けられないため、この商品と、JAN が同じ商品は全て「POS販売で在庫を減らす」が「減らさない」になります（在庫は棚卸しと手入力で合わせます）。「商品コードだけ同じ」の商品は変わりません。";
+  const THIRD_TEXT =
+    "同じ品なら、新しく登録せずに、商品一覧で JAN を検索してその商品を直してください（廃番なら「表示に戻す」）。";
+  const WARNING =
+    "同じ JAN の商品 P-901「赤」の「POS販売で在庫を減らす」を「減らさない」にしました";
+
+  function cmdError(kind: "duplicate" | "validation", message: string, field: string | null) {
+    return {
+      status: "error" as const,
+      error: { kind, message, field, error_id: null, stocktake_recovery: null },
+    };
+  }
+
+  function mockOptions() {
+    mockListDepartments.mockResolvedValue({
+      status: "ok",
+      data: [
+        makeMockDepartment({ id: 1, name: "布", code_prefix: "HZ" }),
+        makeMockDepartment({ id: 2, name: "通常部門", code_prefix: null }),
+      ],
+    });
+    mockListSuppliers.mockResolvedValue({ status: "ok", data: [] });
+  }
+
+  async function submitWithJan(departmentOption: string) {
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/^商品名/), NAME);
+    await user.click(screen.getByLabelText(/^部門/));
+    await user.click(await screen.findByRole("option", { name: departmentOption }));
+    await user.type(screen.getByLabelText(/^JANコード/), JAN);
+    await user.clear(screen.getByLabelText(/^売価/));
+    await user.type(screen.getByLabelText(/^売価/), "500");
+    await user.clear(screen.getByLabelText(/^原価/));
+    await user.type(screen.getByLabelText(/^原価/), "300");
+    await user.click(screen.getByRole("button", { name: "登録する" }));
+    return user;
+  }
+
+  function renderCreate(onNavigateToList = vi.fn()) {
+    mockOptions();
+    const rendered = renderWithClient(
+      <ProductFormPage mode="create" onNavigateToList={onNavigateToList} />,
+    );
+    const invalidateSpy = vi.spyOn(rendered.queryClient, "invalidateQueries");
+    return { invalidateSpy, onNavigateToList };
+  }
+
+  it("U2 REQ-101 / UI-01b-D26 opens the dialog on duplicate with field jan_code and keeps the input", async () => {
+    mockCreateProduct.mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"));
+    const { onNavigateToList } = renderCreate();
+    await submitWithJan("布（独自コード可）");
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByRole("heading", { name: "この JAN はほかの商品が使っています" }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(JAN_IN_USE_MESSAGE)).toBeInTheDocument();
+    expect(within(dialog).getByText(SECOND_TEXT)).toBeInTheDocument();
+    expect(within(dialog).getByText(THIRD_TEXT)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "独自コードで登録する" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "戻る" })).toBeEnabled();
+    expect(onNavigateToList).not.toHaveBeenCalled();
+    expect(screen.queryByText("保存できませんでした")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue(NAME)).toBeInTheDocument();
+  });
+
+  it("U2 REQ-101 / UI-01b-D26 keeps the buttons outside a height-capped scroll box when many products use the JAN", async () => {
+    // 合成の 20 件。happy-dom は layout を測らないので、上限と scroll の class・構造と focus の順だけを見る
+    const manyUsers = Array.from(
+      { length: 20 },
+      (_, i) =>
+        `P-${String(900 + i)}「長い名前の布 ${String(i + 1)} 色目」（POS販売で在庫を減らす）`,
+    ).join("、");
+    const manyMessage = `この JAN（${JAN}）はほかの商品が使っています: ${manyUsers}`;
+    mockCreateProduct.mockResolvedValueOnce(cmdError("duplicate", manyMessage, "jan_code"));
+    renderCreate();
+    const user = await submitWithJan("布（独自コード可）");
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveClass("flex", "max-h-[90vh]", "flex-col");
+    const scrollBox = within(dialog).getByText(manyMessage).parentElement;
+    expect(scrollBox).toHaveClass("min-h-0", "overflow-y-auto");
+    // 題を持つ header も縮められる（縮めないと文の箱に上限が掛からない）
+    expect(scrollBox?.parentElement).toHaveClass("flex", "min-h-0", "flex-col");
+    expect(scrollBox).toContainElement(within(dialog).getByText(THIRD_TEXT));
+    for (const name of ["戻る", "独自コードで登録する"]) {
+      expect(scrollBox).not.toContainElement(within(dialog).getByRole("button", { name }));
+    }
+    expect(scrollBox).not.toContainElement(
+      within(dialog).getByRole("heading", { name: "この JAN はほかの商品が使っています" }),
+    );
+    // 本文の箱は名前の付いた region で、Tab と Shift+Tab で入れる（矢印の key の scroll は L3-1）
+    expect(within(dialog).getByRole("region", { name: "使っている商品と変わる所" })).toBe(
+      scrollBox,
+    );
+    const back = within(dialog).getByRole("button", { name: "戻る" });
+    const confirm = within(dialog).getByRole("button", { name: "独自コードで登録する" });
+    await waitFor(() => {
+      expect(back).toHaveFocus();
+    });
+    await user.tab({ shift: true });
+    expect(scrollBox).toHaveFocus();
+    await user.tab();
+    expect(back).toHaveFocus();
+    await user.tab();
+    expect(confirm).toHaveFocus();
+    await user.tab();
+    expect(scrollBox).toHaveFocus();
+  });
+
+  it("U3 REQ-101 / UI-01b-D26 resends with shared_jan_custom_code and pos_stock_sync false, toasts warnings, invalidates C23", async () => {
+    mockCreateProduct
+      .mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"))
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { product_code: "HZ-0012", warnings: [WARNING] },
+      });
+    // UI-USW-D1: 遷移の時点で baseline が同期済み（離脱の確認に渡る dirty が false）
+    unsavedDirty.length = 0;
+    let dirtyAtNavigate: boolean | undefined;
+    const { invalidateSpy, onNavigateToList } = renderCreate(
+      vi.fn(() => {
+        dirtyAtNavigate = unsavedDirty[unsavedDirty.length - 1];
+      }),
+    );
+    const user = await submitWithJan("布（独自コード可）");
+    const dialog = await screen.findByRole("alertdialog");
+    // 在庫連動の checkbox は on のまま
+    expect(screen.getByLabelText("POS販売で在庫を減らす")).toBeChecked();
+
+    await user.click(within(dialog).getByRole("button", { name: "独自コードで登録する" }));
+
+    await waitFor(() => {
+      expect(onNavigateToList).toHaveBeenCalled();
+    });
+    expect(dirtyAtNavigate).toBe(false);
+    expect(mockCreateProduct).toHaveBeenCalledTimes(2);
+    const first = mockCreateProduct.mock.calls[0][0];
+    expect(first).toMatchObject({
+      jan_code: JAN,
+      pos_stock_sync: true,
+      shared_jan_custom_code: false,
+    });
+    expect(mockCreateProduct.mock.calls[1][0]).toEqual({
+      ...first,
+      shared_jan_custom_code: true,
+      pos_stock_sync: false,
+    });
+    expect(mockToastSuccess).toHaveBeenCalledWith(
+      `商品「${NAME}」を登録しました（商品コード: HZ-0012）`,
+      expect.objectContaining({ id: "product-save-success" }),
+    );
+    const options = mockToastSuccess.mock.calls[0][1] as { description?: ReactNode };
+    render(<>{options.description}</>);
+    expect(screen.getByText(WARNING)).toBeInTheDocument();
+    expectExactInvalidations(
+      invalidateSpy.mock.calls,
+      d052InvalidationOracle.productCreateSharedJan(),
+    );
+  });
+
+  it("U3 REQ-101 / UI-01b-D26 shows no toast description when warnings are empty", async () => {
+    mockCreateProduct
+      .mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"))
+      .mockResolvedValueOnce({ status: "ok", data: { product_code: "HZ-0013", warnings: [] } });
+    const { onNavigateToList } = renderCreate();
+    const user = await submitWithJan("布（独自コード可）");
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "独自コードで登録する" }));
+
+    await waitFor(() => {
+      expect(onNavigateToList).toHaveBeenCalled();
+    });
+    const options = mockToastSuccess.mock.calls[0][1] as { description?: ReactNode };
+    expect(options.description).toBeUndefined();
+  });
+
+  it("U4 REQ-101 / UI-01b-D26 back closes the dialog without resending and keeps the dirty input", async () => {
+    mockCreateProduct.mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"));
+    unsavedDirty.length = 0;
+    renderCreate();
+    const user = await submitWithJan("布（独自コード可）");
+    const dialog = await screen.findByRole("alertdialog");
+
+    await user.click(within(dialog).getByRole("button", { name: "戻る" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expect(mockCreateProduct).toHaveBeenCalledTimes(1);
+    expect(screen.getByDisplayValue(NAME)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(JAN)).toBeInTheDocument();
+    expect(unsavedDirty[unsavedDirty.length - 1]).toBe(true);
+  });
+
+  it("U5 REQ-101 / UI-01b-D26 names the department and hides the primary button without code_prefix", async () => {
+    mockCreateProduct.mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"));
+    renderCreate();
+    await submitWithJan("通常部門");
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).queryByRole("button", { name: "独自コードで登録する" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "部門「通常部門」は独自コードを振れません。独自コードを振れる部門を選び直してから、もう一度「登録する」を押してください。",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "戻る" })).toBeInTheDocument();
+  });
+
+  it("U6 REQ-101 / UI-01b-D26 keeps the form-level alert for duplicate without field", async () => {
+    mockCreateProduct.mockResolvedValueOnce(
+      cmdError("duplicate", "この商品コードは既に使用されています: X", null),
+    );
+    renderCreate();
+    await submitWithJan("布（独自コード可）");
+
+    expect(await screen.findByText("保存できませんでした")).toBeInTheDocument();
+    expect(screen.getByText("この商品コードは既に使用されています: X")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("U7 REQ-101 / UI-01b-D26 closes the dialog and shows the save error when the resend fails", async () => {
+    mockCreateProduct
+      .mockResolvedValueOnce(cmdError("duplicate", JAN_IN_USE_MESSAGE, "jan_code"))
+      .mockResolvedValueOnce(
+        cmdError("validation", "この部門の独自コードの番号を振れません", null),
+      );
+    const { onNavigateToList } = renderCreate();
+    const user = await submitWithJan("布（独自コード可）");
+    const dialog = await screen.findByRole("alertdialog");
+
+    await user.click(within(dialog).getByRole("button", { name: "独自コードで登録する" }));
+
+    expect(await screen.findByText("この部門の独自コードの番号を振れません")).toBeInTheDocument();
+    expect(screen.getByText("保存できませんでした")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expect(onNavigateToList).not.toHaveBeenCalled();
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+  });
+});
