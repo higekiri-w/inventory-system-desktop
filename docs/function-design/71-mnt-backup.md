@@ -54,7 +54,7 @@ struct BackupInfo {
 
 例: `inventory_backup_20260413_130000.db`
 
-名前の解析（一覧・掃除・今日の判定・作業名の掃除・媒体の写しの並び、PC の中と媒体の上で同じ関数）は、規約外の名前を `None` にし、panic しない。日時の部分は ASCII の数字と `_` だけなので、長さ・`_` の位置・ASCII かの確認を文字列の slice より前に行う（`extract_datetime_from_backup` は長さ・ASCII・`_` の位置を確かめてから切るので、`inventory_backup_あああああ.db` のような 15 bytes の多バイトの名前でも文字境界の panic にならない。`extract_date_from_backup` は `_` の位置を先に見る。D-114 の作業名の掃除も同じ関数を使う）
+名前の解析（一覧・掃除・今日の判定・作業名の掃除・媒体の写しの並び、PC の中と媒体の上で同じ関数）は、規約外の名前を `None` にし、panic しない。日時の部分は ASCII の数字と `_` だけなので、長さ・`_` の位置・ASCII かの確認を文字列の slice より前に行う（`extract_datetime_from_backup`・`extract_date_from_backup` は共有の判定で、stem が 15 bytes・9 文字目が `_`・ほかの 14 文字が ASCII の数字であることを確かめてから切り、chrono で日付・時刻として解析する。`inventory_backup_あああああ.db` のような 15 bytes の多バイトの名前でも文字境界の panic にならず、chrono の解析が受ける空白・符号の入った名前〈`inventory_backup_20260101_12 100.db`・`inventory_backup_+202 1 1_120000.db`〉も規約外になる。D-114 の作業名の掃除も同じ関数を使う）
 
 ---
 

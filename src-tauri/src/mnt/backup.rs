@@ -232,34 +232,39 @@ impl std::fmt::Display for BackupDirError {
 // プライベートヘルパー
 // ---------------------------------------------------------------------------
 
-/// ファイル名からYYYYMMDD部分を抽出してNaiveDateに変換
+/// 規約名 `inventory_backup_YYYYMMDD_HHMMSS.db` の日付・時刻の部分（71 §71.3 の完全一致）
 ///
-/// パターン: `inventory_backup_YYYYMMDD_HHMMSS.db`
-fn extract_date_from_backup(filename: &str) -> Option<chrono::NaiveDate> {
+/// stem は 15 bytes で `_` が 9 文字目、ほかの 14 文字は ASCII の数字だけ。
+/// chrono の解析は空白・符号を受ける（`12 100`・`+202 1 1`）ので、解析の前に数字で限る。
+/// 非 timestamp suffix（`_manual` 等）・多バイトの名前もここで落ちる（slice より前に見る）。
+fn split_backup_stamp(filename: &str) -> Option<(&str, &str)> {
     let stem = filename.strip_prefix(BACKUP_PREFIX)?;
     let stem = stem.strip_suffix(BACKUP_EXT)?;
-    // stem = "YYYYMMDD_HHMMSS" の完全一致のみ削除対象（§71.5 ステップ2a-2d）。
-    // 日付部分だけの検証では inventory_backup_YYYYMMDD_manual.db のような
-    // 非 timestamp suffix のファイルまで削除対象になる
-    if stem.len() != 15 || stem.as_bytes()[8] != b'_' {
+    let bytes = stem.as_bytes();
+    let conforming = bytes.len() == 15
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if index == 8 {
+                *byte == b'_'
+            } else {
+                byte.is_ascii_digit()
+            }
+        });
+    if !conforming {
         return None;
     }
-    let date_part = &stem[..8];
-    let time_part = &stem[9..];
+    Some((&stem[..8], &stem[9..]))
+}
+
+/// ファイル名からYYYYMMDD部分を抽出してNaiveDateに変換（保持日数の掃除の対象、§71.5 ステップ2a-2d）
+fn extract_date_from_backup(filename: &str) -> Option<chrono::NaiveDate> {
+    let (date_part, time_part) = split_backup_stamp(filename)?;
     chrono::NaiveTime::parse_from_str(time_part, "%H%M%S").ok()?;
     chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()
 }
 
 /// ファイル名からYYYYMMDD_HHMMSS部分を抽出して "YYYY-MM-DD HH:MM:SS" に変換
 fn extract_datetime_from_backup(filename: &str) -> Option<String> {
-    let stem = filename.strip_prefix(BACKUP_PREFIX)?;
-    let stem = stem.strip_suffix(BACKUP_EXT)?;
-    // 長さ・ASCII・`_` の位置を slice より前に見る（多バイトの名前で panic しない、§71.3）
-    if stem.len() != 15 || !stem.is_ascii() || stem.as_bytes()[8] != b'_' {
-        return None;
-    }
-    let date_part = &stem[..8];
-    let time_part = &stem[9..];
+    let (date_part, time_part) = split_backup_stamp(filename)?;
     // 日付・時刻のパースチェック
     chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()?;
     chrono::NaiveTime::parse_from_str(time_part, "%H%M%S").ok()?;
@@ -2231,6 +2236,64 @@ mod tests {
         assert_eq!(list_backups(&backup_dir).unwrap().len(), 1);
         assert!(backup_dir.join(&odd).exists());
         assert!(backup_dir.join(&odd_partial).exists());
+    }
+
+    /// chrono の `%Y%m%d`・`%H%M%S` が受ける・受けうる、数字でない文字を含む 15 bytes の stem
+    /// （空白は日付・時刻のどちらでも受ける。`+`・`-` は `+202 1 1` の形の日付で受ける。
+    /// 全角数字は chrono が受けないが、数字の判定の側で落とすことを固定する）
+    fn nondigit_stamps() -> Vec<String> {
+        let today = chrono::Local::now().format("%Y%m%d").to_string();
+        vec![
+            "20200101_12 100".to_string(),
+            format!("{today}_12 100"),
+            "2026 101_120000".to_string(),
+            "+202 1 1_120000".to_string(),
+            "-202 1 1_120000".to_string(),
+            "２０01_120000".to_string(),
+        ]
+    }
+
+    #[test]
+    fn test_backup_names_req901_nondigit_stamp_is_not_conforming() {
+        // REQ-901 / 71 §71.3: 日付・時刻の 14 文字が ASCII の数字でない名前は規約に合わない
+        for stamp in nondigit_stamps() {
+            assert_eq!(stamp.len(), 15, "fixture の前提 {stamp:?}");
+            let name = format!("{BACKUP_PREFIX}{stamp}{BACKUP_EXT}");
+            assert_eq!(extract_datetime_from_backup(&name), None, "{name:?}");
+            assert_eq!(extract_date_from_backup(&name), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn test_backup_names_req901_d7_nondigit_stamp_not_removed_or_counted() {
+        // REQ-901 / MNT-01-D7 / 71 §71.4 手順 3・§71.5・§71.8 手順 3: 数字でない日時の名前を
+        // 作業名の掃除・保持日数の掃除で消さず、今日の判定に数えない
+        let (dir, conn) = setup_test_db();
+        db::system_repo::upsert_setting(&conn, "backup_enabled", "1").unwrap();
+        db::system_repo::upsert_setting(&conn, "backup_time", "").unwrap();
+        let backup_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        let mut leftovers = Vec::new();
+        for stamp in nondigit_stamps() {
+            let name = format!("{BACKUP_PREFIX}{stamp}{BACKUP_EXT}");
+            leftovers.push(partial_name(&name));
+            leftovers.push(name);
+        }
+        for name in &leftovers {
+            std::fs::write(backup_dir.join(name), b"synthetic").unwrap();
+        }
+
+        assert_eq!(cleanup_old_backups(&backup_dir, 0).unwrap(), 0);
+        assert!(list_backups(&backup_dir).unwrap().is_empty());
+        // 今日の判定 → create_backup（作業名の掃除）→ 保持日数の掃除
+        assert!(check_auto_backup(&conn, &backup_dir).unwrap());
+        assert_eq!(list_backups(&backup_dir).unwrap().len(), 1);
+        for name in &leftovers {
+            assert!(
+                backup_dir.join(name).exists(),
+                "{name:?} を消してはならない"
+            );
+        }
     }
 
     #[test]
