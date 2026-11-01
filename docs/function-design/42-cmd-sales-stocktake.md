@@ -97,7 +97,7 @@ fn get_daily_sales(
 3. Ok → DailySalesReport をそのまま返す
 4. Err(BizError) → CmdError に変換して返す
 
-#### get_daily_report_sheet（proposed・未実装、D-120）
+#### get_daily_report_sheet（D-120）
 
 **関数要求**: 指定日の日報の紙の内容（1 日 1 枚）を取得する。内容と規則は BIZ-05 の [34 §19.3a](34-biz-sales-service.md) の SALES-SHEET-D1〜D6 が持ち、CMD は変換だけを行う。
 

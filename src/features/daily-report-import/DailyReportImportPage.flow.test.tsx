@@ -136,4 +136,37 @@ describe("DailyReportImportPage flow_req401", () => {
       { filename: "Z005_260321.CSV", file_bytes: [5], source_path: "C:\\tmp\\Z005_260321.CSV" },
     ]);
   });
+
+  it("DailyReportImportPage shows over-limit column message and allows reselect (REQ-401)", async () => {
+    // BIZ-08-D2a: 上限の越えは帳票と列を名指す文がそのまま出て、file を選び直せる（37 から転記）
+    const message =
+      "Z001の金額列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。";
+    const user = userEvent.setup();
+    mockOpen.mockResolvedValueOnce([
+      "C:\\tmp\\Z001_260321.CSV",
+      "C:\\tmp\\Z002_260321.CSV",
+      "C:\\tmp\\Z005_260321.CSV",
+    ]);
+    mockParse.mockResolvedValue({
+      status: "error",
+      error: {
+        kind: "import_error",
+        message,
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+
+    renderWithClient(<DailyReportImportPage />);
+    await user.click(screen.getByRole("button", { name: "ファイルを選んで取り込む" }));
+    await screen.findByRole("list", { name: "選んだファイル" });
+    await user.click(screen.getByRole("button", { name: "確認する" }));
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(
+      await screen.findByRole("button", { name: "ファイルを選んで取り込む" }),
+    ).toBeInTheDocument();
+  });
 });

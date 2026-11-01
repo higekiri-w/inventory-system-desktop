@@ -168,6 +168,7 @@
 | 在庫（計算の後の値を含む） | 絶対値 `999999999`（長さは `9999999.99` m。負の在庫は INV-3 のまま `-999999999` まで） | 在庫を書く所の全部: `apply_stock_change` の計算の後（`src-tauri/src/biz/inventory_service/common.rs`。入庫・返品・手動販売・廃棄・商品別売上 CSV の取込みの 5 経路が通る 1 か所）、商品登録の初期在庫（`src-tauri/src/biz/product_service.rs` の `validate_create_request` の `initial_stock`。0 以上）、商品 CSV の初期在庫（preview の `preview_import` の「初期在庫」と commit の `import_row_commit_error`。0 以上）、棚卸しの計数の値（0 以上。`save_stock_count`・`zero_uncounted_items`、D-118 の b1）、写しの求め直しの直前（`recompute_stock`。Z004 の確定と取消を含む）、整合性の補正の後（`src-tauri/src/biz/integrity_service.rs` の `fix_integrity`） |
 | 売価（円） | 0 以上 `999999` | 商品の create・update・価格改定・商品 CSV の検証（負の検査と同じ `price_range_error`: `src-tauri/src/biz/product_service.rs`。呼ぶ所は `validate_create_request`・`validate_update_request`・`revise_product_price`・`preview_import` と、商品 CSV の commit の `import_row_commit_error`） |
 | 原価（1/100 円） | 0 以上 `99999999`（`999999.99` 円） | 商品の create・update・価格改定・商品 CSV（売価と同じ `price_range_error`: `src-tauri/src/biz/product_service.rs` の `validate_create_request`・`validate_update_request`・`revise_product_price`・`preview_import` と、商品 CSV の commit）と、入庫・廃棄の明細（`src-tauri/src/biz/inventory_service/receiving.rs` の `create_receiving`・`src-tauri/src/biz/inventory_service/disposal.rs` の `create_disposal` の `MAX_COST_PRICE_CENTI`）の検証（D5） |
+| レジの日報（Z001・Z002・Z005）の金額・件数と個数（D-142） | 金額・件数は絶対値 `9999999999`、個数は絶対値 `9999999.99`（100 倍の整数で `999999999`） | 日報の parser（[29](29-io-daily-report-parser.md) IO-07-D6。`src-tauri/src/io/daily_report_parser.rs` の `parse_optional_i64`・`parse_optional_hundredths`、上限は `src-tauri/src/constants.rs` の `MAX_DAILY_REPORT_INTEGER`・`MAX_DAILY_REPORT_QUANTITY_HUNDREDTHS`）。file から選ぶ経路と SD から読む経路が同じ parser を通る。越える値は `number_too_large` の誤りで、その束は取り込めない（取込みの画面の文は帳票と列を名指す。[37](37-biz-daily-report-import-service.md) BIZ-08-D2a） |
 
 - 上限を越えた入力は `ValidationFailed` で、何も書かない（TX の中で見つけたときは TX 全体を戻す）。画面は同じ上限で先に止めて入力の error を出す。file の行（商品 CSV、商品別売上 CSV）は行の error。文は `数量が大きすぎます`・`在庫数が大きすぎます`・`売価が大きすぎます`・`原価が大きすぎます`（D5）で、明細の検証は今の `明細{n}: ` を前に付ける。
 - 4 つの値は定数で 1 か所に置き、各検証はそこから引く（Rust は `src-tauri/src/constants.rs`〈今の `CSV_IMPORT_LINE_LIMIT` と同じ file〉、TS は `src/lib/` の 1 file）。
@@ -205,8 +206,8 @@
 
 (e) 表の外:
 
-- 売上の金額と、その集計（POS の金額、手動販売の金額欄の値。円の wire）。
-- レジの日報（Z001・Z005）の数量（D-104、今のまま）。
+- 手動販売の金額欄の値と、それを含む集計（日次売上の商品別の手動販売の行・部門小計・総合計、月次の集計。円の wire）。上限は無く、範囲の外の値は number で正確に運べない（D-142 で残した。backlog の「手動販売の金額欄の上限」）。日報の紙は手動販売の行を載せない（[34](34-biz-sales-service.md) SALES-SHEET-D4）。
+- 次の 2 つは上限が別の所にあり、集計は (d) と同じく届かないので、読取りを範囲で拒まない（D-142）: レジの日報（Z001・Z002・Z005）の値は (a) の表の行（IO-07-D6）の上限で、1 つの集計（1 日の公式日報・日報の紙の 1 行、1 か月の部門）が `9007199254740991` を越えるには金額で 900,720 本の取込みの行が要る。Z004 の個数・金額は parser が `i32` で読む（[23](23-io-z004-parser.md) §13.6 の「金額・数量」の行、`src-tauri/src/io/z004_parser.rs` の `quantity`・`amount` の型）ので、1 日の 1 商品の和が越えるには 4,194,305 行が要る。日次売上の画面と日報の紙は同じ値を同じ書き方で出し、どちらにも範囲の検査を置かない。
 - 在庫少の基準（`app_settings` の `stock_low_threshold`・`stock_low_threshold_fabric`）。画面の入力は 1〜99999 の整数で（[69](69-ui-threshold-settings.md) UI-11a-D3）、BIZ は読んだ値を在庫の数量と比べるだけで、足し算・掛け算に入れない（`src-tauri/src/biz/product_service.rs` の `list_low_stock`、`src-tauri/src/db/product_repo.rs` の `list_low_stock_products` の `stock_quantity <= ?`）。基準の単位は D10 のまま（一般は個数の単位の数、生地は cm）で、本節の上限と検査は足さない。
 - 上限の外の値を持つ DB（DB を直接書き換えた、壊れた）。移行は上限の外の保存済みの値を通さず（[22](22-mnt-migration.md) §16）、その後の書込みは (a)(c) が拒むので、アプリの操作では作られない。この状態では、演算の溢れは既存の error を返し、溢れない値はそのまま出る（number で正確に運べる保証は無い）。
 
@@ -273,3 +274,6 @@ Pagination upper-bound policy is intentionally module-specific. D-031 introduced
 | 2026-10-21 | 原価の lane（Plan Review round 1 の是正） | D5 の表示の記号を半角の `¥` に一意にした（今の画面は 3 つの形が混ざる。売価の記号は変えない）。D10 に商品 CSV の `原価` の行の error の分け方（負の文と D5 の形式の文）と、`在庫単位` の `巻`・`roll`・`cm` の行の error に直し方を添えることを足した（出所は AI review）。 |
 | 2026-10-21 | 原価の lane（Plan Review round 2 の是正） | D5 の入力の欄の初期値の場所に、価格改定の新原価（案）と現売価 0 の行の現原価を足した。 |
 | 2026-10-21 | 原価の lane の実装（PR #184） | D5（原価の 1/100 円・入力・補助・表示・税抜）と D1 の巻・cm を外した一覧（10 個）を実装し、`proposed・未実装` の注記を現行の記述に直した（migration は 22 §16 の vB〈v10〉）。D2・D3・D10 の `cm` の分岐、D6・「入力の上限と安全な整数の範囲」の (a)〜(c) の「原価が円の間」の値を外した。D10 の商品 CSV の `原価` と `在庫単位` の文、D5 の formatter と関数の名前を書いた。 |
+| 2026-10-27 | 日報の紙の runtime（起票、D-142） | 「入力の上限と安全な整数の範囲」の (a) の表にレジの日報（Z001・Z002・Z005）の金額・件数・個数の行（IO-07-D6、proposed・未実装）を足し、(e) の「売上の金額」の項を、表の外に残す手動販売の金額欄と、上限が別の所にあり読取りで拒まないレジの日報・Z004 の値に分けた。 |
+| 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | (a) の表のレジの日報の行の誤りの種類を `number_too_large` にし、取込みの画面の文が帳票と列を名指すこと（37 BIZ-08-D2a）を書いた。 |
+| 2026-10-31 | 日報の紙の runtime（実装、D-142） | (a) の表のレジの日報の行の proposed の注記を外し、検査の置き場（関数と定数）を書いた。 |

@@ -294,26 +294,24 @@ fn parse_z001(
         };
         let first_value = match first_value {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z001),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z001の個数/件数列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z001,
+                    line_no,
+                    "個数/件数",
+                    error,
                 ));
                 continue;
             }
         };
         let amount = match parse_optional_i64(&fields[3]) {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z001),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z001の金額列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z001,
+                    line_no,
+                    "金額",
+                    error,
                 ));
                 continue;
             }
@@ -444,26 +442,24 @@ fn parse_z002(
         }
         let count = match parse_optional_i64(&fields[2]) {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z002),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z002の件数列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z002,
+                    line_no,
+                    "件数",
+                    error,
                 ));
                 continue;
             }
         };
         let amount = match parse_optional_i64(&fields[3]) {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z002),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z002の金額列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z002,
+                    line_no,
+                    "金額",
+                    error,
                 ));
                 continue;
             }
@@ -493,26 +489,24 @@ fn parse_z005(
         }
         let quantity = match parse_optional_hundredths(&fields[2]) {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z005),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z005の個数列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z005,
+                    line_no,
+                    "個数",
+                    error,
                 ));
                 continue;
             }
         };
         let amount = match parse_required_i64(&fields[3]) {
             Ok(value) => value,
-            Err(()) => {
-                errors.push(parse_error(
-                    Some(DailyReportSourceKind::Z005),
-                    None,
-                    Some(line_no),
-                    "invalid_number",
-                    "Z005の金額列を変換できません",
+            Err(error) => {
+                errors.push(number_error(
+                    DailyReportSourceKind::Z005,
+                    line_no,
+                    "金額",
+                    error,
                 ));
                 continue;
             }
@@ -533,23 +527,46 @@ pub fn quantity_hundredths_to_units(quantity_hundredths: i64) -> f64 {
     quantity_hundredths as f64 / 100.0
 }
 
-fn parse_optional_i64(value: &str) -> Result<Option<i64>, ()> {
+/// 数の読取りの誤り。形の誤り（`invalid_number`）と上限の越え（`number_too_large`）を分ける（IO-07-D6）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NumberError {
+    Invalid,
+    TooLarge,
+}
+
+/// 金額・件数を整数で読む。絶対値が上限を越える値は `TooLarge`（IO-07-D6）
+fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
     let cleaned = clean_number(value);
     if cleaned.is_empty() {
         return Ok(None);
     }
-    cleaned.parse::<i64>().map(Some).map_err(|_| ())
+    // 先に数の形（任意の符号 1 つ ＋ 1 桁以上の ASCII 数字。`parse::<i64>` が受ける形）を確かめる。
+    // `parse` は桁あふれを後ろの文字より先に返すので、形を見ずに overflow を上限の越えにしない
+    let digits = cleaned.strip_prefix(['+', '-']).unwrap_or(&cleaned);
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(NumberError::Invalid);
+    }
+    let parsed = cleaned.parse::<i64>().map_err(|error| match error.kind() {
+        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+            NumberError::TooLarge
+        }
+        _ => NumberError::Invalid,
+    })?;
+    if parsed.unsigned_abs() > crate::constants::MAX_DAILY_REPORT_INTEGER.unsigned_abs() {
+        return Err(NumberError::TooLarge);
+    }
+    Ok(Some(parsed))
 }
 
-/// 個数を小数 2 桁までの 100 倍の整数で読む。浮動小数を通さない（IO-07-D2）
-fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, ()> {
+/// 個数を小数 2 桁までの 100 倍の整数で読む。浮動小数を通さない（IO-07-D2）。上限は IO-07-D6
+fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, NumberError> {
     let cleaned = clean_number(value);
     if cleaned.is_empty() {
         return Ok(None);
     }
     let (integer, fraction) = match cleaned.split_once('.') {
         Some((integer, fraction)) if (1..=2).contains(&fraction.len()) => (integer, fraction),
-        Some(_) => return Err(()),
+        Some(_) => return Err(NumberError::Invalid),
         None => (cleaned.as_str(), ""),
     };
     let (negative, digits) = match integer.strip_prefix('-') {
@@ -558,20 +575,46 @@ fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, ()> {
     };
     let all_digits = |text: &str| text.bytes().all(|byte| byte.is_ascii_digit());
     if digits.is_empty() || !all_digits(digits) || !all_digits(fraction) {
-        return Err(());
+        return Err(NumberError::Invalid);
     }
-    let fraction_hundredths: i64 = format!("{fraction:0<2}").parse().map_err(|_| ())?;
+    let fraction_hundredths: i64 = format!("{fraction:0<2}")
+        .parse()
+        .map_err(|_| NumberError::Invalid)?;
+    // 形は数なので、i64 に収まらない桁も上限の越え
     let magnitude = digits
         .parse::<i64>()
         .ok()
         .and_then(|units| units.checked_mul(100))
         .and_then(|hundredths| hundredths.checked_add(fraction_hundredths))
-        .ok_or(())?;
+        .ok_or(NumberError::TooLarge)?;
+    if magnitude > crate::constants::MAX_DAILY_REPORT_QUANTITY_HUNDREDTHS {
+        return Err(NumberError::TooLarge);
+    }
     Ok(Some(if negative { -magnitude } else { magnitude }))
 }
 
-fn parse_required_i64(value: &str) -> Result<i64, ()> {
-    parse_optional_i64(value)?.ok_or(())
+fn parse_required_i64(value: &str) -> Result<i64, NumberError> {
+    parse_optional_i64(value)?.ok_or(NumberError::Invalid)
+}
+
+/// 数の列の誤り。文は帳票と列の語だけで作り、値・file 名を入れない（IO-07-D6、§29.5）
+fn number_error(
+    source: DailyReportSourceKind,
+    line_no: i64,
+    column: &str,
+    error: NumberError,
+) -> DailyReportParseError {
+    let (error_type, message) = match error {
+        NumberError::Invalid => (
+            "invalid_number",
+            format!("{source:?}の{column}列を変換できません"),
+        ),
+        NumberError::TooLarge => (
+            "number_too_large",
+            format!("{source:?}の{column}列の値が大きすぎます"),
+        ),
+    };
+    parse_error(Some(source), None, Some(line_no), error_type, &message)
 }
 
 fn clean_number(value: &str) -> String {
@@ -589,11 +632,10 @@ fn summary_line_key(label: &str, sort_order: i64) -> String {
     }
 }
 
+/// 意味の鍵は `cash` だけ。`credit` の鍵は導かない（IO-07-D4a）
 fn payment_key(label: &str, sort_order: i64) -> String {
     if label.contains("現金") || label.eq_ignore_ascii_case("cash") {
         "cash".to_string()
-    } else if label.contains("クレジット") || label.eq_ignore_ascii_case("credit") {
-        "credit".to_string()
     } else {
         fallback_key("payment", sort_order)
     }
@@ -1489,5 +1531,234 @@ mod tests {
         let zero = settlement_bundle(["0000", "0000", "0000"]);
         assert!(zero.parse_errors.is_empty(), "{:?}", zero.parse_errors);
         assert_eq!(zero.settlement_no, Some(0));
+    }
+
+    #[test]
+    fn test_payment_key_has_no_credit_rule() {
+        // REQ-401 / IO-07-D4a: `credit` の鍵は導かない。`cash`・総売・純売の鍵は変えない
+        let result = parse_daily_report_bundle(vec![
+            z001("2026-03-21"),
+            report_file(
+                "Z002_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[
+                    ("0001", "現金", "7", "11000"),
+                    ("0002", "クレジット", "1", "1000"),
+                    ("0003", "クレジット２", "1", "500"),
+                ],
+            ),
+            z005("2026-03-21"),
+        ]);
+
+        assert!(result.parse_errors.is_empty(), "{:?}", result.parse_errors);
+        let keys: Vec<&str> = result
+            .payment_lines
+            .iter()
+            .map(|line| line.payment_key.as_str())
+            .collect();
+        assert_eq!(keys, ["cash", "payment_2", "payment_3"]);
+        let summary_keys: Vec<&str> = result
+            .summary_lines
+            .iter()
+            .map(|line| line.line_key.as_str())
+            .collect();
+        assert_eq!(summary_keys, ["gross_sales", "net_sales"]);
+    }
+
+    #[test]
+    fn test_parse_daily_report_req401_accepts_limit_values() {
+        // REQ-401 / IO-07-D6: 上限ちょうど（絶対値）は受ける。値は 29 IO-07-D6 から転記
+        let result = parse_daily_report_bundle(vec![
+            report_file(
+                "Z001_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[
+                    ("0001", "総売", "8", "9999999999"),
+                    ("0002", "純売", "7", "-9999999999"),
+                ],
+            ),
+            report_file(
+                "Z002_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[("0001", "現金", "9999999999", "1")],
+            ),
+            report_file(
+                "Z005_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[("0001", "部門A", "9999999.99", "1")],
+            ),
+        ]);
+
+        assert!(result.parse_errors.is_empty(), "{:?}", result.parse_errors);
+        assert_eq!(result.summary_lines[0].amount, Some(9999999999));
+        assert_eq!(result.summary_lines[1].amount, Some(-9999999999));
+        assert_eq!(result.payment_lines[0].count, Some(9999999999));
+        assert_eq!(
+            result.department_lines[0].quantity_hundredths,
+            Some(999999999)
+        );
+    }
+
+    #[test]
+    fn test_parse_daily_report_req401_rejects_over_limit_with_column() {
+        // REQ-401 / IO-07-D6: 1 越えると number_too_large。文は帳票と列だけで値を入れない
+        let result = parse_daily_report_bundle(vec![
+            report_file(
+                "Z001_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[
+                    ("0001", "総売", "8", "10000000000"),
+                    ("0002", "純売", "7", "11000"),
+                ],
+            ),
+            report_file(
+                "Z002_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[("0001", "現金", "-10000000000", "1")],
+            ),
+            report_file(
+                "Z005_260321.CSV",
+                "2026-03-21",
+                &settlement_line("0001"),
+                &[("0001", "部門A", "10000000.00", "1")],
+            ),
+        ]);
+
+        let too_large: Vec<(Option<DailyReportSourceKind>, Option<i64>, &str)> = result
+            .parse_errors
+            .iter()
+            .filter(|error| error.error_type == "number_too_large")
+            .map(|error| {
+                (
+                    error.source_file,
+                    error.line_no,
+                    error.error_message.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            too_large,
+            [
+                (
+                    Some(DailyReportSourceKind::Z001),
+                    Some(9),
+                    "Z001の金額列の値が大きすぎます"
+                ),
+                (
+                    Some(DailyReportSourceKind::Z002),
+                    Some(9),
+                    "Z002の件数列の値が大きすぎます"
+                ),
+                (
+                    Some(DailyReportSourceKind::Z005),
+                    Some(9),
+                    "Z005の個数列の値が大きすぎます"
+                ),
+            ]
+        );
+        assert!(!has_error_type(&result, "invalid_number"));
+        assert!(result
+            .parse_errors
+            .iter()
+            .all(|error| !error.error_message.contains("10000000")));
+    }
+
+    #[test]
+    fn test_parse_daily_report_req401_overflow_digits_with_bad_tail_is_invalid_number() {
+        // REQ-401 / IO-07-D6: 数の形をしていない値は桁があふれていても形の誤り（invalid_number）。
+        // 数の形で i64 に収まらない値だけが上限の越え（number_too_large）。error_type は 29 §29.5
+        let s = settlement_line("0001");
+        let bundle = |amount: &str, count: &str, quantity: &str| {
+            parse_daily_report_bundle(vec![
+                report_file(
+                    "Z001_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "総売", "3", amount), ("0002", "純売", "7", "90")],
+                ),
+                report_file(
+                    "Z002_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "現金", count, "100")],
+                ),
+                report_file(
+                    "Z005_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "部門A", quantity, "100")],
+                ),
+            ])
+        };
+        let errors_of =
+            |result: &DailyReportParseResult| -> Vec<(Option<DailyReportSourceKind>, String)> {
+                result
+                    .parse_errors
+                    .iter()
+                    .map(|error| (error.source_file, error.error_type.clone()))
+                    .collect()
+            };
+
+        for (amount, count, quantity) in [
+            (
+                "100000000000000000000x",
+                "-100000000000000000000x",
+                "100000000000000000000x",
+            ),
+            (
+                "100000000000000000000.5",
+                "100000000000000000000.5",
+                "-100000000000000000000x",
+            ),
+        ] {
+            let result = bundle(amount, count, quantity);
+            assert_eq!(
+                errors_of(&result),
+                [
+                    (
+                        Some(DailyReportSourceKind::Z001),
+                        "invalid_number".to_string()
+                    ),
+                    (
+                        Some(DailyReportSourceKind::Z002),
+                        "invalid_number".to_string()
+                    ),
+                    (
+                        Some(DailyReportSourceKind::Z005),
+                        "invalid_number".to_string()
+                    ),
+                ],
+                "{amount} / {count} / {quantity}"
+            );
+        }
+
+        let result = bundle(
+            "100000000000000000000",
+            "-100000000000000000000",
+            "100000000000000000000",
+        );
+        assert_eq!(
+            errors_of(&result),
+            [
+                (
+                    Some(DailyReportSourceKind::Z001),
+                    "number_too_large".to_string()
+                ),
+                (
+                    Some(DailyReportSourceKind::Z002),
+                    "number_too_large".to_string()
+                ),
+                (
+                    Some(DailyReportSourceKind::Z005),
+                    "number_too_large".to_string()
+                ),
+            ]
+        );
     }
 }

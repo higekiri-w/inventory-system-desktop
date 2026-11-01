@@ -75,12 +75,14 @@ pub fn parse_and_validate_daily_report_with_sd_lookup(
             .iter()
             .any(|error| error.error_type == "settlement_mismatch")
         {
-            SETTLEMENT_MISMATCH_MESSAGE
+            SETTLEMENT_MISMATCH_MESSAGE.to_string()
+        } else if let Some(message) = number_too_large_message(&parse_result.parse_errors) {
+            message
         } else {
-            "日報ファイルの解析に失敗しました"
+            "日報ファイルの解析に失敗しました".to_string()
         };
-        log_parse_failure(conn, message);
-        return Err(BizError::ImportError(message.to_string()));
+        log_parse_failure(conn, &message);
+        return Err(BizError::ImportError(message));
     }
 
     let report_date = parse_result.report_date.ok_or_else(|| {
@@ -364,6 +366,35 @@ pub(super) fn build_bundle_hash(
     let mut hasher = Sha256::new();
     hasher.update(joined.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// BIZ-08-D2a: 上限の越えの帳票と列を名指す文。IO-07-D6 の文は帳票と列の語だけなので値は漏れない。
+/// 並びは帳票の Z001 → Z002 → Z005、帳票の中は列の左から（金額の列は各帳票の右端）
+fn number_too_large_message(
+    errors: &[daily_report_parser::DailyReportParseError],
+) -> Option<String> {
+    let mut columns: Vec<(i64, bool, &str)> = errors
+        .iter()
+        .filter(|error| error.error_type == "number_too_large")
+        .map(|error| {
+            (
+                error.source_file.map_or(0, source_kind_order),
+                error.error_message.contains("金額列"),
+                error.error_message.as_str(),
+            )
+        })
+        .collect();
+    if columns.is_empty() {
+        return None;
+    }
+    columns.sort();
+    columns.dedup();
+    let mut message: String = columns
+        .iter()
+        .map(|(_, _, column)| format!("{column}。"))
+        .collect();
+    message.push_str("この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。");
+    Some(message)
 }
 
 pub(super) fn log_parse_failure(conn: &DbConnection, message: &str) {

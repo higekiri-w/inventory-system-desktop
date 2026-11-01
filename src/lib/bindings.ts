@@ -210,6 +210,8 @@ export const commands = {
 	listPluDirty: () => typedError<ProductResponse[], CmdError>(__TAURI_INVOKE("list_plu_dirty")),
 	// 指定日の売上レポートを取得する
 	getDailySales: (date: string) => typedError<DailySalesReport, CmdError>(__TAURI_INVOKE("get_daily_sales", { date })),
+	// 指定日の日報の紙の内容を取得する（42 §22.4、34 §19.3a）
+	getDailyReportSheet: (date: string) => typedError<DailyReportSheet, CmdError>(__TAURI_INVOKE("get_daily_report_sheet", { date })),
 	/**
 	 *  指定月の売上レポートを取得する
 	 *
@@ -656,6 +658,41 @@ export type DailyReportSdScan = {
 	candidates: DailyReportSdCandidate[],
 	// 名前の規則に合わず読まなかった file の数（IO-09-D2）
 	skipped_unknown_count: number,
+};
+
+// 日報の紙の内容（34 §19.3a、SALES-SHEET-D1〜D6）
+export type DailyReportSheet = {
+	date: string,
+	// その日の完了した日報の取込みの数。0 なら行は空
+	import_count: number,
+	summary_rows: DailyReportSheetRow[],
+	payment_rows: DailyReportSheetRow[],
+	department_rows: DailyReportSheetRow[],
+	// SALES-SHEET-D2 の 2・3 の帳票（Z001 → Z002 → Z005 の順）
+	label_changed_sources: DailyReportSourceKind[],
+	// SALES-SHEET-D2 の 3 の帳票（足さずに取込みごとに載せた）
+	unsummed_sources: DailyReportSourceKind[],
+	// SALES-SHEET-D4: その日に売れた Z004 由来の行
+	plu_rows: DailySaleItem[],
+	plu_import: DailyReportSheetPluImport,
+};
+
+// 日報の紙の PLU の部分の取込みの数（SALES-SHEET-D4）
+export type DailyReportSheetPluImport = {
+	import_count: number,
+	skipped_count: number,
+};
+
+// 日報の紙の 1 行
+export type DailyReportSheetRow = {
+	position: number,
+	// 前後の空白を除いた名称（Z005 はレジの名称）。空のこともある
+	label: string,
+	quantity: number | null,
+	count: number | null,
+	amount: number | null,
+	// SALES-SHEET-D2 の 3 の帳票の行だけ、取込みの並びの中の位置（1 から）
+	import_seq: number | null,
 };
 
 export type DailyReportSourceFileInfo = {

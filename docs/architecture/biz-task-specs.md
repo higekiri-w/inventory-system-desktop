@@ -321,7 +321,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. IO-07（POS日報bundleパーサー）を呼び出す
 2. parse_errors がある場合は commit 不可として中断し、`daily_report_imports` は作らない
 3. parse失敗は operation_logs に `daily_report_parse_failed` として汎用文言で記録する
-4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`）だけは、選び直しを案内する固定の文にする（BIZ-08-D2）
+4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`、BIZ-08-D2）と数の上限の越え（`number_too_large`、BIZ-08-D2a。帳票と列を名指し、値を出さない）は固定の形の文にする
 
 **Stage 2: Validate**
 1. Z001/Z002/Z005 の report_date が一致することを確認する

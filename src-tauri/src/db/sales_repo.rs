@@ -1120,7 +1120,8 @@ pub struct OfficialDailyReportRow {
     pub report_date: String,
     pub gross_amount: Option<i64>,
     pub net_amount: Option<i64>,
-    pub payment_lines: Vec<OfficialDailyPaymentRow>,
+    /// 支払の行（足さない。親の古い順・行の位置の順。24 §14.21 手順 3・8 の (a)）
+    pub payment_lines: Vec<OfficialDailyPaymentLineRow>,
     pub department_lines: Vec<OfficialDailyDepartmentRow>,
     pub summary_imports: Vec<OfficialDailySummaryImportRow>,
 }
@@ -1142,12 +1143,39 @@ pub struct OfficialDailySummaryLineRow {
     pub amount: Option<i64>,
 }
 
+/// 支払（Z002）の 1 行。足さずに返す（24 §14.21 手順 3。wire に出さない）
 #[derive(Debug, serde::Serialize)]
-pub struct OfficialDailyPaymentRow {
-    pub payment_key: String,
+pub struct OfficialDailyPaymentLineRow {
+    pub daily_report_import_id: i64,
+    pub imported_at: String,
+    pub id: i64,
+    pub sort_order: i64,
     pub label: String,
+    pub payment_key: String,
     pub amount: Option<i64>,
     pub count: Option<i64>,
+}
+
+/// 日報の紙の読取り（24 §14.21a）。`import_ids` は completed の親の `imported_at ASC, id ASC`。
+/// 行は帳票ごとに親の古い順・行の位置の順（db は IO-07 の型を参照しないので帳票は field で分ける）
+#[derive(Debug, serde::Serialize)]
+pub struct DailyReportSheetLinesRow {
+    pub import_ids: Vec<i64>,
+    pub summary_lines: Vec<DailyReportSheetLineRow>,
+    pub payment_lines: Vec<DailyReportSheetLineRow>,
+    pub department_lines: Vec<DailyReportSheetLineRow>,
+}
+
+/// Z001・Z002・Z005 の 1 行（保存されたまま。Z005 の `label` は `raw_department_name`）
+#[derive(Debug, serde::Serialize)]
+pub struct DailyReportSheetLineRow {
+    pub daily_report_import_id: i64,
+    pub sort_order: i64,
+    pub label: String,
+    /// 個数の100倍の整数（IO-07-D2）。Z002 は NULL
+    pub quantity_hundredths: Option<i64>,
+    pub count: Option<i64>,
+    pub amount: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1245,60 +1273,33 @@ pub fn get_completed_daily_report_aggregate(
     let gross_amount = sum_optional_strict(parents.iter().rev().map(|parent| parent.2))?;
     let net_amount = sum_optional_strict(parents.iter().rev().map(|parent| parent.3))?;
 
+    // 支払の行は足さずに返す。足し方は BIZ-05 の SALES-SHEET-D2（24 §14.21 手順 3）
     let mut payment_stmt = conn
         .prepare(
-            "SELECT l.payment_key, l.label, l.amount, l.count, l.sort_order, l.id
+            "SELECT l.daily_report_import_id, i.imported_at, l.id, l.sort_order, l.label,
+                    l.payment_key, l.amount, l.count
              FROM daily_report_payment_lines l
              INNER JOIN daily_report_imports i ON i.id = l.daily_report_import_id
              WHERE i.report_date = ?1 AND i.status = 'completed'
-             ORDER BY l.sort_order ASC, l.id ASC",
+             ORDER BY i.imported_at ASC, i.id ASC, l.sort_order ASC, l.id ASC",
         )
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
     let payment_lines = payment_stmt
         .query_map([report_date.as_str()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
+            Ok(OfficialDailyPaymentLineRow {
+                daily_report_import_id: row.get(0)?,
+                imported_at: row.get(1)?,
+                id: row.get(2)?,
+                sort_order: row.get(3)?,
+                label: row.get(4)?,
+                payment_key: row.get(5)?,
+                amount: row.get(6)?,
+                count: row.get(7)?,
+            })
         })
         .map_err(|e| DbError::QueryFailed(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-    type PaymentGroup = (String, Vec<Option<i64>>, Vec<Option<i64>>, i64, i64);
-    let mut payment_groups: std::collections::BTreeMap<String, PaymentGroup> =
-        std::collections::BTreeMap::new();
-    for (key, label, amount, count, sort_order, id) in payment_lines {
-        let group = payment_groups
-            .entry(key)
-            .or_insert_with(|| (label.clone(), Vec::new(), Vec::new(), sort_order, id));
-        group.1.push(amount);
-        group.2.push(count);
-        if (sort_order, id) < (group.3, group.4) {
-            group.0 = label;
-            group.3 = sort_order;
-            group.4 = id;
-        }
-    }
-    let mut payment_lines: Vec<_> = payment_groups
-        .into_iter()
-        .map(|(payment_key, (label, amounts, counts, sort_order, id))| {
-            Ok((
-                (sort_order, id),
-                OfficialDailyPaymentRow {
-                    payment_key,
-                    label,
-                    amount: sum_optional_strict(amounts)?,
-                    count: sum_optional_strict(counts)?,
-                },
-            ))
-        })
-        .collect::<Result<_, DbError>>()?;
-    payment_lines.sort_by_key(|item| item.0);
-    let payment_lines = payment_lines.into_iter().map(|item| item.1).collect();
 
     let mut department_stmt = conn
         .prepare(
@@ -1445,6 +1446,87 @@ pub fn get_completed_daily_report_aggregate(
         department_lines,
         summary_imports,
     }))
+}
+
+/// 指定日の completed 日報取込みの id と、配下の Z001・Z002・Z005 の全行を足さずに返す（24 §14.21a）
+pub fn get_daily_report_sheet_lines(
+    conn: &DbConnection,
+    report_date: &str,
+) -> Result<DailyReportSheetLinesRow, DbError> {
+    let mut parent_stmt = conn.prepare(
+        "SELECT id FROM daily_report_imports
+         WHERE report_date = ?1 AND status = 'completed'
+         ORDER BY imported_at ASC, id ASC",
+    )?;
+    let import_ids = parent_stmt
+        .query_map([report_date], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if import_ids.is_empty() {
+        return Ok(DailyReportSheetLinesRow {
+            import_ids,
+            summary_lines: Vec::new(),
+            payment_lines: Vec::new(),
+            department_lines: Vec::new(),
+        });
+    }
+
+    let read_lines = |table: &str, label: &str, quantity: &str| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT l.daily_report_import_id, l.sort_order, l.{label}, {quantity}, l.count, l.amount
+             FROM {table} l
+             INNER JOIN daily_report_imports i ON i.id = l.daily_report_import_id
+             WHERE i.report_date = ?1 AND i.status = 'completed'
+             ORDER BY i.imported_at ASC, i.id ASC, l.sort_order ASC, l.id ASC"
+        ))?;
+        let lines = stmt
+            .query_map([report_date], |row| {
+                Ok(DailyReportSheetLineRow {
+                    daily_report_import_id: row.get(0)?,
+                    sort_order: row.get(1)?,
+                    label: row.get(2)?,
+                    quantity_hundredths: row.get(3)?,
+                    count: row.get(4)?,
+                    amount: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            // 親の読取りの後に確定した取込みの行を混ぜない（24 §14.21a 手順 2）
+            .filter(|line| import_ids.contains(&line.daily_report_import_id))
+            .collect::<Vec<_>>();
+        Ok::<_, DbError>(lines)
+    };
+    let summary_lines = read_lines(
+        "daily_report_summary_lines",
+        "label",
+        "l.quantity_hundredths",
+    )?;
+    let payment_lines = read_lines("daily_report_payment_lines", "label", "NULL")?;
+    let department_lines = read_lines(
+        "daily_report_department_lines",
+        "raw_department_name",
+        "l.quantity_hundredths",
+    )?;
+
+    Ok(DailyReportSheetLinesRow {
+        import_ids,
+        summary_lines,
+        payment_lines,
+        department_lines,
+    })
+}
+
+/// 指定の精算日の active な Z004 の取込みの数と skipped_count の和（24 §14.21b）
+pub fn get_active_z004_import_totals(
+    conn: &DbConnection,
+    settlement_date: &str,
+) -> Result<(i64, i64), DbError> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(skipped_count), 0) FROM csv_imports
+         WHERE settlement_date = ?1 AND status IN ('completed','completed_partial')",
+        [settlement_date],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
 }
 
 /// NULL を伝える合計。どれかが NULL なら NULL、i64 を溢れたら QueryFailed（24 §14.21 手順 7）
@@ -2223,6 +2305,43 @@ mod tests {
         insert_daily_report_import(conn, &record).unwrap()
     }
 
+    /// 支払の行を (親 id, 位置, 名称, payment_key, 金額, 件数) の並びで見る
+    type PaymentLineView<'a> = (i64, i64, &'a str, &'a str, Option<i64>, Option<i64>);
+
+    fn payment_line_tuples(report: &OfficialDailyReportRow) -> Vec<PaymentLineView<'_>> {
+        report
+            .payment_lines
+            .iter()
+            .map(|line| {
+                (
+                    line.daily_report_import_id,
+                    line.sort_order,
+                    line.label.as_str(),
+                    line.payment_key.as_str(),
+                    line.amount,
+                    line.count,
+                )
+            })
+            .collect()
+    }
+
+    fn payment_line(
+        import_id: i64,
+        sort_order: i64,
+        label: &str,
+        amount: i64,
+    ) -> NewDailyReportPaymentLine {
+        NewDailyReportPaymentLine {
+            daily_report_import_id: import_id,
+            source_file: "Z002".to_string(),
+            payment_key: format!("payment_{sort_order}"),
+            label: label.to_string(),
+            amount: Some(amount),
+            count: Some(1),
+            sort_order,
+        }
+    }
+
     #[test]
     fn test_daily_report_repo_req401_insert_and_find_by_id() {
         // REQ-401: SALES日報取込み
@@ -2474,9 +2593,16 @@ mod tests {
         assert_eq!(report.source_import_count, 2);
         assert_eq!(report.gross_amount, Some(24000));
         assert_eq!(report.net_amount, Some(22000));
-        assert_eq!(report.payment_lines[0].payment_key, "old");
-        assert_eq!(report.payment_lines[1].payment_key, "cash");
-        assert_eq!(report.payment_lines[2].payment_key, "credit");
+        // 24 §14.21 手順 3: 支払の行は足さずに親の古い順・行の位置の順で返す。
+        // 足した値と並びの期待は BIZ の test_daily_sales_payment_out_of_range_all_active_parents_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (old_id, 1, "旧現金", "old", Some(1), Some(1)),
+                (latest_id, 1, "現金", "cash", Some(9000), Some(5)),
+                (latest_id, 2, "クレジット", "credit", Some(2000), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines.len(), 1);
     }
 
@@ -2561,9 +2687,15 @@ mod tests {
         assert_eq!(report.source_import_count, 2);
         assert_eq!(report.gross_amount, None);
         assert_eq!(report.net_amount, Some(400));
-        assert_eq!(report.payment_lines[0].label, "現金新");
-        assert_eq!(report.payment_lines[0].amount, None);
-        assert_eq!(report.payment_lines[0].count, Some(3));
+        // 24 §14.21 手順 3: 支払の行は足さずに返し、NULL を 0 にしない。
+        // 足した値の期待は BIZ の test_daily_sales_payment_out_of_range_null_fixture_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (first, 2, "現金旧", "cash", None, Some(1)),
+                (second, 1, "現金新", "cash", Some(200), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines[0].raw_department_name, "新名");
         assert_eq!(report.department_lines[0].amount, 300);
         assert_eq!(report.department_lines[0].quantity_hundredths, None);
@@ -2665,11 +2797,15 @@ mod tests {
         let report = get_completed_daily_report_aggregate(&conn, "2026-03-21")
             .unwrap()
             .unwrap();
-        assert_eq!(report.payment_lines.len(), 1);
-        assert_eq!(report.payment_lines[0].payment_key, "cash");
-        assert_eq!(report.payment_lines[0].label, "現金 新");
-        assert_eq!(report.payment_lines[0].amount, Some(300));
-        assert_eq!(report.payment_lines[0].count, Some(3));
+        // 24 §14.21 手順 3: 支払の行は足さずに返す。代表の選び方と足した値の期待は
+        // BIZ の test_daily_sales_payment_out_of_range_identities_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (first, 4, "現金 旧", "cash", Some(100), Some(1)),
+                (second, 1, "現金 新", "cash", Some(200), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines.len(), 3);
         let known = report
             .department_lines
@@ -3633,6 +3769,176 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some("2026-10-01")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 日報の紙の読取り（24 §14.21 手順 3・§14.21a・§14.21b、D-120）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_completed_daily_report_aggregate_req501_payment_lines_unsummed_in_order() {
+        // REQ-501 / 24 §14.21 手順 3: 同じ位置・名称の支払の行を足さず、親の imported_at ASC, id ASC・
+        // 行の sort_order ASC, id ASC で、親の id・行の id・sort_order・payment_key 付きで返す
+        let (_dir, conn) = setup_test_db();
+        let later = seed_daily_report_import(&conn, "2026-03-21", "pay-later", "completed");
+        let earlier = seed_daily_report_import(&conn, "2026-03-21", "pay-earlier", "completed");
+        set_imported_at(&conn, later, "2026-03-21T20:00:00");
+        set_imported_at(&conn, earlier, "2026-03-21T12:00:00");
+        insert_daily_report_payment_lines(
+            &conn,
+            &[
+                payment_line(later, 2, "項目B", 20),
+                payment_line(later, 1, "現金", 10),
+                payment_line(earlier, 1, "現金", 5),
+            ],
+        )
+        .unwrap();
+
+        let report = get_completed_daily_report_aggregate(&conn, "2026-03-21")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (earlier, 1, "現金", "payment_1", Some(5), Some(1)),
+                (later, 1, "現金", "payment_1", Some(10), Some(1)),
+                (later, 2, "項目B", "payment_2", Some(20), Some(1)),
+            ]
+        );
+        let ids: Vec<i64> = report.payment_lines.iter().map(|line| line.id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 3, "行の id を持つ");
+        assert_eq!(report.payment_lines[0].imported_at, "2026-03-21T12:00:00");
+    }
+
+    #[test]
+    fn test_get_daily_report_sheet_lines_reads_completed_only_in_order() {
+        // REQ-501 / 24 §14.21a: completed の親だけ（行の無い親も import_ids に残す）、帳票ごとに
+        // 親の古い順・位置の順、値は保存されたまま（空白・NULL）、Z005 は raw_department_name
+        let (_dir, conn) = setup_test_db();
+        let later = seed_daily_report_import(&conn, "2026-03-21", "sheet-later", "completed");
+        let earlier = seed_daily_report_import(&conn, "2026-03-21", "sheet-earlier", "completed");
+        let empty = seed_daily_report_import(&conn, "2026-03-21", "sheet-empty", "completed");
+        let rolled = seed_daily_report_import(&conn, "2026-03-21", "sheet-rolled", "rolled_back");
+        seed_daily_report_import(&conn, "2026-03-22", "sheet-other-day", "completed");
+        set_imported_at(&conn, later, "2026-03-21T20:00:00");
+        set_imported_at(&conn, earlier, "2026-03-21T12:00:00");
+        set_imported_at(&conn, empty, "2026-03-21T21:00:00");
+        insert_daily_report_summary_lines(
+            &conn,
+            &[
+                summary_line(later, "総売", Some(200), None, Some(500), 1),
+                summary_line(earlier, "  項目A ", None, Some(3), None, 2),
+                summary_line(earlier, "総売", Some(130), None, Some(1000), 1),
+                summary_line(rolled, "総売", Some(100), None, Some(9), 1),
+            ],
+        )
+        .unwrap();
+        insert_daily_report_payment_lines(
+            &conn,
+            &[
+                payment_line(later, 1, "現金", 10),
+                payment_line(rolled, 1, "現金", 99),
+            ],
+        )
+        .unwrap();
+        insert_daily_report_department_lines(
+            &conn,
+            &[NewDailyReportDepartmentLine {
+                daily_report_import_id: earlier,
+                source_file: "Z005".to_string(),
+                department_id: None,
+                raw_department_name: "部門 レジ".to_string(),
+                normalized_department_name: Some("部門マスタ".to_string()),
+                amount: 7,
+                quantity_hundredths: Some(250),
+                count: None,
+                sort_order: 1,
+            }],
+        )
+        .unwrap();
+
+        let sheet = get_daily_report_sheet_lines(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.import_ids, [earlier, later, empty]);
+        let view = |lines: &[DailyReportSheetLineRow]| {
+            lines
+                .iter()
+                .map(|line| {
+                    (
+                        line.daily_report_import_id,
+                        line.sort_order,
+                        line.label.clone(),
+                        line.quantity_hundredths,
+                        line.count,
+                        line.amount,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            view(&sheet.summary_lines),
+            [
+                (earlier, 1, "総売".to_string(), Some(130), None, Some(1000)),
+                (earlier, 2, "  項目A ".to_string(), None, Some(3), None),
+                (later, 1, "総売".to_string(), Some(200), None, Some(500)),
+            ]
+        );
+        assert_eq!(
+            view(&sheet.payment_lines),
+            [(later, 1, "現金".to_string(), None, Some(1), Some(10))]
+        );
+        assert_eq!(
+            view(&sheet.department_lines),
+            [(
+                earlier,
+                1,
+                "部門 レジ".to_string(),
+                Some(250),
+                None,
+                Some(7)
+            )]
+        );
+
+        let none = get_daily_report_sheet_lines(&conn, "2026-03-23").unwrap();
+        assert!(none.import_ids.is_empty());
+        assert!(none.summary_lines.is_empty());
+    }
+
+    #[test]
+    fn test_get_active_z004_import_totals_counts_active_only() {
+        // REQ-501 / 24 §14.21b: completed・completed_partial の数と skipped_count の和、無い日は (0, 0)
+        let (_dir, conn) = setup_test_db();
+        assert_eq!(
+            get_active_z004_import_totals(&conn, "2026-03-21").unwrap(),
+            (0, 0)
+        );
+        for (settlement_no, hash, status, skipped) in [
+            (1, "z-a", "completed", 0),
+            (2, "z-b", "completed_partial", 3),
+            (3, "z-c", "rolled_back", 5),
+        ] {
+            insert_csv_import(
+                &conn,
+                &NewCsvImport {
+                    filename: "Z004.CSV".to_string(),
+                    settlement_date: "2026-03-21".to_string(),
+                    file_hash: hash.to_string(),
+                    total_items: 1,
+                    total_amount: 1,
+                    skipped_count: skipped,
+                    status: status.to_string(),
+                    machine_no: "0001".to_string(),
+                    settlement_no,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            get_active_z004_import_totals(&conn, "2026-03-21").unwrap(),
+            (2, 3)
         );
     }
 }
