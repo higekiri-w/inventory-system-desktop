@@ -285,6 +285,32 @@ describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15
     }
   });
 
+  it("REQ-901 / UI-11b-D13: 停止の前に始まった確認が停止中に失敗しても toast・連続失敗の状態を変えず、再開後の最初の失敗は通知する", async () => {
+    const check = pendingCheck();
+    renderCheck();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+      suspendAutoBackupCheck();
+
+      check.settle(failure());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockToastError).not.toHaveBeenCalled();
+
+      resumeAutoBackupCheck();
+      mockCheckAutoBackup.mockResolvedValueOnce(failure());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
+      // 古い失敗が連続失敗の状態を立てていれば、ここで通知されない
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+      expect(mockToastError).toHaveBeenCalledWith("自動バックアップ確認に失敗しました", {
+        id: "backup-auto-check-error",
+      });
+    } finally {
+      check.settle(ok(false));
+    }
+  });
+
   it("REQ-901 / UI-11b-D13: 復元の理由は resume で外れず release(false) で外れ、fatal は何でも外れない", async () => {
     renderCheck();
 

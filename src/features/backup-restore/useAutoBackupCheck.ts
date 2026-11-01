@@ -15,7 +15,8 @@ import { queryKeys } from "@/lib/query-keys";
 
 const AUTO_BACKUP_CHECK_INTERVAL_MS = 60_000;
 
-// 選択の理由（UI-11b-D15: 控えを選んで確かめ・詳細・最終確認を見ている間）。resume だけが外す。
+// 選択の理由（UI-11b-D15: 控えを選んで確かめ・詳細・最終確認を見ている間）。resume が外し、
+// 復元の開始（hold）は外して復元の理由へ移す。
 let selectionHold = false;
 // 復元の理由（実行中の復元の数と fatal）。復元の開始と結果だけが変える。fatal は再起動まで外れない。
 let restoringCount = 0;

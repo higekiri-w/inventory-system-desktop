@@ -411,6 +411,11 @@ PR: #190。
   - 停止の待ちの即時解決（Codex P3 2）: 実装は `inFlight === null` のときだけすぐ解決し、hook が unmount されていても実行中の回が残れば待つ。Scope の `useAutoBackupCheck.ts` の行の「hook が mount されていないときはすぐ解決する」は、この条件を分けない言い方のまま。Matrix の hook の行は直した。
   - release は 1 回（Opus P3 2）: `handleRestore` は fatal を局所の値で決め、外側の `finally` で `releaseAutoBackupCheckAfterRestore(fatal)` を 1 回だけ呼ぶ（成功の後の処理が throw して fatal でない `catch` へ落ちても 2 回にならない）。Scope の文との差は無い。
   - 確かめの間の assert（Opus P3 3）: `inspectBackup` を止めた間も文言と disabled が続く assert を足した。
+- Final Review round 1 の是正（発注 715。受理した findings と commit の件名の対応）:
+  - Codex F1（P2）→「控えの名前の日時の部分を数字だけに限る」: 2 つの名前の解析を共有の判定（stem が 15 bytes・9 文字目が `_`・ほかの 14 文字が ASCII の数字）に通してから chrono で解析する。71 §71.3 の説明と Matrix に行を足した。
+  - Codex F2（P2）→「復元の成功の後の失敗を復元の失敗と表示しない」: `restoreBackup` の解決で成功を確定し、その後の `clear`・flag・遷移の失敗は flag を消して成功の toast を出す（navigate の reject の fallback と 1 つにした）。release は外側の `finally` の 1 回のまま。68 §68.7 の `restore_succeeded` の行に 1 文。
+  - Codex P3-3・P3-4 →「古い確認の失敗を捨てる test を足し、停止の理由と command の同期の古い説明を直す」: 古い確認の失敗の結果を捨てる hook の test、`useAutoBackupCheck.ts` の選択の理由の説明、43 §43.8.2 の「実行の thread」の文。
+  - Codex P3-5（`syn` への置き換え）は follow-up で、この round では触らない。
 
 ## Review Response
 
