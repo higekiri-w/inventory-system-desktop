@@ -123,7 +123,7 @@
   - Z004 タブの上に「取り込んだ記録を見る（取り消すときはここから）」（入出庫履歴を種別「CSV取込み」で開く）。結果の画面を離れた後も、CSV取込みの詳細の「この取込みを取り消す」で取り消せる（[55](function-design/55-ui-csv-import.md) UI-07-D18、[65](function-design/65-inventory-record-traceability.md) §65.5a）
   - 取消の確認（結果の画面と CSV取込みの詳細で同じ）は、取り消した後に数え直しが必要な商品・取り込み直す精算・記録の詳細の数が変わることがある完了した棚卸しを名指し、読み終わるまで「取り消す」を押せない
 - **利用者配慮**:
-  - 毎日の作業だから、日報取込みは「SD から読む→精算を選ぶ→確認→実行」の短い導線にし（D-111 の採用済みの画面の設計。今の画面は file を選ぶ導線）、ファイルの場所や名前を利用者に探させない
+  - 毎日の作業だから、日報取込みは「SD から読む→精算を選ぶ→確認→実行」の短い導線にし（D-111。PR #172 で実装した）、ファイルの場所や名前を利用者に探させない
   - 読み終えたら「いつもの取込みが済んでいれば、SD はレジに戻してください（次の精算に要ります）」を出す。SD が無いとレジは精算できない。取込み済みを `XZ_BKUP` へ移すアプリの操作（後続の lane）ができるまでは、CV17 の取込み → 「SD から読む」 → SD をレジへ戻す、の順（SD 直読みの runtime の後の形。D-111 の運用の制約、55 UI-07-D15 (2)）
   - 精算の一覧の状態（取り込めます / 取込み済み / 同じ精算を取込み済み / ファイルがそろっていません / 読めません）は日本語の label と icon で示し、色だけに頼らない
   - 「日報取込み」と「商品別CSV取込み（Z004）」はタブまたはsegmented controlで分け、在庫が動く/動かないを日本語で明示する
@@ -335,6 +335,7 @@
   - route は `/products/new`（新規）と `/products/$code/edit`（修正）を分ける。新規 / 修正を query param だけで切り替えない
   - UI は tauri-specta で生成済みの `commands.createProduct` / `commands.updateProduct` / `commands.toggleDiscontinue` / `commands.listSuppliers` を使う
   - create mode の商品コードは「JANコードあり」と「JANなし独自コード自動発番」に分ける。JAN blank + 選択部門に `code_prefix` がない場合は保存前に止める
+  - （D-141 は proposed・実装済み〈PR #212、L3 待ち〉）入れた JAN をほかの商品が使っているときは、保存で確認のダイアログを開き、使っている商品を名指して「独自コードで登録する」（JAN を持ったまま独自コードで登録し、この商品と JAN が同じ商品は全て「POS販売で在庫を減らす」が「減らさない」になる。商品コードだけが同じ商品は変わらない）と「戻る」を出す（UI-01b-D26）。JAN がほかの商品に無いときは今どおり JAN を商品コードにする
   - edit mode では `product_code` / `jan_code` / `stock_quantity` を読取専用にする。`stock_unit` は個数の単位の商品だけ個数の単位どうしで変えられ、長さの単位の商品は読取専用（D-119、UI-01b-D23）
   - 取引先候補は取引先マスタ全件を取得し、「新しい取引先を追加」からメーカー/ブランドを漸進追加できる（UI-01b-D7 / D21）。改名・統合は UI-15 取引先管理（[function-design/78-ui-supplier-management.md](function-design/78-ui-supplier-management.md)）で扱う
   - 保存成功後は来た一覧へ戻る（D-138 の後は商品と在庫の画面の条件と開いていた行、[function-design/51-ui-product-form.md](function-design/51-ui-product-form.md) UI-01b-D2。今の build は商品一覧）。`returnTo` は `/products` 一覧 route とその search params だけを許可し、`/products/new`、`/products/$code/edit`、`/products/import`、外部 URL、他画面 route は `/products` に戻す
