@@ -125,6 +125,11 @@ export function StockTransferPage() {
   };
   // UI-16-D7: 2 つの商品追加欄が同じ lock を読む
   const isFormLockedRef = useRef(false);
+  // UI-16-D7: 直接の検索の世代。保存の開始・リセット・「続けて」で進め、その前に始まった検索の
+  // 応答（成功・失敗とも）を採らない。lock は保存の後の失敗で外れ、リセットでも外れるので、
+  // lock だけでは前のフォームの検索を見分けられない。2 つの欄で 1 つを共有し、同じ欄の新しい
+  // 検索では進めない（スキャンを続けて打ったときに前の商品を落とさない）。
+  const searchGenerationRef = useRef(0);
   const [initialValues, setInitialValues] = useState<TransferFormValues>(createEmptyForm);
   const [values, setValues] = useState<TransferFormValues>(initialValues);
   const [errors, setErrors] = useState<TransferFormErrors>({});
@@ -270,13 +275,16 @@ export function StockTransferPage() {
   async function handleProductSearch(direction: TransferDirection, keywordOverride?: string) {
     const keyword = (keywordOverride ?? search[direction].text).trim();
     if (keyword === "" || isFormLocked) return;
+    const generation = searchGenerationRef.current;
+    // 保存の click の直後で、まだ isFormLocked が描画に届く前に始まった検索は lock の ref で止める（U7）
+    const isStale = () => generation !== searchGenerationRef.current || isFormLockedRef.current;
     updateSearch(direction, { message: null, candidates: [] });
     try {
       const products = await unwrapResult(
         commands.searchProducts({ ...PRODUCT_SEARCH_QUERY, keyword }),
         { source: "commands", cmd: "search_products" },
       );
-      if (isFormLockedRef.current) return;
+      if (isStale()) return;
       if (products.items.length === 0) {
         updateSearch(direction, { message: "該当する商品がありません" });
         return;
@@ -290,12 +298,14 @@ export function StockTransferPage() {
         message: `候補から${TRANSFER_SIDE_LABELS[direction]}を選んでください`,
       });
     } catch (error) {
+      if (isStale()) return;
       updateSearch(direction, { message: describeError(error) });
     }
   }
 
   function resetForm() {
     isFormLockedRef.current = false;
+    searchGenerationRef.current += 1;
     const emptyValues = createEmptyForm();
     setInitialValues(emptyValues);
     setValues(emptyValues);
@@ -645,6 +655,7 @@ export function StockTransferPage() {
             disabled={!canSubmit}
             onClick={() => {
               isFormLockedRef.current = true;
+              searchGenerationRef.current += 1;
               suggests.out.invalidateAndClose();
               suggests.in.invalidateAndClose();
               setSaveError(null);

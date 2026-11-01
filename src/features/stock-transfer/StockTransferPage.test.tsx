@@ -2,7 +2,7 @@
 // U10 の oracle は src/test/invalidation-oracle.ts の C23（79 UI-16-D10 から独立に写した列）。
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -350,6 +350,95 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     deferredSave.resolve(okResult(44));
     expect(await screen.findByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
     expect(screen.queryByText("TR-LATE")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["減らす商品", "リセット", "成功", OUT_SEARCH],
+    ["減らす商品", "リセット", "失敗", OUT_SEARCH],
+    ["減らす商品", "続けて詰め替え・切り分け", "成功", OUT_SEARCH],
+    ["減らす商品", "続けて詰め替え・切り分け", "失敗", OUT_SEARCH],
+    ["増やす商品", "リセット", "成功", IN_SEARCH],
+    ["増やす商品", "リセット", "失敗", IN_SEARCH],
+    ["増やす商品", "続けて詰め替え・切り分け", "成功", IN_SEARCH],
+    ["増やす商品", "続けて詰め替え・切り分け", "失敗", IN_SEARCH],
+  ])(
+    "U17 / UI-16-D7: %sの欄で「%s」の前に始まった検索が%sで完了しても新しいフォームに反映しない",
+    async (_side, resetButton, outcome, label) => {
+      const user = userEvent.setup();
+      const deferredSearch = createDeferred<Awaited<ReturnType<typeof commands.searchProducts>>>();
+      const late = makeMockProductWithRelations({
+        product_code: "TR-LATE",
+        name: "古い検索の商品",
+      });
+      mockCreateTransfer.mockResolvedValue(okResult(45));
+      renderWithClient(<StockTransferPage />);
+      await fillBothSides(user);
+      mockSearchProducts.mockReturnValueOnce(deferredSearch.promise);
+      await user.type(screen.getByLabelText(label), "TR-LATE{enter}");
+
+      if (resetButton === "続けて詰め替え・切り分け") {
+        await user.click(screen.getByRole("button", { name: SAVE }));
+        expect(await screen.findByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
+      }
+      await user.click(screen.getByRole("button", { name: resetButton }));
+      await waitFor(() => {
+        expect(screen.queryByLabelText("TR-M1 の数量")).not.toBeInTheDocument();
+      });
+
+      await act(async () => {
+        deferredSearch.resolve(outcome === "成功" ? searchResult([late]) : internalError);
+        await deferredSearch.promise;
+      });
+      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("一時的なエラー。詳細は診断ログに記録されています。"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText(label)).toHaveValue("");
+      expect(screen.getByRole("button", { name: SAVE })).toBeDisabled();
+    },
+  );
+
+  it("U18 / §79.6: 検索 0 件はその欄の近くに案内・商品登録への導線・未保存の入力が残らない警告を出し、既存の行を保つ", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<StockTransferPage />);
+    await addTo(user, OUT_SEARCH, fabric);
+    expect(await screen.findByLabelText("TR-M1 の数量")).toBeInTheDocument();
+
+    mockSearchProducts.mockResolvedValueOnce(searchResult([]));
+    await user.type(screen.getByLabelText(IN_SEARCH), "missing{enter}");
+
+    expect(await screen.findByText("該当する商品がありません")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "未登録商品の場合は、商品マスタに登録してから詰め替え・切り分けへ戻って追加します。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "未保存の詰め替え・切り分けの内容があります。商品登録へ進むとこの画面の入力は残りません。",
+      ),
+    ).toHaveClass("text-warning-emphasis");
+    expect(screen.getByRole("link", { name: "商品登録へ進む" })).toHaveAttribute(
+      "href",
+      "/products/new",
+    );
+    expect(screen.getByLabelText("TR-M1 の数量")).toBeInTheDocument();
+  });
+
+  it("U18 / §79.6: 検索の失敗は describeError の文をその欄の近くに出し、既存の行を保つ", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<StockTransferPage />);
+    await addTo(user, OUT_SEARCH, fabric);
+    expect(await screen.findByLabelText("TR-M1 の数量")).toBeInTheDocument();
+
+    mockSearchProducts.mockResolvedValueOnce(internalError);
+    await user.type(screen.getByLabelText(IN_SEARCH), "TR-01{enter}");
+
+    expect(
+      await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "商品登録へ進む" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("TR-M1 の数量")).toBeInTheDocument();
   });
 
   it("U8・U10・U11: 保存結果に記録の番号・2 つの一覧（数量と単位）・warning・replay、C23 の無効化、returnTo 付きの詳細", async () => {
