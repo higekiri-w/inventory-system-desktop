@@ -7,7 +7,7 @@ wave に属さない単独の lane。導入の前の関門 5（[Plans の導入�
 - Phase: implementing
 - Risk: R3
 - Plan Commit: cfc9df8c734da4f8caaa01b2e003cc7ec4e7131b
-- Amendments: 2dc3ccd0184b85cafa6e093e4cb8fa610abb61a7
+- Amendments: 2dc3ccd0184b85cafa6e093e4cb8fa610abb61a7, 18fdf4400e49461c66f08bde3e68e859d8bfb00a
 - Coordinator: Opus 5.5 main session
 - Writer: Opus 5.5 subagent（起票と design の段。実装の Writer は Coordinator が発注で決める）
 - Plan Reviewer: fresh Opus 5.5 + Codex（model は発注時に決める）
