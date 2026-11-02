@@ -1616,6 +1616,8 @@ export type ReturnCreateResult = {
 	created: boolean,
 	idempotent_replay: boolean,
 	stock_warnings: string[],
+	// この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送では記録の movement から作る。D-148 (3)）
+	stock_applied_product_codes: string[],
 };
 
 export type ReturnDirection = "in" | "out";
