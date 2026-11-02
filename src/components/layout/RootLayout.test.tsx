@@ -42,10 +42,11 @@ vi.mock("@/features/shortcuts", () => ({
 
 // UI-11b-D13: RootLayout は実 hook の useAutoBackupCheck を呼ぶため、hook は mock せず command だけを mock する
 vi.mock("@/lib/bindings", () => ({
-  commands: { checkAutoBackup: vi.fn() },
+  commands: { checkAutoBackup: vi.fn(), checkOffsiteBackup: vi.fn() },
 }));
 
 const mockCheckAutoBackup = vi.mocked(commands.checkAutoBackup);
+const mockCheckOffsite = vi.mocked(commands.checkOffsiteBackup);
 
 function createLayoutRouter() {
   const outerRoute = createRootRoute({ component: () => <Outlet /> });
@@ -85,6 +86,8 @@ beforeEach(() => {
   resumeAutoBackupCheck();
   mockCheckAutoBackup.mockReset();
   mockCheckAutoBackup.mockResolvedValue({ status: "ok", data: false });
+  mockCheckOffsite.mockReset();
+  mockCheckOffsite.mockResolvedValue({ status: "ok", data: { kind: "not_prepared" } });
 });
 
 afterEach(() => {
@@ -131,5 +134,12 @@ describe("UI-12 / UI-11b-D13 RootLayout auto backup check", () => {
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
+  });
+
+  it("UI-12 / UI-11b-D16: 共通レイアウトの mount で PC の外の控えの確認を 1 回呼ぶ", async () => {
+    renderLayout();
+    await screen.findByText("test outlet");
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
   });
 });
