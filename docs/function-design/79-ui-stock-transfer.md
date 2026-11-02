@@ -12,7 +12,7 @@
 
 ## 79.0 関数要求 / シグネチャ / 処理ステップの扱い
 
-**関数要求**: UI-16 は frontend page / hooks / component 群として、日付と明細を `commands.createTransfer(req)` に渡し、成功時に D-052-C23 の query を無効化して保存結果を表示する。UI-16b は `commands.getTransferRecord(recordId)` で記録の詳細を読取り専用で表示する。
+**関数要求**: UI-16 は frontend page / hooks / component 群として、日付と明細を `commands.createTransfer(req)` に渡し、成功時に D-052-C24 の query を無効化して保存結果を表示する。UI-16b は `commands.getTransferRecord(recordId)` で記録の詳細を読取り専用で表示する。
 
 **シグネチャ**: frontend の境界は `commands.createTransfer(req)`、`commands.getTransferRecord(recordId)`、最近の記録の `commands.listInventoryRecords(query)`（`record_type: "transfer_record"`）、商品追加用の `commands.searchProducts(query)` である。command / DTO は §79.4。
 
@@ -31,7 +31,7 @@
 | D-143 / submit | UI-16-D7 | 保存中は日付・2 つの表・2 つの商品追加欄・戻る/リセットを disabled にする。非同期の商品検索の結果の採否は UI-05-D15 と同じ event 境界の lock を 1 つ持ち、2 つの商品追加欄が同じ lock を読む。リセット・「続けて」の前に始まった検索の応答は成功・失敗とも採らず、保存失敗後に完了した応答は UI-05-D15 に従って採る。 | backend は単一 TX。片方の欄の検索の結果が保存の後に行を足さないようにする。 |
 | D-143 / result | UI-16-D8 | 保存成功後は record_id、減らした商品と増やした商品の一覧（商品コード・商品名・数量と単位と、行ごとの「在庫を見る」。`/products?q=<商品コード>` を開く。[64](64-ui-disposal.md) UI-05-D11 の先は `selected=<商品コード>` も渡すが、今の `/products` の search schema に `selected` が無いので `q` だけにし、D-138 の実装の時に 64 と一緒に揃える）、stock_warnings（在庫が負になった商品）、`idempotent_replay` の有無を出し、「続けて詰め替え・切り分け」「詳細を見る」を出す。 | 保存の後に元と先の在庫を 1 回で確かめられるようにする。 |
 | D-143 / list | UI-16-D9 | 画面下部に最近の記録を `listInventoryRecords({ record_type: "transfer_record", page: 1, per_page: 10 })` で出す（日付・記録ID・代表商品・記録日時・「詳細を見る」）。「すべての履歴を見る」は `/inventory/records?recordType=transfer_record`。per_page は 10 で、CMD・BIZ の上限 200（[65](65-inventory-record-traceability.md) §65.4.2）を越えない。 | 他の作成画面の recent list と同じ役割（[65](65-inventory-record-traceability.md) TRACE-D1・D7）。 |
-| D-143 / cache | UI-16-D10 | 保存成功時の invalidation は D-052 の C23（`invalidationContract.stockTransfer`）。集合は廃棄の C7 から `disposals.root()` を除いたもの（`inventoryRecords.root()`・`productList.root()`・`lowStock(false)`・`stockInquiryRoot()`・`stockMovements.root()`・`productForm.root()`・`stocktake.itemsRoot()`・`stocktake.recheckList()`）で、正本は `src/lib/invalidation-contract.ts` と decision-log D-052 の Contract 行。 | 振替が書く表（`transfer_*`・`inventory_movements`・`products` の写し）を読む consumer は廃棄と同じで、廃棄の一覧だけを読まない（UI_TECH_STACK §2.5 の導出）。 |
+| D-143 / cache | UI-16-D10 | 保存成功時の invalidation は D-052 の C24（`invalidationContract.stockTransfer`。起票の時は C23 だったが、#212 の D-141 が先に C23 を取ったので main との同期で振り直した）。集合は廃棄の C7 から `disposals.root()` を除いたもの（`inventoryRecords.root()`・`productList.root()`・`lowStock(false)`・`stockInquiryRoot()`・`stockMovements.root()`・`productForm.root()`・`stocktake.itemsRoot()`・`stocktake.recheckList()`）で、正本は `src/lib/invalidation-contract.ts` と decision-log D-052 の Contract 行。 | 振替が書く表（`transfer_*`・`inventory_movements`・`products` の写し）を読む consumer は廃棄と同じで、廃棄の一覧だけを読まない（UI_TECH_STACK §2.5 の導出）。 |
 | D-143 / return | UI-16-D11 | 保存結果と recent list の「詳細を見る」は、現在の `/inventory/transfer` URL を `returnTo` として詳細へ送る（DSR-18、[65](65-inventory-record-traceability.md) TRACE-D11）。 | 他の作成画面と同じ戻り方。 |
 | D-143 / L3 | UI-16-D12 | Windows native L3 で owner が見る: サイドバーから開く、2 つの表へのスキャン相当の Enter 追加、長さの商品の m の入力と表示、もう片方の表にある商品の追加を止める案内、保存中の disable、保存結果と「在庫を見る」、recent list と詳細、在庫変動履歴の種別と元記録。 | 新しい作成画面で、2 つの表の入力の分かりやすさは CI で判断できない（`docs/DEV_WORKFLOW.md` Human Visual Confirmation）。 |
 
@@ -112,7 +112,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 
 ## 79.7 Cache / Navigation
 
-- 保存成功時は D-052-C23 の SSOT helper を適用する（UI-16-D10）。
+- 保存成功時は D-052-C24 の SSOT helper を適用する（UI-16-D10）。
 - `src/config/navigation.ts` の入出庫の「廃棄・破損」の次に `{ id: "ui-16", label: "詰め替え・切り分け", to: "/inventory/transfer", status: "active" }` を足し、`navigation.test.ts` に到達の test を足す（`docs/templates/plan-packet.md` の Registration / Generation Obligations）。
 - 明細か日付が初期値と違う間だけ `useUnsavedChangesWarning` を有効にし、保存中 / 保存結果の表示中は外す（UI-05 §64.7 と同じ）。
 
@@ -142,7 +142,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 - UI-16-D7: 保存中は 2 つの追加欄と表が disabled、保存 event と競合して完了した検索の結果を反映しない。両側でリセット・「続けて」の前の検索は成功・失敗とも反映せず、保存失敗後の検索完了は反映する。
 - UI-16-D8: 保存結果に record_id、2 つの一覧、warning、replay が読める。
 - UI-16-D9: 最近の記録を `record_type: "transfer_record"` で取得し、空・失敗・成功を出せる。
-- UI-16-D10: 保存成功時の実呼出し集合が D-052-C23 の独立 test oracle と完全一致する。
+- UI-16-D10: 保存成功時の実呼出し集合が D-052-C24 の独立 test oracle と完全一致する。
 - UI-16-D11: 保存結果と recent list の「詳細を見る」が現在の URL を `returnTo` で送る。
 - UI-16b: 詳細に 2 つの表と関連在庫変動、取消の代わりの案内（「この記録と同じ日付・同じ数量で」を含む）、戻り先。
 
@@ -154,3 +154,4 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 | 2026-10-31 | stock-transfer の runtime（PR #216） | 実装に合わせて状態を現行にし、`> 対応仕様:` に REQ-210 を書いた。 |
 | 2026-11-01 | stock-transfer の是正（PR #216） | UI-16-D8 の「在庫を見る」の先を今の契約（`q` だけ）に直し、`selected` を D-138 の実装に送った。 |
 | 2026-11-02 | stock-transfer の是正（PR #216） | UI-16-D7 にリセット・「続けて」の前の検索応答を採らない契約と、保存失敗後は UI-05-D15 に従って採る契約を明記した。 |
+| 2026-11-02 | main との同期（PR #216） | #212 の D-141 が D-052 の C23 を先に取ったので、振替の invalidation の entry を C24 に振り直した（owner 判断 TD-562。集合は変えない）。 |

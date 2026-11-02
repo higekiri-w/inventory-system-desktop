@@ -216,7 +216,7 @@ export const d052InvalidationOracle = {
     ["receivings"],
     ["inventory-records"],
   ],
-  // C23: 79 UI-16-D10 の 8 つの key の列から写す（廃棄の C7 から disposals.root() を除いた集合）
+  // C24: 79 UI-16-D10 の 8 つの key の列から写す（廃棄の C7 から disposals.root() を除いた集合）
   stockTransfer: () => [
     ["inventory-records"],
     ["product-list"],

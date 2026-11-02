@@ -98,7 +98,7 @@ export const invalidationContract = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.stocktake.recheckList(),
   ],
-  // D-052-C23（79 UI-16-D10）: 廃棄の C7 から disposals.root() を除いた集合
+  // D-052-C24（79 UI-16-D10）: 廃棄の C7 から disposals.root() を除いた集合
   stockTransfer: () => [
     queryKeys.inventoryRecords.root(),
     queryKeys.productList.root(),

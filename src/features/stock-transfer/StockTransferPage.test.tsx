@@ -1,5 +1,5 @@
 // UI-16（79 §79.10 の UI-16-D2〜D11）の component test。期待値は 79 から写す。
-// U10 の oracle は src/test/invalidation-oracle.ts の C23（79 UI-16-D10 から独立に写した列）。
+// U10 の oracle は src/test/invalidation-oracle.ts の C24（79 UI-16-D10 から独立に写した列）。
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -518,7 +518,7 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     expect(screen.getByLabelText("TR-M1 の数量")).toBeInTheDocument();
   });
 
-  it("U8・U10・U11: 保存結果に記録の番号・2 つの一覧（数量と単位）・warning・replay、C23 の無効化、returnTo 付きの詳細", async () => {
+  it("U8・U10・U11: 保存結果に記録の番号・2 つの一覧（数量と単位）・warning・replay、C24 の無効化、returnTo 付きの詳細", async () => {
     const user = userEvent.setup();
     mockCreateTransfer.mockResolvedValue(
       okResult(41, { replay: true, warnings: ["TR-M1: 在庫がマイナスになりました"] }),
