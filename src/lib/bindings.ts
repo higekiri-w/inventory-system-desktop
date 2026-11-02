@@ -349,6 +349,12 @@ export const commands = {
 	 */
 	getEffectiveBackupDir: () => typedError<string, CmdError>(__TAURI_INVOKE("get_effective_backup_dir")),
 	/**
+	 *  控えを変えずに確かめる（§43.8.5、71 §71.12）
+	 *
+	 *  DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
+	 */
+	inspectBackup: (request: InspectBackupRequest) => typedError<BackupInspection, CmdError>(__TAURI_INVOKE("inspect_backup", { request })),
+	/**
 	 *  バックアップから復元する（§43.9）
 	 *
 	 *  DB接続の所有権を移転するため、Mutex内の接続をstd::mem::replaceで取り出す。
@@ -409,6 +415,23 @@ export type BackupInfo = {
 	file_path: string,
 	size_bytes: number,
 	created_at: string,
+};
+
+// 控えの確かめの結果（71 §71.12、MNT-01-D9）
+export type BackupInspection = {
+	file_name: string,
+	// §71.3 の規約に合えば `YYYY-MM-DD HH:MM:SS`
+	created_at: string | null,
+	size_bytes: number,
+	schema_version: number,
+	app_max_version: number,
+	// `schema_version > app_max_version`
+	newer_than_app: boolean,
+	quick_check_ok: boolean,
+	// 版がアプリ以下で quick_check が ok のときだけ
+	product_count: number | null,
+	// 同上。`operation_logs.created_at` の最大
+	last_operation_at: string | null,
 };
 
 /**
@@ -934,6 +957,10 @@ export type ImportRow = {
 	pos_stock_sync: boolean | null,
 	plu_target?: boolean | null,
 	warnings?: string[],
+};
+
+export type InspectBackupRequest = {
+	backup_path: string,
 };
 
 // 写しと求めた値で違う項目（重複なし、この順。36）

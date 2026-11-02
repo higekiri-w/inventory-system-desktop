@@ -12,8 +12,12 @@ import { toast } from "sonner";
 import { commands } from "@/lib/bindings";
 import { queryKeys } from "@/lib/query-keys";
 import {
+  holdAutoBackupCheckForRestore,
+  releaseAutoBackupCheckAfterRestore,
+  resetAutoBackupCheckForTests,
   resumeAutoBackupCheck,
   suspendAutoBackupCheck,
+  suspendAutoBackupCheckAndWait,
   useAutoBackupCheck,
 } from "./useAutoBackupCheck";
 
@@ -68,7 +72,7 @@ function renderCheck({ strict = false } = {}) {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  resumeAutoBackupCheck();
+  resetAutoBackupCheckForTests();
   mockCheckAutoBackup.mockReset();
   mockCheckAutoBackup.mockResolvedValue(ok(false));
   mockToastSuccess.mockReset();
@@ -182,5 +186,189 @@ describe("useAutoBackupCheck (REQ-901 / UI-11b-D13)", () => {
     } finally {
       settle(ok(false));
     }
+  });
+});
+
+function pendingCheck() {
+  let settle: (value: CheckResult) => void = () => undefined;
+  const promise = new Promise<CheckResult>((resolve) => {
+    settle = resolve;
+  });
+  mockCheckAutoBackup.mockReturnValueOnce(promise);
+  return {
+    settle: (value: CheckResult) => {
+      settle(value);
+    },
+  };
+}
+
+function trackSettled(promise: Promise<void>) {
+  const state = { settled: false };
+  void promise.then(() => {
+    state.settled = true;
+  });
+  return state;
+}
+
+describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15)", () => {
+  it("REQ-901 / UI-11b-D15: `suspendAutoBackupCheckAndWait()` は実行中の回の解決まで待ち、待つ間に届いた `true` を捨てる", async () => {
+    const check = pendingCheck();
+    const { invalidateSpy } = renderCheck();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+      const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waiting.settled).toBe(false);
+
+      check.settle(ok(true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waiting.settled).toBe(true);
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    } finally {
+      check.settle(ok(false));
+    }
+  });
+
+  it("REQ-901 / UI-11b-D15: 実行中の回が無いとき・hook が一度も mount されていないときはすぐ解決する", async () => {
+    const unmounted = trackSettled(suspendAutoBackupCheckAndWait());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(unmounted.settled).toBe(true);
+
+    resetAutoBackupCheckForTests();
+    renderCheck();
+    const idle = trackSettled(suspendAutoBackupCheckAndWait());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle.settled).toBe(true);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+  });
+
+  it("REQ-901 / UI-11b-D15: 確かめの開始の後に hook を unmount しても、実行中の回が終わるまで解決しない", async () => {
+    const check = pendingCheck();
+    const { unmount } = renderCheck();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+      unmount();
+
+      const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(waiting.settled).toBe(false);
+
+      check.settle(ok(false));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waiting.settled).toBe(true);
+    } finally {
+      check.settle(ok(false));
+    }
+  });
+
+  it("REQ-901 / UI-11b-D13: 停止 → 再開の後に届いた停止の前の `true` は捨て、guard は解けて次の tick で呼ぶ", async () => {
+    const check = pendingCheck();
+    const { invalidateSpy } = renderCheck();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      suspendAutoBackupCheck();
+      resumeAutoBackupCheck();
+
+      check.settle(ok(true));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(invalidateSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
+    } finally {
+      check.settle(ok(false));
+    }
+  });
+
+  it("REQ-901 / UI-11b-D13: 停止の前に始まった確認が停止中に失敗しても toast・連続失敗の状態を変えず、再開後の最初の失敗は通知する", async () => {
+    const check = pendingCheck();
+    renderCheck();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+      suspendAutoBackupCheck();
+
+      check.settle(failure());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockToastError).not.toHaveBeenCalled();
+
+      resumeAutoBackupCheck();
+      mockCheckAutoBackup.mockResolvedValueOnce(failure());
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
+      // 古い失敗が連続失敗の状態を立てていれば、ここで通知されない
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+      expect(mockToastError).toHaveBeenCalledWith("自動バックアップ確認に失敗しました", {
+        id: "backup-auto-check-error",
+      });
+    } finally {
+      check.settle(ok(false));
+    }
+  });
+
+  it("REQ-901 / UI-11b-D13: 復元の理由は resume で外れず release(false) で外れ、fatal は何でも外れない", async () => {
+    renderCheck();
+
+    holdAutoBackupCheckForRestore();
+    resumeAutoBackupCheck();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+
+    releaseAutoBackupCheckAfterRestore(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+    holdAutoBackupCheckForRestore();
+    releaseAutoBackupCheckAfterRestore(true);
+    resumeAutoBackupCheck();
+    await vi.advanceTimersByTimeAsync(120_000);
+    holdAutoBackupCheckForRestore();
+    releaseAutoBackupCheckAfterRestore(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D13: hold は選択の理由を復元の理由へ移す", async () => {
+    renderCheck();
+
+    suspendAutoBackupCheck();
+    holdAutoBackupCheckForRestore();
+    releaseAutoBackupCheckAfterRestore(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D13: 前の復元の結果は再訪した画面の選択の理由を外さない", async () => {
+    renderCheck();
+
+    holdAutoBackupCheckForRestore();
+    resumeAutoBackupCheck(); // 復元の実行中に画面を離れる
+    suspendAutoBackupCheck(); // 再訪した画面で別の控えを選ぶ
+    releaseAutoBackupCheckAfterRestore(false); // 前の復元が fatal でない結果で終わる
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+
+    resumeAutoBackupCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D13: 実行中の復元を数え、先に終わった復元の結果が後の復元の停止を外さない", async () => {
+    renderCheck();
+
+    holdAutoBackupCheckForRestore();
+    holdAutoBackupCheckForRestore();
+    releaseAutoBackupCheckAfterRestore(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+
+    releaseAutoBackupCheckAfterRestore(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
   });
 });

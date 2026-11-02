@@ -96,10 +96,16 @@ impl RestorePaths {
     }
 }
 
-trait RestoreFileOps {
+/// file 操作の差し替え口（restore と backup の公開で共有する。71 §71.4.1）
+pub(super) trait RestoreFileOps {
     fn try_exists(&self, path: &Path) -> std::io::Result<bool>;
     fn rename(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
     fn replace(&self, source: &Path, destination: &Path) -> std::io::Result<()>;
+    /// 既存の file を置き換えずに `source` を `destination` へ移す（71 §71.4.1）。
+    /// 既存の注入の型は本物の操作へ委ねる
+    fn publish_no_replace(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        StdRestoreFileOps.publish_no_replace(source, destination)
+    }
     fn copy(&self, source: &Path, destination: &Path) -> std::io::Result<u64>;
     fn remove_file(&self, path: &Path) -> std::io::Result<()>;
     fn write_file(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()>;
@@ -109,7 +115,7 @@ trait RestoreFileOps {
     fn checkpoint(&self, conn: &DbConnection) -> Result<(i64, i64, i64), rusqlite::Error>;
 }
 
-struct StdRestoreFileOps;
+pub(super) struct StdRestoreFileOps;
 
 impl RestoreFileOps for StdRestoreFileOps {
     fn try_exists(&self, path: &Path) -> std::io::Result<bool> {
@@ -144,6 +150,42 @@ impl RestoreFileOps for StdRestoreFileOps {
                     source.as_ptr(),
                     destination.as_ptr(),
                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+                )
+            };
+            if result == 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    fn publish_no_replace(&self, source: &Path, destination: &Path) -> std::io::Result<()> {
+        #[cfg(not(windows))]
+        {
+            // test だけの経路: hard_link は `destination` が既にあれば error を返す
+            std::fs::hard_link(source, destination)?;
+            std::fs::remove_file(source)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+            let source: Vec<u16> = source
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let destination: Vec<u16> = destination
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            // 置き換えの flag を付けない: 既存の正式名があれば失敗する（71 §71.4.1）
+            let result = unsafe {
+                MoveFileExW(
+                    source.as_ptr(),
+                    destination.as_ptr(),
+                    MOVEFILE_WRITE_THROUGH,
                 )
             };
             if result == 0 {
@@ -2040,5 +2082,122 @@ mod tests {
             *ops.events.lock().unwrap(),
             vec!["write", "sync_file", "rename", "sync_parent"]
         );
+    }
+
+    /// `open` の直後の位置から対応する `close` までの中身を返す（入れ子を数える）
+    fn balanced(text: &str, open: char, close: char) -> &str {
+        let mut depth = 0usize;
+        for (index, ch) in text.char_indices() {
+            if ch == open {
+                depth += 1;
+            } else if ch == close {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[1..index];
+                }
+            }
+        }
+        panic!("対応する {close} が無い");
+    }
+
+    /// `StdRestoreFileOps` の `publish_no_replace` の Windows の分岐の `MoveFileExW` の flags
+    fn windows_publish_flags(source: &str) -> Result<String, String> {
+        let production = source
+            .split(concat!("#[cfg(", "test)]\nmod tests {"))
+            .next()
+            .unwrap();
+        let std_impl = production
+            .split("impl RestoreFileOps for StdRestoreFileOps")
+            .nth(1)
+            .ok_or("StdRestoreFileOps の impl が無い")?;
+        let after_fn = std_impl
+            .split("fn publish_no_replace(")
+            .nth(1)
+            .ok_or("publish_no_replace の実装が無い")?;
+        let body = balanced(&after_fn[after_fn.find('{').unwrap()..], '{', '}');
+        if body.contains("MOVEFILE_REPLACE_EXISTING") {
+            return Err("MOVEFILE_REPLACE_EXISTING がある".into());
+        }
+        let windows = body
+            .split("#[cfg(windows)]")
+            .nth(1)
+            .ok_or("Windows の分岐が無い")?;
+        if windows.matches("MoveFileExW(").count() != 1 {
+            return Err("MoveFileExW の呼出しが 1 つでない".into());
+        }
+        let call = windows.split("MoveFileExW(").nth(1).unwrap();
+        let args = balanced(&format!("({call}"), '(', ')').to_string();
+        let mut depth = 0i32;
+        let mut parts = vec![String::new()];
+        for ch in args.chars() {
+            match ch {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(String::new());
+                    continue;
+                }
+                _ => {}
+            }
+            parts.last_mut().unwrap().push(ch);
+        }
+        let parts: Vec<String> = parts
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect();
+        if parts.len() != 3 {
+            return Err(format!("MoveFileExW の引数が 3 つでない: {parts:?}"));
+        }
+        Ok(parts[2].clone())
+    }
+
+    #[test]
+    fn test_publish_no_replace_req901_d7_windows_flags_exclude_replace_existing() {
+        // REQ-901 / MNT-01-D7 / 71 §71.4.1: Linux の CI は #[cfg(windows)] を compile しないので、
+        // Windows の公開が既存の正式名を置き換えないことを source で見る（restore の replace は見ない）
+        let source = include_str!("restore.rs");
+        let flags = windows_publish_flags(source).unwrap();
+        assert!(flags.contains("MOVEFILE_WRITE_THROUGH"), "flags={flags}");
+        assert!(
+            !flags.contains("MOVEFILE_REPLACE_EXISTING"),
+            "flags={flags}"
+        );
+
+        // mutant: publish_no_replace の本体の中だけを書き換える（restore の replace は触らない）
+        let impl_at = source
+            .find("impl RestoreFileOps for StdRestoreFileOps")
+            .unwrap();
+        let fn_at = impl_at + source[impl_at..].find("fn publish_no_replace(").unwrap();
+        let fn_at = fn_at + source[fn_at..].find("#[cfg(windows)]").unwrap();
+        let fn_end = fn_at + source[fn_at..].find("fn copy(").unwrap();
+        for (from, to) in [
+            (
+                "MOVEFILE_WRITE_THROUGH,",
+                "MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,",
+            ),
+            ("MOVEFILE_WRITE_THROUGH,", "0,"),
+            ("MoveFileExW(", "std_fs_rename("),
+        ] {
+            let region = &source[fn_at..fn_end];
+            assert_eq!(
+                region.matches(from).count(),
+                1,
+                "前提の文字列が無い: {from}"
+            );
+            let mutated = format!(
+                "{}{}{}",
+                &source[..fn_at],
+                region.replacen(from, to, 1),
+                &source[fn_end..]
+            );
+            assert!(
+                !windows_publish_flags(&mutated).is_ok_and(|flags| {
+                    flags.contains("MOVEFILE_WRITE_THROUGH")
+                        && !flags.contains("MOVEFILE_REPLACE_EXISTING")
+                }),
+                "red にならない: {to}"
+            );
+        }
     }
 }
