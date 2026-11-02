@@ -87,7 +87,7 @@ DB_PATH=~/.local/share/com.inventory-system.desktop/inventory.db
 
 ### Step 1: seed_demo で 100 商品 + 6 部門 + suppliers / sale_records / inventory_movements 投入
 
-repository root から `--manifest-path` で `src-tauri` crate を指定して実行する (Tauri 2 標準構造で Rust crate は `src-tauri/` 配下にあり、repo root に `Cargo.toml` は存在しない)。`seed_demo_data` は `src-tauri/src/bin/seed_demo_data.rs` L107-114 で `--db <path>` を受付。
+repository root から `--manifest-path` で `src-tauri` crate を指定して実行する (Tauri 2 標準構造で Rust crate は `src-tauri/` 配下にあり、repo root に `Cargo.toml` は存在しない)。`seed_demo_data` は `src-tauri/dev-tools/src/bin/seed_demo_data.rs` の `parse_args` で `--db <path>` を受付。
 
 **Windows native (CMD):**
 ```cmd
@@ -104,7 +104,7 @@ cargo run --manifest-path src-tauri\Cargo.toml --bin seed_demo_data -- --db "$en
 cargo run --manifest-path src-tauri/Cargo.toml --bin seed_demo_data -- --db "$DB_PATH" --reset
 ```
 
-> 注記: `--reset` 指定時は `confirm_reset` (`src-tauri/src/bin/seed_demo_data.rs` L196-208) で tty 確認 prompt `本当に reset しますか？ (yes/no):` が表示される。`yes` 入力で続行。
+> 注記: `--reset` 指定時は `confirm_reset` (`src-tauri/dev-tools/src/bin/seed_demo_data.rs`) で tty 確認 prompt `本当に reset しますか？ (yes/no):` が表示される。`yes` 入力で続行。
 
 ### Step 2: setup-products.sql で 55 商品 fixture seed
 

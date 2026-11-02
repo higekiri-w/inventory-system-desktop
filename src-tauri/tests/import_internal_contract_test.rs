@@ -314,7 +314,13 @@ fn test_active_sales_import_vocabulary_sweep_i_g1() {
         ["get_latest", "_completed_daily_report"].concat(),
     ];
     let mut hits = Vec::new();
-    for target in ["src-tauri/src", "src-tauri/tests", "src"] {
+    // D-137: 開発用の bin は src-tauri/dev-tools/src にある（sweep の対象に残す）
+    for target in [
+        "src-tauri/src",
+        "src-tauri/dev-tools/src",
+        "src-tauri/tests",
+        "src",
+    ] {
         sweep_dir_for_tokens(&repo_root.join(target), &removed, &mut hits);
     }
     assert!(

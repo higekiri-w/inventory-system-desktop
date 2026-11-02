@@ -1542,9 +1542,16 @@ check_plan_unresolved_decisions() {
 check_stale_parent_doc_references() {
     header "R0: 親文書の直接参照検出"
 
-    local src_dir="src-tauri/src"
-    if [ ! -d "$src_dir" ]; then
-        info "src-tauri/src/ が見つかりません。スキップ"
+    # D-137: 開発用の bin は src-tauri/dev-tools/src にある。無い dir は飛ばす
+    local -a src_dirs=()
+    local d
+    for d in "src-tauri/src" "src-tauri/dev-tools/src"; do
+        if [ -d "$d" ]; then
+            src_dirs+=("$d")
+        fi
+    done
+    if [ ${#src_dirs[@]} -eq 0 ]; then
+        info "src-tauri/src/ と src-tauri/dev-tools/src/ が見つかりません。スキップ"
         return
     fi
 
@@ -1558,7 +1565,7 @@ check_stale_parent_doc_references() {
 
     for parent in "${parent_docs[@]}"; do
         local hits
-        hits=$(rg -n "$parent" "$src_dir" --type rust 2>/dev/null | \
+        hits=$(rg -n "$parent" "${src_dirs[@]}" --type rust 2>/dev/null | \
             rg -v "$exclude_pattern" 2>/dev/null || true)
 
         if [ -n "$hits" ]; then
@@ -1581,9 +1588,16 @@ check_stale_parent_doc_references() {
 check_code_doc_references() {
     header "R1: コード内ドキュメント参照パス検証"
 
-    local src_dir="src-tauri/src"
-    if [ ! -d "$src_dir" ]; then
-        info "src-tauri/src/ が見つかりません。スキップ"
+    # D-137: 開発用の bin は src-tauri/dev-tools/src にある。無い dir は飛ばす
+    local -a src_dirs=()
+    local d
+    for d in "src-tauri/src" "src-tauri/dev-tools/src"; do
+        if [ -d "$d" ]; then
+            src_dirs+=("$d")
+        fi
+    done
+    if [ ${#src_dirs[@]} -eq 0 ]; then
+        info "src-tauri/src/ と src-tauri/dev-tools/src/ が見つかりません。スキップ"
         return
     fi
 
@@ -1593,7 +1607,7 @@ check_code_doc_references() {
     # パターン1: フルパス参照（function-design/xx-yy.md 等）
     local refs
     refs=$(rg -on '(function-design|db-design|architecture)/[a-zA-Z0-9_-]+\.md' \
-        "$src_dir" --type rust 2>/dev/null || true)
+        "${src_dirs[@]}" --type rust 2>/dev/null || true)
 
     if [ -n "$refs" ]; then
         while IFS= read -r line; do
@@ -1614,7 +1628,7 @@ check_code_doc_references() {
     # function-design/ のサブファイル名パターン: NN-layer-module.md
     local bare_refs
     bare_refs=$(rg -on '\b[0-9]{2}-[a-z][a-z0-9_-]+\.md' \
-        "$src_dir" --type rust 2>/dev/null || true)
+        "${src_dirs[@]}" --type rust 2>/dev/null || true)
 
     if [ -n "$bare_refs" ]; then
         # フルパス参照と重複する行を除外（既にパターン1でチェック済み）

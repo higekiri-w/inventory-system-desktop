@@ -1,0 +1,15 @@
+# D-137: 開発用の bin（generate_bindings・generate_traceability・seed_demo_data）の置き場。
+# tauri の crate の外の workspace の member なので、tauri-cli は bundle（MSI・deb）に入れない。
+# 新しい開発用の bin はここの src/bin/ に足す（tauri の crate の src/bin/ に置かない）。
+[package]
+name = "inventory-system-dev-tools"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+inventory-system-tauri-scaffold = { path = ".." }
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

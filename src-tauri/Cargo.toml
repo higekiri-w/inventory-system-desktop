@@ -4,8 +4,9 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
-# src/bin/generate_bindings.rs 追加で bin が 2 つになったため、`cargo run` / `tauri dev` が
-# どちらを起動するか決められなくなる。default-run で main binary を明示して曖昧性を解消。
+# D-137 (2): default-members に 2 つの package（この crate と dev-tools）があり、`--bin` の無い
+# `cargo run`（`npm run tauri dev` で tauri-cli が打つ）が両方の package の bin を候補にして止まる。
+# default-run で main binary を明示する。
 default-run = "inventory-system-tauri-scaffold"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -52,3 +53,10 @@ serial_test = "3"
 tauri = { version = "2", features = ["test"] }
 tempfile = "3"
 syn = { version = "2", features = ["full"] }
+
+# D-137 (1)(2): 開発用の bin は member の dev-tools に置き、tauri の crate には main だけを置く
+# （tauri-cli は workspace の他の member の bin を bundle に入れない）。default-members に両方を
+# 入れて、`cargo run --bin <開発用の bin>`・`cargo test`・clippy の command を変えずに dev-tools を含める。
+[workspace]
+members = ["dev-tools"]
+default-members = [".", "dev-tools"]
