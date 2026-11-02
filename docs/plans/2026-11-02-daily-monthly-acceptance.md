@@ -134,10 +134,10 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 
 - AC1: 流れ 4 の合格基準の表が、UI-09a-D13 の 5 項目（公式集計・過去日到達・未取込み日の識別・修正と再取込み・backup/restore 後の再現）と UI-09b-D9 の 4 項目（到達・取込み済み日の範囲・修正後の値・月の帳票との照合）を 1 行ずつ持ち、各行に観測できる合格基準（画面・見る値・何と同じなら PASS）がある。
 - AC2: 流れ 4 が引く画面の文字列・ボタンの名は、今の版の `src/` に在る（`rg -nF "<文字列>" src` が各 1 件以上。確かめた文字列と件数を報告に書く）。前提の lane の後に足す手順は、まだ無い画面の名を書かない。
-- AC3: 流れ 4 の復元の手順は、流れ 4 の中で作った backup だけを戻す先にし、業務の入力を始めた後の復元をさせない。FAIL の戻し方は流れ 3 の手順 9 の最初の backup。
-- AC4: O3 の前提の 2 項目（離れた後の取消、月の中の取り込んだ日）は、流れ 4 と 56・57 で「前提の lane の後に確かめる」と書かれ、今の版で PASS にできる書き方をしていない。
+- AC3: 流れ 4 の復元の手順は、流れ 4 の中で作った backup だけを戻す先にし、業務の入力を始めた後の復元をさせない。FAIL の戻し方は流れ 3 の手順 9 の最初の backup（`docs/initial-load-runbook.md` の流れ 4 の復元の手順と FAIL の行を Final Review で照合）。
+- AC4: O3 の前提の 2 項目（離れた後の取消、月の中の取り込んだ日）は、流れ 4 と 56・57 で「前提の lane の後に確かめる」と書かれ、今の版で PASS にできる書き方をしていない（`rg -n "前提" docs/initial-load-runbook.md docs/function-design/56-ui-daily-sales.md docs/function-design/57-ui-monthly-sales.md` の該当の行を報告に並べる）。
 - AC5: UI-09a-D19 の (2) の本文は変わらず（`git diff origin/main -- docs/function-design/56-ui-daily-sales.md` に D19 の行が出ない）、56 D13 が D19 (2) を別に残すと書く。
-- AC6: repo に店の売上の値・file・紙の写しが入らない（差分に金額の実値・実の JAN・店の file 名の実例が無い。合成の例を使うときはそう書く）。
+- AC6: repo に店の売上の値・file・紙の写しが入らない（差分に金額の実値・実の JAN・店の file 名の実例が無い。合成の例を使うときはそう書く。差分 `git diff origin/main` を Final Review で照合）。
 - AC7: `bash scripts/doc-consistency-check.sh` が ERROR 0、`bash scripts/doc-consistency-check.sh --target plan docs/plans/2026-11-02-daily-monthly-acceptance.md` が ERROR 0、`bash scripts/check-workflow-git.sh` が exit 0。
 
 ## Design Readiness
