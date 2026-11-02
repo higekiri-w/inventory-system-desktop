@@ -29,7 +29,7 @@
   - PLU をレジへ書く時期（PLU を書く前の導入では Z004 の自動在庫連動はほとんど動かない）は、owner が次の訪店の C3（店の PC の CV17 の画面で部門リンクの値を確かめる、TD-459）の後に A / B / C から選び、B・C は D-070 の「初日から」を改める新しい D になる（TD-462）。backlog の「PLU をレジへ書く時期と D-070 の自動在庫連動」。
   - 済んだもの: 操作ログの保持を 7 年程度へ（TD-348）は [PR #198](https://github.com/kosei-w90607/inventory-system-desktop/pull/198) で 2026-10-26 に済んだ（既定 3000 日、D-136、[packet](archive/plans/2026-10-23-oplog-retention.md)）。installer の種類を MSI に絞るのは D-132 (4) で決まり、PR #191 で済んだ。
 - 関門（precondition-dependent）:
-  - SD 直読み（PR #172）を初回の版に入れるのは、導入の初日からアプリで日報を取り込む場合（#172 より前の経路の取込みは精算回数が NULL のまま二重取込みの拒否の外に残る）。backlog の「SD 直読みの runtime」。
+  - SD 直読み（PR #172）を初回の版に入れるのは、導入の初日からアプリで日報を取り込む場合（#172 より前の経路の取込みは精算回数が NULL のまま二重取込みの拒否の外に残る）。backlog の「SD 直読みの runtime」。→ 2026-10-31 に [PR #172](https://github.com/kosei-w90607/inventory-system-desktop/pull/172) で main へ入り、初回の版に入る。
   - 共有 JAN の色違いの群と JAN の無い品の v1.0 の扱い。今は店内コードができるまで在庫連動の外（ADR SPEC-STK-CNT-D4、TD-296）。レジとリーダーの実機の確かめ（C1、次の訪店、TD-454）の後に owner が決める（TD-461）。backlog の「JAN の無い商品の店内コードと色ごとのバーコードの表」。
   - Z004 の経路の受入台本の第 2 版と go-live の検証の流れ（D-070 の配布判定の入口条件。[受入台本](ACCEPTANCE_SCENARIO.md) の第 1 版は Z004 の経路を対象外とする）。台本の形は b2 と、上の candidate の PLU をレジへ書く時期で決まる。backlog の「go-live の検証の流れ（受入台本の第 2 版）」。
 - 導入の後でよいと確かめたもの: ECR+ のサービス終了（2028 年 12 月末予定）、二重起動・途中の電源断（対策済み）、v8 より後の migration を足す lane の義務（初回の版の後から当たる）。

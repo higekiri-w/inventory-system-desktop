@@ -25,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useDailyReportSheet } from "./hooks/useDailyReportSheet";
 import { useDailySalesReport } from "./hooks/useDailySalesReport";
 import { useExportDailySalesCsv } from "./hooks/useExportDailySalesCsv";
 import { useTodayDate } from "./lib/date-nav";
@@ -59,6 +60,7 @@ export function DailySalesPage({ search, onSearchChange }: DailySalesPageProps) 
     sortDir,
   });
   const { exportCsv, isExporting } = useExportDailySalesCsv();
+  const sheetQuery = useDailyReportSheet(date);
 
   const handleDateChange = (newDate: string) => {
     onSearchChange((prev) => ({ ...prev, date: newDate }));
@@ -142,6 +144,8 @@ export function DailySalesPage({ search, onSearchChange }: DailySalesPageProps) 
                 exportCsv({ date });
               }}
               isExporting={isExporting}
+              date={date}
+              sheetQuery={sheetQuery}
             />
           </div>
         </>
@@ -173,13 +177,13 @@ function OfficialDailyReportSection({ report }: { report: OfficialDailyReportSum
         <div className="space-y-4 rounded-md border p-4">
           <p className="text-sm font-medium">
             {report.source_import_count >= 2
-              ? `総売上・純売上・支払集計・部門別集計は${report.source_import_count.toLocaleString("ja-JP")}回の取込みを合算しています。日計（Z001）は取込みごとに表示します。`
+              ? `総売上・純売上・支払集計・部門別集計は${report.source_import_count.toLocaleString("ja-JP")}回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。`
               : `${report.source_import_count.toLocaleString("ja-JP")}回の取込みを合算`}
           </p>
           {report.warnings.length > 0 && (
             <Alert variant="warning">
               <AlertCircle className="size-4" aria-hidden="true" />
-              <AlertTitle>日報の部門確認が必要です</AlertTitle>
+              <AlertTitle>日報の確認が必要です</AlertTitle>
               <AlertDescription>
                 <ul className="list-disc pl-5">
                   {report.warnings.map((warning) => (
@@ -219,8 +223,9 @@ function OfficialDailyReportSection({ report }: { report: OfficialDailyReportSum
           <div className="grid gap-4 lg:grid-cols-2">
             <OfficialLinesTable
               title="支払集計（Z002）"
-              rows={report.payment_lines.map((line) => ({
-                key: line.payment_key,
+              rows={report.payment_lines.map((line, index) => ({
+                // 同じ payment_key の行が 2 つ返りうる（34 §19.3 手順 3）
+                key: `${line.payment_key}-${String(index)}`,
                 label: line.label,
                 amount: formatMoney(line.amount),
                 quantity: line.count === null ? "—" : `${line.count.toLocaleString("ja-JP")} 件`,
