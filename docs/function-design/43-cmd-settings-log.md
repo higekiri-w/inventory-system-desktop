@@ -217,7 +217,17 @@ fn get_effective_backup_dir(state: State<AppState>, app_handle: tauri::AppHandle
 
 ```
 #[tauri::command(async)]
+fn prepare_offsite_medium(state: State<AppState>, app_handle: tauri::AppHandle, request: PrepareOffsiteMediumRequest) -> Result<OffsiteMediumView, CmdError>
+#[tauri::command(async)]
+fn check_offsite_backup(state: State<AppState>, app_handle: tauri::AppHandle) -> Result<OffsiteCheckResult, CmdError>
+#[tauri::command(async)]
+fn get_offsite_backup_status(state: State<AppState>, app_handle: tauri::AppHandle) -> Result<OffsiteBackupStatus, CmdError>
+#[tauri::command(async)]
 fn inspect_backup(request: InspectBackupRequest) -> Result<BackupInspection, CmdError>
+#[tauri::command(async)]
+fn reset_offsite_state(state: State<AppState>, app_handle: tauri::AppHandle) -> Result<OffsiteCheckResult, CmdError>
+#[tauri::command(async)]
+fn stop_offsite_backup(app_handle: tauri::AppHandle) -> Result<(), CmdError>
 ```
 
 **エラーの写像**（`CmdError.kind` の値は既存の `validation` / `internal` だけを使い、`CmdErrorKind` に値を足さない）:
@@ -248,6 +258,11 @@ fn inspect_backup(request: InspectBackupRequest) -> Result<BackupInspection, Cmd
 | 入力 → 出力 | 処理 |
 |---|---|
 | `BackupDirChoiceRequest { selected_path: String }` → `null` | `mnt::offsite::check_backup_dir_choice(Path::new(&selected_path))`（71 §71.11.5c）を呼ぶだけ。DB を使わない（lock を取らない）。設定を保存しない（保存は UI が `Ok` の後に §43.4 の `update_setting` で行う、68 §68.4 の backup_path 変更）。空の `selected_path` は `validation`。`OffsiteError::BackupDirIsMediumFolder` は上のエラーの写像の表の同じ行の `validation` |
+
+```
+#[tauri::command(async)]
+fn check_backup_dir_choice(request: BackupDirChoiceRequest) -> Result<(), CmdError>
+```
 
 drive の列挙をするので、§43.8.2〜§43.8.7 の「実行の thread」と同じく `#[tauri::command(async)]` + `#[specta::specta]` で定義する。`update_setting` に `backup_path` の key だけの分岐を足さないのは、`update_setting` が key に依らない設定の保存の入口（BIZ-09）で、main thread で動く既存の command の実行 thread を変えないため。
 

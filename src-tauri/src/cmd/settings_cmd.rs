@@ -8,6 +8,7 @@ use crate::biz::{
 };
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
 use crate::mnt::backup;
+use crate::mnt::offsite::{self, OffsiteError};
 use base64::{engine::general_purpose, Engine as _};
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
@@ -39,6 +40,18 @@ pub struct RestoreBackupRequest {
 #[derive(Debug, serde::Deserialize, specta::Type)]
 pub struct InspectBackupRequest {
     pub backup_path: String,
+}
+
+/// §43.8.2
+#[derive(Debug, serde::Deserialize, specta::Type)]
+pub struct PrepareOffsiteMediumRequest {
+    pub selected_path: String,
+}
+
+/// §43.8.8
+#[derive(Debug, serde::Deserialize, specta::Type)]
+pub struct BackupDirChoiceRequest {
+    pub selected_path: String,
 }
 
 #[derive(Debug, serde::Deserialize, specta::Type)]
@@ -103,6 +116,73 @@ fn create_backup_at(
 ) -> Result<backup::BackupResult, CmdError> {
     backup::pin_backup_dir(backup_dir).map_err(backup_dir_error)?;
     backup::create_backup(conn, backup_dir).map_err(db_err)
+}
+
+/// PC の外の控えの失敗を 43 §43.8.2〜§43.8.7 のエラーの写像の表の固定の文へ写す（kind を足さない）
+fn offsite_error(error: OffsiteError) -> CmdError {
+    let internal = |message: &str| CmdError::internal(message, format!("{error:?}"));
+    match &error {
+        OffsiteError::NotRemovable => validation(NOT_REMOVABLE),
+        OffsiteError::RegisterSd { sd_folder } => validation(&format!(
+            "これはレジの SD カードです（{} が見つかりました）。控えは USB メモリに作ってください。USB メモリにレジの SD の写しを置いているなら、写しを drive の直下でなく folder の中へ移してください",
+            sd_folder.display()
+        )),
+        OffsiteError::StorageFull => internal("USB メモリの空きが足りません"),
+        OffsiteError::VerifyMismatch | OffsiteError::Io => {
+            internal("PC の外の控えを写せませんでした")
+        }
+        OffsiteError::Redirected => validation(
+            "この USB メモリの InventoryBackup フォルダは別の場所へのリンクのため使えません",
+        ),
+        OffsiteError::BackupDirIsMediumFolder => validation(BACKUP_DIR_IS_MEDIUM_FOLDER),
+        OffsiteError::MarkerUnsupported => validation(
+            "この USB メモリは新しい版のアプリで用意されています。新しい版のアプリを入れてください",
+        ),
+        OffsiteError::StateUnreadable => internal(
+            "PC の外の控えの記録を読めませんでした。「記録を作り直す」を押してください",
+        ),
+        OffsiteError::StateUnsupported => validation(
+            "PC の外の控えの記録は新しい版のアプリが書いたものです。新しい版のアプリを入れてください",
+        ),
+        OffsiteError::NoMediumAttached => validation(
+            "用意した USB メモリが差さっていません。USB メモリを差して「記録を作り直す」を押すか、使わないなら「PC の外の控えをやめる」を押してください",
+        ),
+        OffsiteError::StopFailed => internal(
+            "PC の外の控えをやめる操作を終えられませんでした。「PC の外の控えをやめる」がまだ出ていれば、もう一度押してください",
+        ),
+        OffsiteError::StateResetFailed => internal(
+            "PC の外の控えの記録の作り直しを終えられませんでした。「記録を作り直す」がまだ出ていれば、もう一度押してください",
+        ),
+        OffsiteError::SourceUnverified => internal(
+            "PC の中の最新のバックアップを確かめられなかったため、PC の外へ写していません",
+        ),
+    }
+}
+
+const NOT_REMOVABLE: &str = "USB メモリを選んでください（この場所は PC の外の控えに使えません）";
+const BACKUP_DIR_IS_MEDIUM_FOLDER: &str = "PC の中の保存先が、USB メモリの InventoryBackup フォルダと同じです。「保存先を選ぶ」で PC の中の別のフォルダを選び直してください";
+const EMPTY_BACKUP_DIR_CHOICE: &str = "保存先のフォルダを選んでください";
+
+fn app_data_dir<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) -> Result<PathBuf, CmdError> {
+    app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| CmdError::internal("アプリデータの保存先を取得できませんでした", e))
+}
+
+/// app data と backup_dir を読み、DB の Mutex を放してから返す（§43.8.2〜§43.8.4。写す前に放す）
+fn offsite_dirs<R: tauri::Runtime>(
+    state: &AppState,
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<(PathBuf, PathBuf), CmdError> {
+    let backup_dir = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+        get_backup_dir(&conn, app_handle)?
+    };
+    Ok((app_data_dir(app_handle)?, backup_dir))
 }
 
 /// DbError → CmdError::internal 変換ヘルパー
@@ -300,6 +380,111 @@ pub fn inspect_backup(request: InspectBackupRequest) -> Result<backup::BackupIns
     })
 }
 
+// PC の外の控え（§43.8.2〜§43.8.4・§43.8.6〜§43.8.8、71 §71.11）。
+// どれも main thread の外で動かす（§43.8.2 の「実行の thread」）。MNT を呼ぶだけで規則を持たない
+
+/// USB メモリを PC の外の控えの保存先として用意する（§43.8.2）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn prepare_offsite_medium(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    request: PrepareOffsiteMediumRequest,
+) -> Result<offsite::OffsiteMediumView, CmdError> {
+    prepare_offsite_medium_core(&state, &app_handle, request)
+}
+
+fn prepare_offsite_medium_core<R: tauri::Runtime>(
+    state: &AppState,
+    app_handle: &tauri::AppHandle<R>,
+    request: PrepareOffsiteMediumRequest,
+) -> Result<offsite::OffsiteMediumView, CmdError> {
+    if request.selected_path.is_empty() {
+        return Err(validation(NOT_REMOVABLE));
+    }
+    let (app_data, backup_dir) = offsite_dirs(state, app_handle)?;
+    offsite::prepare_offsite_medium(&app_data, &backup_dir, Path::new(&request.selected_path))
+        .map_err(offsite_error)
+}
+
+/// 用意した媒体へまだ写していない最新の backup を写す（§43.8.3）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn check_offsite_backup(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<offsite::OffsiteCheckResult, CmdError> {
+    check_offsite_backup_core(&state, &app_handle)
+}
+
+fn check_offsite_backup_core<R: tauri::Runtime>(
+    state: &AppState,
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<offsite::OffsiteCheckResult, CmdError> {
+    let (app_data, backup_dir) = offsite_dirs(state, app_handle)?;
+    offsite::check_offsite_backup(&app_data, &backup_dir).map_err(offsite_error)
+}
+
+/// 「PC の外の控え」の card とホームの状態（§43.8.4）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn get_offsite_backup_status(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<offsite::OffsiteBackupStatus, CmdError> {
+    let (app_data, backup_dir) = offsite_dirs(&state, &app_handle)?;
+    Ok(offsite::offsite_status(
+        &app_data,
+        &backup_dir,
+        chrono::Local::now().date_naive(),
+    ))
+}
+
+/// 読めない記録を作り直す。先に backup を作る（§43.8.6）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn reset_offsite_state(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<offsite::OffsiteCheckResult, CmdError> {
+    reset_offsite_state_core(&state, &app_handle)
+}
+
+fn reset_offsite_state_core<R: tauri::Runtime>(
+    state: &AppState,
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<offsite::OffsiteCheckResult, CmdError> {
+    let backup_dir = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+        let backup_dir = get_backup_dir(&conn, app_handle)?;
+        // 作成に失敗したら作り直しを呼ばない（記録に触れない）。写像は §43.6 と共有
+        create_backup_at(&conn, &backup_dir)?;
+        backup_dir
+    };
+    let app_data = app_data_dir(app_handle)?;
+    offsite::reset_offsite_state(&app_data, &backup_dir).map_err(offsite_error)
+}
+
+/// PC の外の控えをやめる。DB を使わない（§43.8.7）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn stop_offsite_backup(app_handle: tauri::AppHandle) -> Result<(), CmdError> {
+    offsite::stop_offsite_backup(&app_data_dir(&app_handle)?).map_err(offsite_error)
+}
+
+/// 保存先に選ぼうとする folder を確かめる。DB を使わず、保存しない（§43.8.8）
+#[tauri::command(async)]
+#[specta::specta]
+pub fn check_backup_dir_choice(request: BackupDirChoiceRequest) -> Result<(), CmdError> {
+    if request.selected_path.is_empty() {
+        return Err(validation(EMPTY_BACKUP_DIR_CHOICE));
+    }
+    offsite::check_backup_dir_choice(Path::new(&request.selected_path)).map_err(offsite_error)
+}
+
 /// バックアップから復元する（§43.9）
 ///
 /// DB接続の所有権を移転するため、Mutex内の接続をstd::mem::replaceで取り出す。
@@ -401,6 +586,7 @@ mod tests {
     use super::*;
     use crate::db;
     use crate::db::system_repo;
+    use crate::mnt;
     use crate::mnt::backup as mnt_backup;
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -749,8 +935,16 @@ mod tests {
     fn test_inspect_backup_cmd_req901_runs_off_main_thread() {
         // REQ-901 / 43 §43.8.2「実行の thread」: D-114 の command は main thread で動かない
         let file = syn::parse_file(include_str!("settings_cmd.rs")).unwrap();
-        // (b) が残りの 5 command をここに足す
-        let names = vec!["inspect_backup"];
+        // runtime (a) の 1 command と、(b) の残りの 6 command
+        let names = vec![
+            "inspect_backup",
+            "prepare_offsite_medium",
+            "check_offsite_backup",
+            "get_offsite_backup_status",
+            "reset_offsite_state",
+            "stop_offsite_backup",
+            "check_backup_dir_choice",
+        ];
         for name in names {
             let command = file
                 .items
@@ -770,6 +964,200 @@ mod tests {
                 "{name} は #[tauri::command(async)] でない"
             );
         }
+    }
+
+    /// app data を一時 directory にした mock app と、その app data・既定の backup_dir
+    fn offsite_app(
+        conn: db::DbConnection,
+    ) -> (
+        tempfile::TempDir,
+        tauri::App<tauri::test::MockRuntime>,
+        PathBuf,
+        PathBuf,
+    ) {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().identifier = data_dir.path().to_string_lossy().to_string();
+        let app = tauri::test::mock_builder()
+            .manage(app_state_for_test(conn))
+            .build(context)
+            .unwrap();
+        let app_data = app.path().app_data_dir().unwrap();
+        std::fs::create_dir_all(&app_data).unwrap();
+        let backup_dir = app_data.join("backups");
+        (data_dir, app, app_data, backup_dir)
+    }
+
+    fn offsite_medium_root(base: &Path) -> PathBuf {
+        let root = std::fs::canonicalize(base).unwrap().join("E");
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn test_offsite_cmd_req901_maps_errors_to_fixed_kinds() {
+        // REQ-901 / 43 §43.8.2〜§43.8.8 のエラーの写像: message の文字列に依らず固定の kind と文
+        let sd_folder = PathBuf::from("E:\\CASIO\\SR500_550_4000");
+        let validation_cases = [
+            (OffsiteError::NotRemovable, "USB メモリを選んでください（この場所は PC の外の控えに使えません）".to_string()),
+            (
+                OffsiteError::RegisterSd { sd_folder: sd_folder.clone() },
+                format!("これはレジの SD カードです（{} が見つかりました）。控えは USB メモリに作ってください。USB メモリにレジの SD の写しを置いているなら、写しを drive の直下でなく folder の中へ移してください", sd_folder.display()),
+            ),
+            (OffsiteError::MarkerUnsupported, "この USB メモリは新しい版のアプリで用意されています。新しい版のアプリを入れてください".to_string()),
+            (OffsiteError::Redirected, "この USB メモリの InventoryBackup フォルダは別の場所へのリンクのため使えません".to_string()),
+            (OffsiteError::StateUnsupported, "PC の外の控えの記録は新しい版のアプリが書いたものです。新しい版のアプリを入れてください".to_string()),
+            (OffsiteError::NoMediumAttached, "用意した USB メモリが差さっていません。USB メモリを差して「記録を作り直す」を押すか、使わないなら「PC の外の控えをやめる」を押してください".to_string()),
+            (OffsiteError::BackupDirIsMediumFolder, "PC の中の保存先が、USB メモリの InventoryBackup フォルダと同じです。「保存先を選ぶ」で PC の中の別のフォルダを選び直してください".to_string()),
+        ];
+        for (error, message) in validation_cases {
+            let mapped = offsite_error(error.clone());
+            assert_eq!(mapped.kind, CmdErrorKind::Validation, "{error:?}");
+            assert_eq!(mapped.message, message, "{error:?}");
+        }
+        let internal_cases = [
+            (OffsiteError::StorageFull, "USB メモリの空きが足りません"),
+            (OffsiteError::VerifyMismatch, "PC の外の控えを写せませんでした"),
+            (OffsiteError::Io, "PC の外の控えを写せませんでした"),
+            (OffsiteError::StateUnreadable, "PC の外の控えの記録を読めませんでした。「記録を作り直す」を押してください"),
+            (OffsiteError::SourceUnverified, "PC の中の最新のバックアップを確かめられなかったため、PC の外へ写していません"),
+            (OffsiteError::StopFailed, "PC の外の控えをやめる操作を終えられませんでした。「PC の外の控えをやめる」がまだ出ていれば、もう一度押してください"),
+            (OffsiteError::StateResetFailed, "PC の外の控えの記録の作り直しを終えられませんでした。「記録を作り直す」がまだ出ていれば、もう一度押してください"),
+        ];
+        for (error, message) in internal_cases {
+            let mapped = offsite_error(error.clone());
+            assert_eq!(mapped.kind, CmdErrorKind::Internal, "{error:?}");
+            assert_eq!(mapped.message, message, "{error:?}");
+            assert!(mapped.error_id.is_some());
+        }
+
+        // 空の selected_path は validation
+        let (_db_dir, conn) = setup_test_db();
+        let (_data, app, _app_data, _backup_dir) = offsite_app(conn);
+        let error = prepare_offsite_medium_core(
+            &app.state::<AppState>(),
+            app.handle(),
+            PrepareOffsiteMediumRequest {
+                selected_path: String::new(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+        let error = check_backup_dir_choice(BackupDirChoiceRequest {
+            selected_path: String::new(),
+        })
+        .unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+
+        // CmdErrorKind の値を足さない
+        let kinds = syn::parse_file(include_str!("mod.rs")).unwrap();
+        let variants = kinds
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == "CmdErrorKind" => Some(item.variants.len()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(variants, 13);
+    }
+
+    #[test]
+    fn test_reset_offsite_cmd_req901_creates_backup_before_reset() {
+        // REQ-901 / 43 §43.8.6: 作り直しの前に backup を作り、作成の失敗では記録に触れない
+        let (_db_dir, conn) = setup_test_db();
+        let (data, app, app_data, backup_dir) = offsite_app(conn);
+        let root = offsite_medium_root(data.path());
+        let _media = mnt::offsite::set_test_media(vec![root.clone()], |_| {});
+        mnt::offsite::prepare_offsite_medium(&app_data, &backup_dir, &root).unwrap();
+        // PC の中の最新と同じ名前・size の写しを媒体に先に置く
+        let earlier = {
+            let conn = app.state::<AppState>();
+            let conn = conn.db.lock().unwrap();
+            mnt_backup::create_backup(&conn, &backup_dir).unwrap()
+        };
+        let earlier_name = "inventory_backup_20000101_000000.db";
+        std::fs::rename(&earlier.file_path, backup_dir.join(earlier_name)).unwrap();
+        std::fs::copy(
+            backup_dir.join(earlier_name),
+            root.join("InventoryBackup").join(earlier_name),
+        )
+        .unwrap();
+        let state_file = app_data.join("offsite-backup.json");
+        std::fs::write(&state_file, b"{ broken").unwrap();
+
+        let result = reset_offsite_state_core(&app.state::<AppState>(), app.handle()).unwrap();
+        match result {
+            mnt::offsite::OffsiteCheckResult::Copied { file_name, .. } => {
+                assert_ne!(file_name, earlier_name, "新しい backup を先に作って写す");
+            }
+            other => panic!("Copied でない: {other:?}"),
+        }
+
+        // 作成の失敗: 保存先の祖先にレジの SD の folder
+        std::fs::write(&state_file, b"{ broken again").unwrap();
+        let sd_base = data.path().join("sd");
+        let [casio, model] = crate::io::REGISTER_SD_FOLDER;
+        let sd_folder = sd_base.join(casio).join(model);
+        std::fs::create_dir_all(&sd_folder).unwrap();
+        {
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            system_repo::upsert_setting(
+                &conn,
+                "backup_path",
+                &sd_base.join("backups").to_string_lossy(),
+            )
+            .unwrap();
+        }
+        let error = reset_offsite_state_core(&app.state::<AppState>(), app.handle()).unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+        assert_eq!(
+            error.message,
+            format!(
+                "この保存先はレジの SD カードの上にあります（{} が見つかりました）。レジの SD の写しを PC に置いているなら、写しを drive の直下でなく folder の中へ移してください。そうでなければ「保存先を選ぶ」で PC の中の別の folder を選び直してください",
+                sd_folder.display()
+            )
+        );
+        assert_eq!(std::fs::read(&state_file).unwrap(), b"{ broken again");
+    }
+
+    #[test]
+    fn test_check_offsite_cmd_req901_releases_db_lock_before_copy() {
+        // REQ-901 / 43 §43.8.3: 写す間 DB の Mutex を持たない（写す直前に同じ thread で取れる）
+        let (_db_dir, conn) = setup_test_db();
+        let (data, app, app_data, backup_dir) = offsite_app(conn);
+        let root = offsite_medium_root(data.path());
+        {
+            let _media = mnt::offsite::set_test_media(vec![root.clone()], |_| {});
+            mnt::offsite::prepare_offsite_medium(&app_data, &backup_dir, &root).unwrap();
+        }
+        {
+            let state = app.state::<AppState>();
+            let conn = state.db.lock().unwrap();
+            mnt_backup::create_backup(&conn, &backup_dir).unwrap();
+        }
+        let app: &'static tauri::App<tauri::test::MockRuntime> = Box::leak(Box::new(app));
+        let observed: std::rc::Rc<std::cell::RefCell<Vec<bool>>> = Default::default();
+        let record = std::rc::Rc::clone(&observed);
+        let _media = mnt::offsite::set_test_media(vec![root.clone()], move |step| {
+            if step == "before_copy" {
+                let free = app.state::<AppState>().db.try_lock().is_ok();
+                record.borrow_mut().push(free);
+            }
+        });
+
+        let result = check_offsite_backup_core(&app.state::<AppState>(), app.handle()).unwrap();
+
+        assert!(matches!(
+            result,
+            mnt::offsite::OffsiteCheckResult::Copied { .. }
+        ));
+        assert_eq!(
+            *observed.borrow(),
+            [true],
+            "写す直前に DB の Mutex が放されている"
+        );
     }
 
     #[test]

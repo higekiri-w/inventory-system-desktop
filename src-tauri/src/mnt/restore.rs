@@ -113,6 +113,11 @@ pub(super) trait RestoreFileOps {
     fn sync_file(&self, path: &Path) -> std::io::Result<()>;
     fn sync_parent(&self, path: &Path) -> std::io::Result<()>;
     fn checkpoint(&self, conn: &DbConnection) -> Result<(i64, i64, i64), rusqlite::Error>;
+    /// 既存の entry があれば失敗する copy（`create_new` で開いて `io::copy`。sync は呼ぶ側。
+    /// 71 §71.11.4 手順 4d・§71.11.5a 手順 5）。既存の注入の型は本物の操作へ委ねる
+    fn copy_new(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
+        StdRestoreFileOps.copy_new(source, destination)
+    }
 }
 
 pub(super) struct StdRestoreFileOps;
@@ -275,6 +280,15 @@ impl RestoreFileOps for StdRestoreFileOps {
         conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
+    }
+    fn copy_new(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
+        // 既存の entry（reparse point・dangling link を含む）を開かず・上書きしない
+        let mut input = File::open(source)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)?;
+        std::io::copy(&mut input, &mut output)
     }
 }
 
@@ -2199,5 +2213,38 @@ mod tests {
                 "red にならない: {to}"
             );
         }
+    }
+
+    #[test]
+    fn test_restore_req901_d15_live_db_path_keeps_current_db() {
+        // REQ-901 / UI-11b-D15 隣接（runtime (b)）: 「控えを選んで確かめる」でアプリの今の DB を選んでも DB を失わない
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("inventory.db");
+        let conn = database_with_supplier(&db_path, "今の行");
+        let names_of = |dir: &Path| {
+            let mut names: Vec<String> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .filter(|name| !name.ends_with("-wal") && !name.ends_with("-shm"))
+                .collect();
+            names.sort();
+            names
+        };
+        let before = names_of(dir.path());
+
+        let result = restore_backup(conn, &db_path, &db_path);
+
+        assert!(
+            matches!(result, Err(RestoreError::Recovered(_))),
+            "Recovered 以外: {:?}",
+            result.as_ref().err()
+        );
+        let reopened = db::open_existing_database(db_path.to_str().unwrap()).unwrap();
+        assert_eq!(supplier_names(&reopened), ["今の行"]);
+        assert_eq!(
+            names_of(dir.path()),
+            before,
+            "退避・manifest の遺物を残さない"
+        );
     }
 }
