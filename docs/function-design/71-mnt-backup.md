@@ -699,7 +699,7 @@ enum OffsiteCheckResult {
    a. 同じ名前の正式名の file（reparse point でないもの）があり size が同じなら写さない（アプリが置く正式名は手順 f でしか作らないので確かめ済み。手で置いた規約の名前の file は例外で、§71.11.7）。同じ名前の entry が reparse point なら写したことにせず、手順 f の公開が既存の名前で失敗して `Io` になる
    b. 残っている作業名を消す。消すのは `.partial` を除いた名前が §71.3 の規約に完全に合う file だけ（§71.4 手順 3 と同じ。`unrelated.partial` 等は消さない）
    c. 元の file の SHA-256 を計算する（既存の `sha2` crate）
-   d. 目印を読み直して照合し、`InventoryBackup` が reparse point でないことを確かめ（§71.11.3）、`{ファイル名}.partial` へ copy し `sync_all`
+   d. 目印を読み直して照合し、`InventoryBackup` が reparse point でないことを確かめ（§71.11.3）、`{ファイル名}.partial` を `OpenOptions::create_new` で開いて `io::copy` → `sync_all` する（§71.11.5a 手順 5 と同じ、既存なら失敗する copy）。作業名の entry が残る・直前に現れる場合は、reparse point を含め開かず・上書きせず `Io`。手順 b が除外した link を辿る `std::fs::copy` は使わない
    e. 作業名の file を開き直して全部読み、SHA-256 を c と比べる。違えば作業名の file を消し `VerifyMismatch`
    f. 目印と reparse point を確かめ直し、正式名へ上書きしない公開（§71.4.1）をして、親 directory を sync する。同じ名前の正式名が現れていれば既存を残し、作業名を消して `Io`
    g. 掃除: 目印と reparse point を確かめ直し、正式名の写し（reparse point の entry を除く）を新しい順に並べ、`OFFSITE_KEEP` 本目より後を消す。今写した file・作業名でない他の file（目印、名前の規約に合わない file）は消さない。消せなければ `tracing::warn!` で続ける
@@ -717,6 +717,8 @@ enum OffsiteCheckResult {
 | 手動の backup・事前バックアップ（`create_backup`） | 写す元の一覧に作成途中の file が見える | 作業名へ書いて検査の後にだけ正式名を公開する（MNT-01-D7）ので、写す元は正式名の確かめ済みの file だけ。PC の中の保持日数の掃除は日付で古い file だけを消し、写す元の最新（今日の file）は消さない。`checkAutoBackup` とは DB の Mutex で直列 |
 | 設定の変更（`backup_path`） | 写しの途中で保存先が替わる | 確認は始めに読んだ `backup_dir` から写し終える（写す元は検査済みで、替わる前の保存先の file）。次の回から新しい保存先 |
 | 控えを選んで確かめる（短い確かめ、§71.13） | 確かめている控えを媒体の掃除が消す | 復元と同じ入口（UI-11b-D15）なので、同じく止める |
+
+**排他の test の注入境界**: 公開関数の各入口は、本番と test が共有する、上の同じ mutex を取る内部入口へ委ねる。その入口に媒体の root の列・時刻・`RestoreFileOps` を渡せるようにし、lock の取得から状態の読取り・書込み・解放までを test で通す（lock を取らない確認の本体だけの test では代えない）。手順 4d の `create_new` の copy を channel / barrier で待たせ、別 thread の用意・作り直し・停止が lock 取得を試みたことと、取得後の本体への入場を区別して記録する。取得前後の通知は test の観測点とし、mutex 自体は差し替えない。用意の手順 6・作り直しの手順 7 は lock を取らない本体へ進み、二重取得しない。停止の完了後、待機していた確認を含む全 thread を join しても状態の file が再作成されず、次の確認は `NotPrepared` であることを確かめる。
 
 **エラーハンドリング**:
 

@@ -134,6 +134,8 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 
 ## 68.7 State Machine
 
+「PC の外の控え」の card の 3 つの button（用意・記録を作り直す・やめる）は、`restoreState.selected` がある間、または `controlsDisabled` の間は disabled にする。詳細・最終確認も選択を保持するため、用意の手順 6・作り直しの手順 7 が確認の本体を呼んで、選んだ控えを掃除する経路を閉じる。復元の card を閉じて未選択になり、busy / fatal でもないときだけ、status に応じた操作を再び有効にする。
+
 | State | Entry / action | Next | UI behavior |
 |---|---|---|---|
 | `loading` | `getSettings` + `listBackups` | `ready` / `load_error` | skeleton または progress を表示。 |
