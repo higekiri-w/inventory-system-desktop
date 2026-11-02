@@ -47,7 +47,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 
 ## Workflow State
 
-- Phase: plan-approved
+- Phase: implementing
 - Risk: R4
 - Plan Commit: 5fce1113d9a0c53e1572dc64135f6e0b19900265
 - Amendments: none
@@ -72,6 +72,8 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 7. plan-draft 継続（2026-11-02、Writer）: [計画の review round 1 の裁定](https://github.com/kosei-w90607/inventory-system-desktop/pull/194#issuecomment-6575382611)の受理した 8 行を是正した。計画の承認・実装は行わず、closure は独立 reviewer へ渡す。
 
 8. plan-draft → plan-approved（2026-11-02、Coordinator）: 計画の review の closure（発注 735、Codex Astra・Opus）が 2 本とも approve（P1/P2 0、[報告と裁定](https://github.com/kosei-w90607/inventory-system-desktop/pull/194#issuecomment-6575846144)）。`scripts/plan-approve.sh` で Plan Commit を `5fce1113` に固定した。closure の Opus P3-a（用意などの実行中に控えを選べる逆の順）・P3-b（`Mutex<()>` の poison）は、計画の節を変えずに設計正本と Matrix で実装の発注に入れる。
+
+9. plan-approved → implementing（2026-11-02、Writer〈発注 737。Codex の利用上限のため座組表どおり Opus 5.5 の subagent〉）: Plan Commit `5fce1113` の Scope S1〜S7 を実装した。計画の節は変えていない。closure の P3-a は 68 §68.7・Matrix の §68.7 の行・`BackupRestorePage.tsx` の `isBusy`、P3-b は 71 §71.11.4 の排他の段落・Matrix の排他の行・`mnt/offsite.rs` の lock に入れた。結果は下の Implementation Results。
 
 ## Owner Effort Budget
 
@@ -503,7 +505,16 @@ D-127 の今回の sweep: L3-b5 の行・合成状態の差替え・退避物の
 
 ## Implementation Results
 
-Fill after implementation.
+実装（発注 737、2026-11-02）の要旨。exact な SHA・test の件数は PR と helper の status が持つ（D-035/D-038）。
+
+- S1・S2（MNT）: 新 module `mnt::offsite` に 71 §71.11 の 6 つの公開関数と型・目印と状態の file・媒体の探索・同じ folder の判定を置いた。公開関数は本番と test が共有する内部入口（root の列・時刻・`RestoreFileOps`・観測点を受ける）へ委ね、排他は process 全体の `Mutex<()>`（poison は `PoisonError::into_inner`）。`io/register_sd.rs` の `ErrorModeGuard` と取外し可能な root の列挙（`removable_drive_roots`）を `pub(crate)` で共有し、SD の選別は `find_register_sd_roots` に残した。`RestoreFileOps` に `create_new` の copy（`copy_new`、既定は本物へ委ねる）を 1 つ足し、Std の impl では `checkpoint` の後に置いた（`publish_no_replace` の source 検査の範囲の外）。`mnt/backup.rs` の名前解析・`is_usable_backup`・`partial_name` を `pub(super)` にして共有した。
+- S3（CMD・登録）: `cmd/settings_cmd.rs` に 6 command（`#[tauri::command(async)]`、DB の Mutex は `backup_dir` の読取りの間だけ、作り直しは先に既存の `create_backup_at`）とエラーの写像、`lib.rs` の 2 つの macro、bindings・traceability の再生成、設計照合の `mnt::offsite`、43 §43.8 の signature の code block。
+- S4（共通の確認）: `useAutoBackupCheck` の同じ回の中で `checkAutoBackup` の後に `checkOffsiteBackup`、mount で 1 回、停止の理由・世代番号・`inFlight` を共有、結果に依らず status を invalidate、失敗の toast は連続の最初の 1 回（id `backup-offsite-error`）。
+- S5（バックアップ画面）: `OffsiteBackupPanel`（表示だけ）と `offsite-status-text.ts`（状態の文・原因の文・副情報を 1 か所で選ぶ。和式日時の整形もここへ移した）、`useOffsiteBackupStatus`、`BackupRestorePage.tsx` の 3 つの操作（同じ file の中の `useOffsiteActions`、§68.10 の invalidate）、「控えを選んで確かめる」の file の入口（`selected` を `RestoreTarget` にし、作成日時が取れなければ file 名）、「保存先を選ぶ」の保存の前の `checkBackupDirChoice`、§68.7 の無効化（P3-a の逆の順を含む）。
+- S6（ホーム）: `OffsiteBackupWarning` と `HomePage.tsx` の独立 query・失敗の toast（id `offsite-status-error`）。
+- S7（正本の注記）: 71 §71.1、68 前文、53 §53.1 と更新履歴、43 §43.11、22 §16、`docs/FUNCTION_DESIGN.md` の MNT-01 を実装済みへ直した（AC7 の検索は 53 の 2026-10-07 の履歴だけを返す）。
+- 計画からの小さな差: 媒体の取外し可能の判定（§71.11.2 手順 2）は、`GetDriveTypeW` を 2 度書かず、共有した取外し可能な root の列に選んだ path の root が在るかで見る（test は root の列の注入で差し替える）。68 §68.6 の hook 名の一覧（`usePrepareOffsiteMedium` 等）は作らず、Scope のとおり page の中に置いた。
+- Windows でしか通らない code（`removable_drive_roots`・`GetFileAttributesW` の reparse point の判定・drive の root の取り出し・ASCII の大文字小文字を区別しない比較）は Linux の CI と手元の `cargo check` では compile されない。L3（b1〜b4・b6・b7）が初めて通す。
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

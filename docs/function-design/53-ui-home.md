@@ -35,7 +35,7 @@ UI 層関数設計書の 2 段階テンプレ（業務ロジック有無で使�
 | `src/features/home/components/InventoryActionGrid.tsx` | 「入庫・出庫」2×2: 入庫記録 / 返品・交換 / 手動販売出庫 / 廃棄・破損 |
 | `src/features/home/components/MiscActionRow.tsx` | 「その他」3 card（2 列折返し）: 棚卸し / バックアップ / 設定 |
 | `src/features/home/components/ActionButton.tsx` | 引数: `navItemId: NavItem["id"]` と `variant?: "default" \| "primary"`。内部で `navigation.ts` を参照して `status / to / label / icon / description` を取得し、icon + 題名 + 1 行説明の card を描画。pending 時 Tooltip + `aria-disabled` + `onClick preventDefault` + `cursor-not-allowed`（D-2 採用、HTML disabled は pointer-events ブロックで Tooltip hover が起動しないため不採用、prop drilling 回避で navigation が SSOT） |
-| `src/features/home/components/OffsiteBackupWarning.tsx`（D-114、runtime は後続の lane） | PC の外の控えが古いときの warning Alert（UI-00-D12）。`useHomeSummary` の 4 query とは別の独立 query（`getOffsiteBackupStatus`、UI-11b と同じ query key） |
+| `src/features/home/components/OffsiteBackupWarning.tsx`（D-114、runtime (b) で実装） | PC の外の控えが古いときの warning Alert（UI-00-D12）。`useHomeSummary` の 4 query とは別の独立 query（`getOffsiteBackupStatus`、UI-11b と同じ query key） |
 | `src/features/home/hooks/useHomeSummary.ts` | 4 useQuery 束ね、`{ sales, lowStock, pluDirty, csvImports }` を返す（D-3） |
 | `src/features/home/hooks/useYesterdayDate.ts` | JST 昨日の `YYYY-MM-DD` + Visibility API listener（24:00 またぎで再計算 → setState → queryKey 変化で再 fetch、D-9 / P2-A 反映） |
 | `src/features/home/lib/count-stock-status.ts` | `ProductWithRelations[]` → `{ outOfStock, lowStock }` 純関数（D-1） |
@@ -326,3 +326,4 @@ UI-00 の回帰 test は、表示 component 用の手組み `UseQueryResult` fix
 | 2026-10-07 | D-114（backup の PC の外の控え、design lane） | §53.1 に `OffsiteBackupWarning`、§53.5 に PC の外の控えの知らせ（UI-00-D12）と query 失敗の行を追加（runtime は後続の lane） |
 | 2026-10-23 | D-114（PC の外の控えの runtime (b) の起票、plan-first） | UI-00-D12 の (5) を、用意済みの媒体が見えているか（`attached`）で 2 つの文に分けた（design lane の closeout の申し送り (a)） |
 | 2026-10-23 | D-130（PC の外の控えの runtime (b) の J1 の owner の決定、plan-first） | UI-00-D12 の (4) に `backup_dir_is_medium_folder`（PC の中の保存先が媒体の InventoryBackup と同じ folder）とその文を足した（71 MNT-01-D11） |
+| 2026-11-02 | D-114・D-130（PC の外の控えの runtime (b) の実装） | §53.1 の `OffsiteBackupWarning` を実装済みにした |

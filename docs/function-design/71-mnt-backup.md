@@ -5,9 +5,9 @@
 ```
 src-tauri/src/
   mnt/
-    mod.rs        -- pub mod backup（既存宣言済み）。pub mod offsite は runtime の lane で足す
+    mod.rs        -- pub mod backup・pub mod offsite
     backup.rs     -- バックアップ・リストア・自動チェック・控えの検査（本セクション、§71.12）
-    offsite.rs    -- PC の外の控え（§71.11、MNT-01-D8。D-114 で設計、runtime は後続の lane）
+    offsite.rs    -- PC の外の控え（§71.11、MNT-01-D8・D11。D-114・D-130、runtime (b) で実装）
   db/
     system_repo.rs -- get_setting, upsert_setting, insert_operation_log を使用
   lib.rs          -- setup hook に check_auto_backup 呼び出しを追加
@@ -706,7 +706,7 @@ enum OffsiteCheckResult {
 5. 1 つ以上写せたら `last_success = { at: 今, file_name, medium_id: 最後に写した媒体, sha256 }`、`last_failure = None` を書き `Copied`。写すものが無ければ `UpToDate`（状態を変えない）
 6. 手順 4 のどれかが失敗したら、その媒体の残りを止め、`last_failure = { at, kind, medium_id }` を書いて `Err`（他の媒体へ写せていれば `last_success` も書く）
 
-**排他**: 用意（§71.11.2）と 60 秒の確認が重ならないよう、`mnt::offsite` の中の 1 つの `Mutex<()>` で直列にする（ponytail: process 全体の lock。媒体ごとの lock は複数の媒体を同時に扱う要件が出たとき）。lock は公開関数（`prepare_offsite_medium`・`check_offsite_backup`・`reset_offsite_state`・`stop_offsite_backup`）の入口で 1 回だけ取る。用意の手順 6 は lock を取らない内部関数（`check_offsite_backup` の本体）を呼ぶ（`std::sync::Mutex` は再入できず、入口の関数を呼ぶと自分を待って止まる）。`offsite_status` は書かないので lock を取らない。DB の Mutex は持たない（CMD が設定の読取りの間だけ持ち、写す前に放す。43 §43.8.3）。60 秒の確認と競合しうる操作ごとの扱い:
+**排他**: 用意（§71.11.2）と 60 秒の確認が重ならないよう、`mnt::offsite` の中の 1 つの `Mutex<()>` で直列にする（ponytail: process 全体の lock。媒体ごとの lock は複数の媒体を同時に扱う要件が出たとき）。lock は公開関数（`prepare_offsite_medium`・`check_offsite_backup`・`reset_offsite_state`・`stop_offsite_backup`）の入口で 1 回だけ取る。用意の手順 6 は lock を取らない内部関数（`check_offsite_backup` の本体）を呼ぶ（`std::sync::Mutex` は再入できず、入口の関数を呼ぶと自分を待って止まる）。守るデータの無い `Mutex<()>`（状態は file の側にあり、lock は直列にするためだけ）なので、lock を持った thread の panic による poison は `PoisonError::into_inner` で受けて続ける（止めると以後の確認・用意・作り直し・やめるが全部止まり、知らせだけが残る）。`offsite_status` は書かないので lock を取らない。DB の Mutex は持たない（CMD が設定の読取りの間だけ持ち、写す前に放す。43 §43.8.3）。60 秒の確認と競合しうる操作ごとの扱い:
 
 | 操作 | 競合 | 扱い |
 |---|---|---|

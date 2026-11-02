@@ -2,7 +2,7 @@
 
 > 親文書: [FUNCTION_DESIGN.md](../FUNCTION_DESIGN.md)
 > 対応REQ: QR-05 / REQ-901
-> Design Phase: 2026-07-06。PR #141 で settings / log / backup 系 command bindings は配線済み。実効保存先常時表示（PR #144 L3 / Fable 裁定起源の follow-up）を追記。2026-10-07: PC の外の控えと復元の前の確かめ（D-114、UI-11b-F8〜F10・D14〜D16）を追記。runtime (a)（PR #190）で、一覧の行の入口の控えの確かめ（UI-11b-F9・D15 の一覧の行、§68.7 の `restore_inspecting`・`restore_blocked`・`restore_detail` と「閉じる」）、共通の確認の停止の 2 つの理由（UI-11b-D13）、手動バックアップの失敗の後の一覧の取り直し（§68.4）が入った。PC の外の控え（UI-11b-F8・F10・D14・D16）と「控えを選んで確かめる」の入口は後続の runtime (b)。
+> Design Phase: 2026-07-06。PR #141 で settings / log / backup 系 command bindings は配線済み。実効保存先常時表示（PR #144 L3 / Fable 裁定起源の follow-up）を追記。2026-10-07: PC の外の控えと復元の前の確かめ（D-114、UI-11b-F8〜F10・D14〜D16）を追記。runtime (a)（PR #190）で、一覧の行の入口の控えの確かめ（UI-11b-F9・D15 の一覧の行、§68.7 の `restore_inspecting`・`restore_blocked`・`restore_detail` と「閉じる」）、共通の確認の停止の 2 つの理由（UI-11b-D13）、手動バックアップの失敗の後の一覧の取り直し（§68.4）が入った。PC の外の控え（UI-11b-F8・F10・D14・D16）、「控えを選んで確かめる」の入口（UI-11b-D15 の file の入口）、保存先の選択の確かめ（UI-11b-F3、D-130）は runtime (b)（PR #194）で入った。
 
 UI-11b は、ローカル SQLite DB の手動バックアップ、バックアップ設定、バックアップ一覧、復元を operator が 1 画面で扱うための画面である。backend 契約の正本は [71-mnt-backup.md](71-mnt-backup.md) と [43-cmd-settings-log.md](43-cmd-settings-log.md) に置き、本書は UI 側の状態遷移、文言、安全確認、query cache の扱い、Windows native L3 を固定する。
 
@@ -134,7 +134,7 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 
 ## 68.7 State Machine
 
-「PC の外の控え」の card の 3 つの button（用意・記録を作り直す・やめる）は、`restoreState.selected` がある間、または `controlsDisabled` の間は disabled にする。詳細・最終確認も選択を保持するため、用意の手順 6・作り直しの手順 7 が確認の本体を呼んで、選んだ控えを掃除する経路を閉じる。復元の card を閉じて未選択になり、busy / fatal でもないときだけ、status に応じた操作を再び有効にする。
+「PC の外の控え」の card の 3 つの button（用意・記録を作り直す・やめる）は、`restoreState.selected` がある間、または `controlsDisabled` の間は disabled にする。詳細・最終確認も選択を保持するため、用意の手順 6・作り直しの手順 7 が確認の本体を呼んで、選んだ控えを掃除する経路を閉じる。復元の card を閉じて未選択になり、busy / fatal でもないときだけ、status に応じた操作を再び有効にする。逆の順も閉じる: `offsite_preparing`・`offsite_resetting`・`offsite_stopping` の間は `isBusy` に入れ、`controlsDisabled` が一覧の行の復元の入口と「控えを選んで確かめる」も止める（用意などの実行中に控えを選べない。runtime (b) の計画の review の closure の P3、2026-11-02）。
 
 | State | Entry / action | Next | UI behavior |
 |---|---|---|---|

@@ -334,12 +334,18 @@ PR #164 以降、この文書の command はすべて `#[specta::specta]` を付
     cmd::settings_cmd::list_backups,
     cmd::settings_cmd::get_effective_backup_dir,
     cmd::settings_cmd::inspect_backup,   // §43.8.5、#[tauri::command(async)]
+    cmd::settings_cmd::prepare_offsite_medium,     // §43.8.2〜§43.8.4・§43.8.6〜§43.8.8 も #[tauri::command(async)]
+    cmd::settings_cmd::check_offsite_backup,
+    cmd::settings_cmd::get_offsite_backup_status,
+    cmd::settings_cmd::reset_offsite_state,
+    cmd::settings_cmd::stop_offsite_backup,
+    cmd::settings_cmd::check_backup_dir_choice,
     cmd::settings_cmd::restore_backup,
     cmd::settings_cmd::save_receipt_image,
 ])
 ```
 
-D-114・D-130 の 7 command（§43.8.2〜§43.8.8）は `#[tauri::command(async)]`（§43.8.2 の「実行の thread」）+ `#[specta::specta]` を付け、`generate_handler!` と `collect_commands!` の両方へ登録する（`scripts/check-command-drift.sh` が 4 つの集合の一致を見る）。`inspect_backup`（§43.8.5）は runtime (a) で登録済み。残りの 6 command（§43.8.2〜§43.8.4・§43.8.6〜§43.8.8）は PC の外の控えの runtime (b) で登録する。
+D-114・D-130 の 7 command（§43.8.2〜§43.8.8）は `#[tauri::command(async)]`（§43.8.2 の「実行の thread」）+ `#[specta::specta]` を付け、`generate_handler!` と `collect_commands!` の両方へ登録する（`scripts/check-command-drift.sh` が 4 つの集合の一致を見る）。`inspect_backup`（§43.8.5）は runtime (a)、残りの 6 command（§43.8.2〜§43.8.4・§43.8.6〜§43.8.8）は PC の外の控えの runtime (b) で登録した。
 
 ---
 
