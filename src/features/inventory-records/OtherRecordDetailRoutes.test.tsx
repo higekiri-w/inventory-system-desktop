@@ -8,8 +8,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 vi.mock("@/features/backup-restore/useAutoBackupCheck", () => ({
   useAutoBackupCheck: () => undefined,
-  suspendAutoBackupCheck: vi.fn(),
   resumeAutoBackupCheck: vi.fn(),
+  suspendAutoBackupCheckAndWait: vi.fn().mockResolvedValue(undefined),
+  holdAutoBackupCheckForRestore: vi.fn(),
+  releaseAutoBackupCheckAfterRestore: vi.fn(),
 }));
 
 vi.mock("@/features/receiving/ReceivingPage", () => ({

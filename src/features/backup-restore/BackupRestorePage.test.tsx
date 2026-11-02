@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { toast } from "sonner";
 import { commands } from "@/lib/bindings";
-import type { CmdErrorKind } from "@/lib/bindings";
+import type { BackupInspection, CmdErrorKind } from "@/lib/bindings";
 import { queryKeys } from "@/lib/query-keys";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -14,7 +14,11 @@ import {
   consumeRestoreSuccessPending,
 } from "@/lib/restore-success-notification";
 import { BackupRestorePage } from "./BackupRestorePage";
-import { resumeAutoBackupCheck, useAutoBackupCheck } from "./useAutoBackupCheck";
+import {
+  holdAutoBackupCheckForRestore,
+  resetAutoBackupCheckForTests,
+  useAutoBackupCheck,
+} from "./useAutoBackupCheck";
 
 const mockNavigate = vi.fn();
 
@@ -39,6 +43,7 @@ vi.mock("@/lib/bindings", () => ({
     listBackups: vi.fn(),
     getEffectiveBackupDir: vi.fn(),
     restoreBackup: vi.fn(),
+    inspectBackup: vi.fn(),
   },
 }));
 
@@ -49,6 +54,7 @@ const mockCheckAutoBackup = vi.mocked(commands.checkAutoBackup);
 const mockListBackups = vi.mocked(commands.listBackups);
 const mockGetEffectiveBackupDir = vi.mocked(commands.getEffectiveBackupDir);
 const mockRestoreBackup = vi.mocked(commands.restoreBackup);
+const mockInspectBackup = vi.mocked(commands.inspectBackup);
 const mockOpen = vi.mocked(open);
 const mockToastSuccess = vi.mocked(toast.success);
 
@@ -83,7 +89,6 @@ function PageWithAutoBackupCheck() {
 }
 
 type CheckResult = Awaited<ReturnType<typeof commands.checkAutoBackup>>;
-type RestoreResult = Awaited<ReturnType<typeof commands.restoreBackup>>;
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => undefined;
@@ -99,6 +104,22 @@ function listInvalidateCount(spy: { mock: { calls: unknown[][] } }): number {
       JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey) ===
       JSON.stringify(queryKeys.backupRestore.list()),
   ).length;
+}
+
+// 設計の例（§68.9）と無関係の値にし、表示が mock から来たことを確かめる
+function makeInspection(overrides: Partial<BackupInspection> = {}): BackupInspection {
+  return {
+    file_name: "inventory_backup_20260703_210000.db",
+    created_at: "2026-07-03 21:00:00",
+    size_bytes: 12_400_000,
+    schema_version: 9,
+    app_max_version: 9,
+    newer_than_app: false,
+    quick_check_ok: true,
+    product_count: 37,
+    last_operation_at: "2026-07-03T20:47:00",
+    ...overrides,
+  };
 }
 
 function mockDefaultCommands() {
@@ -131,6 +152,7 @@ function mockDefaultCommands() {
   mockCheckAutoBackup.mockResolvedValue(ok(false));
   mockGetEffectiveBackupDir.mockResolvedValue(ok("/tmp/backups"));
   mockRestoreBackup.mockResolvedValue(ok(null));
+  mockInspectBackup.mockResolvedValue(ok(makeInspection()));
   mockOpen.mockResolvedValue(null);
 }
 
@@ -141,9 +163,10 @@ async function openRestoreDetail(user: ReturnType<typeof userEvent.setup>) {
   expect(row).not.toBeNull();
   if (!row) throw new Error("backup row not found");
   await user.click(within(row).getByRole("button", { name: "この控えに戻す" }));
+  // UI-11b-D15: 詳細は控えの確かめの解決の後に出る
   // SC20 / DSR-08: 既存文言・roleを保ってwarning variantへ移行する。
   expect(
-    screen.getByText("復元すると今の記録は戻せません").closest('[data-slot="alert"]'),
+    (await screen.findByText("復元すると今の記録は戻せません")).closest('[data-slot="alert"]'),
   ).toHaveAttribute("data-variant", "warning");
   expect(
     screen.getByText("復元すると今の記録は戻せません").closest('[data-slot="alert"]'),
@@ -170,9 +193,10 @@ beforeEach(() => {
   mockRestoreBackup.mockReset();
   mockOpen.mockReset();
   mockToastSuccess.mockReset();
+  mockInspectBackup.mockReset();
   mockDefaultCommands();
   clearRestoreSuccessPending();
-  resumeAutoBackupCheck();
+  resetAutoBackupCheckForTests();
 });
 
 afterEach(() => {
@@ -296,6 +320,13 @@ describe("BackupRestorePage (UI-11b / QR-05 / REQ-901)", () => {
 
       expect(await screen.findByText(text)).toBeInTheDocument();
       expect(screen.getByText("（エラーID: E-20260726-153021-a1b2）")).toBeInTheDocument();
+      if (kind === "restore_failed_recovered") {
+        // §68.7: restore_failed_recovered の後は復元の card が未選択（再試行は選び直して確かめから）
+        expect(
+          screen.getByText("一覧から戻したい控えを選ぶと、内容と確認手順を表示します。"),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "復元の確認へ進む" })).not.toBeInTheDocument();
+      }
     },
   );
 
@@ -360,79 +391,6 @@ describe("BackupRestorePage (UI-11b / QR-05 / REQ-901)", () => {
       expect(mockCheckAutoBackup).toHaveBeenCalledTimes(callsAtFatal);
     },
   );
-
-  it("REQ-901 / UI-11b-D13: 復元の前に発火して待機中の確認の結果は捨てる（復元の間に届く）", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const pendingCheck = deferred<CheckResult>();
-    const pendingRestore = deferred<RestoreResult>();
-    mockCheckAutoBackup.mockReturnValueOnce(pendingCheck.promise);
-    mockRestoreBackup.mockReturnValueOnce(pendingRestore.promise);
-
-    const { queryClient } = renderWithClient(<PageWithAutoBackupCheck />);
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    try {
-      await screen.findByRole("heading", { name: "バックアップ・復元" });
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
-
-      await startRestoreConfirmation(user);
-      await user.click(screen.getByRole("button", { name: "7月3日 21:00 の控えに戻す" }));
-      await waitFor(() => {
-        expect(mockRestoreBackup).toHaveBeenCalledTimes(1);
-      });
-
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
-
-      const listInvalidatesBefore = listInvalidateCount(invalidateSpy);
-      pendingCheck.resolve(ok(true));
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(listInvalidateCount(invalidateSpy)).toBe(listInvalidatesBefore);
-    } finally {
-      pendingCheck.resolve(ok(false));
-      pendingRestore.resolve(ok(null));
-      await vi.advanceTimersByTimeAsync(0);
-    }
-  });
-
-  it("REQ-901 / UI-11b-D13: 復元の前に発火して待機中の確認の結果は捨てる（再開の後に届く）", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const pendingCheck = deferred<CheckResult>();
-    mockCheckAutoBackup.mockReturnValueOnce(pendingCheck.promise);
-    mockRestoreBackup.mockResolvedValueOnce(ok(null));
-
-    const { queryClient } = renderWithClient(<PageWithAutoBackupCheck />);
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    try {
-      await screen.findByRole("heading", { name: "バックアップ・復元" });
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
-
-      await startRestoreConfirmation(user);
-      await user.click(screen.getByRole("button", { name: "7月3日 21:00 の控えに戻す" }));
-      await waitFor(() => {
-        expect(mockNavigate).toHaveBeenCalledWith({ to: "/" });
-      });
-
-      const listInvalidatesBefore = listInvalidateCount(invalidateSpy);
-      pendingCheck.resolve(ok(true));
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(listInvalidateCount(invalidateSpy)).toBe(listInvalidatesBefore);
-
-      // 捨てた後も実行中の guard は解けていて、再開した確認が次の 60 秒で呼ばれる
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
-    } finally {
-      pendingCheck.resolve(ok(false));
-      await vi.advanceTimersByTimeAsync(0);
-    }
-  });
 
   it.each([
     ["成功", () => mockRestoreBackup.mockResolvedValueOnce(ok(null))],
@@ -592,6 +550,130 @@ describe("BackupRestorePage (UI-11b / QR-05 / REQ-901)", () => {
     ).not.toBeInTheDocument();
     // 他機能（手動バックアップ）は取得失敗の影響を受けない
     expect(screen.getByRole("button", { name: "今すぐバックアップを作成" })).toBeEnabled();
+  });
+});
+
+describe("復元の前の控えの確かめ (REQ-901 / UI-11b-D15)", () => {
+  it("REQ-901 / UI-11b-D15: 戻せる控えの詳細に確かめの結果を出し、同じ path を確かめと復元に渡す", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<BackupRestorePage />);
+
+    await startRestoreConfirmation(user);
+    expect(screen.getByText("この控えは戻せます")).toBeInTheDocument();
+    expect(screen.getByText("商品の数: 37 件")).toBeInTheDocument();
+    expect(screen.getByText("最後の記録: 7月3日 20:47")).toBeInTheDocument();
+    expect(mockInspectBackup).toHaveBeenCalledWith({
+      backup_path: "/tmp/backups/inventory_backup_20260703_210000.db",
+    });
+
+    await user.click(screen.getByRole("button", { name: "7月3日 21:00 の控えに戻す" }));
+    await waitFor(() => {
+      expect(mockRestoreBackup).toHaveBeenCalledWith({
+        backup_path: "/tmp/backups/inventory_backup_20260703_210000.db",
+      });
+    });
+  });
+
+  it("REQ-901 / UI-11b-D15: 商品の数 0 は「0 件」と出し、取れない値の行は出さない", async () => {
+    const user = userEvent.setup();
+    mockInspectBackup.mockResolvedValue(
+      ok(makeInspection({ product_count: 0, last_operation_at: null })),
+    );
+    renderWithClient(<BackupRestorePage />);
+
+    await openRestoreDetail(user);
+    expect(screen.getByText("この控えは戻せます")).toBeInTheDocument();
+    expect(screen.getByText("商品の数: 0 件")).toBeInTheDocument();
+    expect(screen.queryByText(/^最後の記録:/)).not.toBeInTheDocument();
+  });
+
+  it("REQ-901 / UI-11b-D15: 商品の数が取れない控えは商品の数の行を出さない", async () => {
+    const user = userEvent.setup();
+    mockInspectBackup.mockResolvedValue(ok(makeInspection({ product_count: null })));
+    renderWithClient(<BackupRestorePage />);
+
+    await openRestoreDetail(user);
+    expect(screen.queryByText(/^商品の数:/)).not.toBeInTheDocument();
+    expect(screen.getByText("最後の記録: 7月3日 20:47")).toBeInTheDocument();
+  });
+
+  it("REQ-901 / UI-11b-D13 / §68.7: 成功の後の処理が throw しても release は 1 回（別の復元の停止を外さない）で、失敗と表示しない", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const { clearSpy } = renderWithClient(<PageWithAutoBackupCheck />);
+    clearSpy.mockImplementation(() => {
+      throw new Error("synthetic clear failure");
+    });
+
+    await startRestoreConfirmation(user);
+    // 前の画面で始めた別の復元がまだ実行中（復元の理由を 1 つ持つ）
+    holdAutoBackupCheckForRestore();
+    await user.click(screen.getByRole("button", { name: "7月3日 21:00 の控えに戻す" }));
+    await waitFor(() => {
+      expect(clearSpy).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "この控えに戻す" })).toBeEnabled();
+    });
+    const callsAfterRestore = mockCheckAutoBackup.mock.calls.length;
+    // §68.7: CMD の Ok の後の失敗は復元の失敗・元に戻した、と表示しない。成功の feedback を出す
+    expect(screen.queryByText(/バックアップの復元に失敗しました/)).not.toBeInTheDocument();
+    expect(mockToastSuccess).toHaveBeenCalledWith("バックアップから復元しました");
+    expect(consumeRestoreSuccessPending()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    // release が 1 回だけ: 2 回なら別の復元の理由まで外れて確認が走る
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(callsAfterRestore);
+  });
+
+  it("REQ-901 / UI-11b-D15: 確かめの間（確認の待ちと inspectBackup の解決まで）は文言を出し、操作を押せない", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const pendingCheck = deferred<CheckResult>();
+    const pendingInspect = deferred<Awaited<ReturnType<typeof commands.inspectBackup>>>();
+    mockCheckAutoBackup.mockReturnValueOnce(pendingCheck.promise);
+    mockInspectBackup.mockReturnValueOnce(pendingInspect.promise);
+
+    const { queryClient } = renderWithClient(<PageWithAutoBackupCheck />);
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    try {
+      await screen.findByText("7月3日 21:00");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+      await user.click(screen.getByRole("button", { name: "この控えに戻す" }));
+      expect(screen.getByText("控えを確かめています")).toBeInTheDocument();
+      expect(mockInspectBackup).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "閉じる" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "今すぐバックアップを作成" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "この控えに戻す" })).toBeDisabled();
+
+      const listInvalidatesBefore = listInvalidateCount(invalidateSpy);
+      pendingCheck.resolve(ok(true));
+      await waitFor(() => {
+        expect(mockInspectBackup).toHaveBeenCalledTimes(1);
+      });
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+      expect(listInvalidateCount(invalidateSpy)).toBe(listInvalidatesBefore);
+
+      // inspectBackup の未解決の間も続く
+      expect(screen.getByText("控えを確かめています")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "閉じる" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "今すぐバックアップを作成" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "今すぐバックアップを作成" }));
+      expect(mockCreateBackup).not.toHaveBeenCalled();
+      expect(mockInspectBackup).toHaveBeenCalledTimes(1);
+
+      pendingInspect.resolve(ok(makeInspection()));
+      expect(await screen.findByText("この控えは戻せます")).toBeInTheDocument();
+      expect(screen.queryByText("控えを確かめています")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "閉じる" })).toBeEnabled();
+    } finally {
+      pendingCheck.resolve(ok(false));
+      pendingInspect.resolve(ok(makeInspection()));
+      await vi.advanceTimersByTimeAsync(0);
+    }
   });
 });
 

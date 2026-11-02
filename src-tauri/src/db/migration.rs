@@ -118,7 +118,7 @@ pub(crate) fn app_max_version() -> i64 {
 ///
 /// `schema_versions` 表が無ければ版 0。存在の確認・読取りのその他の失敗は
 /// `MigrationFailed` にし、版 0 に倒さない。
-fn read_current_version_without_ddl(conn: &Connection) -> Result<i64, DbError> {
+pub(crate) fn read_current_version_without_ddl(conn: &Connection) -> Result<i64, DbError> {
     let exists: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_versions')",

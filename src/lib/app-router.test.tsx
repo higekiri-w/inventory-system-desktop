@@ -36,8 +36,10 @@ vi.mock("@tauri-apps/api/webview", () => ({
 
 vi.mock("@/features/backup-restore/useAutoBackupCheck", () => ({
   useAutoBackupCheck: () => undefined,
-  suspendAutoBackupCheck: vi.fn(),
   resumeAutoBackupCheck: vi.fn(),
+  suspendAutoBackupCheckAndWait: vi.fn().mockResolvedValue(undefined),
+  holdAutoBackupCheckForRestore: vi.fn(),
+  releaseAutoBackupCheckAfterRestore: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router-devtools", () => ({
