@@ -5,7 +5,7 @@ wave に属さない単独の lane（導入の前の関門 10。owner の決定�
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 92149f917995e767e2528678dd83d35e57be7cf5
 - Amendments: none
 
 ## Risk
