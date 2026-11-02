@@ -162,7 +162,13 @@ export function ProductImportPreview({
           <CardHeader>
             <CardTitle>エラー行</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {/* UI-01c-D18: エラー行は直すための一覧なので 50 行の制限に掛けず全件を出す */}
+            <p className="text-sm">
+              {
+                "エラー行は取り込みません。内容の文のとおりに CSV を直し、「ファイルを選び直す」で読み込み直してください"
+              }
+            </p>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -171,7 +177,7 @@ export function ProductImportPreview({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {preview.error_rows.slice(0, MAX_VISIBLE_ROWS).map((row) => (
+                {preview.error_rows.map((row) => (
                   <TableRow key={row.line_no}>
                     <TableCell>{row.line_no}</TableCell>
                     <TableCell>{row.errors.join(" / ")}</TableCell>
@@ -179,11 +185,6 @@ export function ProductImportPreview({
                 ))}
               </TableBody>
             </Table>
-            {preview.error_rows.length > MAX_VISIBLE_ROWS ? (
-              <p className="mt-2 text-xs text-muted-foreground">
-                他 {(preview.error_rows.length - MAX_VISIBLE_ROWS).toLocaleString()} 件
-              </p>
-            ) : null}
           </CardContent>
         </Card>
       ) : null}

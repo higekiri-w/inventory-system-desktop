@@ -44,6 +44,8 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
     ...actual,
     commands: {
       parseAndValidateDailyReport: vi.fn(),
+      parseAndValidateDailyReportFromSd: vi.fn(),
+      scanRegisterSd: vi.fn(),
       commitDailyReportImport: vi.fn(),
       rollbackDailyReportImport: vi.fn(),
     },
@@ -110,8 +112,21 @@ function makeRollback(): DailyReportRollbackResult {
   };
 }
 
-function makeFile(name: string) {
-  return new File(["synthetic"], name, { type: "text/csv" });
+const THREE_PATHS = [
+  "C:\\tmp\\Z001_260321.CSV",
+  "C:\\tmp\\Z002_260321.CSV",
+  "C:\\tmp\\Z005_260321.CSV",
+];
+
+/** UI-07-D16: dialog で 3 つを選び、「確認する」で parse する */
+async function chooseAndConfirmThree(flow: () => ReturnType<typeof useDailyReportImportFlow>) {
+  mockOpen.mockResolvedValueOnce(THREE_PATHS);
+  await act(async () => {
+    await flow().chooseFiles();
+  });
+  act(() => {
+    flow().confirmManualFiles();
+  });
 }
 
 function makeWrapper(queryClient: QueryClient) {
@@ -189,18 +204,39 @@ beforeEach(() => {
 
 describe("useDailyReportImportFlow_req401", () => {
   it.each([
-    ["1 file", [makeFile("Z001_260321.CSV")]],
-    ["2 files", [makeFile("Z001_260321.CSV"), makeFile("Z002_260321.CSV")]],
-    [
-      "4 files",
-      [
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-        makeFile("Z005_duplicate_260321.CSV"),
-      ],
-    ],
-  ])("REQ-401: rejects %s before parse", async (_label, files) => {
+    ["1 file", ["C:\\tmp\\Z001_260321.CSV"]],
+    ["2 files", ["C:\\tmp\\Z001_260321.CSV", "C:\\tmp\\Z002_260321.CSV"]],
+  ])(
+    "REQ-401 / UI-07-D16: %s cannot be confirmed before 3 series are present",
+    async (_label, paths) => {
+      mockOpen.mockResolvedValueOnce(paths);
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      const { result } = renderHook(() => useDailyReportImportFlow(), {
+        wrapper: makeWrapper(queryClient),
+      });
+
+      await act(async () => {
+        await result.current.chooseFiles();
+      });
+      act(() => {
+        result.current.confirmManualFiles();
+      });
+
+      expect(result.current.manualFiles.map((file) => file.series)).toHaveLength(paths.length);
+      expect(mockParse).not.toHaveBeenCalled();
+      expect(result.current.state.status).toBe("idle");
+    },
+  );
+
+  it("REQ-401 / UI-07-D16 (c): the same series twice in one dialog adds none and explains why", async () => {
+    mockOpen.mockResolvedValueOnce([
+      "C:\\tmp\\Z001_260321.CSV",
+      "C:\\tmp\\Z002_260321.CSV",
+      "C:\\tmp\\Z005_260321.CSV",
+      "C:\\tmp\\Z005_duplicate_260321.CSV",
+    ]);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -209,14 +245,27 @@ describe("useDailyReportImportFlow_req401", () => {
     });
 
     await act(async () => {
-      await result.current.selectFiles(files);
+      await result.current.chooseFiles();
+    });
+    act(() => {
+      result.current.confirmManualFiles();
     });
 
+    expect(result.current.manualFiles).toEqual([]);
     expect(mockParse).not.toHaveBeenCalled();
-    expect(mockToast.error).toHaveBeenCalledWith("Z001/Z002/Z005 の3ファイルを選択してください");
     expect(result.current.state.lastSelectionError).toBe(
-      `Z001/Z002/Z005 の3ファイルを選択してください（選択されたのは${String(files.length)}ファイルです）`,
+      "Z001・Z002・Z005 は 1 つずつ選んでください（同じ種類のファイルが 2 つ以上あります）。",
     );
+  });
+
+  it("REQ-401 / UI-07-D16: the hook no longer accepts path-less File input", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    expect("selectFiles" in result.current).toBe(false);
   });
 
   it("REQ-401: native dialog cancellation does not change state or parse", async () => {
@@ -274,7 +323,7 @@ describe("useDailyReportImportFlow_req401", () => {
     );
   });
 
-  it("REQ-401: keeps the browsed folder even when the selection count is wrong", async () => {
+  it("REQ-401: keeps the browsed folder even when fewer than 3 files are chosen", async () => {
     mockOpen.mockResolvedValue(["C:\\tmp\\Z001_260321.CSV", "C:\\tmp\\Z002_260321.CSV"]);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -288,9 +337,11 @@ describe("useDailyReportImportFlow_req401", () => {
     });
 
     expect(window.localStorage.getItem(DAILY_REPORT_LAST_DIR_STORAGE_KEY)).toBe("C:\\tmp");
-    expect(result.current.state.lastSelectionError).toBe(
-      "Z001/Z002/Z005 の3ファイルを選択してください（選択されたのは2ファイルです）",
-    );
+    expect(result.current.manualFiles.map((file) => file.filename)).toEqual([
+      "Z001_260321.CSV",
+      "Z002_260321.CSV",
+    ]);
+    expect(mockParse).not.toHaveBeenCalled();
   });
 
   it("REQ-401: selection flow continues when localStorage is unavailable", async () => {
@@ -310,6 +361,9 @@ describe("useDailyReportImportFlow_req401", () => {
     await act(async () => {
       await result.current.chooseFiles();
     });
+    act(() => {
+      result.current.confirmManualFiles();
+    });
 
     expect(result.current.state.lastSelectionError).toBeNull();
     await waitFor(() => {
@@ -317,7 +371,7 @@ describe("useDailyReportImportFlow_req401", () => {
     });
   });
 
-  it("REQ-401: native dialog rejects fewer than 3 files without parsing", async () => {
+  it("REQ-401: native dialog with fewer than 3 files does not parse", async () => {
     mockOpen.mockResolvedValue(["C:\\tmp\\Z001_260321.CSV", "C:\\tmp\\Z002_260321.CSV"]);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -329,14 +383,13 @@ describe("useDailyReportImportFlow_req401", () => {
     await act(async () => {
       await result.current.chooseFiles();
     });
+    act(() => {
+      result.current.confirmManualFiles();
+    });
 
-    expect(mockReadFile).not.toHaveBeenCalled();
     expect(mockParse).not.toHaveBeenCalled();
-    expect(mockToast.error).toHaveBeenCalledWith("Z001/Z002/Z005 の3ファイルを選択してください");
     expect(result.current.state.status).toBe("idle");
-    expect(result.current.state.lastSelectionError).toBe(
-      "Z001/Z002/Z005 の3ファイルを選択してください（選択されたのは2ファイルです）",
-    );
+    expect(result.current.state.lastSelectionError).toBeNull();
   });
 
   it("REQ-401: native dialog read failure stays idle without unhandled parsing", async () => {
@@ -358,6 +411,7 @@ describe("useDailyReportImportFlow_req401", () => {
     });
 
     expect(mockParse).not.toHaveBeenCalled();
+    expect(result.current.manualFiles).toEqual([]);
     expect(mockToast.error).toHaveBeenCalledWith("日報ファイルの選択または読み取りに失敗しました");
     expect(result.current.state.status).toBe("idle");
     expect(result.current.state.lastSelectionError).toBe(
@@ -385,6 +439,9 @@ describe("useDailyReportImportFlow_req401", () => {
     await act(async () => {
       await result.current.chooseFiles();
     });
+    act(() => {
+      result.current.confirmManualFiles();
+    });
 
     expect(mockReadFile).toHaveBeenCalledTimes(3);
     await waitFor(() => {
@@ -392,9 +449,9 @@ describe("useDailyReportImportFlow_req401", () => {
     });
     expect(result.current.state.lastSelectionError).toBeNull();
     expect(mockParse).toHaveBeenCalledWith([
-      { filename: "Z001_260321.CSV", file_bytes: [1] },
-      { filename: "Z002_260321.CSV", file_bytes: [2] },
-      { filename: "Z005_260321.CSV", file_bytes: [5] },
+      { filename: "Z001_260321.CSV", file_bytes: [1], source_path: "C:\\tmp\\Z001_260321.CSV" },
+      { filename: "Z002_260321.CSV", file_bytes: [2], source_path: "C:\\tmp\\Z002_260321.CSV" },
+      { filename: "Z005_260321.CSV", file_bytes: [5], source_path: "C:\\tmp\\Z005_260321.CSV" },
     ]);
   });
 
@@ -408,13 +465,7 @@ describe("useDailyReportImportFlow_req401", () => {
       wrapper: makeWrapper(queryClient),
     });
 
-    await act(async () => {
-      await result.current.selectFiles([
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-      ]);
-    });
+    await chooseAndConfirmThree(() => result.current);
     await waitFor(() => {
       expect(result.current.state.status).toBe("preview");
     });
@@ -455,13 +506,7 @@ describe("useDailyReportImportFlow_req401", () => {
     const { result } = renderHook(() => useDailyReportImportFlow(), {
       wrapper: makeWrapper(queryClient),
     });
-    await act(async () => {
-      await result.current.selectFiles([
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-      ]);
-    });
+    await chooseAndConfirmThree(() => result.current);
     await waitFor(() => {
       expect(result.current.state.status).toBe("preview");
     });
@@ -487,13 +532,7 @@ describe("useDailyReportImportFlow_req401", () => {
       wrapper: makeWrapper(queryClient),
     });
 
-    await act(async () => {
-      await result.current.selectFiles([
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-      ]);
-    });
+    await chooseAndConfirmThree(() => result.current);
     await waitFor(() => {
       expect(result.current.state.status).toBe("preview");
     });
@@ -529,6 +568,7 @@ describe("useDailyReportImportFlow_req401", () => {
         message: "合成 rollback failure",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
     const queryClient = new QueryClient({
@@ -554,12 +594,9 @@ describe("useDailyReportImportFlow_req401", () => {
       </QueryClientProvider>,
     );
     expect(await screen.findByText("900")).toBeInTheDocument();
-    await act(async () => {
-      await harness.flow?.selectFiles([
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-      ]);
+    await chooseAndConfirmThree(() => {
+      if (!harness.flow) throw new Error("harness not rendered");
+      return harness.flow;
     });
     await waitFor(() => {
       expect(harness.flow?.state.status).toBe("preview");
@@ -611,13 +648,7 @@ describe("useDailyReportImportFlow_req401", () => {
       wrapper: makeWrapper(queryClient),
     });
 
-    await act(async () => {
-      await result.current.selectFiles([
-        makeFile("Z001_260321.CSV"),
-        makeFile("Z002_260321.CSV"),
-        makeFile("Z005_260321.CSV"),
-      ]);
-    });
+    await chooseAndConfirmThree(() => result.current);
     await waitFor(() => {
       expect(result.current.state.status).toBe("preview");
     });
@@ -645,5 +676,53 @@ describe("useDailyReportImportFlow_req401", () => {
     await waitFor(() => {
       expect(result.current.state.status).toBe("result");
     });
+  });
+
+  it("REQ-401 / UI-07-D15 (6): rollback 中も useBlocker と beforeunload で result 画面を離れない", async () => {
+    let resolveRollback!: (
+      value: Awaited<ReturnType<typeof commands.rollbackDailyReportImport>>,
+    ) => void;
+    mockRollback.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRollback = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    const lastBlocker = () =>
+      mockUseBlocker.mock.calls[mockUseBlocker.mock.calls.length - 1]?.[0] as
+        | { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean }
+        | undefined;
+
+    await chooseAndConfirmThree(() => result.current);
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("preview");
+    });
+    act(() => {
+      result.current.confirmImport(false);
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("result");
+    });
+    expect(lastBlocker()?.shouldBlockFn()).toBe(false);
+
+    act(() => {
+      result.current.rollback(501);
+    });
+    await waitFor(() => {
+      expect(result.current.isRollingBack).toBe(true);
+    });
+    expect(lastBlocker()?.shouldBlockFn()).toBe(true);
+    expect(lastBlocker()?.enableBeforeUnload()).toBe(true);
+
+    resolveRollback({ status: "ok", data: makeRollback() });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("idle");
+    });
+    expect(lastBlocker()?.shouldBlockFn()).toBe(false);
   });
 });

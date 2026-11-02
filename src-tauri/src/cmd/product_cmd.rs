@@ -227,6 +227,8 @@ pub fn preview_import(
             message: "ファイルサイズが上限(20MB)を超えています".to_string(),
             field: None,
             error_id: None,
+            stocktake_recovery: None,
+            related_csv_import_id: None,
         });
     }
     let conn = state
@@ -274,6 +276,7 @@ mod tests {
                 db: Mutex::new(conn),
                 preview_cache: Mutex::new(HashMap::new()),
                 daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
             })
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -294,6 +297,7 @@ mod tests {
                 db: Mutex::new(conn),
                 preview_cache: Mutex::new(HashMap::new()),
                 daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
             })
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();

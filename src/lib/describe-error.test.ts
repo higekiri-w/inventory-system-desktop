@@ -15,6 +15,7 @@ describe("describeError (REQ-700 / UI-ERR-D1)", () => {
       message: "バックアップ一覧の取得でエラーが発生しました",
       field: null,
       error_id: "E-20260726-153021-a1b2",
+      stocktake_recovery: null,
     });
 
     expect(describeError(error)).toBe(
@@ -28,6 +29,7 @@ describe("describeError (REQ-700 / UI-ERR-D1)", () => {
       message: "バックアップ一覧の取得でエラーが発生しました",
       field: null,
       error_id: null,
+      stocktake_recovery: null,
     });
 
     expect(describeError(error)).toBe(
@@ -43,11 +45,32 @@ describe("describeError (REQ-700 / UI-ERR-D1)", () => {
         message: "独立転記した利用者向けメッセージ",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       });
 
       expect(describeError(error)).toBe("独立転記した利用者向けメッセージ");
     },
   );
+
+  it("W7 / REQ-205: stocktake_guard shows the BIZ message and does not hide the refusal (40)", () => {
+    // 未知の code でも message を出し、空や成功の文にしない（回復の分岐は画面が型で行う）
+    const recoveryCodes = ["completion_blocked", "unknown_future_code"] as const;
+    for (const code of recoveryCodes) {
+      const error = invokeError({
+        kind: "stocktake_guard",
+        message: "棚卸しを完了できません。理由ごとの一覧を確かめてください",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code,
+          targets: [],
+          settlement_pending: null,
+        },
+      } as unknown as CmdError);
+
+      expect(describeError(error)).toBe("棚卸しを完了できません。理由ごとの一覧を確かめてください");
+    }
+  });
 
   it("passes through the message for a legacy unknown kind payload", () => {
     const error = invokeError({
@@ -55,6 +78,7 @@ describe("describeError (REQ-700 / UI-ERR-D1)", () => {
       message: "独立転記した利用者向けメッセージ",
       field: null,
       error_id: null,
+      stocktake_recovery: null,
     } as unknown as CmdError);
 
     expect(describeError(error)).toBe("独立転記した利用者向けメッセージ");

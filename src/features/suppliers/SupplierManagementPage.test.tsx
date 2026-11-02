@@ -33,6 +33,7 @@ const cmdError = (kind: CmdError["kind"], message: string): CmdError => ({
   message,
   field: null,
   error_id: null,
+  stocktake_recovery: null,
 });
 
 function arrangeList(rows: SupplierWithUsage[] = SUPPLIERS) {

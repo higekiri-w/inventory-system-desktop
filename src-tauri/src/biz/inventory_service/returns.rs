@@ -265,7 +265,6 @@ pub fn create_return(
                 &tx,
                 &item.product_code,
                 &req.return_date,
-                None,
                 qty,
                 MovementType::Return,
                 ReferenceType::ReturnRecord,

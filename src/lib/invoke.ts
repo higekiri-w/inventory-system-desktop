@@ -19,6 +19,7 @@ export const CMD_ERROR_KIND = {
   IDEMPOTENCY_CONFLICT: "idempotency_conflict",
   STOCKTAKE_IN_PROGRESS: "stocktake_in_progress",
   STOCKTAKE_NOT_IN_PROGRESS: "stocktake_not_in_progress",
+  STOCKTAKE_GUARD: "stocktake_guard",
   RESTORE_FAILED_RECOVERED: "restore_failed_recovered",
   RESTORE_FAILED_UNRECOVERABLE: "restore_failed_unrecoverable",
   RESTORE_DURABILITY_UNKNOWN: "restore_durability_unknown",
@@ -87,6 +88,7 @@ export function toCmdError(err: unknown): CmdError {
     message: err instanceof Error ? err.message : String(err),
     field: null,
     error_id: null,
+    stocktake_recovery: null,
   };
 }
 

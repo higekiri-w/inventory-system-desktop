@@ -48,7 +48,6 @@ export function csvImportReducer(state: CsvImportState, action: CsvImportAction)
           status: "importing",
           preview: state.preview,
           previewToken: state.previewToken,
-          additionalImportConfirmed: action.additionalImportConfirmed,
           filename: state.filename,
         };
       }

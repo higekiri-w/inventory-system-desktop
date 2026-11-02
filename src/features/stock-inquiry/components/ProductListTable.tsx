@@ -20,8 +20,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { StockStatus } from "../types";
 import { deriveStockState } from "../lib/derive-stock-state";
-import { formatStockDisplay } from "../lib/format-stock-display";
 import { StockDetailContent } from "./StockDetailContent";
+import { StockWithRecheck } from "./StockRecheckBadge";
 import { StockStatusBadge } from "./StockStatusBadge";
 
 export interface ProductListTableProps {
@@ -97,7 +97,7 @@ export function ProductListTable({
                     isSelected && status === "low" ? OPEN_LOW_STOCK_CLASS : STOCK_CLASS[status],
                   )}
                 >
-                  {formatStockDisplay(item.stock_quantity, item.stock_unit)}
+                  <StockWithRecheck product={item} />
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {priceFormatter.format(item.selling_price)}

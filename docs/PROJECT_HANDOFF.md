@@ -4,7 +4,7 @@
 
 | 知りたいこと | 正本 |
 |---|---|
-| 現在の作業・phase・blocker・次の行動 | [Plans.md](Plans.md) と対象Plan Packet |
+| 完了・lane の現在地・関門 | 完了は `git log origin/main`、lane の現在地は `gh pr list --state open` と helper の status、導入の前の関門・ブロッカー・製品の未決判断は [Plans.md](Plans.md)（D-145） |
 | 未了候補・保留・受容済みリスク | [Backlog](backlog.md) |
 | 安定した業務・POSの前提 | [project-memory.md](project-memory.md) |
 | 層と依存関係 | [ARCHITECTURE.md](ARCHITECTURE.md) |
@@ -12,6 +12,7 @@
 | 永続化・migration | [DB_DESIGN.md](DB_DESIGN.md) |
 | 更新の前の版へ戻す管理者の手順（migration v8 以降） | [migration-recovery-runbook.md](migration-recovery-runbook.md)（正本は [22](function-design/22-mnt-migration.md) §16） |
 | アプリの MSI を作る・入れる・更新する・前の版へ戻す管理者の手順 | [msi-distribution-runbook.md](msi-distribution-runbook.md) |
+| 店の PC で本物のデータを入れ始める管理者の手順（初期投入） | [initial-load-runbook.md](initial-load-runbook.md) |
 | 現行のER・画面遷移・業務フローと設計点検 | [図面の入口](diagrams/current-system.md)、[図面監査](research/2026-09-16-diagram-audit.md) |
 | 表示・操作・日本語文言 | [SCREEN_DESIGN.md](SCREEN_DESIGN.md)、[design-system](design-system/README.md) |
 | 環境構築 | [DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) |

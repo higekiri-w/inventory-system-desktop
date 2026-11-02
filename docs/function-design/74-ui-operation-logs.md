@@ -49,7 +49,7 @@ export function useOperationLogs(args: {
 | ID | 決定 | 理由 / 棄却案 |
 |---|---|---|
 | UI-11c-D1 | URL search state は `start_date` / `end_date` / `operation_type` / `page` の4キーに限定し、いずれかの変更で `page=1` に戻す。初期の両日付未指定だけは `start_date = today-29`, `end_date = today`（JST暦日）を既定生成する。日付inputを明示的にclearした状態はURLの空文字で保持し、正規化後はCMDへ`null`として渡す。 | Owner Decision #2/#5 の固定。初期未初期化と利用者が両日付をclearした状態を混同すると片側指定が失われるため、空文字はURL/UI専用sentinelとする。`InventoryRecordsPage` / `StockMovementsPage` の既存 URL state 契約を再利用する（§74.17 Adjacent Pattern Audit）。 |
-| UI-11c-D2 | 期間は JST 暦日の `start` inclusive・`end` は翌日00:00:00 exclusive の predicate にする。既存 `list_movements` の `created_at <= dateTo + "T23:59:59"` パターン（`inventory_repo.rs`）は再利用せず、新しい predicate を採用する。 | Owner Decision #2 の明示固定（JST inclusive/exclusive）。既存パターンは秒精度に依存し、将来 `created_at` にミリ秒等が付いた場合に境界が曖昧になるリスクがある。操作ログは監査用途のため境界の厳密さを優先する。既存 movement/records 画面は本設計で変更しない（scenario が異なるため据え置き、§74.17）。 |
+| UI-11c-D2 | 期間は JST 暦日の `start` inclusive・`end` は翌日00:00:00 exclusive の predicate にする。 | Owner Decision #2 の明示固定（JST inclusive/exclusive）。保存の時刻の終端に時刻の文字列を足して比べる形は秒精度に依存し、将来 `created_at` にミリ秒等が付いた場合に境界が曖昧になるリスクがある。操作ログは監査用途のため境界の厳密さを優先する。在庫変動の履歴は D-118 の b2 で業務日の両端を含む比べに変わった（[44](44-cmd-inventory.md) の `list_movements`）。入出庫の記録の画面は本設計で変更しない（scenario が異なるため据え置き、§74.17）。 |
 | UI-11c-D3 | `LogQuery` に `start_date` / `end_date`（`Option<String>`, `YYYY-MM-DD`）を追加する。両方省略時は現行動作を完全維持する。`items` と `total_count` は同一 predicate を使う。 | Owner Decision #2。行 query と件数 query が別 predicate になると pagination 契約が壊れるため、同一 WHERE 句を共有する実装を必須にする（43-cmd-settings-log.md / 20-io-product-repo.md 側で明文化）。 |
 | UI-11c-D4 | operation_type の候補は現在ページ/現在の filter 済み結果から生成しない。保持中ログ全体の distinct operation_type を返す**新規 CMD `list_log_operation_types` + IO `find_distinct_operation_types`** を新設する。日本語ラベルとカテゴリ分類は frontend 所有の静的 registry（`OPERATION_TYPE_LABELS`）が持ち、backend が返す値のうち registry 未収載の値は raw 表示にする。 | Owner Decision #3 + Plan Packet 明示要求（「新CMD/IO契約の設計を含む」）。frontend 静的リストのみだと DB 実態との drift を検出できない。backend 側が日本語ラベルを持つ案は、ラベルが表示専用の UI 関心事であり CMD 層を厚くする（棄却）。 |
 | UI-11c-D5 | Table は1行1ログとし、各行の明示的なnative button「詳細を表示」で detail をその場（同じ行の直下）に展開する。展開中の可視文言とaccessible nameは「詳細を閉じる」に変わる。Enter / Spaceはnative button契約で動作する。行全体clickは追加せず、同時に展開できる行は常に1件（新しい行を開くと前の展開行は閉じる）。 | キーボード・アクセシビリティ上の操作対象を明確にし、行内の関連記録リンクとのclick競合と誤展開を避ける。複数同時展開も棄却（ページが際限なく伸び、スクロール位置を見失うリスクが高い）。 |
@@ -57,11 +57,11 @@ export function useOperationLogs(args: {
 | UI-11c-D7 | 関連業務記録リンクは、detail_json が `record_type`（`receiving_record` \| `return_record` \| `manual_sale` \| `disposal_record` のいずれか）とpositive safe integerの `record_id` を両方含む場合だけ表示する。それ以外（欠落・zero・negative・fractional・string・unsafe integer・未知 `record_type`）はリンクを出さず、summary 表示のみ継続する。入庫・返品交換・手動販売・廃棄の作成 producer は、許可リストに対応する `record_type` と当該業務記録 PK の `record_id` を detail_json に格納する（§74.9）。 | Missing UI item 7 は「任意の JSON key からの heuristic 推測」と文字列からの数値coercionを明示的に禁止する。既存 4 record_type は `InventoryRecordsSearch.recordType` / `65-inventory-record-traceability.md` §65.3 の実装済み detail route と一致させる。`csv_import` / `stocktake` は 2026-09-01 の producer 実効化 R3 では据置とし、初期 allow-list からの除外を維持する。それぞれの producer 側採用と registry 追加は別 follow-up で行う。 |
 | UI-11c-D8 | pagination は既定 50 + `Select`（50 / 100 / 200）。URL search state は UI-11c-D1 の 4 キー限定を維持し perPage はローカル state（L3-D3）。範囲外 page（`items` 空 かつ `total_count > 0` かつ `page > 1`）は「このページには表示するログがありません」+「先頭ページに戻る」導線を出す。 | 表示件数を選べる一方、URL search schema は増やさない。範囲外 page 回復は既存2画面が持たない新規契約だが、Missing UI item 8 が明示要求するため追加する。 |
 | UI-11c-D9 | 空状態は「ログそのものが0件」と「filter に該当するログが0件」を区別する。既定 filter（today-29..today、operation_type 未指定）と一致した状態で0件なら前者、それ以外の filter が適用された状態で0件なら後者の文言にする。エラー時は destructive Alert + 「再試行」ボタンを出し、再試行は現在の filter を保持したまま同一 query を再実行する。 | Missing UI item 9。既存2画面は単一 EmptyState 文言・retry ボタンなしだが、操作ログはトラブル対応で使う画面のため取得失敗時の再試行を明示的に用意する（`DailySalesPage` / `MonthlySalesPage` / `ThresholdSettingsPage` / `StocktakePage` の再試行 Button パターンを再利用、§74.17）。「全体0件かどうか」を判定する専用 CMD は追加しない（既定 filter 自体が30日範囲を持つため真の「全体0件」判定には無期限 count が必要になり、viewing MVP の scope を超えるため見送り。既定 filter との一致判定で近似する）。 |
-| UI-11c-D10 | `queryKey` は `queryKeys.operationLogs.list(normalizedSearch)`、`staleTime: 0` / `gcTime: 5min` とし、自動ポーリングはしない。バックグラウンドの365日 cleanup は起動時1回のみのため、セッション中の total_count 変化は次回 fetch（filter 変更・page 変更・再訪・再試行）で自然に反映される。 | 事故調査という利用シーンでは表示時点の最新性を優先する（`UI-10 棚卸し進行中` の `staleTime: 0` と同じ判断）。ポーリングは新規複雑さの割に運用上の要求がない（単一 operator、トラブル発生後に開く画面）。 |
+| UI-11c-D10 | `queryKey` は `queryKeys.operationLogs.list(normalizedSearch)`、`staleTime: 0` / `gcTime: 5min` とし、自動ポーリングはしない。バックグラウンドの保持日数の cleanup は起動時1回のみのため、セッション中の total_count 変化は次回 fetch（filter 変更・page 変更・再訪・再試行）で自然に反映される。 | 事故調査という利用シーンでは表示時点の最新性を優先する（`UI-10 棚卸し進行中` の `staleTime: 0` と同じ判断）。ポーリングは新規複雑さの割に運用上の要求がない（単一 operator、トラブル発生後に開く画面）。 |
 | UI-11c-D11 | operation_type filter は `<select>` によるドロップダウン選択のみとし、自由入力・IME 対応の検索欄は持たない。 | Owner Decision #3 は個別 exact value の選択を要求しており、`InventoryRecordsPage` の商品名部分一致検索のような自由入力欄は不要。IME `isComposing` 対応は本画面に適用対象がない（§74.13 で明示）。 |
 | UI-11c-D12 | REQ-902 を操作ログの record/list/自動削除の canonical ID として確定する。既存 `settings_cmd.rs` の `test_list_logs_req905_pagination` / `test_list_logs_req905_filter` / `test_list_logs_req905_invalid_page_to_cmderror` は REQ-905（設定CRUD/エラー変換）ではなく REQ-902 に是正する（テスト名・コメントの是正は本 Design Phase では実施せず、次の実装 PR のタスクとして明記する）。 | `docs/spec/requirements.md` は REQ-902=「ログ管理（操作ログ記録/一覧/自動削除）」/ REQ-905=「設定管理（設定CRUD/エラー変換）」と定義し、`system_repo.rs` の IO 層テストは既に log 系関数を REQ-902、settings 系関数を REQ-905 で正しく分離している（`rg` 実測）。`65-inventory-record-traceability.md` §65.11 も「REQ-902 / TRACE-D3」を canonical として使用済み。CMD 層 3 テストだけが REQ-905（CMD-11 全体のタスク表マッピング）を機械的に継承しており、`list_logs` の呼び出し・エラー変換テストという中身は REQ-902 の対象。「REQ-905 のままエイリアスとして残す」案は、REQ-905 の定義（設定CRUD）と `list_logs`（ログ一覧）の実体が一致しないため棄却。 |
-| UI-11c-D13 | `SCREEN_DESIGN.md` の QR-06 行にあった旧 CSV export/archive 記述を、閲覧 MVP + 365日 cleanup（archive 不要）に同期する。CSV 出力と MNT-04 診断ログ導線は別 task として明記する。 | Owner Decision #1 + Missing UI item 13。`72-mnt-log-manager.md` の実装済み `cleanup_old_logs` は物理削除のみで archive を作らない（DB設計上の事実）。 |
-| UI-11c-D14 | `integrity_fix` の detail_json（adjustments の product_code / old_stock / new_stock / adjustment）は在庫整合性補正の**唯一の監査痕跡**（補正は inventory_movements に行を残さない — BIZ-07-D2/D3、[D-051](../decision-log.md)）。詳細表示は既知 key 要約（UI-11c-D6）に加え、adjustments を「商品コード / 旧在庫 → 新在庫 / 差分」の operator-readable な一覧として表示し、生 JSON は折りたたみ「技術情報」に残す。adjustment に `stock_unit` の key がある記録の長さの商品は m で出し（`旧在庫 27.5 m → 新在庫 27 m`・`差分 -0.5 m`）、key の無い記録済みの log は整数のまま（[共通規則](10-common-rules.md) SPEC-UNIT-D3 の「表示する所」の表の 12 行目）。D-118 の (a) の後に書く adjustment は `product_code`・`stock_unit`・`before`・`after`（それぞれ [36](36-biz-integrity-check.md) の `StockCopy` の 4 項目）で、「{商品コード} / {before} → {after}」と出す。各側は在庫数（単位どおり）と、その側の `stock_recheck` が true なら後ろに「（要再確認 {low}〜{high}）」（例: `5（要再確認 4〜6） → 5（要再確認 3〜7）`。差分は出さない）。記録済みの形（`old_stock`・`new_stock`・`adjustment`）は書き換えず今の表示で読み続け、1 つの log の中で要素ごとにどちらかの形で読む。どちらの形にも合わない要素（印と範囲が対にならない `StockCopy` を含む）が 1 つでもあれば一覧を出さず、生 JSON の要約と「技術情報」へ回す。移行の行（`trigger: migration`）の要約は summary の文のまま。 | 非IT operator が唯一の監査痕跡を読めることは、movement を残さない直接更新意味論の説明可能性の前提。rejected: 生 JSON のみの現状維持 = operator が補正内容を読めない。365日 cleanup（D-051 retention）までが閲覧可能期間である点は D-051 に従う。実装は follow-up PR（`OperationLogsPage.tsx` + test）。 |
+| UI-11c-D13 | `SCREEN_DESIGN.md` の QR-06 行にあった旧 CSV export/archive 記述を、閲覧 MVP + 保持日数の cleanup（archive 不要。当時は 365 日。今の既定は [72](72-mnt-log-manager.md) MNT-02-D1）に同期する。CSV 出力と MNT-04 診断ログ導線は別 task として明記する。 | Owner Decision #1 + Missing UI item 13。`72-mnt-log-manager.md` の実装済み `cleanup_old_logs` は物理削除のみで archive を作らない（DB設計上の事実）。 |
+| UI-11c-D14 | `integrity_fix` の detail_json（adjustments の product_code / old_stock / new_stock / adjustment）は在庫整合性補正の**唯一の監査痕跡**（補正は inventory_movements に行を残さない — BIZ-07-D2/D3、[D-051](../decision-log.md)）。詳細表示は既知 key 要約（UI-11c-D6）に加え、adjustments を「商品コード / 旧在庫 → 新在庫 / 差分」の operator-readable な一覧として表示し、生 JSON は折りたたみ「技術情報」に残す。adjustment に `stock_unit` の key がある記録の長さの商品は m で出し（`旧在庫 27.5 m → 新在庫 27 m`・`差分 -0.5 m`）、key の無い記録済みの log は整数のまま（[共通規則](10-common-rules.md) SPEC-UNIT-D3 の「表示する所」の表の 12 行目）。D-118 の (a) の後に書く adjustment は `product_code`・`stock_unit`・`before`・`after`（それぞれ [36](36-biz-integrity-check.md) の `StockCopy` の 4 項目）で、「{商品コード} / {before} → {after}」と出す。各側は在庫数（単位どおり）と、その側の `stock_recheck` が true なら後ろに「（要再確認 {low}〜{high}）」（例: `5（要再確認 4〜6） → 5（要再確認 3〜7）`。差分は出さない）。記録済みの形（`old_stock`・`new_stock`・`adjustment`）は書き換えず今の表示で読み続け、1 つの log の中で要素ごとにどちらかの形で読む。どちらの形にも合わない要素（印と範囲が対にならない `StockCopy` を含む）が 1 つでもあれば一覧を出さず、生 JSON の要約と「技術情報」へ回す。移行の行（`trigger: migration`）の要約は summary の文のまま。 | 非IT operator が唯一の監査痕跡を読めることは、movement を残さない直接更新意味論の説明可能性の前提。rejected: 生 JSON のみの現状維持 = operator が補正内容を読めない。保持日数の cleanup（既定は [72](72-mnt-log-manager.md) MNT-02-D1、D-136。D-051 の retention を置き換えた）までが閲覧可能期間である。実装は follow-up PR（`OperationLogsPage.tsx` + test）。 |
 | UI-11c-D15 | 逆転範囲で参照する「直前に commit 済みの valid normalized search」は state に保持し、valid render が commit した後の effect でだけ更新する。valid render 自身は現在の normalized search を query key / CMD引数 / pagination に直ちに使い、invalid render のときだけ commit 済み snapshot を使う。 | render 中の ref 更新は破棄された render の search を共有 ref に残す。state/effect 方式なら未commit renderは snapshot を更新しない。valid render で state snapshot の反映を待つ案は通常のfilter変更に1 renderの遅延を生むため棄却し、valid側は現在値を直接使う。effect commitからsnapshot反映までにinvalid更新が割り込む極小窓では、前回snapshotを一時表示した後に最新commit済みsnapshotへ同期し得る。この差を許容するか、`useLayoutEffect` でpaint前同期するかは Plan Gate のowner裁定対象とする。 |
 | UI-11c-D16 | 「関連記録を見る」は、現在の `/settings/logs` URL（期間 `start_date` / `end_date`、`operation_type`、`page` の search state を含む）を `returnTo` として業務記録詳細へ送る。詳細の「前の画面へ戻る」で同じ検索 state を復元する（DSR-18）。 | 操作ログの調査中に関連記録を確認しても、期間・種別・page を組み直さず同じ調査位置へ戻れるようにする。link は UI-11c-D5 の展開行内の明示的な操作のままとし、行全体 click や展開 toggle を追加しない。 |
 
@@ -124,7 +124,7 @@ export interface NormalizedOperationLogsSearch {
 
 #### 74.4.3 既存パターンとの差分
 
-既存 `list_movements`（`inventory_repo.rs`）は `date_to` に対して「10文字なら `T23:59:59` を付与」という緩い当日末判定を使い、逆転範囲チェックを持たない。UI-11c は JST 暦日の inclusive/exclusive 境界と逆転範囲エラーを新規導入する。既存 movement/records 画面のこのロジックは本設計では変更しない（scenario が異なる: 操作ログは監査境界の厳密性を要求される一方、movement/records は業務日付ベースの緩い当日末で運用上問題が出ていない）。将来 movement/records 側で境界問題が実運用で顕在化した場合に横展開を検討する（decision-log D-037 参照）。
+UI-11c は JST 暦日の inclusive/exclusive 境界と逆転範囲エラーを新規導入する。在庫変動の履歴（[44](44-cmd-inventory.md) の `list_movements`）は D-118 の b2 で、保存の時刻でなく業務日（`YYYY-MM-DD`）の両端を含む比べに変わった。入出庫の記録の画面（`InventoryRecordsPage`）は日付の列を `<= date_to` で比べ、逆転範囲チェックを持たない。このロジックは本設計では変更しない（scenario が異なる: 操作ログは監査境界の厳密性を要求される一方、records は業務日付で比べ運用上問題が出ていない）。将来 records 側で境界問題が実運用で顕在化した場合に横展開を検討する（decision-log D-037 参照）。
 
 ---
 
@@ -269,7 +269,7 @@ OperationLogFilters + OperationLogTable（展開行1件） + Pagination
 - 文言: `全 {total_count.toLocaleString("ja-JP")} 件のうち {from}〜{to} 件を表示（{page} / {totalPages} ページ）`（範囲付き統一形、`Pagination` をそのまま再利用）。
 - **範囲外 page 回復**（UI-11c-D8）: `logsQuery.data.items.length === 0 && logsQuery.data.total_count > 0 && normalizedSearch.page > 1` の場合、通常の EmptyState ではなく専用メッセージ「このページには表示するログがありません」+ 「先頭ページに戻る」ボタン（`updateSearch({ page: 1 })`）を表示する。
 - IO層は`page` / clamp後の`per_page`を`i64`へ変換してからoffsetを計算する。URL/CMD wireで表現可能な最大positive page（`u32::MAX`）でもRust側でpanic/wrapせず、SQLiteの範囲外offsetによる空`items`と上記回復導線へ到達させる。
-- filter 変更時は常に `page=1`（§74.3）に戻るため、この回復導線は「filter 変更を伴わない外部要因（365日 cleanup、URL 直接改変、他端末からの delete 等）で総ページ数が減った」場合にのみ到達する。
+- filter 変更時は常に `page=1`（§74.3）に戻るため、この回復導線は「filter 変更を伴わない外部要因（保持日数の cleanup、URL 直接改変、他端末からの delete 等）で総ページ数が減った」場合にのみ到達する。
 
 ---
 
@@ -294,7 +294,7 @@ OperationLogFilters + OperationLogTable（展開行1件） + Pagination
 - `queryKey`: `queryKeys.operationLogs.list(effectiveNormalizedSearch)`、`queryKeys.operationLogs.types()`。逆転rangeのdraft searchはkeyを変えない。
 - valid normalized search の snapshot 更新は commit 後の effect だけで行う。valid renderは現在値を直接 query key に使うため、通常のfilter/page変更に意図的な1 render遅延を加えない（UI-11c-D15）。
 - `staleTime: 0` / `gcTime: 5 * 60_000`（両 query 共通）。`refetchOnWindowFocus: false`（既存グローバル既定を継承）。
-- 自動ポーリング・自動再取得タイマーは持たない。365日 cleanup による total_count 変化は次回の filter 変更・page 操作・再訪・再試行で自然に反映される（§74.6）。
+- 自動ポーリング・自動再取得タイマーは持たない。保持日数の cleanup による total_count 変化は次回の filter 変更・page 操作・再訪・再試行で自然に反映される（§74.6）。
 
 ---
 
@@ -337,7 +337,7 @@ OperationLogFilters + OperationLogTable（展開行1件） + Pagination
 対象はWindowsの**専用local development/demo DB（synthetic dataのみ）**であり、実店舗DBでは実行しない。appを開いたまま、別のPowerShell windowで次を実行する。SQLite WALでも`PRAGMA locking_mode=EXCLUSIVE`と`BEGIN EXCLUSIVE`の組み合わせは、既に開いている別connectionのreadを`database is locked`にすることをsynthetic WAL DBで確認済みである。`BEGIN IMMEDIATE`だけではWAL read failureを再現しないため使わない。
 
 ```powershell
-$db = Join-Path $env:APPDATA 'com.kosei.inventory\inventory.db'
+$db = Join-Path $env:APPDATA 'com.inventory-system.desktop\inventory.db'
 if (-not (Test-Path $db)) { throw "development/demo DB not found: $db" }
 sqlite3 $db
 ```
@@ -370,7 +370,7 @@ live codeでは、初期schemaの`app_settings.key='backup_enabled'`は`value='1
 
 ```powershell
 # 1. アプリを停止してDB lockを解放する。
-$db = Join-Path $env:APPDATA 'com.kosei.inventory\inventory.db'
+$db = Join-Path $env:APPDATA 'com.inventory-system.desktop\inventory.db'
 if (-not (Test-Path $db)) { throw "development/demo DB not found: $db" }
 
 # 実店舗DBへの誤適用防止。専用demo DBだと人が確認できる場合だけ続行する。
@@ -565,11 +565,11 @@ SELECT changes() AS deleted_rows;
 | やらないこと | 理由 | 責務を持つモジュール |
 |---|---|---|
 | CSV 出力 | Owner Decision #1。viewing MVP に含めない別 task | 将来 IO-05 拡張 |
-| 操作ログの保持設定変更・手動削除 | 本画面は閲覧専用。365日自動削除は既存 MNT-02 契約のまま | `72-mnt-log-manager.md` |
+| 操作ログの保持設定変更・手動削除 | 本画面は閲覧専用。保持日数による自動削除は MNT-02 の契約のまま（[72](72-mnt-log-manager.md) MNT-02-D1） | `72-mnt-log-manager.md` |
 | 診断ログファイル/ディレクトリ導線（MNT-04） | 別種のログ（アプリ診断ログ）であり operation_logs とは別責務 | `70-mnt-diagnostic-log.md` |
 | 業務記録の訂正・取消 | 操作ログは監査ログであり業務記録の代替にしない（TRACE-D3） | `65-inventory-record-traceability.md` |
 | `csv_import` / `stocktake` 記録種別の関連リンク | 両種の詳細 route は実装済みだが、2026-09-01 の producer 実効化 R3 では据置とし、許可リストからの除外を維持する。csv_import / stocktake producer への `record_type` 採用と関連リンク追加は、それぞれ別 follow-up で行う | `65-inventory-record-traceability.md` §65.10 実装スライス |
-| movement/records 画面の期間 predicate を JST inclusive/exclusive に統一 | scenario が異なるため本 PR では変更しない。実運用で境界問題が出た場合に横展開を検討 | `21-io-inventory-repo.md` / decision-log D-037 |
+| records 画面の期間 predicate を JST inclusive/exclusive に統一 | scenario が異なるため本 PR では変更しない。実運用で境界問題が出た場合に横展開を検討 | `21-io-inventory-repo.md` / decision-log D-037 |
 
 ---
 
@@ -586,7 +586,7 @@ SELECT changes() AS deleted_rows;
 | EmptyState | 単一文言 | 単一文言 | **2系統に分岐**（既定0件 vs filter該当0件。意図的な相違、UI-11c-D9） |
 | 範囲外 page 回復 | なし | なし | **追加する**（意図的な相違、UI-11c-D8） |
 | keyboard/行展開 | 該当機能なし | 該当機能なし | 新規パターン（§74.7、既存踏襲元なし） |
-| 期間 predicate | `date_to + T23:59:59` 緩い当日末 | 同左（`records.tsx` も同じ IO 経由） | **JST inclusive/exclusive に変更**（意図的な相違、UI-11c-D2） |
+| 期間 predicate | 業務日の両端を含む（b2） | 日付の列の両端を含む（`<= date_to`） | **JST inclusive/exclusive に変更**（意図的な相違、UI-11c-D2） |
 | 明示clear日付 | 日付キー欠落は既定値へfallback | 同左 | 片側・両側clearをURL空文字で明示し、初期未初期化と区別する（UI-11c-D1。既存画面への横展開はしない） |
 
 ---

@@ -213,6 +213,7 @@ describe("StockInquiryPage (REQ-301 自動展開)", () => {
         message: "一覧の取得に失敗しました",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
     mockDetail.mockResolvedValue({
@@ -681,7 +682,13 @@ describe("StockInquiryPage SPEC-UIBB-9（部門候補 loading / error 結線）"
     });
     mockListDepartments.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "取得失敗", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "取得失敗",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     renderWithClient(
       <StockInquiryPage search={{ q: "毛糸", status: "all" }} onSearchChange={vi.fn()} />,

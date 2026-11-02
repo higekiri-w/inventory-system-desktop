@@ -279,10 +279,8 @@ pub fn list_inventory_records(
         date_col: &'static str,
         route_prefix: &'static str,
         status_expr: Option<&'static str>,
-        item_count_expr: Option<&'static str>,
         date_expr: Option<&'static str>,
         created_at_col: Option<&'static str>,
-        filter_item_extra_where: &'static str,
     }
 
     const SPECS: &[RecordSpec] = &[
@@ -296,10 +294,8 @@ pub fn list_inventory_records(
             date_col: "receiving_date",
             route_prefix: "/inventory/receiving/records",
             status_expr: None,
-            item_count_expr: None,
             date_expr: None,
             created_at_col: None,
-            filter_item_extra_where: "",
         },
         RecordSpec {
             record_type: "return_record",
@@ -311,10 +307,8 @@ pub fn list_inventory_records(
             date_col: "return_date",
             route_prefix: "/inventory/return/records",
             status_expr: None,
-            item_count_expr: None,
             date_expr: None,
             created_at_col: None,
-            filter_item_extra_where: "",
         },
         RecordSpec {
             record_type: "manual_sale",
@@ -326,10 +320,8 @@ pub fn list_inventory_records(
             date_col: "sale_date",
             route_prefix: "/inventory/manual-sale/records",
             status_expr: None,
-            item_count_expr: None,
             date_expr: None,
             created_at_col: None,
-            filter_item_extra_where: "",
         },
         RecordSpec {
             record_type: "disposal_record",
@@ -341,10 +333,8 @@ pub fn list_inventory_records(
             date_col: "disposal_date",
             route_prefix: "/inventory/disposal/records",
             status_expr: None,
-            item_count_expr: None,
             date_expr: None,
             created_at_col: None,
-            filter_item_extra_where: "",
         },
         RecordSpec {
             record_type: "csv_import",
@@ -358,35 +348,26 @@ pub fn list_inventory_records(
             status_expr: Some(
                 "CASE {header_alias}.status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END",
             ),
-            item_count_expr: None,
             date_expr: Some("{header_alias}.settlement_date"),
             created_at_col: Some("imported_at"),
-            filter_item_extra_where: "",
         },
         RecordSpec {
             record_type: "stocktake",
             header_table: "stocktakes",
             header_alias: "st",
-            item_table: "inventory_movements",
-            item_alias_prefix: "im",
-            item_fk_col: "reference_id",
+            // 件数と絞り込みは明細（入庫・廃棄と同じく明細の数。計数は movement を作らない。65）
+            item_table: "stocktake_items",
+            item_alias_prefix: "sti",
+            item_fk_col: "stocktake_id",
             date_col: "completed_at",
             route_prefix: "/stocktake/records",
             status_expr: Some(
                 "CASE {header_alias}.status WHEN 'completed' THEN 'active' ELSE 'in_progress' END",
             ),
-            item_count_expr: Some(
-                "(SELECT COUNT(*) FROM inventory_movements {item_alias}_count
-                  WHERE {item_alias}_count.reference_id = {header_alias}.id
-                    AND {item_alias}_count.reference_type = 'stocktake'
-                    AND {item_alias}_count.is_voided = 0)",
-            ),
             date_expr: Some(
                 "DATE(COALESCE({header_alias}.completed_at, {header_alias}.started_at))",
             ),
             created_at_col: Some("started_at"),
-            filter_item_extra_where:
-                " AND {item_alias}.reference_type = 'stocktake' AND {item_alias}.is_voided = 0",
         },
     ];
 
@@ -421,10 +402,6 @@ pub fn list_inventory_records(
             .map(|expr| expr.replace("{header_alias}", spec.header_alias))
             .unwrap_or_else(|| "'active'".to_string());
         let created_at_col = spec.created_at_col.unwrap_or("created_at");
-        let extra_where = |item_alias: &str| {
-            spec.filter_item_extra_where
-                .replace("{item_alias}", item_alias)
-        };
 
         if let Some(ref from) = query.date_from {
             where_clauses.push(format!("{} >= ?{}", date_expr, params.len() + 1));
@@ -439,21 +416,18 @@ pub fn list_inventory_records(
             params.push(Box::new(record_id));
         }
         if let Some(department_id) = query.department_id {
-            let item_alias = format!("{}_dept", spec.item_alias_prefix);
             where_clauses.push(format!(
                 "EXISTS (
                     SELECT 1
                     FROM {item_table} {item_alias}_dept
                     JOIN products p_dept ON p_dept.product_code = {item_alias}_dept.product_code
                     WHERE {item_alias}_dept.{item_fk_col} = {header_alias}.id
-                      {filter_item_extra_where}
                       AND p_dept.department_id = ?{param_index}
                 )",
                 item_table = spec.item_table,
                 item_alias = spec.item_alias_prefix,
                 item_fk_col = spec.item_fk_col,
                 header_alias = spec.header_alias,
-                filter_item_extra_where = extra_where(&item_alias),
                 param_index = params.len() + 1
             ));
             params.push(Box::new(department_id));
@@ -461,14 +435,12 @@ pub fn list_inventory_records(
         if let Some(ref keyword) = query.product_keyword {
             let trimmed = keyword.trim();
             if !trimmed.is_empty() {
-                let item_alias = format!("{}_kw", spec.item_alias_prefix);
                 where_clauses.push(format!(
                     "EXISTS (
                         SELECT 1
                         FROM {item_table} {item_alias}_kw
                         JOIN products p_kw ON p_kw.product_code = {item_alias}_kw.product_code
                         WHERE {item_alias}_kw.{item_fk_col} = {header_alias}.id
-                          {filter_item_extra_where}
                           AND (
                             p_kw.product_code LIKE ?{param_index}
                             OR p_kw.name LIKE ?{param_index}
@@ -479,7 +451,6 @@ pub fn list_inventory_records(
                     item_alias = spec.item_alias_prefix,
                     item_fk_col = spec.item_fk_col,
                     header_alias = spec.header_alias,
-                    filter_item_extra_where = extra_where(&item_alias),
                     param_index = params.len() + 1
                 ));
                 params.push(Box::new(format!("%{}%", trimmed)));
@@ -492,27 +463,16 @@ pub fn list_inventory_records(
             format!("WHERE {}", where_clauses.join(" AND "))
         };
 
-        let representative_alias = format!("{}_rep", spec.item_alias_prefix);
-        // filter / representative / item_count は同じ明細母集団を表す。棚卸しでは
-        // 多態FK衝突を避ける reference_type/is_voided 条件を意図的に重複保持する。
-        let representative_extra_where = extra_where(&representative_alias);
-        let item_count_expr = spec
-            .item_count_expr
-            .map(|expr| {
-                expr.replace("{header_alias}", spec.header_alias)
-                    .replace("{item_alias}", spec.item_alias_prefix)
-            })
-            .unwrap_or_else(|| {
-                format!(
-                    "(SELECT COUNT(*)
-                      FROM {item_table} {item_alias}_count
-                      WHERE {item_alias}_count.{item_fk_col} = {header_alias}.id)",
-                    item_table = spec.item_table,
-                    item_alias = spec.item_alias_prefix,
-                    item_fk_col = spec.item_fk_col,
-                    header_alias = spec.header_alias,
-                )
-            });
+        // filter / representative / item_count は同じ明細母集団を表す
+        let item_count_expr = format!(
+            "(SELECT COUNT(*)
+              FROM {item_table} {item_alias}_count
+              WHERE {item_alias}_count.{item_fk_col} = {header_alias}.id)",
+            item_table = spec.item_table,
+            item_alias = spec.item_alias_prefix,
+            item_fk_col = spec.item_fk_col,
+            header_alias = spec.header_alias,
+        );
 
         select_sqls.push(format!(
             "SELECT
@@ -525,7 +485,6 @@ pub fn list_inventory_records(
                         FROM {item_table} {item_alias}_rep
                         JOIN products p ON p.product_code = {item_alias}_rep.product_code
                         WHERE {item_alias}_rep.{item_fk_col} = {header_alias}.id
-                          {representative_extra_where}
                         ORDER BY p.product_code ASC
                         LIMIT 1
                     ),
@@ -543,7 +502,6 @@ pub fn list_inventory_records(
             item_table = spec.item_table,
             item_alias = spec.item_alias_prefix,
             item_fk_col = spec.item_fk_col,
-            representative_extra_where = representative_extra_where,
             item_count_expr = item_count_expr,
             status_expr = status_expr,
             created_at_col = created_at_col,
@@ -761,8 +719,9 @@ mod tests {
         seed_product(conn, product_code);
         conn.execute(
             "INSERT INTO csv_imports
-             (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at)
-             VALUES (?1, ?2, ?3, 1, 500, 0, ?4, ?5)",
+             (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at,
+              machine_no, settlement_no)
+             VALUES (?1, ?2, ?3, 1, 500, 0, ?4, ?5, '0001', (SELECT COUNT(*) + 1 FROM csv_imports))",
             rusqlite::params![
                 format!("{product_code}.csv"),
                 settlement_date,
@@ -796,6 +755,15 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    fn seed_stocktake_item(conn: &DbConnection, stocktake_id: i64, product_code: &str) {
+        conn.execute(
+            "INSERT INTO stocktake_items (stocktake_id, product_code, system_stock, actual_count)
+             VALUES (?1, ?2, 1, 1)",
+            rusqlite::params![stocktake_id, product_code],
+        )
+        .unwrap();
     }
 
     fn seed_stocktake_movement(
@@ -1549,7 +1517,7 @@ mod tests {
 
     #[test]
     fn test_list_inventory_records_req206_stocktake_item_count_diff_only() {
-        // REQ-206 / D-b: 棚卸し item_count は非void差異 movement 件数
+        // REQ-206 / 65: 棚卸し item_count は明細の数
         let (_dir, conn) = setup_test_db();
         let stocktake_id = seed_stocktake(
             &conn,
@@ -1578,7 +1546,8 @@ mod tests {
 
         let result = list_inventory_records(&conn, &inventory_query("stocktake")).unwrap();
 
-        assert_eq!(result.items[0].item_count, 2);
+        // 65: 棚卸しの件数は明細の数（movement からは数えない。期待を変える。Matrix T2・R3）
+        assert_eq!(result.items[0].item_count, 5);
     }
 
     #[test]
@@ -1608,13 +1577,8 @@ mod tests {
             Some("2026-08-06T18:00:00"),
         );
         assert_eq!(disposal_id, stocktake_id);
-        seed_stocktake_movement(
-            &conn,
-            stocktake_id,
-            "AA-STOCK-OWN",
-            false,
-            "2026-08-06T18:00:00",
-        );
+        // 65: 棚卸しの件数と絞り込みは明細（fixture を明細に。期待は変えない）
+        seed_stocktake_item(&conn, stocktake_id, "AA-STOCK-OWN");
         conn.execute(
             "INSERT INTO inventory_movements
              (product_code, movement_type, quantity, stock_after, reference_type, reference_id, note, is_voided, created_at, business_date, phase)
@@ -1737,9 +1701,9 @@ mod tests {
             "2026-08-06T09:00:00",
             Some("2026-08-06T18:00:00"),
         );
-        seed_stocktake_movement(&conn, stocktake_id, "POP-A", false, "2026-08-06T18:00:00");
-        seed_stocktake_movement(&conn, stocktake_id, "POP-B", false, "2026-08-06T18:01:00");
-        seed_stocktake_movement(&conn, stocktake_id, "POP-VOID", true, "2026-08-06T18:02:00");
+        // 65: 母集団は明細（fixture を明細に。明細を持たない POP-VOID は数えない。期待は変えない）
+        seed_stocktake_item(&conn, stocktake_id, "POP-A");
+        seed_stocktake_item(&conn, stocktake_id, "POP-B");
         let mut query = inventory_query("stocktake");
         query.product_keyword = Some("POP-B".to_string());
 
@@ -1750,8 +1714,9 @@ mod tests {
     }
 
     #[test]
-    fn test_list_inventory_records_req206_in_progress_filter_exclusion() {
-        // REQ-206 / D-i: 進行中棚卸しは明細商品を持っても差異 movement filter には hit しない
+    fn test_list_inventory_records_req206_in_progress_filter_matches_items() {
+        // REQ-206 / 65 の D-118 の節（棚卸しの件数と絞り込みは明細。packet S2）/ b1 Matrix T2（期待を変えた）:
+        // 進行中の棚卸しも明細の商品と部門で絞り込みに当たる（前は差異 movement が無いので当たらなかった）
         let (_dir, conn) = setup_test_db();
         seed_product(&conn, "INPROGRESS-TARGET");
         let stocktake_id = seed_stocktake(&conn, "in_progress", "2026-08-06T09:00:00", None);
@@ -1775,7 +1740,7 @@ mod tests {
             list_inventory_records(&conn, &keyword_query)
                 .unwrap()
                 .total_count,
-            0
+            1
         );
 
         let mut department_query = inventory_query("stocktake");
@@ -1784,7 +1749,7 @@ mod tests {
             list_inventory_records(&conn, &department_query)
                 .unwrap()
                 .total_count,
-            0
+            1
         );
     }
 

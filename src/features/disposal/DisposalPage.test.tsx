@@ -397,11 +397,23 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     mockCreateDisposal
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -647,7 +659,13 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     const user = userEvent.setup();
     mockCreateDisposal.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "保存command失敗", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "保存command失敗",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     renderWithClient(<DisposalPage />);
     await addSingleProduct(user);
@@ -687,6 +705,7 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
         message: "廃棄・破損の保存でエラーが発生しました",
         field: null,
         error_id: "E-20260627-101500-syn5",
+        stocktake_recovery: null,
       },
     });
     renderWithClient(<DisposalPage />);

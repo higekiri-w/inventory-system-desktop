@@ -31,7 +31,7 @@ UI 層関数設計書の 2 段階テンプレ（業務ロジック有無で使�
 | `src/features/home/components/PluNotificationBar.tsx` | 黄色バー。`pluDirtyCount >= 1` で表示、UI-08 へ遷移ボタン（pending: aria-disabled + cursor-not-allowed + onClick preventDefault、D-2） |
 | `src/features/home/components/SummaryCards.tsx` | 3 カード束ね（昨日売上 / 在庫切れ / 在庫少）。在庫切れ・在庫少の件数は 1 件以上で状態色（`text-destructive` / `text-warning-emphasis`）、0 件は無色（D-H7、SCREEN_DESIGN §ホーム画面） |
 | `src/components/patterns/SummaryCard.tsx` | 単一カード。loading / error / data 3 状態（PR-B で `features/home/components/` から patterns/ へ移動、[59-ui-shared-patterns.md](59-ui-shared-patterns.md)） |
-| `src/features/home/components/QuickActionGrid.tsx` | 「毎日の作業」2×2: CSV取込み / 売上レポート（日次）/ 在庫照会 / 商品管理（Q-1 採用、モックアップ準拠） |
+| `src/features/home/components/QuickActionGrid.tsx` | 「毎日の作業」2×2: CSV取込み / 売上レポート（日次）/ 在庫照会 / 商品管理（Q-1 採用、モックアップ準拠）。D-138 で 3・4 枚目を「商品と在庫」（`/products`）と「在庫切れ・在庫少」（`/products?status=low_stock`）にする（UI-00-D13、proposed・未実装） |
 | `src/features/home/components/InventoryActionGrid.tsx` | 「入庫・出庫」2×2: 入庫記録 / 返品・交換 / 手動販売出庫 / 廃棄・破損 |
 | `src/features/home/components/MiscActionRow.tsx` | 「その他」3 card（2 列折返し）: 棚卸し / バックアップ / 設定 |
 | `src/features/home/components/ActionButton.tsx` | 引数: `navItemId: NavItem["id"]` と `variant?: "default" \| "primary"`。内部で `navigation.ts` を参照して `status / to / label / icon / description` を取得し、icon + 題名 + 1 行説明の card を描画。pending 時 Tooltip + `aria-disabled` + `onClick preventDefault` + `cursor-not-allowed`（D-2 採用、HTML disabled は pointer-events ブロックで Tooltip hover が起動しないため不採用、prop drilling 回避で navigation が SSOT） |
@@ -276,7 +276,8 @@ shadcn `Tooltip` を本 PR commit 0 で導入済（`src/components/ui/tooltip.ts
 
 ### 53.8 備考
 
-- **大ボタン 4 つ目 = 商品管理**（Q-1 採用、モックアップ準拠）。月次売上はサイドバー「毎日の業務」エリア経由で遷移（[ui-task-specs.md §UI-12](../architecture/ui-task-specs.md) サイドバー定義既済）。商品管理は Phase 3 UI-01a 実装まで pending disabled
+- **大ボタンの 3・4 つ目**: D-138 の後は「商品と在庫」と「在庫切れ・在庫少」（下の UI-00-D13）。今の build は 3 つ目が在庫照会、4 つ目が商品管理（Q-1 採用、モックアップ準拠）。月次売上はサイドバー「毎日の業務」エリア経由で遷移（[ui-task-specs.md §UI-12](../architecture/ui-task-specs.md) サイドバー定義既済）
+- **UI-00-D13（D-138、2026-10-24、proposed・未実装）**: 在庫照会と商品検索・一覧が 1 つの画面「商品と在庫」になる（[50](50-ui-product-list.md) UI-01a-D14）ので、「毎日の作業」の 3 枚目を「商品と在庫」（`/products`）、4 枚目を「在庫切れ・在庫少」（`/products?status=low_stock`、サイドバーの同名の項目と同じ先）にする。Why: 2 つの入口が同じ画面を指すと選ぶ手間だけが残る（Hick の法則）。空いた枠に発注の準備の一覧を置くと、ホームの在庫切れ・在庫少の件数のすぐ近くから 1 回でその一覧を開ける（今は在庫照会を開いてチップを押す 2 回）。件数の card は今のまま導線にしない（D-089）。Rejected: 月次売上を置く（日次売上の画面のタブから 1 回で開ける）、3 枚にする（2×2 の格子が欠ける）。見え方は runtime の Windows native L3 で owner が確かめる
 - **pending route UX**: Tooltip + `aria-disabled` + cursor-not-allowed の 3 層で誤クリック防止（D-2）。サイドバー pending と一貫
 - **specta 化済み 4 コマンド**: `get_daily_sales` / `list_low_stock` / `list_plu_dirty` / `list_csv_imports`（commit 1 `2c1ac37` 完了）。本書 §53.3 はこれら specta 化前提で記述
 - **struct field snake_case**: bindings.ts は struct field を snake_case のまま出力（specta default、commit 1 で確認済）。本書 §53.2 で snake_case 直接アクセス採用と明記

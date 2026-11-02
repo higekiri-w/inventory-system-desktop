@@ -153,15 +153,15 @@ Project-specific failure modes to test:
 
 ## Workflow Notes
 
-- Read this profile when project-specific risk or verification boundaries are needed; it is not a mandatory full read for a standalone question. Plan Packet is expected for R2+ active plans.
-- Design Phase happens before Plan Packet for R2+ work when source design docs may be affected.
+- Read this profile when project-specific risk or verification boundaries are needed; it is not a mandatory full read for a standalone question. Plan Packet is expected for R3/R4; R0〜R2 use the PR body route (D-145).
+- Design Phase happens before the Plan Packet for R3/R4 work when source design docs may be affected (R0〜R2 use the PR body route, D-145).
 - Plan Packets are implementation planning evidence, not durable design source of truth. Durable design belongs in architecture, DB design, function design, screen/UI design, decision-log, or ADR docs.
-- R3/R4 should use a Test Design Matrix and explicit Boundary / Wire Contract.
+- R3/R4 use the packet `## Test Plan` table; wire contracts are checked by the plan review fixed questions (D-145 (10)).
 - R3/R4 use the Final Review (count per `Final Review Minimum`); R4 also requires human approval (`r4`). This profile does not itself add enforcement.
 - Requirement/spec IDs should be attached to tests or test comments when the touched area has traceability.
 - Behavior changes must update the relevant source document in the same change: architecture, DB design, function design, screen design, or UI tech stack.
 - Task-local evidence belongs in active/archive plans. Long PR histories should not make `Plans.md` the product truth.
-- `docs/PROJECT_HANDOFF.md` is navigation only. Current state is in `Plans.md`; long candidates are in `docs/backlog.md`, and archived handoffs are historical.
+- `docs/PROJECT_HANDOFF.md` is navigation only. Completion is in git log, lane state is in the helper status, and pre-deployment gates, blockers, and open product decisions are in `Plans.md` (D-145); long candidates are in `docs/backlog.md`, and archived handoffs are historical.
 - Keep CMD thin and BIZ authoritative. UI and CMD should not duplicate business rules that belong in BIZ.
 - Prefer Windows native verification for Japanese input and operator-facing Phase 2+ UI flows.
 - Risk classification is review-assisted and self-reported in this workflow PR. Machine detection for under-classified changes belongs in a future workflow-hardening plan/PR.

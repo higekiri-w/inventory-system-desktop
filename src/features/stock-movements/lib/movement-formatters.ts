@@ -2,8 +2,11 @@
 //
 // REQ-303 / UI-06c-D4-D5: movement 種別と増減の operator-facing 表示。
 
-import { formatLengthOrPlain } from "@/features/stock-inquiry/lib/format-stock-display";
-import type { MovementType, ProductStockUnit } from "@/lib/bindings";
+import {
+  formatLengthOrPlain,
+  formatStockDisplay,
+} from "@/features/stock-inquiry/lib/format-stock-display";
+import type { MovementType, ProductStockUnit, StockCountHistory } from "@/lib/bindings";
 
 const movementTypeLabels: Record<MovementType, string> = {
   receiving: "入庫",
@@ -39,4 +42,16 @@ export function formatMovementDateTime(value: string): string {
     return `${match[1]} ${match[2]}`;
   }
   return value;
+}
+
+// D-118 b2: 計数の行の種別の文（65）。{数} は在庫の欄と同じ形を行の単位で（66）
+export function formatCountRow(count: StockCountHistory, businessDate: string): string {
+  const label = count.count_kind === "fresh" ? "数を入れ直し" : "数を確認";
+  return `${label}（${formatStockDisplay(count.count_value, count.stock_unit)}、${businessDate}）`;
+}
+
+// D-118 b2: 「日付」の列の下の保存の日時（YYYY-MM-DD HH:mm。66）
+export function formatSavedAt(value: string): string {
+  const match = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value);
+  return `保存 ${match ? `${match[1]} ${match[2]}` : value}`;
 }

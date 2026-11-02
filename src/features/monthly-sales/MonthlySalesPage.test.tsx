@@ -246,6 +246,7 @@ describe("MonthlySalesPage describeError adoption (B2, UI-ERR-D2)", () => {
         message: "月次売上の取得に失敗しました",
         field: null,
         error_id: "E-20260501-090000-syn2",
+        stocktake_recovery: null,
       },
     });
 

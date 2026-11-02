@@ -4,7 +4,7 @@ import { queryKeys } from "./query-keys";
 
 export type InvalidationKey = QueryKey;
 
-/** D-052-C1〜C22: mutation 成功時に stale 化する consumer query の SSOT。 */
+/** D-052-C1〜C22 と C23（D-141）: mutation 成功時に stale 化する consumer query の SSOT。 */
 export const invalidationContract = {
   productCreate: () => [
     queryKeys.productList.root(),
@@ -15,6 +15,18 @@ export const invalidationContract = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.inventoryRecords.stocktakeDetailRoot(),
   ],
+  // C23（D-141）: 同じ JAN の群に加える登録は外した商品を求め直す（外した商品の商品コードを画面は持たない）
+  productCreateSharedJan: () => [
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.pluDirty(),
+    queryKeys.stockMovements.root(),
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.inventoryRecords.stocktakeDetailRoot(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.recheckList(),
+  ],
   productUpdate: (productCode: string) => [
     queryKeys.productList.root(),
     queryKeys.productForm.product(productCode),
@@ -24,6 +36,7 @@ export const invalidationContract = {
     queryKeys.pluSlotSummary(),
     queryKeys.stockMovements.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   productImport: () => [
     queryKeys.productList.root(),
@@ -34,6 +47,7 @@ export const invalidationContract = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.productForm.root(),
     queryKeys.inventoryRecords.stocktakeDetailRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   receiving: () => [
     queryKeys.receivings.root(),
@@ -44,6 +58,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   returnExchange: (registerProcessed: boolean) => [
     queryKeys.returns.root(),
@@ -56,6 +71,7 @@ export const invalidationContract = {
           queryKeys.stockMovements.root(),
           queryKeys.productForm.root(),
           queryKeys.stocktake.itemsRoot(),
+          queryKeys.stocktake.recheckList(),
         ]
       : []),
   ],
@@ -69,6 +85,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   disposal: () => [
     queryKeys.disposals.root(),
@@ -79,6 +96,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   csvImportCommit: () => [
     queryKeys.csvImportLists(),
@@ -91,6 +109,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   csvImportRollback: () => [
     queryKeys.csvImportLists(),
@@ -103,6 +122,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   dailyReportImport: () => [
     queryKeys.dailyReportImportLists(),
@@ -113,8 +133,17 @@ export const invalidationContract = {
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),
     queryKeys.inventoryRecords.root(),
+    queryKeys.stocktake.recheckList(),
   ],
-  stocktakeCountUpdate: () => [queryKeys.stocktake.itemsRoot()],
+  stocktakeCountUpdate: () => [
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.stockMovements.root(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.recheckList(),
+  ],
   stocktakeComplete: () => [
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),
@@ -125,6 +154,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.inventoryRecords.root(),
+    queryKeys.stocktake.recheckList(),
   ],
   integrityFix: () => [
     queryKeys.productList.root(),
@@ -133,6 +163,7 @@ export const invalidationContract = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   thresholdSave: () => [
     queryKeys.thresholdSettings.settings(),

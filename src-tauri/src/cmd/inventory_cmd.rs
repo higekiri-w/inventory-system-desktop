@@ -3,8 +3,8 @@
 //! 44-cmd-inventory.md §23.8 に基づく実装。
 
 use crate::biz::{
-    inventory_service, product_service, MovementQuery, MovementRecord, PaginatedResult,
-    ProductWithRelations, StockDetail,
+    inventory_service, product_service, MovementQuery, PaginatedResult, ProductWithRelations,
+    StockDetail, StockHistoryItem,
 };
 use crate::cmd::{AppState, CmdError};
 use tauri::State;
@@ -41,7 +41,7 @@ pub fn list_low_stock(
     product_service::list_low_stock(&conn, include_discontinued).map_err(CmdError::from)
 }
 
-/// 商品別の在庫変動履歴をフィルタ付きでページング取得する
+/// 商品別の在庫変動の履歴（movement と計数）をフィルタ付きでページング取得する
 ///
 /// 44-cmd-inventory.md §23.8 list_movements
 #[tauri::command]
@@ -49,7 +49,7 @@ pub fn list_low_stock(
 pub fn list_movements(
     state: State<AppState>,
     query: MovementQuery,
-) -> Result<PaginatedResult<MovementRecord>, CmdError> {
+) -> Result<PaginatedResult<StockHistoryItem>, CmdError> {
     let conn = state
         .db
         .lock()
@@ -305,7 +305,7 @@ mod tests {
         let result = crate::biz::inventory_service::list_movements(&conn, &query).unwrap();
         assert_eq!(result.total_count, 1); // voided行は除外
         assert_eq!(
-            result.items[0].movement_type,
+            result.items[0].movement.as_ref().unwrap().movement_type,
             crate::db::inventory_repo::MovementType::Receiving
         );
     }
@@ -330,43 +330,9 @@ mod tests {
         let result = crate::biz::inventory_service::list_movements(&conn, &query).unwrap();
         assert_eq!(result.total_count, 1);
         assert_eq!(
-            result.items[0].movement_type,
+            result.items[0].movement.as_ref().unwrap().movement_type,
             crate::db::inventory_repo::MovementType::Receiving
         );
-    }
-
-    /// list_movements: date_to の日末補完（T23:59:59）
-    #[test]
-    fn test_list_movements_req303_date_to_end_of_day() {
-        // REQ-303: 在庫変動履歴
-        let conn = setup_db();
-        seed_product_with_stock(&conn, "MV-003", 10, "pcs");
-        // created_at が 2026-03-15T10:00:00 で挿入される
-        insert_movement(&conn, "MV-003", "receiving", 5, false);
-
-        // date_to=2026-03-15 で検索 → T23:59:59が補完されるのでヒットする
-        let query = crate::biz::MovementQuery {
-            product_code: "MV-003".to_string(),
-            date_from: None,
-            date_to: Some("2026-03-15".to_string()),
-            movement_type: None,
-            page: 1,
-            per_page: 50,
-        };
-        let result = crate::biz::inventory_service::list_movements(&conn, &query).unwrap();
-        assert_eq!(result.total_count, 1);
-
-        // date_to=2026-03-14 → 14日末まで。15日のデータはヒットしない
-        let query2 = crate::biz::MovementQuery {
-            product_code: "MV-003".to_string(),
-            date_from: None,
-            date_to: Some("2026-03-14".to_string()),
-            movement_type: None,
-            page: 1,
-            per_page: 50,
-        };
-        let result2 = crate::biz::inventory_service::list_movements(&conn, &query2).unwrap();
-        assert_eq!(result2.total_count, 0);
     }
 
     /// list_movements: CMD経由で source link を含む
@@ -392,9 +358,57 @@ mod tests {
             per_page: 20,
         };
         let result = crate::biz::inventory_service::list_movements(&conn, &query).unwrap();
-        let source = result.items[0].source.as_ref().expect("source link");
+        let movement = result.items[0].movement.as_ref().expect("movement row");
+        let source = movement.source.as_ref().expect("source link");
 
         assert_eq!(source.label, "廃棄・破損 #15");
         assert_eq!(source.route, "/inventory/disposal/records/15");
+    }
+
+    /// list_movements: 実 CMD が BIZ の履歴（movement と計数）をそのまま返す
+    #[test]
+    fn test_list_movements_req303_cmd_returns_history_with_counts() {
+        // REQ-303（44 の D-118 の b2 の節）: CMD は BIZ の PaginatedResult<StockHistoryItem> を変えずに返す。Matrix W2
+        use crate::biz::inventory_service::StockHistoryKind;
+        use crate::cmd::AppState;
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        use tauri::Manager;
+
+        let conn = setup_db();
+        seed_product_with_stock(&conn, "MV-HIST", 10, "pcs");
+        insert_movement(&conn, "MV-HIST", "receiving", 5, false);
+        conn.execute(
+            "INSERT INTO stock_counts (product_code, count_value, count_kind, business_date, counted_at)
+             VALUES ('MV-HIST', 7, 'default', '2026-04-02', '2026-04-02T10:00:00')",
+            [],
+        )
+        .unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(AppState {
+                db: Mutex::new(conn),
+                preview_cache: Mutex::new(HashMap::new()),
+                daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let query = crate::biz::MovementQuery {
+            product_code: "MV-HIST".to_string(),
+            date_from: None,
+            date_to: None,
+            movement_type: None,
+            page: 1,
+            per_page: 20,
+        };
+
+        let result = super::list_movements(app.state::<AppState>(), query).unwrap();
+
+        assert_eq!(result.total_count, 2);
+        let kinds: Vec<_> = result.items.iter().map(|item| item.kind).collect();
+        assert_eq!(kinds, [StockHistoryKind::Count, StockHistoryKind::Movement]);
+        let count = result.items[0].count.as_ref().expect("count row");
+        assert_eq!(count.count_value, 7);
+        assert_eq!(result.items[0].business_date, "2026-04-02");
     }
 }

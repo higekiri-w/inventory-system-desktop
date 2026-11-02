@@ -324,5 +324,5 @@ Final Review round 1: pass A Sonnet = P1 0 / P2 0 / P3 2、pass B Opus = P1 0 / 
 ## 後続
 
 - 日報取込み「取込み済み」Alert の title を 1 文に（Final Review Opus P3、2 文が `line-clamp-1` で切れ得る）は [Backlog「保留」](../../backlog.md#見た目ux) を参照。
-- destructive Alert の soft 塗り + 三角 icon（owner 所感 2026-09-15、L3 で確定。既登録）は [Backlog「やると決めたもの」](../../backlog.md#やると決めたもの順番未定) を参照。
+- destructive Alert の soft 塗り + 三角 icon（owner 所感 2026-09-15、L3 で確定。既登録）は [Backlog「やると決めたもの」](../2026-10-19-backlog-closed.md#やると決めたもの順番未定) を参照。
 - 在庫照会の絞り込み時の件数行の token 非対称（`text-base font-semibold` vs `PaginationSummary` の `text-sm muted`）は catalog ⑩ 使用トークンの例外注記と [Backlog「記録目的」](../../backlog.md#記録目的受容済みリスクrevisit-条件付き) を参照。

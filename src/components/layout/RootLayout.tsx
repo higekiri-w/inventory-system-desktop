@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { navigation } from "@/config/navigation";
 import { useAutoBackupCheck } from "@/features/backup-restore/useAutoBackupCheck";
+import { PrintUnsupportedNotice } from "@/features/daily-sales/components/PrintUnsupportedNotice";
 import { ShortcutsDialog, useShortcutsDialog } from "@/features/shortcuts";
 
 import { Sidebar } from "./Sidebar";
@@ -71,6 +72,8 @@ export function RootLayout() {
       </div>
       <Toaster position="bottom-right" richColors closeButton duration={3000} />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      {/* UI-09a-D18: どの画面の Ctrl+P でも、白紙の代わりに印刷の案内を 1 行出す（印刷のときだけ） */}
+      <PrintUnsupportedNotice />
       {import.meta.env.DEV && <TanStackRouterDevtools position="bottom-left" />}
     </TooltipProvider>
   );

@@ -16,7 +16,7 @@ src-tauri/src/
       mod.rs             -- list系ラッパー3関数を追加
   db/
     product_repo.rs      -- get_stock_detail, list_low_stock_products を追加
-    inventory_repo.rs    -- list_movements を追加
+    inventory_repo.rs    -- 在庫変動の履歴の 2 つの読取り（list_history_movements・list_history_counts）
 ```
 
 ---
@@ -787,7 +787,7 @@ include_discontinued: bool   // true=廃番含む、false=廃番除外
 
 #### list_movements
 
-**関数要求**: 商品別の在庫変動履歴をフィルタ付きでページング取得する
+**関数要求**: 商品別の在庫変動の履歴（movement と計数）をフィルタ付きでページング取得する。計数（`stock_counts`）は movement を作らないので、商品の movement と計数を 1 つの履歴に混ぜ、並びの鍵の順で返す（D-118 の b2。[ADR](../adr/2026-10-16-stocktake-count-placement.md) SPEC-STK-CNT-D1・D12 と [65](65-inventory-record-traceability.md) の D-118 の節の 1 つ目の項の CMD-06 の側。2026-10-23、b2 の起票で決めた）
 
 **シグネチャ（Tauriコマンド）**:
 ```
@@ -795,24 +795,40 @@ include_discontinued: bool   // true=廃番含む、false=廃番除外
 fn list_movements(
     state: State<AppState>,
     query: MovementQuery,
-) -> Result<PaginatedResult<MovementRecord>, CmdError>
+) -> Result<PaginatedResult<StockHistoryItem>, CmdError>
 ```
 
-**入力型（新規）**:
+**入力型**:
 ```
 struct MovementQuery {
     product_code: String,
-    date_from: Option<String>,        // YYYY-MM-DD
-    date_to: Option<String>,          // YYYY-MM-DD
+    date_from: Option<String>,        // YYYY-MM-DD（業務日）
+    date_to: Option<String>,          // YYYY-MM-DD（業務日）
     movement_type: Option<MovementType>, // "sale_auto" | "sale_manual" | "receiving" | "return" | "disposal" | "stocktake"
     page: u32,
     per_page: u32,
 }
 ```
 
-**出力型（新規）**:
+**出力型**:
 ```
-struct MovementRecord {
+struct StockHistoryItem {
+    kind: StockHistoryKind,           // "movement" | "count"
+    business_date: String,            // movement の業務日（Z004 は精算日）か計数の日付
+    settlement_no: Option<i64>,       // Z004 の movement の精算回数と、fresh な計数の保存の時点の精算回数
+    saved_at: String,                 // movement の created_at か計数の counted_at
+    movement: Option<MovementRecord>, // kind が movement のときだけ Some
+    count: Option<StockCountHistory>, // kind が count のときだけ Some
+}
+struct StockCountHistory {
+    id: i64,
+    count_value: i64,
+    stock_unit: ProductStockUnit,     // 計数の商品の今の products.stock_unit
+    count_kind: StockCountKind,       // "default" | "fresh"（[42](42-cmd-sales-stocktake.md) の生成型）
+    stocktake_id: Option<i64>,        // 計数が参照する棚卸しの明細の棚卸し
+    source: Option<MovementSourceLink>, // stocktake_id があるときだけ Some
+}
+struct MovementRecord {               // 形は変えない（業務記録の詳細の movements と同じ型）
     id: i64,
     product_code: String,
     movement_type: MovementType,
@@ -830,17 +846,22 @@ struct MovementSourceLink {
 }
 ```
 
+- 出力: `kind` は generated literal union（D-061）。`settlement_no` は Z004 の movement の精算回数と、fresh な計数の保存の時点の精算回数（無ければ None）で、ほかは None（画面が「日付」の列に「（精算 {n}）」を付けるのは Z004 の movement の行だけで、fresh な計数の `settlement_no` は並びの鍵にだけ使う。[66](66-ui-stock-movements.md)）。`saved_at` は movement の `created_at` か計数の `counted_at`（どちらも PC の時刻の `%Y-%m-%dT%H:%M:%S`）。`stock_unit` は計数の商品の今の単位で、画面は計数の値をこの単位で描く（商品情報の取得〈`get_stock_detail`〉だけが失敗しても、長さの商品の計数 450 を「4.5 m」と出せる。[66](66-ui-stock-movements.md) の UI-06c-D3 の部分障害）。計数の `source` は label「棚卸し #{id}」、route `/stocktake/records/{id}`（§23.10 の source の解決の棚卸しの行と同じ）。`MovementRecord` の形は変えない（並びの鍵は履歴の行が持つ）。`total_count` は絞り込みの後の movement と計数の合計。
+- 並び: ADR SPEC-STK-CNT-D1 の鍵 `(business_date, phase, settlement_no, after_settlement)` の降順（新しい順）。movement は、Z004（`settlement_no` を持つ）が `(d_n, 1, n, 0)`、初期在庫（`reference_type` が NULL で `movement_type` が `receiving`。ADR D9）が `(D, 0, NULL, -1)`、ほかが `(D, 0, NULL, 0)`。計数は、既定が `(D, 0, NULL, 0)`、fresh が `(T, 1, n, 1)`（n が NULL なら 3 つ目を -1 とみなす）。鍵の同じ行は、`saved_at`、movement を計数より前、id の順を昇順に足して全順序にし、全体を逆にする。鍵は表示の順にだけ使い、計数に入っているかを示さない（ADR D1）。`stock_after` は保存した時点の写しのまま並べ直さない（65）。
+- 絞り込み: `date_from`・`date_to` は `business_date` の両端を含む範囲で、movement と計数の両方に当てる（並びと同じ軸。保存の時刻では絞らない）。BIZ が値を [31](31-biz-inventory-service.md) の `validate_business_date` で確かめ、外れたら `ValidationFailed`（何も読まない）。`movement_type` が None なら movement と計数の全部、`stocktake` なら `movement_type = 'stocktake'` の movement と計数（計数は棚卸しの数の記録）、ほかの値ならその種類の movement だけ（計数を含めない）。`is_voided = 1` の movement は出さない。計数は消さない記録なので全部出す。ページの検査（page ≥ 1、1 ≤ per_page ≤ 200）は BIZ。
+- 合成の置き場: BIZ（§23.10 の `list_movements`）。IO は §23.9 の 2 つの読取り（どちらも `pub(crate)` で、並べない）を持つ。BIZ が鍵で並べ、件数を数え、ページを切り、`source` を補う。初期在庫の印の SQL の式は `inventory_repo` の 1 つの定数にし、求め直しの読取り（[21](21-io-inventory-repo.md) の `list_ledger_movements_for_product`）と共有する。理由: 鍵の後ろ 2 つ（fresh な計数の `after_settlement` と n が NULL のときの -1、初期在庫の -1）は ADR D1 の規則で、SQL の `ORDER BY` に写すと同じ規則を Rust と SQL の 2 か所に持つ（ADR の Rejected Options の「同じ規則を SQL と Rust の 2 か所に書く危険」と同じ理由）。1 商品の履歴を全部読んでから並べるので、読む量は 1 商品の行の数に比例する（単店舗の 1 商品で数千行までを見込む。越えて遅くなれば、鍵を列にした SQL の並べ替えへ移す）。
+
 **処理ステップ**:
 1. state.db.lock() でDB接続を取得（`&conn`）
 2. biz::inventory_service::list_movements(&conn, &query) を呼ぶ
 3. Ok → PaginatedResult をそのまま返す
 4. Err(BizError) → CmdError に変換して返す
 
-**設計判断 — is_voided=0 の暗黙フィルタ**: IO層のSQLで `WHERE is_voided = 0` を常に付与する。ロールバック済みの変動は在庫照会画面に表示しない。
+**設計判断 — is_voided=0 の暗黙フィルタ**: IO層の movement の読取りで `WHERE is_voided = 0` を常に付与する。ロールバック済みの変動は在庫照会画面に表示しない。
 
-**設計判断 — source link の責務**: IO層は `reference_type/reference_id` を取得し、BIZ層が `source` を解決する。既知の `reference_type` は `label` と `route` を返す。`reference_type` または `reference_id` が NULL、または未知の値の場合は movement 行を残したまま `source=None` にする。
+**設計判断 — source link の責務**: IO層は movement の `reference_type/reference_id` と計数の `stocktake_id` を取得し、BIZ層が `source` を解決する。既知の `reference_type` は `label` と `route` を返す。`reference_type` または `reference_id` が NULL、または未知の値の場合は movement 行を残したまま `source=None` にする。棚卸しの明細を参照しない計数は `source=None`。
 
-**enum 契約化（D-061 / D-064）**: `movement_type` / `reference_type` は DB 層 enum（MovementType/ReferenceType）を generated enum として wire 露出する（reference_type は Option）。値・wire 表現・分岐意味論は不変で、不明な reference_type のみ REQ-303 に従って None へ fallback する。
+**enum 契約化（D-061 / D-064）**: `movement_type` / `reference_type` は DB 層 enum（MovementType/ReferenceType）を generated enum として wire 露出する（reference_type は Option）。値・wire 表現・分岐意味論は不変で、不明な reference_type のみ REQ-303 に従って None へ fallback する。`StockHistoryKind` も generated enum（`"movement" | "count"`）。
 
 **入力例**:
 ```json
@@ -861,34 +882,44 @@ struct MovementSourceLink {
 {
   "items": [
     {
-      "id": 42,
-      "product_code": "4976383262108",
-      "movement_type": "sale_auto",
-      "quantity": -3,
-      "stock_after": 14,
-      "reference_type": "csv_import",
-      "reference_id": 3,
-      "source": {
-        "label": "CSV取込み #3",
-        "route": "/csv-import/records/3"
+      "kind": "movement",
+      "business_date": "2026-03-23",
+      "settlement_no": 102,
+      "saved_at": "2026-03-23T19:45:00",
+      "movement": {
+        "id": 42,
+        "product_code": "4976383262108",
+        "movement_type": "sale_auto",
+        "quantity": -3,
+        "stock_after": 14,
+        "reference_type": "csv_import",
+        "reference_id": 3,
+        "source": {
+          "label": "CSV取込み #3",
+          "route": "/csv-import/records/3"
+        },
+        "note": null,
+        "created_at": "2026-03-23T19:45:00"
       },
-      "note": null,
-      "created_at": "2026-03-23T19:45:00"
+      "count": null
     },
     {
-      "id": 38,
-      "product_code": "4976383262108",
-      "movement_type": "receiving",
-      "quantity": 12,
-      "stock_after": 17,
-      "reference_type": "receiving_record",
-      "reference_id": 5,
-      "source": {
-        "label": "入庫記録 #5",
-        "route": "/inventory/receiving/records/5"
-      },
-      "note": null,
-      "created_at": "2026-03-21T10:30:00"
+      "kind": "count",
+      "business_date": "2026-03-23",
+      "settlement_no": null,
+      "saved_at": "2026-03-23T20:10:00",
+      "movement": null,
+      "count": {
+        "id": 4,
+        "count_value": 14,
+        "stock_unit": "pcs",
+        "count_kind": "default",
+        "stocktake_id": 2,
+        "source": {
+          "label": "棚卸し #2",
+          "route": "/stocktake/records/2"
+        }
+      }
     }
   ],
   "total_count": 8,
@@ -969,33 +1000,45 @@ ORDER BY p.stock_quantity ASC, p.name ASC
 
 ---
 
-#### inventory_repo::list_movements
+#### inventory_repo::list_history_movements / list_history_counts
 
-**関数要求**: 商品別の在庫変動履歴をフィルタ付きでページング取得する
+**関数要求**: 商品別の在庫変動の履歴の入力（movement と計数）を絞り込みの後で読む。並べない（並び・件数・ページは §23.10 の BIZ）
 
-**シグネチャ**:
+**シグネチャ**（どちらも `pub(crate)`。BIZ の `list_movements` だけが呼ぶ）:
 ```
-fn list_movements(
+fn list_history_movements(
     conn: &DbConnection,
     query: &MovementQuery,
-) -> Result<PaginatedResult<MovementRecord>, DbError>
+) -> Result<Vec<HistoryMovementRow>, DbError>   // MovementRecord（source は None）・business_date・settlement_no・initial_stock
+
+fn list_history_counts(
+    conn: &DbConnection,
+    query: &MovementQuery,
+) -> Result<Vec<HistoryCountRow>, DbError>      // id・count_value・fresh・business_date・settlement_no・counted_at・stock_unit・stocktake_id
 ```
 
 **SQL概要**:
 ```sql
-SELECT id, product_code, movement_type, quantity, stock_after,
-       reference_type, reference_id, note, created_at
+SELECT id, product_code, movement_type, quantity, stock_after, reference_type,
+       reference_id, note, created_at, business_date, settlement_no,
+       reference_type IS NULL AND movement_type = 'receiving'   -- 初期在庫の印（inventory_repo の 1 つの定数）
 FROM inventory_movements
-WHERE product_code = ?1
-  AND is_voided = 0
-  [AND created_at >= ?N]       -- date_from
-  [AND created_at <= ?N]       -- date_to（末尾に'T23:59:59'を付与）
-  [AND movement_type = ?N]     -- movement_type フィルタ
-ORDER BY created_at DESC, id DESC
-LIMIT ?N OFFSET ?N
+WHERE product_code = ?1 AND is_voided = 0
+  AND (?2 IS NULL OR business_date >= ?2) AND (?3 IS NULL OR business_date <= ?3)   -- date_from・date_to
+  AND (?4 IS NULL OR movement_type = ?4)                                             -- movement_type
+
+SELECT sc.id, sc.count_value, sc.count_kind, sc.business_date, sc.settlement_no,
+       sc.counted_at, p.stock_unit, si.stocktake_id
+FROM stock_counts sc
+JOIN products p ON p.product_code = sc.product_code
+LEFT JOIN stocktake_items si ON si.id = sc.stocktake_item_id
+WHERE sc.product_code = ?1
+  AND (?2 IS NULL OR sc.business_date >= ?2) AND (?3 IS NULL OR sc.business_date <= ?3)
 ```
 
-**MovementQuery / MovementRecord / MovementSourceLink 型定義**: inventory_repo に配置。CMD層は biz/mod.rs 経由で re-export されたものを使用する。`MovementRecord.source` は BIZ層で付与するため、IO層のSQL select対象には含めない。
+計数を含めるか（`movement_type` が None か `stocktake` のときだけ）は BIZ が決め、含めないときは `list_history_counts` を呼ばない。
+
+**MovementQuery / MovementRecord / MovementSourceLink 型定義**: inventory_repo に配置。CMD層は biz/mod.rs 経由で re-export されたものを使用する。`MovementRecord.source` は BIZ層で付与するため、IO層のSQL select対象には含めない。`StockHistoryItem`・`StockHistoryKind`・`StockCountHistory` は BIZ（`inventory_service`）に置く（`count_kind` が BIZ の生成型 `StockCountKind` のため）。
 
 ---
 
@@ -1053,11 +1096,11 @@ fn get_disposal_record(
     record_id: i64,
 ) -> Result<DisposalRecordDetail, BizError>
 
-// 在庫変動履歴
+// 在庫変動の履歴（movement と計数）
 fn list_movements(
     conn: &DbConnection,
     query: &MovementQuery,
-) -> Result<PaginatedResult<MovementRecord>, BizError>
+) -> Result<PaginatedResult<StockHistoryItem>, BizError>
 ```
 
 各関数の処理:
@@ -1065,7 +1108,7 @@ fn list_movements(
 2. 対応するrepo関数を呼び出し
 3. `DbError` → `BizError::DatabaseError` に変換して返す
 
-`list_movements` は repo から得た movement 行に対して `reference_type/reference_id` を見て `source` を補完する。source 補完に失敗しても一覧取得全体をエラーにはしない。
+`list_movements` は、ページの検査 → 日付の検査（`validate_business_date`）→ §23.9 の 2 つの読取り（計数は種別が None か `stocktake` のときだけ）→ 鍵で並べる（§23.8）→ 件数 → ページを切る → `source` を補う（movement は `reference_type/reference_id` から、計数は `stocktake_id` から棚卸しの行で）の順に処理する。source を解決できない行も一覧に残し（`source=None`）、一覧取得全体をエラーにはしない。
 
 #### product_service に追加する関数
 

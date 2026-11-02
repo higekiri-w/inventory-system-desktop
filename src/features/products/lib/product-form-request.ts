@@ -10,7 +10,7 @@ import type {
   ProductUpdateRequest_Deserialize,
   ProductWithRelations,
 } from "@/lib/bindings";
-import { formatStockDisplay } from "@/features/stock-inquiry/lib/format-stock-display";
+import { formatStockOrRange } from "@/features/stocktake/lib/stocktake-formatters";
 import {
   formatCostInput,
   isLengthUnit,
@@ -101,8 +101,14 @@ export function productToFormValues(product: ProductWithRelations): ProductFormV
     costPrice: formatCostInput(product.cost_price_centi),
     taxRate: product.tax_rate === "8" || product.tax_rate === "0" ? product.tax_rate : "10",
     stockUnit: product.stock_unit,
-    // 修正の画面では read-only の「現在庫」として単位つきで出す（検証も送信もしない）
-    initialStock: formatStockDisplay(product.stock_quantity, product.stock_unit),
+    // 修正の画面では read-only の「現在庫」として単位つきで出す（検証も送信もしない）。
+    // 要再確認なら範囲（b1 の formatStockOrRange。51 の「在庫数の表示」）
+    initialStock: formatStockOrRange({
+      stock: product.stock_quantity,
+      stock_range_low: product.stock_range_low,
+      stock_range_high: product.stock_range_high,
+      stock_unit: product.stock_unit,
+    }),
     makerCode: product.maker_code ?? "",
     supplierId: product.supplier_id,
     posStockSync: product.pos_stock_sync,
@@ -167,6 +173,8 @@ export function buildCreateProductRequest(
       supplier_id: values.supplierId,
       pos_stock_sync: values.posStockSync,
       plu_target: values.pluTarget,
+      // UI-01b-D26: true は JAN を他の商品が使っているときのダイアログからの送り直しだけ
+      shared_jan_custom_code: false,
     },
     errors,
   };

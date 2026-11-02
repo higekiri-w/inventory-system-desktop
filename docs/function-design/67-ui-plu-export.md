@@ -75,7 +75,7 @@ function PluExportPage(): JSX.Element
 | `saved` | PLUファイル保存済み、まだ未反映解除していない | 再保存、Diff再生成、書出し済み確認 |
 | `restored_pending` | 画面再表示時に保存済み未確認状態を復元した | 書出し済み確認、破棄して再書出し |
 | `confirming_exported` | `confirm_plu_export_saved` 実行中 | 操作disabled |
-| `confirmed` | app-side exported state更新済み | 差分一覧再取得、商品一覧へ戻る、PCツール手順確認 |
+| `confirmed` | app-side exported state更新済み | 差分一覧再取得、商品と在庫へ戻る（D-138 の後。proposed・未実装、今の build に戻る導線は無い）、PCツール手順確認 |
 | `error` | prepare/save/confirm 失敗 | 再試行、戻る |
 
 保存キャンセルは `idle` または `saved` に戻す。保存キャンセルと保存失敗は `confirm_plu_export_saved` を呼ばない。
@@ -150,7 +150,7 @@ function PluExportPage(): JSX.Element
 
 ## 67.11 Error / Recovery
 
-- Diff対象0件: `listPluDirty` が 0 なら prepareを呼ばず、空状態で「差分はありません」を表示する。Full書出しは選べる
+- Diff対象0件: `listPluDirty` が 0 なら prepareを呼ばず、空状態で「PLU書出しが必要な商品はありません。」を表示する（何が無いかを言う、DSR-11。2026-10-24 に今の build の文へ合わせた、D-138 の design lane の X-06）。Full書出しは選べる
 - prepare validation error: Alertで表示し、差分一覧へ戻れる
 - 未照合: `register_snapshot_required` を表示し、売上データ取込みへの導線へフォーカスを移す
 - JANなし / 13桁以外 / チェックディジット不正 / 同一JAN価格不一致 / `no_free_slot`: prepareは失敗せず、該当商品を `excluded`（要修正一覧）として理由付きで表示する。既存 slot は維持し、今回のファイルには含めない

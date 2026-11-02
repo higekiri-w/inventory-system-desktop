@@ -191,8 +191,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // app_data_dir: tauri.conf.json の identifier から自動解決
-            // Linux: ~/.local/share/com.kosei.inventory/
-            // Windows: C:\Users\{user}\AppData\Roaming\com.kosei.inventory\
+            // Linux: ~/.local/share/com.inventory-system.desktop/
+            // Windows: C:\Users\{user}\AppData\Roaming\com.inventory-system.desktop\
             let app_data = run_startup_step(
                 StartupFailureKind::AppDataDir,
                 || app.path().app_data_dir(),
@@ -261,9 +261,9 @@ pub fn run() {
 - Tauri 2.0 の setup hook 内で `app.path().app_data_dir()` を使用する
 - setup hook はウィンドウ作成前に実行される（Tauri公式: "Runs before the main loop, so no windows are yet created"）
 - `dirs` クレートの追加は不要。Tauri のパス解決を使うことでパスの一貫性を保つ
-- `tauri.conf.json` の `identifier: "com.kosei.inventory"` からパスが自動解決される
-  - Linux: `~/.local/share/com.kosei.inventory/`
-  - Windows: `C:\Users\{user}\AppData\Roaming\com.kosei.inventory\`
+- `tauri.conf.json` の `identifier: "com.inventory-system.desktop"` からパスが自動解決される
+  - Linux: `~/.local/share/com.inventory-system.desktop/`
+  - Windows: `C:\Users\{user}\AppData\Roaming\com.inventory-system.desktop\`
 
 **DB初期化パスの修正（同時実施）**:
 - 変更前: `"inventory.db"`（相対パス。CWD依存で不安定）

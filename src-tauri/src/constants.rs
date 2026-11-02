@@ -67,6 +67,12 @@ pub const MAX_COST_PRICE_CENTI: i64 = 99_999_999;
 /// JavaScript の number で正確に運べる整数の絶対値の上限（2^53 - 1）
 pub const MAX_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 
+/// レジの日報（Z001・Z002・Z005）の金額・件数の絶対値の上限（IO-07-D6、D-142）
+pub const MAX_DAILY_REPORT_INTEGER: i64 = 9_999_999_999;
+
+/// レジの日報の個数（100 倍の整数）の絶対値の上限。`9999999.99`（IO-07-D6、D-142）
+pub const MAX_DAILY_REPORT_QUANTITY_HUNDREDTHS: i64 = 999_999_999;
+
 // --- プレビューキャッシュ ---
 /// preview_cache の最大エントリ数（FIFO: 上限超過時に最古を削除）
 pub const PREVIEW_CACHE_LIMIT: usize = 10;

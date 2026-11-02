@@ -11,6 +11,8 @@
 use super::migration_tx;
 use super::schema_v1;
 use super::schema_v10;
+use super::schema_v11;
+use super::schema_v12;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -90,6 +92,16 @@ fn migrations() -> Vec<Migration> {
             description: "原価を1/100円の列へ、単位から巻・cmを外す（作り直しの起点）",
             kind: MigrationKind::Custom(schema_v10::apply_v10_cost_centi_origin),
         },
+        Migration {
+            version: 11,
+            description: "Z004の精算の鍵・売上の連動・棚卸しの完了の列（D-118 (b1)）",
+            kind: MigrationKind::Custom(schema_v11::apply_v11_z004_settlement_key),
+        },
+        Migration {
+            version: 12,
+            description: "日報の束の精算回数の列（daily_report_imports.settlement_no）",
+            kind: MigrationKind::Sql(schema_v12::get_v12_daily_report_settlement_no_schema()),
+        },
     ]
 }
 
@@ -106,7 +118,7 @@ pub(crate) fn app_max_version() -> i64 {
 ///
 /// `schema_versions` 表が無ければ版 0。存在の確認・読取りのその他の失敗は
 /// `MigrationFailed` にし、版 0 に倒さない。
-fn read_current_version_without_ddl(conn: &Connection) -> Result<i64, DbError> {
+pub(crate) fn read_current_version_without_ddl(conn: &Connection) -> Result<i64, DbError> {
     let exists: bool = conn
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_versions')",
@@ -412,8 +424,12 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .unwrap();
+        let schema_v11 = include_str!("schema_v11.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
         for source in [
-            migration, schema_v2, schema_v3, schema_v8, schema_v9, schema_v10,
+            migration, schema_v2, schema_v3, schema_v8, schema_v9, schema_v10, schema_v11,
         ] {
             assert!(!source.contains("execute_batch(\"ROLLBACK;\").ok()"));
             assert!(!source.contains("execute_batch(\"COMMIT;\")"));
@@ -424,12 +440,14 @@ mod tests {
         assert_eq!(schema_v8.matches("rollback_after_error").count(), 1);
         assert_eq!(schema_v9.matches("rollback_after_error").count(), 1);
         assert_eq!(schema_v10.matches("rollback_after_error").count(), 1);
+        assert_eq!(schema_v11.matches("rollback_after_error").count(), 1);
         assert_eq!(migration.matches("commit_transaction").count(), 1);
         assert_eq!(schema_v2.matches("commit_transaction").count(), 1);
         assert_eq!(schema_v3.matches("commit_transaction").count(), 1);
         assert_eq!(schema_v8.matches("commit_transaction").count(), 1);
         assert_eq!(schema_v9.matches("commit_transaction").count(), 1);
         assert_eq!(schema_v10.matches("commit_transaction").count(), 1);
+        assert_eq!(schema_v11.matches("commit_transaction").count(), 1);
     }
 
     // -----------------------------------------------------------------------
@@ -754,7 +772,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(v1, 10);
+        assert_eq!(v1, super::app_max_version()); // 最新の版（b1 Matrix T1）
         drop(conn);
 
         // 2回目（同じDBに対して再初期化）
@@ -764,15 +782,16 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(v2, 10, "バージョンが変わってはいけない");
+        assert_eq!(v2, v1, "バージョンが変わってはいけない");
 
-        // schema_versionsにレコードが10件であること（v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10）
+        // schema_versions のレコードは版ごとに 1 件（v1 から最新の版まで。b1 Matrix T1）
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(
-            count, 10,
-            "マイグレーションレコードは10件（v1+v2+v3+v4+v5+v6+v7+v8+v9+v10）"
+            count,
+            super::app_max_version(),
+            "マイグレーションレコードは v1 から最新の版まで 1 件ずつ"
         );
     }
 
@@ -843,7 +862,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, super::app_max_version()); // 最新の版（b1 Matrix T1）
 
         for table_name in &[
             "daily_report_imports",
@@ -907,7 +926,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!((max_version, version_count), (10, 10));
+        assert_eq!(
+            (max_version, version_count),
+            (super::app_max_version(), super::app_max_version())
+        );
     }
 
     #[test]
@@ -923,7 +945,7 @@ mod tests {
         let slot_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM plu_slots", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(max_version, 10);
+        assert_eq!(max_version, super::app_max_version()); // 最新の版（b1 Matrix T1）
         assert_eq!(slot_count, 4_784);
     }
 
@@ -1545,7 +1567,10 @@ mod tests {
         // REQ-903 / MNT-03-D13: 新規の DB（v1 から v8）と行 0 の v7 の DB で成功する
         let dir = tempfile::tempdir().unwrap();
         let conn = init_database(dir.path().join("fresh.db").to_str().unwrap()).unwrap();
-        assert_eq!(max_version_and_count(&conn), (10, 10));
+        assert_eq!(
+            max_version_and_count(&conn),
+            (super::app_max_version(), super::app_max_version())
+        );
         // v8 の CHECK（12 個）は v8 まで当てた新規の DB で確かめる。最新の版の CHECK は vB の test（Matrix T1 (c)）
         let conn = Connection::open(dir.path().join("fresh-v8.db")).unwrap();
         super::migrate_up_to(&conn, 8).unwrap();
@@ -1684,7 +1709,10 @@ mod tests {
             drop(raw);
             let conn = init_database(dir.path().join("test.db").to_str().unwrap()).unwrap();
             assert_eq!(foreign_keys(&conn), 1);
-            assert_eq!(max_version_and_count(&conn), (10, 10));
+            assert_eq!(
+                max_version_and_count(&conn),
+                (super::app_max_version(), super::app_max_version())
+            );
             assert_eq!(
                 schema_version_rows(&conn)
                     .iter()
@@ -1987,36 +2015,74 @@ mod tests {
     }
 
     /// departments初期データ（21部門）が正しく投入されていること
+    /// REQ-903: 期待は master-tables §2「初期データ（全21部門）」の表から写す（schema_v1.rs から写さない）。
+    /// code_prefix は SQL の NULL（None）と空文字（Some("")）を区別して比べる。
     #[test]
     fn test_initial_departments_req903_data() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let conn = init_database(db_path.to_str().unwrap()).unwrap();
 
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM departments", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 21, "部門は21件であるべき");
+        // (id, name = z005_name, code_prefix)。next_seq は全行 1
+        let expected: [(i64, &str, Option<&str>); 21] = [
+            (1, "その他小物", Some("KM")),
+            (2, "ヘア雑貨", Some("HZ")),
+            (3, "毛糸", None),
+            (4, "手芸等材料", Some("SY")),
+            (5, "他化粧品", None),
+            (6, "バッグ", Some("BG")),
+            (7, "エプロン", Some("AP")),
+            (8, "布", Some("NU")),
+            (9, "糸", None),
+            (10, "ゴム", Some("GM")),
+            (11, "食品", None),
+            (12, "宅急便", None),
+            (13, "トワニー", None),
+            (14, "雑貨", Some("ZK")),
+            (15, "帽子", None),
+            (16, "ビューティ関連", None),
+            (17, "本", None),
+            (18, "ボタン", Some("BT")),
+            (19, "ファスナー", Some("FS")),
+            (20, "針", None),
+            (21, "ノンリンク", None),
+        ];
+        let expected: Vec<(i64, String, String, Option<String>, i64)> = expected
+            .iter()
+            .map(|(id, name, prefix)| {
+                (
+                    *id,
+                    name.to_string(),
+                    name.to_string(),
+                    prefix.map(str::to_string),
+                    1,
+                )
+            })
+            .collect();
 
-        // code_prefixが設定されている部門の確認
-        let hz_prefix: Option<String> = conn
-            .query_row(
-                "SELECT code_prefix FROM departments WHERE name = 'ヘア雑貨'",
-                [],
-                |row| row.get(0),
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, name, z005_name, code_prefix, next_seq FROM departments ORDER BY id",
             )
             .unwrap();
-        assert_eq!(hz_prefix, Some("HZ".to_string()));
-
-        // code_prefixがNULLの部門の確認
-        let yarn_prefix: Option<String> = conn
-            .query_row(
-                "SELECT code_prefix FROM departments WHERE name = '毛糸'",
-                [],
-                |row| row.get(0),
-            )
+        let actual: Vec<(i64, String, String, Option<String>, i64)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(yarn_prefix, None, "毛糸の code_prefix は NULL");
+
+        assert_eq!(
+            actual, expected,
+            "departments の初期データは master-tables §2 の 21 行と一致する"
+        );
     }
 
     /// app_settings初期データが正しく投入されていること

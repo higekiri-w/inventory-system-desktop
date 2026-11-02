@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import dateTimeSource from "./IntegrityCheckPage.tsx?raw";
 
-import { commands, type IntegrityMismatch, type StockCopy } from "@/lib/bindings";
+import {
+  commands,
+  type IntegrityMismatch,
+  type SharedJanConflict,
+  type StockCopy,
+} from "@/lib/bindings";
 import { scrollPageToTop } from "@/lib/page-scroll";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { renderWithRouter } from "@/test/render-with-router";
@@ -41,13 +46,14 @@ function mismatch(code: string, stock = 10, derived = 7): IntegrityMismatch {
   };
 }
 
-function checkResult(items: IntegrityMismatch[]) {
+function checkResult(items: IntegrityMismatch[], sharedJanConflicts: SharedJanConflict[] = []) {
   return {
     status: "ok" as const,
     data: {
       mismatches: items,
       mismatch_count: items.length,
       checked_count: Math.max(items.length, 5),
+      shared_jan_conflicts: sharedJanConflicts,
     },
   };
 }
@@ -128,6 +134,49 @@ describe("UI-13 REQ-904 在庫整合性検証", () => {
     expect(screen.queryByText("差異はありません")).not.toBeInTheDocument();
     expect(screen.queryByText("差異が見つかりました")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "補正を確定" })).toBeNull();
+  });
+
+  it("U14 shared jan conflicts are listed separately", async () => {
+    // 75 の D-118 の節（ADR D10）: 共有 JAN の組は差異の一覧と別の欄。補正の操作を持たない
+    runIntegrityCheck.mockResolvedValue(
+      checkResult(
+        [],
+        [
+          { jan_code: "4901234567894", product_codes: ["SYN-A01", "SYN-A02"] },
+          { jan_code: "4909876543212", product_codes: ["SYN-B01", "SYN-B02", "SYN-B03"] },
+        ],
+      ),
+    );
+    renderPage();
+    await runCheck();
+
+    const conflicts = await screen.findByRole("alert", { name: "共有 JAN の商品" });
+    expect(conflicts).toHaveAttribute("data-variant", "warning");
+    expect(
+      within(conflicts).getByText(
+        "在庫連動の商品と同じ JAN の商品があります。レジの売上で在庫が減りません。どちらかの商品の JAN を直すか、在庫連動を外してください。",
+      ),
+    ).toBeInTheDocument();
+    const rows = within(conflicts).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "JAN 4901234567894: SYN-A01、SYN-A02",
+      "JAN 4909876543212: SYN-B01、SYN-B02、SYN-B03",
+    ]);
+    expect(conflicts.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    expect(within(conflicts).queryByRole("button")).toBeNull();
+    // 写しの差異が無い表示は組の欄と別に出る
+    const noDiff = screen.getByText("差異はありません").closest('[data-slot="alert"]');
+    expect(noDiff).not.toBeNull();
+    expect(conflicts.contains(noDiff)).toBe(false);
+    expect(screen.queryByRole("button", { name: "補正を確定" })).toBeNull();
+  });
+
+  it("U14 no shared jan block when there are no conflicts", async () => {
+    runIntegrityCheck.mockResolvedValue(checkResult([]));
+    renderPage();
+    await runCheck();
+    expect(await screen.findByText("差異はありません")).toBeInTheDocument();
+    expect(screen.queryByText("在庫連動の商品と同じ JAN の商品があります")).toBeNull();
   });
 
   it("test_integrity_page_req904_remount_resets_to_idle", async () => {
@@ -404,6 +453,7 @@ describe("UI-13 REQ-904 在庫整合性検証", () => {
           message: "合成チェックエラー。もう一度お試しください",
           field: null,
           error_id: "E-20260726-204901-a1b2",
+          stocktake_recovery: null,
         },
       })
       .mockResolvedValueOnce(checkResult([mismatch("SYN-001")]));
@@ -415,6 +465,7 @@ describe("UI-13 REQ-904 在庫整合性検証", () => {
           message: "合成補正エラー。もう一度お試しください",
           field: null,
           error_id: "E-20260726-204902-c3d4",
+          stocktake_recovery: null,
         },
       })
       .mockResolvedValueOnce(fixResult());
@@ -743,7 +794,13 @@ describe("UI-13 REQ-904 写しの 4 項目と記録から求め直した値", ()
       if (fixRows === "error")
         return Promise.resolve({
           status: "error" as const,
-          error: { kind: "internal", message: "合成の読取りエラー", field: null, error_id: null },
+          error: {
+            kind: "internal",
+            message: "合成の読取りエラー",
+            field: null,
+            error_id: null,
+            stocktake_recovery: null,
+          },
         });
       return Promise.resolve(logsResult(fixRows));
     });

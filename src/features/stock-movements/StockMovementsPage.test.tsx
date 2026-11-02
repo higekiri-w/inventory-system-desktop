@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState, type ReactNode } from "react";
 
 import { commands } from "@/lib/bindings";
-import type { MovementRecord, StockDetail } from "@/lib/bindings";
+import type { MovementRecord, StockDetail, StockHistoryItem } from "@/lib/bindings";
 import { scrollPageToTop } from "@/lib/page-scroll";
 import { stockInquirySearchSchema } from "@/features/stock-inquiry/types";
 import { renderWithRouter } from "@/test/render-with-router";
@@ -18,12 +18,14 @@ vi.mock("@/lib/bindings", () => ({
   commands: {
     getStockDetail: vi.fn(),
     listMovements: vi.fn(),
+    listRecheckProducts: vi.fn(),
   },
 }));
 vi.mock("@/lib/page-scroll", () => ({ scrollPageToTop: vi.fn() }));
 
 const mockGetStockDetail = vi.mocked(commands.getStockDetail);
 const mockListMovements = vi.mocked(commands.listMovements);
+const mockListRecheckProducts = vi.mocked(commands.listRecheckProducts);
 const mockScrollPageToTop = vi.mocked(scrollPageToTop);
 
 function renderWithClient(ui: ReactNode) {
@@ -57,6 +59,9 @@ function makeStockDetail(overrides: Partial<StockDetail> = {}): StockDetail {
       department_name: "ボタン",
       supplier_name: null,
       plu_memory_no: null,
+      stock_recheck: false,
+      stock_range_low: null,
+      stock_range_high: null,
     },
     last_receiving_date: "2026-06-01",
     last_sale_date: "2026-06-20",
@@ -80,9 +85,22 @@ function makeMovement(overrides: Partial<MovementRecord> = {}): MovementRecord {
   };
 }
 
+/// T2: listMovements の行は StockHistoryItem（movement の行。D-118 b2）
+function movementItem(movement: MovementRecord): StockHistoryItem {
+  return {
+    kind: "movement",
+    business_date: movement.created_at.slice(0, 10),
+    settlement_no: null,
+    saved_at: movement.created_at,
+    movement,
+    count: null,
+  };
+}
+
 beforeEach(() => {
   mockGetStockDetail.mockReset();
   mockListMovements.mockReset();
+  mockListRecheckProducts.mockReset();
   mockScrollPageToTop.mockReset();
 });
 
@@ -91,7 +109,7 @@ describe("StockMovementsPage (UI-06c)", () => {
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 2, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 2, per_page: 50 },
     });
 
     renderWithClient(
@@ -127,11 +145,17 @@ describe("StockMovementsPage (UI-06c)", () => {
   it("REQ-303: 商品情報取得失敗でもmovement listを表示する", async () => {
     mockGetStockDetail.mockResolvedValue({
       status: "error",
-      error: { kind: "not_found", message: "商品が見つかりません", field: null, error_id: null },
+      error: {
+        kind: "not_found",
+        message: "商品が見つかりません",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 1, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 1, per_page: 50 },
     });
 
     renderWithClient(
@@ -224,7 +248,7 @@ describe("StockMovementsPage (UI-06c)", () => {
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 1, per_page: 200 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 1, per_page: 200 },
     });
 
     function Harness() {
@@ -272,7 +296,7 @@ describe("StockMovementsPage Lane 4 S1d/S3d: frame color + top summary", () => {
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 1, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 1, per_page: 50 },
     });
     renderWithClient(
       <StockMovementsPage productCode="BT0002" search={{}} onSearchChange={vi.fn()} />,
@@ -353,7 +377,7 @@ describe("StockMovementsPage perPage scroll（UI-06c）", () => {
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 120, page: 2, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 120, page: 2, per_page: 50 },
     });
     renderWithClient(
       <StockMovementsPage productCode="BT0002" search={{ page: 2 }} onSearchChange={vi.fn()} />,
@@ -445,7 +469,7 @@ describe("StockMovementsPage SPEC-UI06C-D9-R1（在庫照会への戻り導線�
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 2, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 2, per_page: 50 },
     });
     renderWithClient(
       <StockMovementsPage
@@ -513,7 +537,7 @@ describe("StockMovementsPage SPEC-NAV-RETURN-TYPES-2026-09-25 C4（detailReturnT
     mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
     mockListMovements.mockResolvedValue({
       status: "ok",
-      data: { items: [makeMovement()], total_count: 1, page: 1, per_page: 50 },
+      data: { items: [movementItem(makeMovement())], total_count: 1, page: 1, per_page: 50 },
     });
     const { unmount } = renderWithClient(
       <StockMovementsPage productCode="BT0002" search={search} onSearchChange={vi.fn()} />,
@@ -607,7 +631,7 @@ it("UI-06c-D5: m の商品の在庫変動は増減 +2.5 m・変動後在庫 27.5
   mockListMovements.mockResolvedValue({
     status: "ok",
     data: {
-      items: [makeMovement({ quantity: 250, stock_after: 2750 })],
+      items: [movementItem(makeMovement({ quantity: 250, stock_after: 2750 }))],
       total_count: 1,
       page: 1,
       per_page: 50,
@@ -620,4 +644,125 @@ it("UI-06c-D5: m の商品の在庫変動は増減 +2.5 m・変動後在庫 27.5
   expect(await screen.findByText("+2.5 m")).toBeInTheDocument();
   // 現在庫（商品の欄）と変動後在庫（表）の 2 か所
   expect(screen.getAllByText("27.5 m")).toHaveLength(2);
+});
+
+describe("StockMovementsPage の見出しと履歴（D-118 b2、66）", () => {
+  it("U5 header current stock shows range and recheck badge in meters", async () => {
+    // REQ-303 / SPEC-STK-CNT-D3・SPEC-UNIT-D3（Matrix U5）: 見出しの「現在庫」に範囲（長さは m）と badge、その下に案内
+    const detail = makeStockDetail();
+    mockGetStockDetail.mockResolvedValue({
+      status: "ok",
+      data: {
+        ...detail,
+        product: {
+          ...detail.product,
+          stock_unit: "m",
+          stock_quantity: 450,
+          stock_recheck: true,
+          stock_range_low: 400,
+          stock_range_high: 450,
+        },
+      },
+    });
+    mockListMovements.mockResolvedValue({
+      status: "ok",
+      data: { items: [], total_count: 0, page: 1, per_page: 50 },
+    });
+    mockListRecheckProducts.mockResolvedValue({ status: "ok", data: [] });
+
+    renderWithClient(
+      <StockMovementsPage productCode="BT0002" search={{}} onSearchChange={vi.fn()} />,
+    );
+
+    const header = (await screen.findByText("現在庫")).parentElement;
+    if (header === null) throw new Error("header not found");
+    expect(header).toHaveTextContent("4〜4.5 m");
+    expect(header).toHaveTextContent("要再確認");
+    expect(header).not.toHaveTextContent("400");
+    expect(await screen.findByText("数え直しが必要です")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "棚卸しの画面で入れ直す" })).toBeInTheDocument();
+  });
+
+  it("U6 count row keeps meters from its stock_unit when product detail fails", async () => {
+    // REQ-303 / UI-06c-D3（Matrix U6）: 商品情報の取得だけが失敗しても、計数の行は行の単位で「4.5 m」
+    mockGetStockDetail.mockResolvedValue({
+      status: "error",
+      error: {
+        kind: "internal",
+        message: "取得に失敗しました",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+    mockListMovements.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            kind: "count",
+            business_date: "2026-06-27",
+            settlement_no: null,
+            saved_at: "2026-06-27T10:11:12",
+            movement: null,
+            count: {
+              id: 1,
+              count_value: 450,
+              stock_unit: "m",
+              count_kind: "default",
+              stocktake_id: null,
+              source: null,
+            },
+          },
+        ],
+        total_count: 1,
+        page: 1,
+        per_page: 50,
+      },
+    });
+
+    renderWithClient(
+      <StockMovementsPage productCode="BT0002" search={{}} onSearchChange={vi.fn()} />,
+    );
+
+    // 商品情報の取得は hook の retry 1 の後に失敗になる（今の部分障害の test と同じ待ち方）
+    await waitFor(
+      () => {
+        expect(screen.getByText("商品情報の取得に失敗しました")).toBeInTheDocument();
+      },
+      { timeout: 5000 },
+    );
+    expect(screen.getByText("数を確認（4.5 m、2026-06-27）")).toBeInTheDocument();
+  });
+
+  it("U9 history rows render in server order", async () => {
+    // REQ-303（Matrix U9）: 画面は BIZ の順のまま描く（業務日でも保存の時刻でも並べ直さない）
+    mockGetStockDetail.mockResolvedValue({ status: "ok", data: makeStockDetail() });
+    const row = (id: number, businessDate: string, savedAt: string): StockHistoryItem => ({
+      ...movementItem(makeMovement({ id, note: `行 ${String(id)}`, created_at: savedAt })),
+      business_date: businessDate,
+      saved_at: savedAt,
+    });
+    mockListMovements.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          row(1, "2026-06-02", "2026-06-10T09:00:00"),
+          row(2, "2026-06-03", "2026-06-12T09:00:00"),
+          row(3, "2026-06-01", "2026-06-11T09:00:00"),
+        ],
+        total_count: 3,
+        page: 1,
+        per_page: 50,
+      },
+    });
+
+    renderWithClient(
+      <StockMovementsPage productCode="BT0002" search={{}} onSearchChange={vi.fn()} />,
+    );
+
+    await screen.findByText("行 1");
+    const notes = screen.getAllByText(/^行 \d$/).map((element) => element.textContent);
+    expect(notes).toEqual(["行 1", "行 2", "行 3"]);
+  });
 });

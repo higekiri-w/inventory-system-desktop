@@ -9,7 +9,7 @@ use crate::biz::{
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
 use crate::mnt::backup;
 use base64::{engine::general_purpose, Engine as _};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
 
 // ---------------------------------------------------------------------------
@@ -33,6 +33,11 @@ pub struct LogQuery {
 
 #[derive(Debug, serde::Deserialize, specta::Type)]
 pub struct RestoreBackupRequest {
+    pub backup_path: String,
+}
+
+#[derive(Debug, serde::Deserialize, specta::Type)]
+pub struct InspectBackupRequest {
     pub backup_path: String,
 }
 
@@ -61,6 +66,43 @@ fn get_backup_dir<R: tauri::Runtime>(
         .app_data_dir()
         .map_err(|e| CmdError::internal("アプリデータの保存先を取得できませんでした", e))?;
     backup::resolve_backup_dir(conn, &app_data).map_err(db_err)
+}
+
+/// 利用者が直せる入力の誤り（固定の文）
+fn validation(message: &str) -> CmdError {
+    CmdError {
+        kind: CmdErrorKind::Validation,
+        message: message.to_string(),
+        field: None,
+        error_id: None,
+        stocktake_recovery: None,
+        related_csv_import_id: None,
+    }
+}
+
+/// 控えを読めないときの固定の文（43 §43.8.5 のエラーの写像）
+const UNREADABLE_BACKUP: &str = "この控えを読めませんでした。別の控えを選んでください。";
+
+/// 書く先の固定の失敗を 43 §43.6 の固定の文へ写す
+fn backup_dir_error(error: backup::BackupDirError) -> CmdError {
+    match error {
+        backup::BackupDirError::Unpinnable => validation(
+            "この保存先は PC の中の folder として確かめられません。PC の中の folder を選び直してください",
+        ),
+        backup::BackupDirError::RegisterSd { sd_folder } => validation(&format!(
+            "この保存先はレジの SD カードの上にあります（{} が見つかりました）。レジの SD の写しを PC に置いているなら、写しを drive の直下でなく folder の中へ移してください。そうでなければ「保存先を選ぶ」で PC の中の別の folder を選び直してください",
+            sd_folder.display()
+        )),
+    }
+}
+
+/// 書く先を確かめてから作る（43 §43.6 手順 3・4。MNT の中で同じ固定と判定をもう一度行う）
+fn create_backup_at(
+    conn: &DbConnection,
+    backup_dir: &Path,
+) -> Result<backup::BackupResult, CmdError> {
+    backup::pin_backup_dir(backup_dir).map_err(backup_dir_error)?;
+    backup::create_backup(conn, backup_dir).map_err(db_err)
 }
 
 /// DbError → CmdError::internal 変換ヘルパー
@@ -189,7 +231,7 @@ pub fn create_backup(
         .lock()
         .map_err(|error| CmdError::internal("DB接続エラー", error))?;
     let backup_dir = get_backup_dir(&conn, &app_handle)?;
-    backup::create_backup(&conn, &backup_dir).map_err(db_err)
+    create_backup_at(&conn, &backup_dir)
 }
 
 /// 自動バックアップチェック（§43.7）
@@ -241,6 +283,21 @@ pub fn list_backups(
     let backup_dir = get_backup_dir(&conn, &app_handle)?;
     backup::list_backups(&backup_dir)
         .map_err(|e| CmdError::internal("バックアップ一覧の取得でエラーが発生しました", e))
+}
+
+/// 控えを変えずに確かめる（§43.8.5、71 §71.12）
+///
+/// DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
+#[tauri::command(async)]
+#[specta::specta]
+pub fn inspect_backup(request: InspectBackupRequest) -> Result<backup::BackupInspection, CmdError> {
+    if request.backup_path.is_empty() {
+        return Err(validation(UNREADABLE_BACKUP));
+    }
+    backup::inspect_backup(Path::new(&request.backup_path)).map_err(|error| {
+        tracing::warn!(error = %error, "控えの確かめに失敗");
+        validation(UNREADABLE_BACKUP)
+    })
 }
 
 /// バックアップから復元する（§43.9）
@@ -312,6 +369,8 @@ fn save_receipt_image_with_runtime<R: tauri::Runtime>(
             message: "画像データが不正です".to_string(),
             field: None,
             error_id: None,
+            stocktake_recovery: None,
+            related_csv_import_id: None,
         })?;
 
     // 2. app_data_dir 取得
@@ -359,6 +418,7 @@ mod tests {
             db: Mutex::new(conn),
             preview_cache: Mutex::new(HashMap::new()),
             daily_report_preview_cache: Mutex::new(HashMap::new()),
+            register_sd_scan_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -547,6 +607,169 @@ mod tests {
             result,
             vec!["backup_create".to_string(), "z_unknown".to_string()]
         );
+    }
+
+    #[test]
+    fn test_create_backup_req901_d10_unpinnable_writes_nothing_and_names_cause() {
+        // REQ-901 / MNT-01-D10 / 43 §43.6: 固定できない保存先には書かず、手動の backup は原因を固定の文で名指す
+        let dir = tempfile::tempdir().unwrap();
+        let (_db_dir, conn) = setup_test_db();
+        let backup_dir = dir.path().join("backups");
+        std::fs::create_dir_all(&backup_dir).unwrap();
+        let old_date = (chrono::Local::now().date_naive() - chrono::Duration::days(10))
+            .format("%Y%m%d")
+            .to_string();
+        let old = backup_dir.join(format!("inventory_backup_{old_date}_120000.db"));
+        std::fs::write(&old, b"synthetic old backup").unwrap();
+        let names = |dir: &std::path::Path| {
+            let mut names: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            names.sort();
+            names
+        };
+        let before = names(&backup_dir);
+        {
+            let _hook = mnt_backup::set_step_hook(|step, _| match step {
+                "pin_to_volume" => Err("injected unpinnable".to_string()),
+                _ => Ok(()),
+            });
+            assert_eq!(
+                mnt_backup::pin_backup_dir(&backup_dir),
+                Err(mnt_backup::BackupDirError::Unpinnable)
+            );
+            assert!(matches!(
+                mnt_backup::create_backup(&conn, &backup_dir),
+                Err(DbError::QueryFailed(_))
+            ));
+            assert!(mnt_backup::cleanup_old_backups(&backup_dir, 3).is_err());
+            assert_eq!(names(&backup_dir), before, "書かない・消さない");
+
+            let error = create_backup_at(&conn, &backup_dir).unwrap_err();
+            assert_eq!(error.kind, CmdErrorKind::Validation);
+            assert_eq!(
+                error.message,
+                "この保存先は PC の中の folder として確かめられません。PC の中の folder を選び直してください"
+            );
+            assert_eq!(names(&backup_dir), before);
+        }
+
+        // レジの SD の上: 見つけた folder の path と直し方を名指す
+        let sd_root = tempfile::tempdir().unwrap();
+        let [casio, model] = crate::io::REGISTER_SD_FOLDER;
+        let sd_folder = sd_root.path().join(casio).join(model);
+        std::fs::create_dir_all(&sd_folder).unwrap();
+        let error = create_backup_at(&conn, &sd_root.path().join("backups")).unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+        assert_eq!(
+            error.message,
+            format!(
+                "この保存先はレジの SD カードの上にあります（{} が見つかりました）。レジの SD の写しを PC に置いているなら、写しを drive の直下でなく folder の中へ移してください。そうでなければ「保存先を選ぶ」で PC の中の別の folder を選び直してください",
+                sd_folder.display()
+            )
+        );
+        assert!(!sd_root.path().join("backups").exists());
+
+        // 書ける保存先は今までどおり作る
+        let ok_dir = tempfile::tempdir().unwrap();
+        let result = create_backup_at(&conn, &ok_dir.path().join("backups")).unwrap();
+        assert!(result.size_bytes > 0);
+    }
+
+    #[test]
+    fn test_inspect_backup_cmd_req901_maps_errors_to_validation() {
+        // REQ-901 / 43 §43.8.5: 空の入力と MNT の失敗は validation の固定の文。DB を使わず kind を足さない
+        let error = inspect_backup(InspectBackupRequest {
+            backup_path: String::new(),
+        })
+        .unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+
+        let dir = tempfile::tempdir().unwrap();
+        let garbage = dir.path().join("garbage.db");
+        std::fs::write(&garbage, vec![0x5Au8; 4096]).unwrap();
+        for path in [dir.path().join("missing.db"), garbage] {
+            let error = inspect_backup(InspectBackupRequest {
+                backup_path: path.to_string_lossy().into_owned(),
+            })
+            .unwrap_err();
+            assert_eq!(error.kind, CmdErrorKind::Validation);
+            assert_eq!(
+                error.message,
+                "この控えを読めませんでした。別の控えを選んでください。"
+            );
+            assert_eq!(error.error_id, None);
+        }
+
+        let (db_dir, conn) = setup_test_db();
+        let backup = mnt_backup::create_backup(&conn, &db_dir.path().join("backups")).unwrap();
+        let inspection = inspect_backup(InspectBackupRequest {
+            backup_path: backup.file_path,
+        })
+        .unwrap();
+        assert!(inspection.quick_check_ok && !inspection.newer_than_app);
+
+        // DB の Mutex を取らない（State を受けない）、CmdErrorKind の値を足さない
+        let file = syn::parse_file(include_str!("settings_cmd.rs")).unwrap();
+        let command = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == "inspect_backup" => Some(function),
+                _ => None,
+            })
+            .expect("inspect_backup command");
+        let inputs: Vec<String> = command
+            .sig
+            .inputs
+            .iter()
+            .map(|input| match input {
+                syn::FnArg::Typed(typed) => match typed.ty.as_ref() {
+                    syn::Type::Path(path) => path.path.segments.last().unwrap().ident.to_string(),
+                    _ => "other".to_string(),
+                },
+                syn::FnArg::Receiver(_) => "self".to_string(),
+            })
+            .collect();
+        assert_eq!(inputs, ["InspectBackupRequest"]);
+        let kinds = syn::parse_file(include_str!("mod.rs")).unwrap();
+        let variants = kinds
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Enum(item) if item.ident == "CmdErrorKind" => Some(item.variants.len()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(variants, 13);
+    }
+
+    #[test]
+    fn test_inspect_backup_cmd_req901_runs_off_main_thread() {
+        // REQ-901 / 43 §43.8.2「実行の thread」: D-114 の command は main thread で動かない
+        let file = syn::parse_file(include_str!("settings_cmd.rs")).unwrap();
+        // (b) が残りの 5 command をここに足す
+        let names = vec!["inspect_backup"];
+        for name in names {
+            let command = file
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{name} が無い"));
+            let async_attribute = command.attrs.iter().any(|attribute| {
+                attribute.path().segments.iter().map(|s| s.ident.to_string()).collect::<Vec<_>>()
+                    == ["tauri", "command"]
+                    && matches!(&attribute.meta, syn::Meta::List(list) if list.tokens.to_string() == "async")
+            });
+            assert!(
+                async_attribute || command.sig.asyncness.is_some(),
+                "{name} は #[tauri::command(async)] でない"
+            );
+        }
     }
 
     #[test]

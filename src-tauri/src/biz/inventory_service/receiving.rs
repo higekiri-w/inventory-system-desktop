@@ -226,7 +226,6 @@ pub fn create_receiving(
             &tx,
             &item.product_code,
             &req.receiving_date,
-            None,
             item.quantity,
             MovementType::Receiving,
             ReferenceType::ReceivingRecord,

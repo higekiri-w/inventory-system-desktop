@@ -193,7 +193,7 @@ consumerは日次`ProductTable`、月次`DepartmentTable`、
 - 状態が一覧の主情報なら独立した「状態列」を置く（DSR-04）
 - 行の識別が主で状態が従なら、商品名セル内の `Badge`（例: `廃番`）+ 行全体の `text-muted-foreground` で示す
 
-**バリエーション: 元記録リンク列**（PR #113/#115、canonical: `src/features/stock-movements/components/MovementTable.tsx`）: 在庫変動明細は `MovementTable{movements, returnTo?}` を在庫変動履歴 + 入出庫 4 詳細ページで共有する。`movement.source`（`{ label, route } | null`）が `null` なら「元記録なし」を表示し、値があれば returnTo 付きリンクで元業務記録の詳細へ遷移する。増減は矢印アイコン + 符号付き数値で示し、色のみに依存しない（DSR-08）。
+**バリエーション: 元記録リンク列**（PR #113/#115、canonical: `src/features/stock-movements/components/MovementTable.tsx`）: 在庫変動明細は、業務記録の詳細ページが `MovementTable{movements, returnTo?}`、在庫変動履歴が `StockHistoryTable`（D-118 の b2。movement と計数の行）を使い、元記録の欄（`MovementSourceLink`）と増減の欄（`MovementQuantity`）を `MovementTable.tsx` から共有する。`source`（`{ label, route } | null`。計数の行は `count.source`）が `null` なら「元記録なし」を表示し、値があれば returnTo 付きリンクで元業務記録の詳細へ遷移する。増減は矢印アイコン + 符号付き数値で示し、色のみに依存しない（DSR-08）。
 
 **バリエーション: 直近実績サマリテーブル**（PR #116）: 業務入力画面（入庫 / 返品・交換 / 手動販売 / 廃棄の 4 画面で確立）の下部に「直近の{業務名}」見出しと「すべての履歴を見る」（outline、`/inventory/records` へ recordType 付き遷移）を横並びで置き、直近 N 件テーブル（Skeleton / Error / Empty / データの 4 状態、パターン⑥）と各行の「詳細を見る」導線を付ける。直近リストの取得失敗時は「入力中の内容はそのままです。保存や商品追加は続けられます」のように業務継続を保証する文言を出し、フォーム入力を壊さない。新規の業務入力画面でも同じ構成を踏襲する。
 
@@ -393,7 +393,7 @@ function FormSection({ title, description, children }: FormSectionProps) {
 - **動作**: 押下でその画面の絞り込み条件をすべて既定値へ戻す。URL search param 画面は search param を既定値へ、local state 画面は state を既定値へ戻す。`page` を持つ画面は `page` も既定（1）へ戻す。並び替え（sort / dir）・表示件数（perPage）は変更しない（分類軸の対象外規定どおり）。
 - **文言**: 「絞り込みを解除」で全採用箇所を統一する。
 - **既存 action との共存規定**（round 1 P1-1 対応、新設）: 既存の主動線 action を持つ画面（商品一覧の「商品を登録する」）は、その action を常設のまま維持し、絞り込みが非既定のときだけ reset ボタンを `action` slot 内へ横並び（flex）で併置する。既存 action が先、reset ボタンが後。`action` slot に複数ボタンを置く場合は wrapper を `flex flex-wrap items-center justify-center gap-2` とし中央揃えにする（EmptyState 本体の中央揃えと整合させる。owner L3 2026-08-03）。
-- **採用箇所**: 棚卸し（`StocktakePage`、部門フィルタ / 未入力のみ toggle / `page` を既定へ戻す。73 §73.6 round 2 P2-1 是正と整合）/ 在庫照会（`StockInquiryPage`）/ 入出庫履歴一覧（`InventoryRecordsPage`）/ 在庫変動履歴（`StockMovementsPage`）/ 操作ログ（`OperationLogsPage`）/ 商品一覧（`ProductListPage`、round 1 P1-1 で追加）の 6 画面。商品一覧は上記共存規定に従い既存「商品を登録する」action と共存する。操作ログは既存の `defaultFilter` 判定の非既定側にのみ reset action が付く。既存の範囲外 page 回復 action「先頭ページに戻る」（§74 参照）とは対象ケースが異なり、同一画面内で共存する。
+- **採用箇所**: 棚卸し（`StocktakePage`、部門フィルタ / 未入力のみ toggle / `page` を既定へ戻す。73 §73.6 round 2 P2-1 是正と整合）/ 在庫照会（`StockInquiryPage`）/ 入出庫履歴一覧（`InventoryRecordsPage`）/ 在庫変動履歴（`StockMovementsPage`）/ 操作ログ（`OperationLogsPage`）/ 商品一覧（`ProductListPage`、round 1 P1-1 で追加）の 6 画面（D-138 の後は在庫照会と商品一覧が「商品と在庫」の 1 画面になり 5 画面。状態も戻す条件に入る、50 §50.7）。商品一覧は上記共存規定に従い既存「商品を登録する」action と共存する。操作ログは既存の `defaultFilter` 判定の非既定側にのみ reset action が付く。既存の範囲外 page 回復 action「先頭ページに戻る」（§74 参照）とは対象ケースが異なり、同一画面内で共存する。
 - **適用除外**: 本節冒頭の適用除外（`EmptySearchPlaceholder` / shortcuts `emptyMessage` / 明細 0 行系）および上記分類軸の除外(a)〜(d) と同じ。これらは「絞り込み結果 0 件」ではないため reset action の対象にしない。
 
 **バリエーション: インライン選択エラー 1 スロット**（PR #125、canonical: `src/features/daily-report-import/DailyReportImportPage.tsx` の `SelectionErrorMessage`）: ファイル選択（DSR-14 の path-based 方式）など非フォーム文脈の入力検証エラーは、発生源（選択ボタン）直下の 1 スロットに `role="alert"` + destructive テキスト + アイコンで表示する。エラー state は選択試行のたびに置換し、成功で `null` にクリアする。画面上部の Alert 帯（データ安全系専用）とは役割を混ぜない（DSR-03 の 3 階層）。フォーム文脈の入力検証はパターン④の `FieldError`（入力直下）が既定で、本バリエーションは非フォーム文脈専用。
@@ -440,6 +440,8 @@ function FormSection({ title, description, children }: FormSectionProps) {
 - **アクション**（slot、例: "商品を登録する" link button。**主動線が画面ヘッダ等の直上に既にある場合はボタンを重複させず description の文言で次の一手を示す**、省略可）
 
 3 行以内で簡潔にまとめる。利用者が「次に何をすればいいか」を即座に理解できることが目標。
+
+説明は利用者がいま選んでいる条件に合わせる。検索語を入れていない 0 件で「検索語を変えて」と促さない（部門・状態だけで絞ったなら「絞り込みを解除してください」）。状態の絞り込みだけで 0 件なら、何が無いかを見出しで言う（例「在庫切れ・在庫少の商品はありません」）（DSR-11、D-138。商品と在庫の画面は [50](../function-design/50-ui-product-list.md) §50.7。今の build の在庫照会の在庫少の 0 件は、検索語の有無に関わらず検索語を変えるよう促す）。
 
 ### 色だけに依存しない状態表示
 
@@ -539,6 +541,8 @@ toast.error(`出力に失敗しました: ${message}`, { id: `export-${reportTyp
 </AlertDialog>
 ```
 
+説明の画面名は D-138 の後（proposed・未実装）は「商品と在庫」にし、`商品「{productName}」は商品と在庫の通常表示から外れます。あとから「表示に戻す」で戻せます。` とする（上の構造と今の build は「商品一覧」）。
+
 | 形式 | 割込み度 | 用途 | 実装 |
 |------|---------|------|------|
 | **Dialog** | 高（明示ボタン必須） | 確認・警告。「廃番にしますか」「整合性チェック差異あり」 | shadcn/ui `AlertDialog` |
@@ -609,6 +613,8 @@ toast.error(`出力に失敗しました: ${message}`, { id: `export-${reportTyp
 ## ⑨ 検索 + フィルタ
 
 **使いどころ**: 一覧 / 記録画面の toolbar 全部、toolbar の全フィルタ入力。HID バーコードスキャナの Enter 確定に対応し、選択状態を URL state に連動させる。
+
+**商品を探す検索欄の当たる列**（D-138）: 商品の一覧の検索欄（商品と在庫・一括価格改定）は、どの画面・どの状態のチップでも商品名・商品コード・JAN・メーカー品番の 4 つに当たる（SPEC-PRV-D2。伝票と発注書でいちばん見る番号はメーカー品番、repo 外の回答台帳 TD-362）。同じ検索欄が状態によって当たる列を変えない（今の build の在庫照会は、在庫切れ・在庫少でメーカー品番に当たらない。[58](../function-design/58-ui-stock-inquiry.md) UI-06a-D8）。記録を商品の語で探す入出庫履歴の検索欄は対象外（記録を探す別の問い）。
 
 **canonical**: `src/components/patterns/SearchBar.tsx`（検索欄。`debounceMs` 未指定 = commit 型（Enter/ボタン確定 + trim、現在の採用箇所なし・機能残置）/ 指定 = live 型（debounce + Enter flush、商品一覧・在庫照会、`debounceMs=200`）。両モードとも `event.isComposing` ガードで IME 変換確定 Enter の誤発火を防止。商品一覧は 2026-08-03 owner L3 是正で commit 型から live 型へ統一）、`src/components/patterns/DepartmentFilter.tsx`（部門フィルタ。allLabel 既定「すべての部門」）
 
@@ -885,7 +891,7 @@ tone family は感情で分ける: 緑 = 終わったことを伝えるプラス
 
 | tone family | 該当する状態 badge（file:line、実測文言） | owner culling（残す/外す/追加、原文回答） |
 |---|---|---|
-| warning（`border-warning-border bg-warning-soft text-warning-strong` + icon） | `src/features/stock-inquiry/components/StockStatusBadge.tsx`「在庫少」（実装済み）/ `src/features/stocktake/StocktakePage.tsx`「未入力 N」（実装済み）/ `src/features/csv-import/components/PreviewStep.tsx`「同日データあり」（実装済み）/ `src/features/products/components/ProductTable.tsx`「未反映」（tone propへ移行済み）/ `src/features/csv-import/components/ResultStep.tsx`「部分成功」（tone propへ移行済み）/ `src/features/inventory-records/CsvImportRecordDetailPage.tsx`「部分成功」（tone="warning"） | 原文 2:「終わったから緑で終わったと教えてあげる、これ取り込み済みだよと教えてあげるのは注意に値しそうだけども。あと反映済み橙にしてるなら緑にしちゃうのもありだな、感情的にプラスの報告は緑、ちょっと待ってねって言いたくなるのは琥珀というか橙？警告したいのは赤、みたいな感情の分け方になると思う」 |
+| warning（`border-warning-border bg-warning-soft text-warning-strong` + icon） | `src/features/stock-inquiry/components/StockStatusBadge.tsx`「在庫少」（実装済み）/ `src/features/stocktake/StocktakePage.tsx`「未入力 N」（実装済み）/ `src/features/csv-import/components/PreviewStep.tsx`「同日データあり」（実装済み）/ `src/features/products/components/ProductTable.tsx`「未反映」（tone propへ移行済み）/ `src/features/csv-import/components/ResultStep.tsx`「部分成功」（tone propへ移行済み）/ `src/features/inventory-records/CsvImportRecordDetailPage.tsx`「部分成功」（tone="warning"）/ `src/features/stock-inquiry/components/StockRecheckBadge.tsx`「要再確認」（D-118 の b2。商品一覧・在庫照会・商品修正の現在庫・在庫変動の見出しの在庫の欄。tone="warning"） | 原文 2:「終わったから緑で終わったと教えてあげる、これ取り込み済みだよと教えてあげるのは注意に値しそうだけども。あと反映済み橙にしてるなら緑にしちゃうのもありだな、感情的にプラスの報告は緑、ちょっと待ってねって言いたくなるのは琥珀というか橙？警告したいのは赤、みたいな感情の分け方になると思う」 |
 | success（`border-success-border bg-success-soft text-success-strong` + icon） | `src/features/integrity-check/IntegrityCheckPage.tsx`「補正済み」（soft success toneへ移行済み）/ `src/features/stocktake/StocktakePage.tsx`（棚卸し全数完了時のsoft success tone）/ `src/features/products/components/ProductTable.tsx`「反映済み」（success toneへ移行済み）/ `src/features/csv-import/components/ResultStep.tsx`「成功」（success toneへ移行済み）/ `src/features/daily-report-import/DailyReportImportPage.tsx`「確認済み」（success toneへ移行済み） / `src/features/inventory-records/CsvImportRecordDetailPage.tsx`「成功」（tone="success"） / `src/features/daily-report-import/DailyReportImportPage.tsx` の完了の「成功」（tone="success"） | 原文 2:「終わったから緑で終わったと教えてあげる、これ取り込み済みだよと教えてあげるのは注意に値しそうだけども。あと反映済み橙にしてるなら緑にしちゃうのもありだな、感情的にプラスの報告は緑、ちょっと待ってねって言いたくなるのは琥珀というか橙？警告したいのは赤、みたいな感情の分け方になると思う」 |
 | destructive（`border-destructive-border bg-destructive-soft text-destructive-strong` + icon） | `src/features/stock-inquiry/components/StockStatusBadge.tsx`「在庫切れ」（実装済み）/ `src/features/inventory-records/CsvImportRecordDetailPage.tsx` の `STATUS_LABELS` と状態の Badge「取消済み」（destructive toneへ移行済み）・明細の Badge「明細取消済み」（destructive toneへ移行済み） / `DailyReportImportPage.tsx`「取込み済み」（上部の Alert と同じ destructive tone、L3 round 1 で試しを採った、D-094） | 原文 2:「終わったから緑で終わったと教えてあげる、これ取り込み済みだよと教えてあげるのは注意に値しそうだけども。あと反映済み橙にしてるなら緑にしちゃうのもありだな、感情的にプラスの報告は緑、ちょっと待ってねって言いたくなるのは琥珀というか橙？警告したいのは赤、みたいな感情の分け方になると思う」 |
 | 中立（家族なし、`variant="outline"` の既定枠色、無彩色 soft（`bg-stone-50` 等）可・icon 任意） | `src/features/stock-inquiry/components/StockStatusBadge.tsx`「在庫あり」（実装済み、`border-stone-200 bg-stone-50 text-stone-600`、icon なしで準拠）/ `src/features/inventory-records/types.ts` の `formatRecordStatus`（`active`="有効" 等、複数の記録詳細ページで共有、owner culling で個別確認） | 原文 2:「終わったから緑で終わったと教えてあげる、これ取り込み済みだよと教えてあげるのは注意に値しそうだけども。あと反映済み橙にしてるなら緑にしちゃうのもありだな、感情的にプラスの報告は緑、ちょっと待ってねって言いたくなるのは琥珀というか橙？警告したいのは赤、みたいな感情の分け方になると思う」 |
@@ -992,6 +998,8 @@ tone family は感情で分ける: 緑 = 終わったことを伝えるプラス
 - 入力値が変わったら active 解除 + リスト close を同期的に行う（D2）
 - close 系 event では timer cancel + in-flight 不採用まで行う（D4）
 
+**取引 4 画面の複数件候補テーブルと明細の先頭の列**（D-138）: 入庫・返品交換・手動販売・廃棄破損の Enter 経路の複数件候補テーブルと明細テーブルは、先頭の列を「商品コード・商品名・部門・現在庫」にそろえ、画面固有の列（単位・数量・原価・方向・種別・理由・販売金額・売価・操作）はその後ろに置く（Fluent 2 *Coherent*）。live 候補プレビューの 3 項目（D7）は変えない。棚卸し（73）の候補と一覧は対象外（画面の形は D-118 の (b) が持つ）。今の build の入庫は候補と明細に現在庫の列が無く、明細に部門の列が無い（[61](../function-design/61-ui-receiving.md) §61.5）。
+
 **Don't**:
 - 表示直後・hover での自動 active 化（スキャナ race 防御の核を壊す）
 - 旧リストの表示維持・click 許可（stale 確定の再導入）
@@ -1047,6 +1055,7 @@ tone family は感情で分ける: 緑 = 終わったことを伝えるプラス
 
 | 日付 | PR | 内容 |
 |---|---|---|
+| 2026-10-24 | 画面ごとの要素の見直し design lane（D-138、proposed・未実装） | ⑥ 空状態の説明を選んでいる条件に合わせる規則と filter-empty の採用箇所の統合の後の数、⑧ 廃番の確認の説明の画面名、⑨ 商品を探す検索欄の当たる列、⑮ 取引 4 画面の複数件候補と明細の先頭の列。 |
 | 2026-09-28 | 色と強調の反映（decision-log D-094） | ⑥ destructive の Alert を warning と対称の 4 点構造にし、三角 icon を部品が描く形を記した。⑫ 選択行と展開行を進行中のバーと地へ。⑬ ③強調を `--warning-emphasis` の塗りの琥珀 pill へ（1 位は `--rank-top-*` の琥珀 pill と行の地のまま）、日報の取込み済みの badge を destructive の行へ。① ⑤ ⑧ ⑯ の操作の色と旧現在行背景の記述を直した |
 | 2026-09-24 | デザインの決まりの組み直し | 冒頭に「本書は現行実装の canonical で、00 の移行列が runtime lane 待ちとする項目は 00 / 04 / 01 を狙いとして読む」旨を追加。04 の原則の統合に合わせ、旧原則 15（現在行 3 点）の参照を原則 10 へ、旧原則 11（待ち時間の顔）の参照を原則 7 へ付け替え（原則 4 は番号不変）。部品の記述は変えない |
 | 2026-09-15 | 表示小修正 batch 2 | ⑥ AlertTitle の共通 weight を600、⑬ 在庫状態の中立 Badge を「在庫あり」に同期。 |

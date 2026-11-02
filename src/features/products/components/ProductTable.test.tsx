@@ -235,3 +235,33 @@ it.each([
   expect(badge).toHaveClass(...classes);
   expect(badge?.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
 });
+
+describe("ProductTable の在庫の欄（D-118 b2、50）", () => {
+  it("U1 recheck product shows range and recheck badge, others show single stock", () => {
+    // REQ-301 / SPEC-STK-CNT-D3（Matrix U1）: 要再確認の行は範囲と「要再確認」（文字と icon）、ほかは 1 つの値
+    render(
+      <ProductTable
+        items={[
+          makeMockProductWithRelations({
+            product_code: "U1-REC",
+            stock_quantity: 9,
+            stock_recheck: true,
+            stock_range_low: 7,
+            stock_range_high: 12,
+          }),
+          makeMockProductWithRelations({ product_code: "U1-PLN", stock_quantity: 3 }),
+        ]}
+      />,
+    );
+    const recheckRow = screen.getByText("U1-REC").closest("tr");
+    const plainRow = screen.getByText("U1-PLN").closest("tr");
+    if (recheckRow === null || plainRow === null) throw new Error("row not found");
+    expect(within(recheckRow).getByText("7〜12 個")).toBeInTheDocument();
+    const badge = within(recheckRow).getByText("要再確認");
+    expect(badge).toHaveAttribute("data-tone", "warning");
+    expect(badge.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
+    expect(within(plainRow).getByText("3 個")).toBeInTheDocument();
+    expect(within(plainRow).queryByText("要再確認")).not.toBeInTheDocument();
+    expect(screen.getAllByText("要再確認")).toHaveLength(1);
+  });
+});

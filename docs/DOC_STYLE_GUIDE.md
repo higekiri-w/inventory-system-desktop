@@ -84,7 +84,7 @@ design-system/README.md（索引）→ design-system/{NN}-{topic}.md（詳細）
 
 - code は repo root からの path と symbol（関数・型・定数・test の名前）で引く。範囲は symbol と、その中の目印の語で書く
 - 文書は節の ID（`§12.3`・`BIZ-01-D8`・`DSR-22` 等）か節の見出しで引く
-- `docs/backlog.md` の申し送りで行番号を使うときは、書いた時点の main の commit を同じ行に添える（例: 「`18db621e` の時点で `src-tauri/src/biz/product_service.rs:965`」）。`docs/Plans.md` は現在地を持つ所で、行番号の申し送りを置かない
+- `docs/backlog.md` の申し送りで行番号を使うときは、書いた時点の main の commit を同じ行に添える（例: 「`18db621e` の時点で `src-tauri/src/biz/product_service.rs` の 965 行」）。`docs/Plans.md` は導入の前の関門・ブロッカー・製品の未決判断を持つ所で、行番号の申し送りを置かない
 - 時点を書いた記録（commit・library の版・日付を書いた観測、dated の調査・提案・L3 の記録、decision-log の append-only の本文）の行番号は、その時点の観測としてそのまま残す
 - 対象外: dated の Plan Packet と Test Design Matrix（起票の時点の観測）、data の行番号（CSV・EJ の `line_no` 等の製品の契約）、review の finding と subagent の報告の `path:line`（その時点の版に対する一時の出力。[code_review.md](code_review.md)、[DEV_WORKFLOW.md](DEV_WORKFLOW.md) の Subagent Budget）
 
@@ -240,7 +240,7 @@ fn name(args) -> Result<T, E>
 | **参照整合** | **R1** | **コード内 docs/ パス参照が実在するか** |
 | **参照整合** | **R3** | **Markdownリンク先ファイルが実在するか** |
 | **Plan 構造** | **PK1** | **`docs/plans/` 直下の dated active plan が Risk 行と必須セクションを持つか** |
-| **Plan 内容** | **PK2** | **R2+ plan に未編集 placeholder / 空 bullet が残っていないか** |
+| **Plan 内容** | **PK2** | **R2+ の packet（新しい packet は R3/R4）に未編集 placeholder / 空 bullet が残っていないか** |
 | **Plan 警告** | **PK3** | **R3/R4 plan の Contract Ledger（旧 Trace Matrix）と Acceptance evidence を warning で見える化する** |
 
 実行方法:

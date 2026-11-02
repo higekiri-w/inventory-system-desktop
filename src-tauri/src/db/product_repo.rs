@@ -139,6 +139,10 @@ pub struct ProductWithRelations {
     pub department_name: String,
     pub supplier_name: Option<String>,
     pub plu_memory_no: Option<i64>,
+    /// 写しの要再確認と範囲（ADR SPEC-STK-CNT-D2・D9。範囲は要再確認のときだけ両端が値。40）
+    pub stock_recheck: bool,
+    pub stock_range_low: Option<i64>,
+    pub stock_range_high: Option<i64>,
 }
 
 /// 商品 + 部門名（INNER JOIN結果、PLU書出し用）
@@ -346,7 +350,7 @@ fn row_to_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     })
 }
 
-/// rusqlite::Row → ProductWithRelations の変換（18カラム + dept_name + supplier_name）
+/// rusqlite::Row → ProductWithRelations の変換（18カラム + dept_name + supplier_name + plu_memory_no + 写しの 3 列）
 fn row_to_product_with_relations(row: &rusqlite::Row) -> rusqlite::Result<ProductWithRelations> {
     let product = row_to_product(row)?;
     Ok(ProductWithRelations {
@@ -354,6 +358,9 @@ fn row_to_product_with_relations(row: &rusqlite::Row) -> rusqlite::Result<Produc
         department_name: row.get(18)?,
         supplier_name: row.get(19)?,
         plu_memory_no: row.get(20)?,
+        stock_recheck: row.get(21)?,
+        stock_range_low: row.get(22)?,
+        stock_range_high: row.get(23)?,
     })
 }
 
@@ -662,7 +669,8 @@ pub fn find_by_product_code(
                    AND ps.status IN ('reserved','active','release_pending')
                  ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
                           ps.memory_no
-                 LIMIT 1) AS plu_memory_no
+                 LIMIT 1) AS plu_memory_no,
+                p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
          LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -734,6 +742,31 @@ pub fn find_by_jan_code(conn: &DbConnection, jan_code: &str) -> Result<Vec<Produ
         products.push(row?);
     }
     Ok(products)
+}
+
+/// 在庫連動の商品と同じ JAN を別の商品が持つ組（JAN の昇順、商品コードの昇順。36 の共有 JAN の違反の一覧）
+pub(crate) fn list_shared_jan_conflicts(
+    conn: &DbConnection,
+) -> Result<Vec<(String, Vec<String>)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT jan_code, product_code FROM products
+         WHERE jan_code IN (SELECT jan_code FROM products WHERE jan_code IS NOT NULL
+                            GROUP BY jan_code HAVING COUNT(*) > 1 AND MAX(pos_stock_sync) = 1)
+         ORDER BY jan_code, product_code",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for (jan, code) in rows {
+        match groups.last_mut() {
+            Some((last, codes)) if *last == jan => codes.push(code),
+            _ => groups.push((jan, vec![code])),
+        }
+    }
+    Ok(groups)
 }
 
 /// plu_dirty=1 の商品一覧を返す（PLU書出しの差分モード、BIZ-04 list_plu_dirty 用）
@@ -931,7 +964,8 @@ pub fn search_products(
                    AND ps.status IN ('reserved','active','release_pending')
                  ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
                           ps.memory_no
-                 LIMIT 1) AS plu_memory_no
+                 LIMIT 1) AS plu_memory_no,
+                p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
          LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -1240,6 +1274,7 @@ pub fn get_stock_detail(conn: &DbConnection, product_code: &str) -> Result<Stock
                  ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
                           ps.memory_no
                  LIMIT 1) AS plu_memory_no,
+                p.stock_recheck, p.stock_range_low, p.stock_range_high,
                 (SELECT MAX(rr.receiving_date)
                  FROM receiving_items ri
                  JOIN receiving_records rr ON ri.receiving_record_id = rr.id
@@ -1258,8 +1293,8 @@ pub fn get_stock_detail(conn: &DbConnection, product_code: &str) -> Result<Stock
             let product = row_to_product_with_relations(row)?;
             Ok(StockDetail {
                 product,
-                last_receiving_date: row.get(21)?,
-                last_sale_date: row.get(22)?,
+                last_receiving_date: row.get(24)?,
+                last_sale_date: row.get(25)?,
             })
         }
         None => Err(DbError::NotFound),
@@ -1310,7 +1345,8 @@ pub fn list_low_stock_products(
                    AND ps.status IN ('reserved','active','release_pending')
                  ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
                           ps.memory_no
-                 LIMIT 1) AS plu_memory_no
+                 LIMIT 1) AS plu_memory_no,
+                p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
          LEFT JOIN suppliers s ON p.supplier_id = s.id
@@ -2787,5 +2823,101 @@ mod tests {
         let (_dir, conn) = setup_test_db();
         let result = list_price_history(&conn, "UNKNOWN-HISTORY", 10).unwrap();
         assert!(result.is_empty());
+    }
+
+    // ===== D-118 b2: 商品の結果の写しの 3 列（Matrix P1・P2） =====
+
+    #[test]
+    fn test_product_reads_req301_req303_carry_copy_recheck_and_range() {
+        // REQ-301 / REQ-303 / SPEC-STK-CNT-D9（20・40）: 商品の読取り 4 つが写しの 3 列を DB のとおりに返す。
+        // get_stock_detail は列の位置のずれを最終入庫日・最終販売日で見る（Matrix P1）
+        let (_dir, conn) = setup_test_db();
+        let mut recheck = create_test_product("CPY-REC", "要再確認の商品", 1);
+        recheck.stock_quantity = 9;
+        let mut plain = create_test_product("CPY-PLN", "要再確認でない商品", 1);
+        plain.stock_quantity = 3;
+        insert_product(&conn, &recheck).unwrap();
+        insert_product(&conn, &plain).unwrap();
+        conn.execute(
+            "UPDATE products SET stock_recheck = 1, stock_range_low = 7, stock_range_high = 12
+             WHERE product_code = 'CPY-REC'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO receiving_records (idempotency_key, request_fingerprint, supplier_id, receiving_date, note, created_at)
+             VALUES ('cpy-key', 'cpy-fp', NULL, '2026-03-20', NULL, '2026-03-20T10:00:00')",
+            [],
+        )
+        .unwrap();
+        let record_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO receiving_items (receiving_record_id, product_code, quantity, cost_price_centi)
+             VALUES (?1, 'CPY-REC', 5, 300)",
+            rusqlite::params![record_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sale_records (product_code, sale_date, quantity, amount, source, is_voided, created_at)
+             VALUES ('CPY-REC', '2026-03-22', 2, 1000, 'auto', 0, '2026-03-22T19:00:00')",
+            [],
+        )
+        .unwrap();
+        let copy = |p: &ProductWithRelations| {
+            (
+                p.product.product_code.clone(),
+                p.stock_recheck,
+                p.stock_range_low,
+                p.stock_range_high,
+            )
+        };
+        let rec = ("CPY-REC".to_string(), true, Some(7), Some(12));
+        let pln = ("CPY-PLN".to_string(), false, None, None);
+
+        let found = find_by_product_code(&conn, "CPY-REC").unwrap().unwrap();
+        assert_eq!(copy(&found), rec);
+        let found = find_by_product_code(&conn, "CPY-PLN").unwrap().unwrap();
+        assert_eq!(copy(&found), pln);
+
+        let searched = search_products(&conn, &default_search_query()).unwrap();
+        let mut searched: Vec<_> = searched.items.iter().map(copy).collect();
+        searched.sort();
+        assert_eq!(searched, vec![pln.clone(), rec.clone()]);
+
+        let detail = get_stock_detail(&conn, "CPY-REC").unwrap();
+        assert_eq!(copy(&detail.product), rec);
+        assert_eq!(detail.last_receiving_date.as_deref(), Some("2026-03-20"));
+        assert_eq!(detail.last_sale_date.as_deref(), Some("2026-03-22"));
+
+        let low = list_low_stock_products(
+            &conn,
+            &[ProductStockUnit::Pcs],
+            100,
+            &[ProductStockUnit::M],
+            0,
+            false,
+        )
+        .unwrap();
+        let low: Vec<_> = low.iter().map(copy).collect();
+        assert_eq!(low, vec![pln, rec]);
+    }
+
+    #[test]
+    fn test_product_with_relations_req303_serializes_copy_fields_flat() {
+        // REQ-303 / SPEC-STK-CNT-D9（40）: wire の key は flatten された商品の field と同じ階層（Matrix P2）
+        let (_dir, conn) = setup_test_db();
+        insert_product(&conn, &create_test_product("CPY-JSON", "写しの商品", 1)).unwrap();
+        conn.execute(
+            "UPDATE products SET stock_recheck = 1, stock_range_low = -1, stock_range_high = 0
+             WHERE product_code = 'CPY-JSON'",
+            [],
+        )
+        .unwrap();
+        let found = find_by_product_code(&conn, "CPY-JSON").unwrap().unwrap();
+        let json = serde_json::to_value(&found).unwrap();
+        assert_eq!(json["product_code"], "CPY-JSON");
+        assert_eq!(json["stock_recheck"], true);
+        assert_eq!(json["stock_range_low"], -1);
+        assert_eq!(json["stock_range_high"], 0);
     }
 }

@@ -12,8 +12,8 @@ vi.mock("./hooks/useDailyReportImportFlow", () => ({
 }));
 
 const mockUseFlow = vi.mocked(useDailyReportImportFlow);
-const selectFiles = vi.fn();
 const chooseFiles = vi.fn();
+const backToSdList = vi.fn();
 const confirmImport = vi.fn();
 const rollback = vi.fn();
 const dismissError = vi.fn();
@@ -95,8 +95,18 @@ function makeResult(): DailyReportImportResult {
 function setFlow(state: DailyReportImportState, isImporting = false) {
   mockUseFlow.mockReturnValue({
     state: { ...state, lastSelectionError: null },
-    selectFiles,
+    scanError: null,
+    manualFiles: [],
+    pendingReplacement: null,
+    scanSd: vi.fn(),
+    chooseSdLocation: vi.fn(),
+    confirmSdCandidate: vi.fn(),
+    backToSdList,
     chooseFiles,
+    removeManualFile: vi.fn(),
+    confirmReplacement: vi.fn(),
+    cancelReplacement: vi.fn(),
+    confirmManualFiles: vi.fn(),
     confirmImport,
     rollback,
     dismissError,
@@ -104,6 +114,7 @@ function setFlow(state: DailyReportImportState, isImporting = false) {
     isParsing: false,
     isImporting,
     isRollingBack: false,
+    isBlocking: false,
   });
 }
 
@@ -244,7 +255,7 @@ describe("DailyReportImportPage_req401", () => {
 
     await user.click(screen.getByRole("button", { name: "ファイルを選び直す" }));
     expect(chooseFiles).toHaveBeenCalledTimes(1);
-    expect(selectFiles).not.toHaveBeenCalled();
+    expect(backToSdList).not.toHaveBeenCalled();
     expect(confirmImport).not.toHaveBeenCalled();
     expect(screen.queryByLabelText("Z001 Z002 Z005 ファイルを選び直す")).not.toBeInTheDocument();
   });

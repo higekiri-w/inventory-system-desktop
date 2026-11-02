@@ -107,7 +107,7 @@ push 前に以下を `scripts/pre-push.sh` の順に実行し、いずれか失�
 - ⑤ Rust / frontend test / function design / requirements 変更時の traceability check
 - ⑥ frontend 変更時の `npm run generate:routes` / `npm run typecheck` / `npm run lint`
 
-pre-push は push 増分の L0 gate であり、PR 全差分の merge evidence ではない。merge 前の feedback は push ごとに走る Draft の hosted の run（`Draft (no merge evidence)`）で、merge の CI 根拠は Ready 後の run の `Merge gate`。手元で全 gate を回したいときだけ `bash scripts/local-ci.sh full`（任意）を使う。
+pre-push は push 増分の L0 gate であり、PR 全差分の merge evidence ではない。push ごとに走る Draft の hosted の run が `Merge gate` を出し、Ready で回し直さず同じ head の run を merge の CI 根拠にする（D-145 (9)）。手元で全 gate を回したいときだけ `bash scripts/local-ci.sh full`（任意）を使う。
 
 Ready PR への push は stale green 防止のため block する。修正は PR を Draft に戻してから行う。緊急 bypass は raw `--no-verify` ではなく、docs/ci.md が定義する固定 reason token を環境変数で渡して hook を実行し、`.local/quality-check.log` に `BYPASS` を残す。
 
@@ -182,7 +182,7 @@ auto-memory を使う場合、project local settings (`./.claude/settings.local.
 
 - `settings.local.json` は machine-specific で team 共有されない。他マシン / 他 user は本節の手順で個別に設定する
 - 操作は必ず `~/.agents/skills/agmsg/scripts/` 配下の script 経由で行う。`teams/` や `db/` を直接読んだり編集したりしない
-- tracked `.claude/settings.json` のproject hook inventoryは0本で、`claude-code-harness`もproject scopeでは無効。agmsg delivery modeはrepository hookに依存させず、Claude Code / Codexとも`turn`（ターン終端チェック）または`off`のみを使う
+- tracked `.claude/settings.json` のproject hook inventoryは0本で、`claude-code-harness`と`ponytail`（D-147）もproject scopeでは無効。agmsg delivery modeはrepository hookに依存させず、Claude Code / Codexとも`turn`（ターン終端チェック）または`off`のみを使う
 - Claude Code の `Edit` で monitor mode の hook 設定を書こうとすると、auto-mode classifier が self-modification と判定して deny することがある。その場合は user が内容を確認して手作業で配置する
 - sandbox が invocation ごとに PID namespace を分ける環境では、monitor の pidfile 生存判定が stale と誤判定されることがある。これは monitor 配信周辺の注意点で、script 経由の inbox / send 自体は引き続き使える
 

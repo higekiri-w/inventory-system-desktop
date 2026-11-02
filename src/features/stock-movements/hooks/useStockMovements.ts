@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 
 import { commands } from "@/lib/bindings";
-import type { MovementRecord, PaginatedResult, StockDetail } from "@/lib/bindings";
+import type { PaginatedResult, StockDetail, StockHistoryItem } from "@/lib/bindings";
 import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import type { NormalizedStockMovementsSearch } from "../types";
@@ -20,7 +20,7 @@ export interface UseStockMovementsArgs {
 
 export interface UseStockMovementsResult {
   productQuery: UseQueryResult<StockDetail>;
-  movementsQuery: UseQueryResult<PaginatedResult<MovementRecord>>;
+  movementsQuery: UseQueryResult<PaginatedResult<StockHistoryItem>>;
 }
 
 export function useStockMovements(args: UseStockMovementsArgs): UseStockMovementsResult {

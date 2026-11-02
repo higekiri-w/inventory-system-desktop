@@ -3,14 +3,21 @@
 // REQ-205 / UI-10 Test Design Matrix T1〜T16（UI-10-D10）+ T17（UI-10-D11）+ T18〜T20（契約監査）+ T21（UI-10-D10 差異符号、受入台本 L3 起源）
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeMockProductWithRelations } from "@/features/products/lib/test-fixtures";
 import { commands } from "@/lib/bindings";
-import type { CmdErrorKind, Department, Stocktake, StocktakeItemDetail } from "@/lib/bindings";
+import type {
+  CmdErrorKind,
+  CountRecoveryTarget,
+  Department,
+  StockCountSaveResult,
+  Stocktake,
+  StocktakeItemDetail,
+} from "@/lib/bindings";
 import { scrollPageToTop } from "@/lib/page-scroll";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 
@@ -29,7 +36,10 @@ vi.mock("@/lib/bindings", () => ({
     startStocktake: vi.fn(),
     getStocktakeItems: vi.fn(),
     findStocktakeItem: vi.fn(),
-    updateCount: vi.fn(),
+    saveStockCount: vi.fn(),
+    previewStockCountPlacement: vi.fn(),
+    zeroUncountedItems: vi.fn(),
+    listRecheckProducts: vi.fn(),
     completeStocktake: vi.fn(),
     searchProducts: vi.fn(),
   },
@@ -43,7 +53,10 @@ const mockGetLast = vi.mocked(commands.getLastCompletedStocktake);
 const mockStart = vi.mocked(commands.startStocktake);
 const mockGetItems = vi.mocked(commands.getStocktakeItems);
 const mockFindItem = vi.mocked(commands.findStocktakeItem);
-const mockUpdateCount = vi.mocked(commands.updateCount);
+const mockSave = vi.mocked(commands.saveStockCount);
+const mockPreviewPlacement = vi.mocked(commands.previewStockCountPlacement);
+const mockZero = vi.mocked(commands.zeroUncountedItems);
+const mockListRecheck = vi.mocked(commands.listRecheckProducts);
 const mockComplete = vi.mocked(commands.completeStocktake);
 const mockScrollPageToTop = vi.mocked(scrollPageToTop);
 
@@ -54,7 +67,7 @@ function ok<T>(data: T) {
 function cmdError(kind: CmdErrorKind, message: string) {
   return {
     status: "error" as const,
-    error: { kind, message, field: null, error_id: null },
+    error: { kind, message, field: null, error_id: null, stocktake_recovery: null },
   };
 }
 
@@ -85,6 +98,14 @@ function baseStocktakeItem(): StocktakeItemDetail {
     counted_at: null,
     current_stock: 10,
     is_discontinued: false,
+    stock_unit: "pcs",
+    count_value: null,
+    count_kind: null,
+    count_business_date: null,
+    stock_range_low: null,
+    stock_range_high: null,
+    recount_reasons: [],
+    difference: null,
   };
 }
 
@@ -123,7 +144,7 @@ function renderWithClient(
 async function renderPage(search: StocktakeSearch = {}) {
   const onSearchChange = vi.fn();
   const utils = renderWithClient(
-    <StocktakePage search={search} onSearchChange={onSearchChange} writesSuspended={false} />,
+    <StocktakePage search={search} onSearchChange={onSearchChange} />,
     {
       onSearchChange,
     },
@@ -132,14 +153,36 @@ async function renderPage(search: StocktakeSearch = {}) {
   return utils;
 }
 
+// 計数の日付は PC の今日（73）。Date だけを差し替え、timer は本物のまま
+const TODAY = "2026-10-02";
+
+function saveResult(overrides: Partial<StockCountSaveResult> = {}) {
+  return ok({
+    id: 9001,
+    count_kind: "default" as const,
+    stock: 8,
+    stock_range_low: null,
+    stock_range_high: null,
+    recount_reasons: [],
+    later_count_exists: false,
+    ...overrides,
+  });
+}
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(2026, 9, 2, 10, 0, 0));
   mockListDepartments.mockReset();
   mockGetActive.mockReset();
   mockGetLast.mockReset();
   mockStart.mockReset();
   mockGetItems.mockReset();
   mockFindItem.mockReset();
-  mockUpdateCount.mockReset();
+  mockSave.mockReset();
+  mockPreviewPlacement.mockReset();
+  mockZero.mockReset();
+  mockListRecheck.mockReset();
+  mockListRecheck.mockResolvedValue(ok([]));
   mockComplete.mockReset();
   mockSearchProducts.mockReset();
   mockScrollPageToTop.mockReset();
@@ -164,32 +207,40 @@ beforeEach(() => {
       total_cost: 2000,
     }),
   );
-  mockStart.mockResolvedValue(ok({ stocktake_id: 77, item_count: 2, auto_filled_count: 0 }));
+  mockStart.mockResolvedValue(ok({ stocktake_id: 77, item_count: 2 }));
   mockGetItems.mockResolvedValue(listResponse());
   mockFindItem.mockResolvedValue(ok(baseStocktakeItem()));
-  mockUpdateCount.mockResolvedValue(ok({ success: true, current_difference: 2 }));
+  mockSave.mockResolvedValue(saveResult());
+  mockZero.mockResolvedValue(ok([]));
   mockComplete.mockResolvedValue(
     ok({
       total_cost: 2500,
-      adjusted_items: [
-        {
-          product_code: "P-001",
-          product_name: "赤い糸",
-          system_stock: 10,
-          actual_count: 8,
-          difference: 2,
-          stock_after: 8,
-        },
-      ],
       total_items: 2,
-      integrity_result: { mismatches: [], mismatch_count: 0, checked_count: 2 },
+      integrity_result: {
+        mismatches: [],
+        mismatch_count: 0,
+        checked_count: 2,
+        shared_jan_conflicts: [],
+      },
     }),
   );
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/** 42 の SaveStockCountRequest（既定の計数・今日） */
+function defaultCount(countValue: number, stocktakeItemId: number | null = 501) {
+  return {
+    product_code: "P-001",
+    count_value: countValue,
+    fresh: false,
+    business_date: TODAY,
+    stocktake_item_id: stocktakeItemId,
+  };
+}
 
 describe("StocktakePage (UI-10)", () => {
   it("T1 not-started shows start CTA and last summary; active CMD state shows counting display", async () => {
@@ -271,9 +322,9 @@ describe("StocktakePage (UI-10)", () => {
 
     expect(mockFindItem).toHaveBeenCalledWith(77, "4900000000001");
     await waitFor(() => {
-      expect(mockUpdateCount).toHaveBeenCalledTimes(1);
+      expect(mockSave).toHaveBeenCalledTimes(1);
     });
-    expect(mockUpdateCount).toHaveBeenCalledWith(501, 8);
+    expect(mockSave).toHaveBeenCalledWith(defaultCount(8));
   });
 
   it("DSR-17 T15: StocktakeCountEntry mount focus prevents native scroll", async () => {
@@ -309,7 +360,7 @@ describe("StocktakePage (UI-10)", () => {
     await user.type(screen.getByLabelText("実際の数"), "8{Enter}");
 
     await waitFor(() => {
-      expect(mockUpdateCount).toHaveBeenCalledWith(501, 8);
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(8));
     });
     await waitFor(() => {
       expect(screen.getByLabelText("商品を検索・スキャン")).toHaveFocus();
@@ -331,27 +382,41 @@ describe("StocktakePage (UI-10)", () => {
         "この商品は棚卸しの対象にありません。商品コードまたはJANを確認してください。新しく登録した商品は自動で追加されます",
       ),
     ).toBeInTheDocument();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
   it("T6 counted item can be overwritten without confirmation", async () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    mockFindItem.mockResolvedValueOnce(ok(stocktakeItem({ actual_count: 5 })));
+    // 明細の実数がある商品は効く計数も持つ（35 の読取り）。欄の文は「入れ直す」と同じ条件で出る
+    mockFindItem.mockResolvedValueOnce(
+      ok(
+        stocktakeItem({
+          actual_count: 5,
+          count_value: 5,
+          count_kind: "default",
+          count_business_date: "2026-10-01",
+        }),
+      ),
+    );
     await renderPage();
     await screen.findByText("棚卸し中（開始日: 2026-10-01 09:00:00）");
 
     await user.type(screen.getByLabelText("商品を検索・スキャン"), "P-001");
     await user.click(screen.getByRole("button", { name: "対象を確認" }));
 
-    expect(await screen.findByText("入力済みの数を上書きできます")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "数を直すときは「入れ直す」を押してください。同じ日付で「数を保存」から違う数を入れると、数え直しが必要になります",
+      ),
+    ).toBeInTheDocument();
     await user.clear(screen.getByLabelText("実際の数"));
     await user.type(screen.getByLabelText("実際の数"), "6");
     await user.click(screen.getByRole("button", { name: "数を保存" }));
 
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(mockUpdateCount).toHaveBeenCalledWith(501, 6);
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(6));
     });
   });
 
@@ -369,8 +434,9 @@ describe("StocktakePage (UI-10)", () => {
     );
   });
 
-  it("T16 list shows difference and last counted columns, blank for uncounted items (UI-10-D10)", async () => {
+  it("SF1 (T16) list shows the effective count's business date in the last-count column, blank for uncounted items (UI-10-D10)", async () => {
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    // 行は BIZ の出す状態（count_business_date と difference は同じ効く計数から。35「読取り」）
     mockGetItems.mockResolvedValueOnce(
       listResponse({
         items: [
@@ -382,6 +448,9 @@ describe("StocktakePage (UI-10)", () => {
             current_stock: 12,
             actual_count: 9,
             counted_at: "2026-10-01T09:05:00",
+            count_business_date: "2026-09-28",
+            // 差異は BIZ の値（35「読取り」）。値の期待（+3）は変えない
+            difference: 3,
           }),
           stocktakeItem({
             id: 602,
@@ -391,25 +460,74 @@ describe("StocktakePage (UI-10)", () => {
             actual_count: null,
             counted_at: null,
           }),
+          stocktakeItem({
+            id: 603,
+            product_code: "P-903",
+            name: "前に数えた未入力商品",
+            actual_count: null,
+            counted_at: null,
+            count_business_date: "2026-09-20",
+            difference: -1,
+          }),
+          stocktakeItem({
+            id: 604,
+            product_code: "P-904",
+            name: "ゼロの商品",
+            actual_count: 0,
+            counted_at: "2026-09-27T17:00:00",
+            count_business_date: "2026-09-27",
+            difference: -2,
+          }),
+          stocktakeItem({
+            id: 605,
+            product_code: "P-905",
+            name: "業務日の無い商品",
+            actual_count: 4,
+            counted_at: "2026-10-02T10:00:00",
+            count_business_date: null,
+          }),
         ],
       }),
     );
     await renderPage();
 
     const table = await screen.findByRole("table");
-    const row = within(table).getByText("差異あり商品").closest("tr");
-    if (row === null) throw new Error("row not found");
+    const rowOf = (name: string) => {
+      const row = within(table).getByText(name).closest("tr");
+      if (row === null) throw new Error(`row not found: ${name}`);
+      return row;
+    };
+    const lastCountCell = (row: HTMLElement) => {
+      const cells = within(row).getAllByRole("cell");
+      return cells[cells.length - 1];
+    };
+
+    const row = rowOf("差異あり商品");
     // 表示される在庫値は差異の計算根拠と同じ current_stock（12）であり、
     // system_stock（10）ではないことを検証する（Codex レビュー P2 是正）。
     expect(within(row).getByText("12")).toBeInTheDocument();
     expect(within(row).queryByText("10")).not.toBeInTheDocument();
     expect(within(row).getByText("+3")).toBeInTheDocument();
-    expect(within(row).getByText("2026-10-01 09:05:00")).toBeInTheDocument();
+    expect(lastCountCell(row)).toHaveTextContent(/^2026-09-28$/);
+    expect(within(row).queryByText(/2026-10-01/)).not.toBeInTheDocument();
 
-    const uncountedRow = within(table).getByText("未入力商品").closest("tr");
-    if (uncountedRow === null) throw new Error("uncounted row not found");
-    const dashes = within(uncountedRow).getAllByText("—");
-    expect(dashes).toHaveLength(2);
+    // 計数の無い未入力の行: 差異と最終カウントが「—」
+    const uncountedRow = rowOf("未入力商品");
+    expect(within(uncountedRow).getAllByText("—")).toHaveLength(2);
+    expect(lastCountCell(uncountedRow)).toHaveTextContent(/^—$/);
+
+    // 前の計数を持つ未入力の行: 最終カウントは「—」（差異は BIZ の値）
+    const previouslyCountedRow = rowOf("前に数えた未入力商品");
+    expect(lastCountCell(previouslyCountedRow)).toHaveTextContent(/^—$/);
+    expect(within(previouslyCountedRow).queryByText(/2026-09-20/)).not.toBeInTheDocument();
+
+    // actual_count 0 は計数
+    expect(lastCountCell(rowOf("ゼロの商品"))).toHaveTextContent(/^2026-09-27$/);
+
+    // 業務日が null なら保存の時刻へ戻さない
+    const noDateRow = rowOf("業務日の無い商品");
+    expect(lastCountCell(noDateRow)).toHaveTextContent(/^—$/);
+    expect(within(noDateRow).queryByText(/2026-10-02/)).not.toBeInTheDocument();
   });
 
   it("T8 negative actual_count shows FieldError and is not sent", async () => {
@@ -425,10 +543,10 @@ describe("StocktakePage (UI-10)", () => {
     await user.click(screen.getByRole("button", { name: "数を保存" }));
 
     expect(await screen.findByText("0以上の数値を入力してください")).toBeInTheDocument();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
-  it("T-C5-1 empty quantity + Enter shows FieldError and does not call updateCount", async () => {
+  it("T-C5-1 empty quantity + Enter shows FieldError and does not call saveStockCount", async () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
     await renderPage();
@@ -440,10 +558,10 @@ describe("StocktakePage (UI-10)", () => {
     await user.type(quantityInput, "{Enter}");
 
     expect(await screen.findByText("数量を入力してください")).toBeInTheDocument();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
-  it("T-C5-2 empty quantity + save click shows FieldError and does not call updateCount", async () => {
+  it("T-C5-2 empty quantity + save click shows FieldError and does not call saveStockCount", async () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
     await renderPage();
@@ -454,10 +572,10 @@ describe("StocktakePage (UI-10)", () => {
     await user.click(screen.getByRole("button", { name: "数を保存" }));
 
     expect(await screen.findByText("数量を入力してください")).toBeInTheDocument();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
-  it("T-C5-3 whitespace-only quantity + Enter shows FieldError and does not call updateCount", async () => {
+  it("T-C5-3 whitespace-only quantity + Enter shows FieldError and does not call saveStockCount", async () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
     await renderPage();
@@ -469,10 +587,10 @@ describe("StocktakePage (UI-10)", () => {
     await user.type(quantityInput, "  {Enter}");
 
     expect(await screen.findByText("数量を入力してください")).toBeInTheDocument();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
-  it('T-C5-4 explicit "0" + Enter calls updateCount with 0 and shows no FieldError', async () => {
+  it('T-C5-4 explicit "0" + Enter calls saveStockCount with 0 and shows no FieldError', async () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
     await renderPage();
@@ -484,81 +602,9 @@ describe("StocktakePage (UI-10)", () => {
     await user.type(quantityInput, "0{Enter}");
 
     await waitFor(() => {
-      expect(mockUpdateCount).toHaveBeenCalledWith(501, 0);
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(0));
     });
     expect(screen.queryByText("数量を入力してください")).not.toBeInTheDocument();
-  });
-
-  it("T9 complete with no uncounted always confirms and sends force_fill false", async () => {
-    const user = userEvent.setup();
-    mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    mockGetItems.mockResolvedValueOnce(
-      listResponse({ progress: { total_items: 2, counted_items: 2, uncounted_items: 0 } }),
-    );
-    const { invalidateSpy } = await renderPage();
-
-    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
-    // SC20 / DSR-08: 既存文言・roleを保ってwarning variantへ移行する。
-    expect(
-      screen.getByText("確定すると取り消せません").closest('[data-slot="alert"]'),
-    ).toHaveAttribute("data-variant", "warning");
-    expect(
-      screen.getByText("確定すると取り消せません").closest('[data-slot="alert"]'),
-    ).toHaveAttribute("role", "alert");
-    expect(await screen.findByRole("heading", { name: "棚卸しの確定" })).toBeInTheDocument();
-    const noUncountedAlert = screen.getByRole("alert");
-    expect(within(noUncountedAlert).getByText("確定すると取り消せません")).toBeInTheDocument();
-    expect(
-      within(noUncountedAlert).getByText("入力した内容で棚卸しを確定します。"),
-    ).toBeInTheDocument();
-    // sr-only description にも不可逆性の警告 title が含まれることを検証（Codex レビュー P2 是正）
-    const noUncountedDialog = screen.getByRole("alertdialog");
-    const noUncountedDescribedBy = noUncountedDialog.getAttribute("aria-describedby");
-    expect(document.getElementById(noUncountedDescribedBy ?? "")).toHaveTextContent(
-      "確定すると取り消せません。入力した内容で棚卸しを確定します。",
-    );
-    expect(screen.getByRole("button", { name: "確定する" })).toHaveAttribute(
-      "data-variant",
-      "destructive",
-    );
-    await user.click(screen.getByRole("button", { name: "確定する" }));
-
-    await waitFor(() => {
-      expect(mockComplete).toHaveBeenCalledWith(77, false);
-      expectExactInvalidations(
-        invalidateSpy.mock.calls,
-        d052InvalidationOracle.stocktakeComplete(),
-      );
-    });
-  });
-
-  it("T10 complete with uncounted confirms force_fill true", async () => {
-    const user = userEvent.setup();
-    mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    await renderPage();
-
-    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
-    expect(
-      await screen.findByRole("heading", { name: "未入力の商品があります" }),
-    ).toBeInTheDocument();
-    const uncountedAlert = screen.getByRole("alert");
-    expect(within(uncountedAlert).getByText("確定すると取り消せません")).toBeInTheDocument();
-    expect(
-      within(uncountedAlert).getByText(
-        "1件が未入力のまま残っています。確定すると、この1件は現在の在庫数で棚卸しされます。",
-      ),
-    ).toBeInTheDocument();
-    // sr-only description にも不可逆性の警告 title が含まれることを検証（Codex レビュー P2 是正）
-    const uncountedDialog = screen.getByRole("alertdialog");
-    const uncountedDescribedBy = uncountedDialog.getAttribute("aria-describedby");
-    expect(document.getElementById(uncountedDescribedBy ?? "")).toHaveTextContent(
-      "確定すると取り消せません。1件が未入力のまま残っています。確定すると、この1件は現在の在庫数で棚卸しされます。",
-    );
-    await user.click(screen.getByRole("button", { name: "確定する" }));
-
-    await waitFor(() => {
-      expect(mockComplete).toHaveBeenCalledWith(77, true);
-    });
   });
 
   it("T11 result shows total_cost, adjusted_items, and last comparison", async () => {
@@ -572,49 +618,8 @@ describe("StocktakePage (UI-10)", () => {
     expect(await screen.findByRole("heading", { name: "棚卸し結果" })).toBeInTheDocument();
     expect(screen.getByText("仕入原価総額")).toBeInTheDocument();
     expect(screen.getByText("¥2,500")).toBeInTheDocument();
-    expect(screen.getByText("赤い糸")).toBeInTheDocument();
     expect(screen.getByText("前回の棚卸し（2026-09-30 18:00:00）")).toBeInTheDocument();
     expect(screen.getByText("仕入原価総額 ¥2,000")).toBeInTheDocument();
-  });
-
-  it("T21 result shows signed difference via formatListDifference (+N / -N, UI-10-D10)", async () => {
-    const user = userEvent.setup();
-    mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    mockComplete.mockResolvedValueOnce(
-      ok({
-        total_cost: 2500,
-        adjusted_items: [
-          {
-            product_code: "P-001",
-            product_name: "赤い糸",
-            system_stock: 10,
-            actual_count: 8,
-            difference: 2,
-            stock_after: 8,
-          },
-          {
-            product_code: "P-002",
-            product_name: "青い糸",
-            system_stock: 5,
-            actual_count: 8,
-            difference: -3,
-            stock_after: 8,
-          },
-        ],
-        total_items: 2,
-        integrity_result: { mismatches: [], mismatch_count: 0, checked_count: 2 },
-      }),
-    );
-    await renderPage();
-
-    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
-    await user.click(screen.getByRole("button", { name: "確定する" }));
-
-    expect(await screen.findByRole("heading", { name: "棚卸し結果" })).toBeInTheDocument();
-    // 正差異は「+2」、負差異は「-3」の符号付きプレーンテキスト（進行中一覧と表現統一）
-    expect(screen.getByText("+2")).toBeInTheDocument();
-    expect(screen.getByText("-3")).toBeInTheDocument();
-    expect(screen.queryByText(/^2$/)).not.toBeInTheDocument();
   });
 
   it("T19 result page keeps pre-complete last-stocktake snapshot after lastCompleted invalidation (Codex contract audit P2)", async () => {
@@ -647,7 +652,7 @@ describe("StocktakePage (UI-10)", () => {
     const user = userEvent.setup();
     mockGetActive.mockResolvedValue(ok(activeStocktake()));
     mockComplete.mockResolvedValueOnce(
-      ok({ total_cost: 2500, adjusted_items: [], total_items: 2, integrity_result: null }),
+      ok({ total_cost: 2500, total_items: 2, integrity_result: null }),
     );
     await renderPage();
 
@@ -668,7 +673,7 @@ describe("StocktakePage (UI-10)", () => {
     expect(mockGetActive).toHaveBeenCalledTimes(2);
 
     mockGetActive.mockResolvedValue(ok(null));
-    mockUpdateCount.mockResolvedValueOnce(
+    mockSave.mockResolvedValueOnce(
       cmdError("stocktake_not_in_progress", "この棚卸しは既に完了しています"),
     );
     await user.type(screen.getByLabelText("商品を検索・スキャン"), "P-001");
@@ -702,35 +707,6 @@ describe("StocktakePage (UI-10)", () => {
     expect(await screen.findByText("この棚卸しは既に完了しています")).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "棚卸しを開始する" })).toBeInTheDocument();
-    });
-  });
-
-  it("T20 complete_stocktake validation error (force_fill 未入力超過) invalidates item list for retry", async () => {
-    const user = userEvent.setup();
-    mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    mockGetItems.mockResolvedValueOnce(
-      listResponse({ progress: { total_items: 2, counted_items: 2, uncounted_items: 0 } }),
-    );
-    mockComplete.mockResolvedValueOnce(
-      cmdError(
-        "validation",
-        "未入力の商品が1件あります。全商品のカウントを完了するか、force_fill=true で未入力をシステム在庫と同じとみなしてください",
-      ),
-    );
-    await renderPage();
-
-    const getItemsCallsBeforeConfirm = mockGetItems.mock.calls.length;
-    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
-    await user.click(await screen.findByRole("button", { name: "確定する" }));
-
-    expect(
-      await screen.findByText(
-        "未入力の商品が1件あります。全商品のカウントを完了するか、force_fill=true で未入力をシステム在庫と同じとみなしてください",
-      ),
-    ).toBeInTheDocument();
-    // 一覧を invalidate/再取得し、次回の確定操作で最新の uncounted_items に基づいた判定ができるようにする
-    await waitFor(() => {
-      expect(mockGetItems.mock.calls.length).toBeGreaterThan(getItemsCallsBeforeConfirm);
     });
   });
 
@@ -812,7 +788,7 @@ describe("StocktakePage (UI-10)", () => {
     fireEvent.change(quantityInput, { target: { value: "8" } });
     fireEvent.keyDown(quantityInput, { key: "Enter", isComposing: true });
 
-    expect(mockUpdateCount).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
   });
 
   it("T14 complete pending shows spinner text and disables operations", async () => {
@@ -1289,87 +1265,6 @@ describe("StocktakePage (UI-10)", () => {
   });
 });
 
-// SPEC-STOP-D4 / 73 §73.15: 停止中（prop 省略 = 既定）。文言は 73 の正本から転記する。
-const SUSPENDED_TITLE = "棚卸しの入力は一時停止中です";
-const SUSPENDED_BODY =
-  "数えた後の入出庫が、確定のときに在庫から打ち消されてしまう不具合を直しています。直るまで、棚卸しの開始・数の保存・確定はできません。これまでの棚卸しの記録と一覧は見られます。";
-
-async function renderSuspendedPage(search: StocktakeSearch = {}) {
-  const onSearchChange = vi.fn();
-  const utils = renderWithClient(
-    <StocktakePage search={search} onSearchChange={onSearchChange} />,
-    {
-      onSearchChange,
-    },
-  );
-  await screen.findByRole("heading", { name: "棚卸し" });
-  return utils;
-}
-
-function expectSuspendedNotice() {
-  const title = screen.getByText(SUSPENDED_TITLE);
-  const notice = title.closest('[data-slot="alert"]');
-  expect(notice).not.toBeNull();
-  expect(notice).toHaveAttribute("data-variant", "warning");
-  expect(title).toHaveTextContent(new RegExp(`^${SUSPENDED_TITLE}$`));
-  expect(within(notice as HTMLElement).getByText(SUSPENDED_BODY)).toBeInTheDocument();
-  expect(notice?.querySelector('svg.lucide-triangle-alert[aria-hidden="true"]')).not.toBeNull();
-}
-
-describe("StocktakePage SPEC-STOP-D4 停止中（既定）", () => {
-  it("test_stocktake_page_req205_suspended_not_started_disables_start_and_keeps_last_summary", async () => {
-    const user = userEvent.setup();
-    await renderSuspendedPage();
-
-    const start = await screen.findByRole("button", { name: "棚卸しを開始する" });
-    expectSuspendedNotice();
-    expect(start).toBeDisabled();
-    await user.click(start);
-    expect(mockStart).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText("前回の棚卸し（2026-09-30 18:00:00）: 仕入原価総額 ¥2,000"),
-    ).toBeInTheDocument();
-  });
-
-  it("test_stocktake_page_req205_suspended_in_progress_disables_writes_and_keeps_browsing", async () => {
-    const user = userEvent.setup();
-    mockGetActive.mockResolvedValue(ok(activeStocktake()));
-    mockGetItems.mockResolvedValue(listResponse({ total_count: 250 }));
-    const { onSearchChange } = await renderSuspendedPage();
-    await screen.findByText("棚卸し中（開始日: 2026-10-01 09:00:00）");
-
-    expectSuspendedNotice();
-    const countEntry = screen.getByLabelText("商品を検索・スキャン").closest("fieldset");
-    expect(countEntry).toBeDisabled();
-    expect(screen.getByLabelText("商品を検索・スキャン")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "対象を確認" })).toBeDisabled();
-    const complete = screen.getByRole("button", { name: "棚卸しを確定する" });
-    expect(complete).toBeDisabled();
-    await user.click(complete);
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-
-    // 閲覧（部門絞り込み・未入力のみ・ページ送り）は止めない。
-    await user.click(screen.getByRole("combobox", { name: "部門" }));
-    await user.click(screen.getByRole("option", { name: "毛糸" }));
-    await user.click(screen.getByLabelText("未入力のみ表示"));
-    await waitFor(() => {
-      expect(mockGetItems).toHaveBeenLastCalledWith(77, 1, false, 1, 50);
-    });
-    const next = screen.getByRole("button", { name: "次のページ" });
-    expect(next).toBeEnabled();
-    await user.click(next);
-    await waitFor(() => {
-      expect(mockGetItems).toHaveBeenLastCalledWith(77, 1, false, 2, 50);
-    });
-    expect(onSearchChange).toHaveBeenCalled();
-
-    expect(mockFindItem).not.toHaveBeenCalled();
-    expect(mockUpdateCount).not.toHaveBeenCalled();
-    expect(mockComplete).not.toHaveBeenCalled();
-    expect(mockStart).not.toHaveBeenCalled();
-  });
-});
-
 describe("StocktakePage SPEC-UIBB-1/2（filter-empty reset action、73 §73.6）", () => {
   function emptyListResponse() {
     return listResponse({
@@ -1443,6 +1338,7 @@ it.each([
             current_stock: 10,
             actual_count: difference === null ? null : 10 - difference,
             counted_at: difference === null ? null : "2026-10-01T09:05:00",
+            difference,
           }),
         ],
         progress: {
@@ -1466,34 +1362,10 @@ it.each([
       expect(cell).not.toHaveClass("text-destructive-strong");
       return;
     }
-    mockComplete.mockResolvedValue(
-      ok({
-        total_cost: 2500,
-        adjusted_items: [
-          {
-            product_code: "P-001",
-            product_name: "SC9商品",
-            system_stock: 10,
-            actual_count: 10 - difference,
-            difference,
-            stock_after: 10 - difference,
-          },
-        ],
-        total_items: 1,
-        integrity_result: { mismatches: [], mismatch_count: 0, checked_count: 1 },
-      }),
-    );
     await renderPage();
     const activeRow = (await screen.findByText("SC9商品")).closest("tr");
     if (!activeRow) throw new Error("active row missing");
     expect(within(activeRow).getByText(label).closest("td")).toHaveClass(color);
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "棚卸しを確定する" }));
-    await user.click(screen.getByRole("button", { name: "確定する" }));
-    await screen.findByRole("heading", { name: "棚卸し結果" });
-    const resultRow = screen.getByText("SC9商品").closest("tr");
-    if (!resultRow) throw new Error("result row missing");
-    expect(within(resultRow).getByText(label).closest("td")).toHaveClass(color);
   },
 );
 
@@ -1525,3 +1397,1411 @@ it.each([0, 1])(
     expect(progress.previousElementSibling).toBe(row?.parentElement);
   },
 );
+
+// ---- D-118 b1 の計数・要再確認・完了（73 の D-118 の節。Matrix の U1〜U9・U15・U16） ----
+
+function recheckTarget(overrides: Partial<CountRecoveryTarget> = {}): CountRecoveryTarget {
+  return {
+    product_code: "P-003",
+    product_name: "黄色い糸",
+    stock_unit: "pcs",
+    stock: 3,
+    stock_range_low: 3,
+    stock_range_high: 6,
+    stocktake_item_id: 503,
+    stocktake_id: 77,
+    action: "active_count",
+    block_reason: null,
+    recount_reasons: ["undetermined_settlement"],
+    ...overrides,
+  };
+}
+
+function placement(overrides: Partial<Awaited<ReturnType<typeof placementData>>> = {}) {
+  return ok({ ...placementData(), ...overrides });
+}
+
+function placementData() {
+  return {
+    later_count_exists: false,
+    product_name: "黄色い糸",
+    stock_unit: "pcs" as const,
+    stock: 3,
+    stock_range_low: 3 as number | null,
+    stock_range_high: 6 as number | null,
+    recount_reasons: ["undetermined_settlement"] as CountRecoveryTarget["recount_reasons"],
+    count_value: 4 as number | null,
+    count_kind: "default" as "default" | "fresh" | null,
+    count_business_date: "2026-10-01" as string | null,
+  };
+}
+
+async function selectItemByCode(code = "P-001") {
+  const user = userEvent.setup();
+  await user.type(await screen.findByLabelText("商品を検索・スキャン"), `${code}{Enter}`);
+  await screen.findByLabelText(/^実際の数/);
+  return user;
+}
+
+function renderWithReturn(search: StocktakeSearch, onReturnTo = vi.fn()) {
+  const onSearchChange = vi.fn();
+  const utils = renderWithClient(
+    <StocktakePage search={search} onSearchChange={onSearchChange} onReturnTo={onReturnTo} />,
+    { onSearchChange },
+  );
+  return { ...utils, onReturnTo };
+}
+
+describe("StocktakePage D-118 b1（73）", () => {
+  it("U1 default count saves with today's date and returns focus", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    const user = await selectItemByCode();
+
+    expect(screen.getByText(`保存の日付: ${TODAY}（今日）`)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^実際の数/)).toHaveValue("");
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(8));
+    });
+    expect(await screen.findByText(`赤い糸 を 8 個（${TODAY}）で保存しました`)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("商品を検索・スキャン")).toHaveFocus();
+    });
+  });
+
+  it("U1 save result with recheck reasons tells the operator in text", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockSave.mockResolvedValueOnce(
+      saveResult({
+        stock_range_low: 7,
+        stock_range_high: 8,
+        recount_reasons: ["same_date_movement"],
+      }),
+    );
+    await renderPage();
+    const user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    expect(
+      await screen.findByText(
+        `赤い糸 を 8 個（${TODAY}）で保存しました。要再確認: 数えた日に売り買い（入出庫）がありました`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("U1 pending count save locks switching the product until the response (73, Final Review F1)", async () => {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    const user = await selectItemByCode();
+
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(8));
+    });
+    expect(screen.getByLabelText("商品を検索・スキャン")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "対象を確認" })).toBeDisabled();
+
+    resolveSave(saveResult());
+    expect(await screen.findByText(`赤い糸 を 8 個（${TODAY}）で保存しました`)).toBeInTheDocument();
+    expect(screen.getByLabelText("商品を検索・スキャン")).toBeEnabled();
+  });
+
+  it("U1 late save response for product A keeps product B's field (73, Final Review F1)", async () => {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    let resolveFind: (value: ReturnType<typeof ok<StocktakeItemDetail>>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    const user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "8");
+
+    // B の検索の応答を保留したまま A の数を保存し、A の保存の応答も保留する
+    mockFindItem.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFind = resolve;
+        }),
+    );
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    await user.clear(screen.getByLabelText("商品を検索・スキャン"));
+    await user.type(screen.getByLabelText("商品を検索・スキャン"), "P-003{Enter}");
+    await user.click(screen.getByRole("button", { name: "数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(8));
+    });
+    resolveFind(ok(stocktakeItem({ id: 503, product_code: "P-003", name: "緑の糸" })));
+    await screen.findByText("緑の糸");
+
+    resolveSave(saveResult());
+    expect(await screen.findByText(`赤い糸 を 8 個（${TODAY}）で保存しました`)).toBeInTheDocument();
+    // A の応答は B の欄を消さない
+    await user.type(await screen.findByLabelText(/^実際の数/), "7{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenLastCalledWith({
+        ...defaultCount(7, 503),
+        product_code: "P-003",
+      });
+    });
+  });
+
+  it("U9 late count_now save for product A keeps product B's field after the route changes (73, Final Review G1)", async () => {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(null));
+    mockPreviewPlacement.mockImplementation((productCode) =>
+      Promise.resolve(
+        placement({
+          product_name: productCode === "P-005" ? "連動なしの糸" : "緑の糸",
+          count_value: null,
+          count_kind: null,
+          count_business_date: null,
+        }),
+      ),
+    );
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const { onReturnTo, onSearchChange, queryClient, rerender } = renderWithReturn({
+      product: "P-005",
+      returnTo: "/products/P-005/edit",
+    });
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    // A の保存の応答の保留中に route の product が B に変わる
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StocktakePage
+          search={{ product: "P-006" }}
+          onSearchChange={onSearchChange}
+          onReturnTo={onReturnTo}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("緑の糸");
+    resolveSave(saveResult());
+
+    // A の遅い成功は B の欄を閉じず、A の編集画面へも戻らない
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "今の数を保存" })).toBeEnabled();
+    });
+    expect(screen.getByText("緑の糸")).toBeInTheDocument();
+    expect(onReturnTo).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText(/^実際の数/), "7");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenLastCalledWith({
+        product_code: "P-006",
+        count_value: 7,
+        fresh: true,
+        business_date: TODAY,
+        stocktake_item_id: null,
+      });
+    });
+  });
+
+  it("U9 count_now save for product A closes A's field after the route's product B fails to load (73, Final Review N1)", async () => {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(null));
+    mockPreviewPlacement.mockImplementation((productCode) =>
+      Promise.resolve(
+        productCode === "P-005"
+          ? placement({
+              product_name: "連動なしの糸",
+              count_value: null,
+              count_kind: null,
+              count_business_date: null,
+            })
+          : cmdError("not_found", "商品が見つかりません"),
+      ),
+    );
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const { onReturnTo, onSearchChange, queryClient, rerender } = renderWithReturn({
+      product: "P-005",
+      returnTo: "/products/P-005/edit",
+    });
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    // A の保存の応答の保留中に route の product が B に変わり、B の読込みが失敗する
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StocktakePage
+          search={{ product: "P-006" }}
+          onSearchChange={onSearchChange}
+          onReturnTo={onReturnTo}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("商品が見つかりません")).toBeInTheDocument();
+    expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+    resolveSave(saveResult());
+
+    // 欄は A のままなので、A の保存の成功で欄が閉じ、A の編集画面へ戻る
+    await waitFor(() => {
+      expect(onReturnTo).toHaveBeenCalledWith("/products/P-005/edit");
+    });
+    expect(screen.queryByText("連動なしの糸")).not.toBeInTheDocument();
+  });
+
+  it("U9 count_now save for product A closes A's field after a recount of C supersedes route B and fails to load (73, Final Review N1c)", async () => {
+    mockGetActive.mockResolvedValue(ok(null));
+    mockListRecheck.mockResolvedValue(
+      ok([
+        recheckTarget({
+          product_code: "P-007",
+          product_name: "生成りの紐",
+          stocktake_item_id: null,
+          action: "count_now",
+        }),
+      ]),
+    );
+    mockPreviewPlacement.mockImplementation((productCode) =>
+      productCode === "P-005"
+        ? Promise.resolve(
+            placement({
+              product_name: "連動なしの糸",
+              count_value: null,
+              count_kind: null,
+              count_business_date: null,
+            }),
+          )
+        : productCode === "P-006"
+          ? new Promise(() => undefined)
+          : Promise.resolve(cmdError("not_found", "商品が見つかりません")),
+    );
+    const { onSearchChange, queryClient, rerender } = renderWithReturn({
+      product: "P-005",
+      returnTo: "/products/P-005/edit",
+    });
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+
+    // route の product が B に変わり、B の読込みの決着の前に「入れ直す」C を押す。C の読込みは失敗する
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StocktakePage search={{ product: "P-006" }} onSearchChange={onSearchChange} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-006", expect.anything());
+    });
+    const list = await screen.findByRole("region", { name: "数え直しが必要な商品" });
+    await user.click(
+      within(within(list).getByRole("row", { name: /生成りの紐/ })).getByRole("button", {
+        name: "入れ直す",
+      }),
+    );
+    expect(await screen.findByText("商品が見つかりません")).toBeInTheDocument();
+    expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+
+    // 欄は A のままなので、A の保存の成功で欄が閉じる
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("連動なしの糸")).not.toBeInTheDocument();
+    });
+  });
+
+  // A の保存の応答の保留中に route を B へ変え、B の読込みを保留したまま A の保存を成功させる
+  async function saveAThenSettleB(settleB: "fail" | "succeed") {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    let settlePreviewB: () => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(null));
+    mockPreviewPlacement.mockImplementation((productCode) =>
+      productCode === "P-005"
+        ? Promise.resolve(
+            placement({
+              product_name: "連動なしの糸",
+              count_value: null,
+              count_kind: null,
+              count_business_date: null,
+            }),
+          )
+        : new Promise((resolve) => {
+            settlePreviewB = () => {
+              resolve(
+                settleB === "fail"
+                  ? cmdError("not_found", "商品が見つかりません")
+                  : placement({
+                      product_name: "緑の糸",
+                      count_value: null,
+                      count_kind: null,
+                      count_business_date: null,
+                    }),
+              );
+            };
+          }),
+    );
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const { onReturnTo, onSearchChange, queryClient, rerender } = renderWithReturn({
+      product: "P-005",
+      returnTo: "/products/P-005/edit",
+    });
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <StocktakePage
+          search={{ product: "P-006" }}
+          onSearchChange={onSearchChange}
+          onReturnTo={onReturnTo}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-006", expect.anything());
+    });
+    resolveSave(saveResult());
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "今の数を保存" })).toBeEnabled();
+    });
+    await waitFor(() => {
+      expect(queryClient.isFetching()).toBe(0);
+    });
+    // B の読込みの決着の前は欄が A のまま残る
+    expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+    expect(onReturnTo).not.toHaveBeenCalled();
+    settlePreviewB();
+    return { onReturnTo, user };
+  }
+
+  it("U9 count_now save for product A closes A's field when it succeeds before the route's product B fails to load (73, Final Review N1b)", async () => {
+    const { onReturnTo } = await saveAThenSettleB("fail");
+
+    // B の読込みが失敗して欄が A のまま決まった時点で、A の保存の成功の後始末をする
+    expect(await screen.findByText("商品が見つかりません")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(onReturnTo).toHaveBeenCalledWith("/products/P-005/edit");
+    });
+    expect(screen.queryByText("連動なしの糸")).not.toBeInTheDocument();
+  });
+
+  it("U9 count_now save for product A keeps product B's field when it succeeds before B loads (73, Final Review N1b)", async () => {
+    const { onReturnTo, user } = await saveAThenSettleB("succeed");
+
+    // B の欄が開いたなら、A の先に届いた成功は B の欄を閉じない
+    expect(await screen.findByText("緑の糸")).toBeInTheDocument();
+    expect(screen.queryByText("連動なしの糸")).not.toBeInTheDocument();
+    expect(onReturnTo).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText(/^実際の数/), "7");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenLastCalledWith({
+        product_code: "P-006",
+        count_value: 7,
+        fresh: true,
+        business_date: TODAY,
+        stocktake_item_id: null,
+      });
+    });
+    expect(onReturnTo).not.toHaveBeenCalled();
+  });
+
+  // route の product が外れる経路（73 の D-118 の節「今の数を入れる」）。P-005 = A、P-006 = B
+  function renderCountNowRoute(previewB: Promise<ReturnType<typeof placement>>) {
+    mockGetActive.mockResolvedValue(ok(null));
+    mockPreviewPlacement.mockImplementation((productCode) =>
+      productCode === "P-005"
+        ? Promise.resolve(
+            placement({
+              product_name: "連動なしの糸",
+              count_value: null,
+              count_kind: null,
+              count_business_date: null,
+            }),
+          )
+        : previewB,
+    );
+    const utils = renderWithReturn({ product: "P-005", returnTo: "/products/P-005/edit" });
+    const setRoute = (search: StocktakeSearch) => {
+      utils.rerender(
+        <QueryClientProvider client={utils.queryClient}>
+          <StocktakePage
+            search={search}
+            onSearchChange={utils.onSearchChange}
+            onReturnTo={utils.onReturnTo}
+          />
+        </QueryClientProvider>,
+      );
+    };
+    return { ...utils, setRoute };
+  }
+
+  function placementB() {
+    return placement({
+      product_name: "緑の糸",
+      count_value: null,
+      count_kind: null,
+      count_business_date: null,
+    });
+  }
+
+  function holdSave() {
+    const held: { resolve: (value: ReturnType<typeof saveResult>) => void } = {
+      resolve: () => undefined,
+    };
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          held.resolve = resolve;
+        }),
+    );
+    return held;
+  }
+
+  // 応答を解いた後の microtask と invalidate の await を流し切る
+  async function flushSaveFollowUp(invalidateSpy: { mock: { calls: unknown[] } }) {
+    await waitFor(() => {
+      expect(invalidateSpy.mock.calls.length).toBeGreaterThan(0);
+    });
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("SF4 count_now field for A closes on save after the route's product is removed while B loads (73)", async () => {
+    let resolvePreviewB: () => void = () => undefined;
+    const { onReturnTo, setRoute } = renderCountNowRoute(
+      new Promise((resolve) => {
+        resolvePreviewB = () => {
+          resolve(placementB());
+        };
+      }),
+    );
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+
+    setRoute({ product: "P-006" });
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-006", expect.anything());
+    });
+    setRoute({});
+    expect(screen.queryByText("操作できませんでした")).not.toBeInTheDocument();
+    expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "今の数を入れる" })).not.toBeInTheDocument();
+    });
+    expect(onReturnTo).not.toHaveBeenCalled();
+
+    // 途中の B の読込みの応答は捨てる
+    resolvePreviewB();
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByText("緑の糸")).not.toBeInTheDocument();
+    expect(screen.queryByText("操作できませんでした")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a: removed before the response"],
+    ["b: removed after the pending close"],
+    ["c: removed without another product"],
+    ["d: page unmounts"],
+  ] as const)(
+    "SF5 count_now save for A started with returnTo does not return after the route's product is removed or the page unmounts (%s) (73)",
+    async (label) => {
+      const save = holdSave();
+      const { onReturnTo, onSearchChange, invalidateSpy, queryClient, setRoute, unmount } =
+        renderCountNowRoute(new Promise(() => undefined));
+      const user = userEvent.setup();
+      await screen.findByText("連動なしの糸");
+      await user.type(screen.getByLabelText(/^実際の数/), "9");
+      await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalledTimes(1);
+      });
+
+      if (label.startsWith("d")) {
+        // サイドバーで別の画面へ移った後に保存の成功が届く
+        const searchCalls = vi.mocked(onSearchChange).mock.calls.length;
+        unmount();
+        save.resolve(saveResult());
+        await flushSaveFollowUp(invalidateSpy);
+        expect(onReturnTo).not.toHaveBeenCalled();
+        expect(onSearchChange).toHaveBeenCalledTimes(searchCalls);
+        return;
+      }
+
+      if (!label.startsWith("c")) {
+        setRoute({ product: "P-006" });
+        await waitFor(() => {
+          expect(mockPreviewPlacement).toHaveBeenCalledWith("P-006", expect.anything());
+        });
+      }
+      if (label.startsWith("b")) {
+        save.resolve(saveResult());
+        await waitFor(() => {
+          expect(screen.getByRole("button", { name: "今の数を保存" })).toBeEnabled();
+        });
+        await waitFor(() => {
+          expect(queryClient.isFetching()).toBe(0);
+        });
+        await flushSaveFollowUp(invalidateSpy);
+        // A の欄は B の読込みの決着を待つ閉じ待ちで残る
+        expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+        setRoute({});
+      } else {
+        setRoute({});
+        // 外れた時点では欄を閉じない（未保存の入力を失わない）
+        expect(screen.getByText("連動なしの糸")).toBeInTheDocument();
+        expect(screen.queryByText("操作できませんでした")).not.toBeInTheDocument();
+        save.resolve(saveResult());
+      }
+
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "今の数を入れる" })).not.toBeInTheDocument();
+      });
+      expect(onReturnTo).not.toHaveBeenCalled();
+      expect(screen.queryByText("操作できませんでした")).not.toBeInTheDocument();
+    },
+  );
+
+  it("SF6 pending count_now save for A keeps B's field after B loads and the route's product is removed (73)", async () => {
+    const save = holdSave();
+    const { onReturnTo, invalidateSpy, setRoute } = renderCountNowRoute(
+      Promise.resolve(placementB()),
+    );
+    const user = userEvent.setup();
+    await screen.findByText("連動なしの糸");
+    await user.type(screen.getByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    setRoute({ product: "P-006" });
+    await screen.findByText("緑の糸");
+    setRoute({});
+    save.resolve(saveResult());
+    await flushSaveFollowUp(invalidateSpy);
+
+    expect(screen.getByRole("heading", { name: "今の数を入れる" })).toBeInTheDocument();
+    expect(screen.getByText("緑の糸")).toBeInTheDocument();
+    expect(onReturnTo).not.toHaveBeenCalled();
+  });
+
+  it("U8 confirm is locked while a count save is pending (73, Final Review G2)", async () => {
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    const user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeDisabled();
+
+    resolveSave(saveResult());
+    expect(await screen.findByText(`赤い糸 を 8 個（${TODAY}）で保存しました`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeEnabled();
+  });
+
+  it("U7 zero actions run once while pending and lock the other saves (73, Final Review G3)", async () => {
+    let resolveZero: (value: ReturnType<typeof ok<[]>>) => void = () => undefined;
+    const pendingZero = () =>
+      new Promise<ReturnType<typeof ok<[]>>>((resolve) => {
+        resolveZero = resolve;
+      });
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockComplete.mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "stocktake_guard",
+        message: "棚卸しを完了できません",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code: "completion_blocked",
+          targets: [
+            recheckTarget({
+              product_code: "P-002",
+              product_name: "青い糸",
+              block_reason: "uncounted",
+              stock_range_low: null,
+              stock_range_high: null,
+              recount_reasons: [],
+            }),
+            recheckTarget({
+              product_code: "P-005",
+              product_name: "白い糸",
+              block_reason: "uncounted",
+              stock_range_low: null,
+              stock_range_high: null,
+              recount_reasons: [],
+            }),
+          ],
+          settlement_pending: null,
+        },
+      },
+    });
+    await renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
+    await user.click(screen.getByRole("button", { name: "確定する" }));
+    const panel = await screen.findByRole("region", { name: "棚卸しを確定できない理由" });
+    const group = within(panel).getByRole("group", { name: "まだ数えていない" });
+
+    // 「0 にする」の保留中は同じ button も他の保存・確定も押せない
+    mockZero.mockImplementationOnce(pendingZero);
+    const blueRow = within(group).getByText("青い糸").closest("li");
+    if (blueRow === null) throw new Error("row missing");
+    const zeroOne = within(blueRow).getByRole("button", { name: "0 にする" });
+    await user.click(zeroOne);
+    await waitFor(() => {
+      expect(mockZero).toHaveBeenCalledTimes(1);
+    });
+    expect(zeroOne).toBeDisabled();
+    expect(within(group).getByRole("button", { name: "残りをまとめて 0 にする" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeDisabled();
+    expect(screen.getByLabelText("商品を検索・スキャン")).toBeDisabled();
+    await user.click(zeroOne);
+    expect(mockZero).toHaveBeenCalledTimes(1);
+    resolveZero(ok([]));
+    await waitFor(() => {
+      expect(within(group).queryByText("青い糸")).not.toBeInTheDocument();
+    });
+
+    // 「残りをまとめて 0 にする」も保留中は開き直せない
+    mockZero.mockImplementationOnce(pendingZero);
+    const zeroAll = within(group).getByRole("button", { name: "残りをまとめて 0 にする" });
+    await user.click(zeroAll);
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "0 にする" }),
+    );
+    await waitFor(() => {
+      expect(mockZero).toHaveBeenCalledTimes(2);
+    });
+    expect(zeroAll).toBeDisabled();
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeDisabled();
+    resolveZero(ok([]));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeEnabled();
+    });
+    expect(mockZero).toHaveBeenCalledTimes(2);
+  });
+
+  it("U5 confirming today's date in the date-change dialog saves once (73, Final Review G3)", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    let user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+    vi.setSystemTime(new Date(2026, 9, 3, 0, 5, 0));
+    user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "6{Enter}");
+    let resolveSave: (value: ReturnType<typeof saveResult>) => void = () => undefined;
+    mockSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    await user.dblClick(await screen.findByRole("button", { name: "今日の分として保存する" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByRole("button", { name: "数を保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeDisabled();
+    resolveSave(saveResult());
+    expect(
+      await screen.findByText("赤い糸 を 6 個（2026-10-03）で保存しました"),
+    ).toBeInTheDocument();
+    expect(mockSave).toHaveBeenCalledTimes(2);
+  });
+
+  it("U1 late search response does not replace the later search's field (73, Final Review G4)", async () => {
+    let resolveFind: (value: ReturnType<typeof ok<StocktakeItemDetail>>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockFindItem
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFind = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(ok(stocktakeItem({ id: 502, product_code: "P-002", name: "青い糸" })));
+    await renderPage();
+    const user = userEvent.setup();
+    const code = await screen.findByLabelText("商品を検索・スキャン");
+    await user.type(code, "P-001{Enter}");
+    await user.clear(code);
+    await user.type(code, "P-002{Enter}");
+    expect(await screen.findByText(/^P-002 \//)).toBeInTheDocument();
+
+    resolveFind(ok(baseStocktakeItem()));
+    await waitFor(() => {
+      expect(mockFindItem).toHaveBeenCalledTimes(2);
+    });
+    // 遅い P-001 の応答は P-002 の欄を置き換えない
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText(/^P-002 \//)).toBeInTheDocument();
+    expect(screen.queryByText(/^P-001 \//)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^実際の数/), "7{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith({
+        ...defaultCount(7, 502),
+        product_code: "P-002",
+      });
+    });
+  });
+
+  it("U6 late recount load does not replace the later recount's field (73, Final Review G4)", async () => {
+    let resolvePreview: (value: ReturnType<typeof placement>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(null));
+    mockListRecheck.mockResolvedValue(
+      ok([
+        recheckTarget({ stocktake_item_id: null, action: "count_now" }),
+        recheckTarget({
+          product_code: "P-004",
+          product_name: "生成りの紐",
+          stocktake_item_id: null,
+          action: "count_now",
+        }),
+      ]),
+    );
+    mockPreviewPlacement
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePreview = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(placement({ product_name: "生成りの紐" }));
+    await renderPage();
+    const list = await screen.findByRole("region", { name: "数え直しが必要な商品" });
+    const user = userEvent.setup();
+    await user.click(
+      within(within(list).getByRole("row", { name: /黄色い糸/ })).getByRole("button", {
+        name: "入れ直す",
+      }),
+    );
+    await user.click(
+      within(within(list).getByRole("row", { name: /生成りの紐/ })).getByRole("button", {
+        name: "入れ直す",
+      }),
+    );
+    const panel = (await screen.findByRole("heading", { name: "今の数を入れる" })).closest(
+      "section",
+    );
+    if (panel === null) throw new Error("panel missing");
+    expect(within(panel).getByText("生成りの紐")).toBeInTheDocument();
+
+    resolvePreview(placement());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(panel).getByText("生成りの紐")).toBeInTheDocument();
+    expect(within(panel).queryByText("黄色い糸")).not.toBeInTheDocument();
+  });
+
+  it("U2 late back-date preview does not replace the later date's warning (73, Final Review G4)", async () => {
+    let resolvePreview: (value: ReturnType<typeof placement>) => void = () => undefined;
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockPreviewPlacement
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolvePreview = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(placement({ later_count_exists: false }));
+    await renderPage();
+    const user = await selectItemByCode();
+    await user.click(screen.getByRole("button", { name: "前の日の分を入れる" }));
+    fireEvent.change(screen.getByLabelText("数えた日"), { target: { value: "2026-09-30" } });
+    fireEvent.change(screen.getByLabelText("数えた日"), { target: { value: "2026-09-29" } });
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-001", "2026-09-29");
+    });
+
+    resolvePreview(placement({ later_count_exists: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText("後の数が既にあり、そちらが効きます")).not.toBeInTheDocument();
+  });
+
+  it("U2 back-dated count warns when a later count exists", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockPreviewPlacement.mockResolvedValue(placement({ later_count_exists: true }));
+    await renderPage();
+    const user = await selectItemByCode();
+
+    await user.click(screen.getByRole("button", { name: "前の日の分を入れる" }));
+    const date = screen.getByLabelText("数えた日");
+    expect(date).toHaveAttribute("type", "date");
+    expect(date).toHaveAttribute("max", TODAY);
+    expect(screen.queryByRole("button", { name: "入れ直す" })).not.toBeInTheDocument();
+    fireEvent.change(date, { target: { value: "2026-09-30" } });
+
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-001", "2026-09-30");
+    });
+    expect(await screen.findByText("後の数が既にあり、そちらが効きます")).toBeInTheDocument();
+    expect(mockSave).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText(/^実際の数/), "10");
+    await user.click(screen.getByRole("button", { name: "数を保存" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith({ ...defaultCount(10), business_date: "2026-09-30" });
+    });
+  });
+
+  it("U2 back-dated count without a later count shows no warning and a future date is refused", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockPreviewPlacement.mockResolvedValue(placement({ later_count_exists: false }));
+    await renderPage();
+    const user = await selectItemByCode();
+    await user.click(screen.getByRole("button", { name: "前の日の分を入れる" }));
+    fireEvent.change(screen.getByLabelText("数えた日"), { target: { value: "2026-09-29" } });
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-001", "2026-09-29");
+    });
+    expect(screen.queryByText("後の数が既にあり、そちらが効きます")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("数えた日"), { target: { value: "2026-10-05" } });
+    await user.type(screen.getByLabelText(/^実際の数/), "3");
+    await user.click(screen.getByRole("button", { name: "数を保存" }));
+    expect(await screen.findByText("未来の日付には保存できません")).toBeInTheDocument();
+    expect(mockSave).not.toHaveBeenCalled();
+  });
+
+  it("U3 recount sends fresh true with today only", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockFindItem.mockResolvedValueOnce(ok(baseStocktakeItem())).mockResolvedValueOnce(
+      ok(
+        stocktakeItem({
+          count_value: 5,
+          count_kind: "default",
+          count_business_date: "2026-10-01",
+          actual_count: 5,
+        }),
+      ),
+    );
+    await renderPage();
+    // 前に保存した数が無いときは「入れ直す」を出さない
+    const user = await selectItemByCode();
+    expect(screen.queryByRole("button", { name: "入れ直す" })).not.toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("商品を検索・スキャン"));
+    await user.type(screen.getByLabelText("商品を検索・スキャン"), "P-001{Enter}");
+    expect(await screen.findByText("前に保存した数: 5 個（2026-10-01）")).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^実際の数/), "4");
+    await user.click(screen.getByRole("button", { name: "入れ直す" }));
+
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith({ ...defaultCount(4), fresh: true });
+    });
+  });
+
+  it("U4 length product count converts meters to cm", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockFindItem.mockResolvedValue(ok(stocktakeItem({ stock_unit: "m", current_stock: 500 })));
+    await renderPage();
+    const user = await selectItemByCode();
+    const input = screen.getByLabelText("実際の数（m、小数 2 桁まで）");
+    expect(input).toHaveAttribute("inputmode", "decimal");
+
+    for (const [text, error] of [
+      ["1.234", "数量は0以上で、小数は2桁までの m で入力してください"],
+      ["-1", "数量は0以上で、小数は2桁までの m で入力してください"],
+      ["10000000", "数が大きすぎます"],
+    ] as const) {
+      await user.clear(input);
+      await user.type(input, `${text}{Enter}`);
+      expect(await screen.findByText(error)).toBeInTheDocument();
+    }
+    expect(mockSave).not.toHaveBeenCalled();
+
+    await user.clear(input);
+    await user.type(input, "0.29{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith(defaultCount(29));
+    });
+  });
+
+  it("U5 date change since last save asks before saving", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    let user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    // 画面を開いたまま PC の日付が変わる
+    vi.setSystemTime(new Date(2026, 9, 3, 0, 5, 0));
+    user = await selectItemByCode();
+    await user.type(screen.getByLabelText(/^実際の数/), "6{Enter}");
+    expect(
+      await screen.findByText(
+        "日付が変わりました（2026-10-02 → 2026-10-03）。今日の分として保存しますか",
+      ),
+    ).toBeInTheDocument();
+    expect(mockSave).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "数を保存" }));
+    await user.click(await screen.findByRole("button", { name: "今日の分として保存する" }));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenLastCalledWith({
+        ...defaultCount(6),
+        business_date: "2026-10-03",
+      });
+    });
+  });
+
+  it("U6 recheck list shows range and recount resolves the row", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockListRecheck
+      .mockResolvedValueOnce(
+        ok([
+          recheckTarget(),
+          recheckTarget({
+            product_code: "P-004",
+            product_name: "生成りの紐",
+            stock_unit: "m",
+            stock: 450,
+            stock_range_low: 450,
+            stock_range_high: 520,
+            stocktake_item_id: null,
+            action: "count_now",
+            recount_reasons: ["conflicting_counts"],
+          }),
+        ]),
+      )
+      .mockResolvedValue(
+        ok([
+          recheckTarget({
+            product_code: "P-004",
+            product_name: "生成りの紐",
+            stock_unit: "m",
+            stock: 450,
+            stock_range_low: 450,
+            stock_range_high: 520,
+            stocktake_item_id: null,
+          }),
+        ]),
+      );
+    mockPreviewPlacement.mockResolvedValue(placement());
+    const { invalidateSpy } = await renderPage();
+
+    const list = await screen.findByRole("region", { name: "数え直しが必要な商品" });
+    const row = within(list).getByRole("row", { name: /黄色い糸/ });
+    expect(within(row).getByText("3〜6 個")).toBeInTheDocument();
+    expect(within(row).getByText("要再確認")).toBeInTheDocument();
+    expect(within(row).getByText("数えた日に売り買い（入出庫）がありました")).toBeInTheDocument();
+    const lengthRow = within(list).getByRole("row", { name: /生成りの紐/ });
+    expect(within(lengthRow).getByText("4.5〜5.2 m")).toBeInTheDocument();
+    expect(within(lengthRow).getByText("同じ日に違う数が保存されています")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(within(row).getByRole("button", { name: "入れ直す" }));
+    await waitFor(() => {
+      expect(mockPreviewPlacement).toHaveBeenCalledWith("P-003", TODAY);
+    });
+    const panel = (await screen.findByRole("heading", { name: "今の数を入れる" })).closest(
+      "section",
+    );
+    if (panel === null) throw new Error("panel missing");
+    expect(within(panel).getByText("黄色い糸")).toBeInTheDocument();
+    expect(within(panel).getByText("前に保存した数: 4 個（2026-10-01）")).toBeInTheDocument();
+    invalidateSpy.mockClear();
+    await user.type(within(panel).getByLabelText(/^実際の数/), "5");
+    await user.click(within(panel).getByRole("button", { name: "今の数を保存" }));
+
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith({
+        product_code: "P-003",
+        count_value: 5,
+        fresh: true,
+        business_date: TODAY,
+        stocktake_item_id: 503,
+      });
+    });
+    await waitFor(() => {
+      expect(within(list).queryByRole("row", { name: /黄色い糸/ })).not.toBeInTheDocument();
+    });
+    expectExactInvalidations(
+      invalidateSpy.mock.calls,
+      d052InvalidationOracle.stocktakeCountUpdate(),
+    );
+    expect(screen.queryByRole("heading", { name: "今の数を入れる" })).not.toBeInTheDocument();
+  });
+
+  it("U7 completion blocked lists reasons, settlement hint and zero actions", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    const blockTarget = (
+      code: string,
+      name: string,
+      reason: "recheck" | "uncounted" | "settlement_pending",
+    ) =>
+      recheckTarget({
+        product_code: code,
+        product_name: name,
+        block_reason: reason,
+        stock_range_low: reason === "recheck" ? 3 : null,
+        stock_range_high: reason === "recheck" ? 6 : null,
+        recount_reasons: reason === "recheck" ? ["same_date_movement"] : [],
+      });
+    mockComplete.mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "stocktake_guard",
+        message: "棚卸しを完了できません",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code: "completion_blocked",
+          targets: [
+            blockTarget("P-001", "赤い糸", "recheck"),
+            blockTarget("P-002", "青い糸", "uncounted"),
+            blockTarget("P-005", "白い糸", "uncounted"),
+            blockTarget("P-003", "黄色い糸", "settlement_pending"),
+          ],
+          settlement_pending: {
+            missing: [
+              { from: 103, to: 103 },
+              { from: 105, to: 107 },
+            ],
+            on_or_after: "2026-10-01",
+            before: "2026-09-28",
+          },
+        },
+      },
+    });
+    await renderPage();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("heading", { name: "棚卸しの確定" })).toBeInTheDocument();
+    const warning = within(dialog)
+      .getByText("確定すると取り消せません")
+      .closest('[data-slot="alert"]');
+    expect(warning).toHaveAttribute("data-variant", "warning");
+    expect(
+      within(dialog).getByText(
+        "今日の最後の精算（締め）を取り込みましたか。取り込む前に完了すると、その精算の売上は棚卸しに入りません",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "確定する" })).toHaveAttribute(
+      "data-variant",
+      "destructive",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "確定する" }));
+    await waitFor(() => {
+      expect(mockComplete).toHaveBeenCalledWith(77);
+    });
+
+    const panel = await screen.findByRole("region", { name: "棚卸しを確定できない理由" });
+    const recheckGroup = within(panel).getByRole("group", { name: "数え直しが必要" });
+    expect(within(recheckGroup).getByText("赤い糸")).toBeInTheDocument();
+    expect(within(recheckGroup).getByText("3〜6 個")).toBeInTheDocument();
+    expect(within(recheckGroup).queryByText("青い糸")).not.toBeInTheDocument();
+    const uncountedGroup = within(panel).getByRole("group", { name: "まだ数えていない" });
+    expect(within(uncountedGroup).getByText("青い糸")).toBeInTheDocument();
+    expect(within(uncountedGroup).getByText("白い糸")).toBeInTheDocument();
+    expect(within(uncountedGroup).queryByText("赤い糸")).not.toBeInTheDocument();
+    const pendingGroup = within(panel).getByRole("group", { name: "取り込んでいない精算がある" });
+    expect(within(pendingGroup).getByText("黄色い糸")).toBeInTheDocument();
+    for (const line of [
+      "精算 103 を取り込んでください",
+      "精算 105〜107 を取り込んでください",
+      "精算日が 2026-10-01 以降の精算を取り込んでください",
+      "精算日が 2026-09-28 より前の精算を 1 本取り込んでください",
+    ]) {
+      expect(within(pendingGroup).getByText(line)).toBeInTheDocument();
+    }
+
+    // 「0 にする」は選んだ商品、日付は既定で今日
+    const blueRow = within(uncountedGroup).getByText("青い糸").closest("li");
+    if (blueRow === null) throw new Error("row missing");
+    await user.click(within(blueRow).getByRole("button", { name: "0 にする" }));
+    await waitFor(() => {
+      expect(mockZero).toHaveBeenCalledWith(77, ["P-002"], TODAY);
+    });
+    await waitFor(() => {
+      expect(within(uncountedGroup).queryByText("青い糸")).not.toBeInTheDocument();
+    });
+
+    // 「残りをまとめて 0 にする」は確認を挟み、日付を選べる
+    fireEvent.change(within(uncountedGroup).getByLabelText("0 にする日付"), {
+      target: { value: "2026-10-01" },
+    });
+    await user.click(
+      within(uncountedGroup).getByRole("button", { name: "残りをまとめて 0 にする" }),
+    );
+    expect(
+      await screen.findByText("まだ数えていない 1件を、2026-10-01 の数 0 として保存します。"),
+    ).toBeInTheDocument();
+    expect(mockZero).toHaveBeenCalledTimes(1);
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "0 にする" }),
+    );
+    await waitFor(() => {
+      expect(mockZero).toHaveBeenLastCalledWith(77, ["P-005"], "2026-10-01");
+    });
+    // 理由ごとの一覧は残る（精算の理由は取込みで解ける）
+    expect(
+      within(panel).getByRole("group", { name: "取り込んでいない精算がある" }),
+    ).toBeInTheDocument();
+  });
+
+  it("U7 unknown recovery code is not treated as completion", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockComplete.mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "stocktake_guard",
+        message: "棚卸しを完了できません（合成の未知の code）",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code: "future_code",
+          targets: [],
+          settlement_pending: null,
+        } as unknown as NonNullable<CmdErrorShape["stocktake_recovery"]>,
+      },
+    });
+    await renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
+    await user.click(screen.getByRole("button", { name: "確定する" }));
+    expect(
+      await screen.findByText("棚卸しを完了できません（合成の未知の code）"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "棚卸し結果" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "棚卸しを確定できない理由" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("U8 completion result shows valuation without adjustments", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "棚卸しを確定する" }));
+    await user.click(screen.getByRole("button", { name: "確定する" }));
+
+    expect(await screen.findByRole("heading", { name: "棚卸し結果" })).toBeInTheDocument();
+    expect(screen.getByText("¥2,500")).toBeInTheDocument();
+    expect(screen.getByText("明細の数: 2件")).toBeInTheDocument();
+    expect(
+      screen.getByText("確定では在庫は動きません（数を保存したときに在庫へ入っています）"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("差異のあった商品")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["no active stocktake", null, null],
+    ["active stocktake with the item", activeStocktake(), 505],
+  ] as const)("U9 count_now entry saves fresh and returns (%s)", async (_label, active, itemId) => {
+    mockGetActive.mockResolvedValue(ok(active));
+    mockFindItem.mockResolvedValue(
+      ok(stocktakeItem({ id: 505, product_code: "P-005", name: "連動なしの糸" })),
+    );
+    mockPreviewPlacement.mockResolvedValue(
+      placement({
+        product_name: "連動なしの糸",
+        stock: 10,
+        stock_range_low: null,
+        stock_range_high: null,
+        recount_reasons: [],
+        count_value: null,
+        count_kind: null,
+        count_business_date: null,
+      }),
+    );
+    const { onReturnTo } = renderWithReturn({ product: "P-005", returnTo: "/products/P-005/edit" });
+
+    const panel = (await screen.findByRole("heading", { name: "今の数を入れる" })).closest(
+      "section",
+    );
+    if (panel === null) throw new Error("panel missing");
+    expect(await within(panel).findByText("連動なしの糸")).toBeInTheDocument();
+    expect(within(panel).getByText(/現在在庫 10 個/)).toBeInTheDocument();
+    expect(mockPreviewPlacement).toHaveBeenCalledWith("P-005", TODAY);
+    const user = userEvent.setup();
+    await user.type(within(panel).getByLabelText(/^実際の数/), "9");
+    await user.click(within(panel).getByRole("button", { name: "今の数を保存" }));
+
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith({
+        product_code: "P-005",
+        count_value: 9,
+        fresh: true,
+        business_date: TODAY,
+        stocktake_item_id: itemId,
+      });
+    });
+    await waitFor(() => {
+      expect(onReturnTo).toHaveBeenCalledWith("/products/P-005/edit");
+    });
+  });
+
+  it("U9 count_now save failure does not return", async () => {
+    mockGetActive.mockResolvedValue(ok(null));
+    mockPreviewPlacement.mockResolvedValue(placement({ product_name: "連動なしの糸" }));
+    mockSave.mockResolvedValueOnce(cmdError("validation", "数が大きすぎます"));
+    const { onReturnTo } = renderWithReturn({ product: "P-005", returnTo: "/products/P-005/edit" });
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(/^実際の数/), "9");
+    await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+    expect(await screen.findByText("数が大きすぎます")).toBeInTheDocument();
+    expect(onReturnTo).not.toHaveBeenCalled();
+  });
+
+  it.each([["/settings"], ["/products/P-999/edit"], [undefined]] as const)(
+    "U9 returnTo outside the product's edit form stays on stocktake (%s)",
+    async (returnTo) => {
+      mockGetActive.mockResolvedValue(ok(null));
+      mockPreviewPlacement.mockResolvedValue(placement({ product_name: "連動なしの糸" }));
+      const { onReturnTo, onSearchChange } = renderWithReturn({ product: "P-005", returnTo });
+      const user = userEvent.setup();
+      await user.type(await screen.findByLabelText(/^実際の数/), "9");
+      await user.click(screen.getByRole("button", { name: "今の数を保存" }));
+      await waitFor(() => {
+        expect(mockSave).toHaveBeenCalledTimes(1);
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole("heading", { name: "今の数を入れる" })).not.toBeInTheDocument();
+      });
+      expect(onReturnTo).not.toHaveBeenCalled();
+      const updater = vi.mocked(onSearchChange).mock.calls[
+        vi.mocked(onSearchChange).mock.calls.length - 1
+      ]?.[0] as (prev: StocktakeSearch) => StocktakeSearch;
+      expect(updater({ product: "P-005", returnTo, dept: 1 })).toEqual({
+        product: undefined,
+        returnTo: undefined,
+        dept: 1,
+      });
+    },
+  );
+
+  it("U15 count save and zero use the stocktakeCountUpdate entry", async () => {
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    mockComplete.mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "stocktake_guard",
+        message: "棚卸しを完了できません",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code: "completion_blocked",
+          targets: [
+            recheckTarget({
+              product_code: "P-002",
+              product_name: "青い糸",
+              block_reason: "uncounted",
+              stock_range_low: null,
+              stock_range_high: null,
+              recount_reasons: [],
+            }),
+          ],
+          settlement_pending: null,
+        },
+      },
+    });
+    const { invalidateSpy } = await renderPage();
+    const user = await selectItemByCode();
+    invalidateSpy.mockClear();
+    await user.type(screen.getByLabelText(/^実際の数/), "8{Enter}");
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expectExactInvalidations(
+        invalidateSpy.mock.calls,
+        d052InvalidationOracle.stocktakeCountUpdate(),
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "棚卸しを確定する" }));
+    await user.click(screen.getByRole("button", { name: "確定する" }));
+    const panel = await screen.findByRole("region", { name: "棚卸しを確定できない理由" });
+    invalidateSpy.mockClear();
+    await user.click(within(panel).getByRole("button", { name: "0 にする" }));
+    await waitFor(() => {
+      expect(mockZero).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expectExactInvalidations(
+        invalidateSpy.mock.calls,
+        d052InvalidationOracle.stocktakeCountUpdate(),
+      );
+    });
+  });
+
+  it("U16 stocktake and z004 writes are enabled", async () => {
+    const first = await renderPage();
+    expect(await screen.findByRole("button", { name: "棚卸しを開始する" })).toBeEnabled();
+    expect(screen.queryByText(/停止中/)).not.toBeInTheDocument();
+    first.unmount();
+
+    mockGetActive.mockResolvedValue(ok(activeStocktake()));
+    await renderPage();
+    await screen.findByText("棚卸し中（開始日: 2026-10-01 09:00:00）");
+    expect(screen.queryByText(/停止中/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("商品を検索・スキャン")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "対象を確認" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "棚卸しを確定する" })).toBeEnabled();
+    const user = await selectItemByCode();
+    expect(screen.getByRole("button", { name: "数を保存" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "棚卸しを確定する" }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+});
+
+type CmdErrorShape = import("@/lib/bindings").CmdError;

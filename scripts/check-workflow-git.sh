@@ -1,46 +1,35 @@
 #!/usr/bin/env bash
 # scripts/check-workflow-git.sh
 # ============================================================================
-# PK5（Plan Commit ancestry）の git 検査
-# docs/DEV_WORKFLOW.md 「Plan Commit ancestry (D-039, PK5)」/ D-039 参照
+# 計画の固定（PK5）と、計画の承認の前の実装（先走り）の git 検査
+# docs/DEV_WORKFLOW.md 「計画の固定」/ D-039・D-145 参照
 #
 # 呼び出し元: scripts/pre-push.sh（push 前 gate）/ scripts/local-ci.sh（L1 gate）
 # hosted docs jobもfetch-depth: 0で実PR HEADを検査する（MG-D4）。
 #
-# 検査内容:
-#   docs/plans/ 直下の各 packet について
-#     - `Evidence Mode` 行は任意。あれば github だけを受理する
-#     - `Phase` は WORKFLOW_STATE_PHASES の 8 値のどれか
-#   PK5: 各 packet について
-#     (a) `Plan Commit` の記録 SHA が現 HEAD の ancestor であること
-#     (b) `Amendments` 行の各 SHA が `Plan Commit` の descendant かつ HEAD の ancestor であること
-#     (c) `Plan Commit` の値が過去に書き換えられていないこと（初回 non-pending 値と現在値の比較）
-#     (d) `Amendments` の登録順を含む prefix が保存されていること
-#   PK5 の対象は起点（WORKFLOW_BASE_SHA が HEAD と違えばそれ、なければ origin/main）からの差分が触る packet。
-#   起点が解決できないか merge-base が 1 つでないか差分の取得に失敗すれば全 packet（fail-closed）。
-#   検査対象の履歴が shallow なら ERROR（full history が必要）。
+# 対象は active な packet だけ（D-145 (5)。定義は scripts/pr-gate.py の plan_origin・active_packets の 1 か所）:
+#   docs/plans/ 直下の dated packet のうち、起点の tree に無いもの。起点は WORKFLOW_BASE_SHA と HEAD の
+#   merge-base。WORKFLOW_BASE_SHA が空か HEAD なら origin/main と HEAD の merge-base。それも HEAD なら 0 件。
+#   起点を解決できない・merge-base が一意でないときは ERROR（全 packet の検査に落とさない）。
 #
-# 「active plan なし」自体は本スクリプトの対象外（doc-consistency-check.sh PK1 が担当、
-# 本スクリプトは docs/plans/ 直下が空でも WARN/ERROR を出さず黙って skip する）
+# 検査内容:
+#   active な packet:
+#     - `Evidence Mode` 行は任意。あれば github だけを受理する（Phase の値は評価しない）
+#     - PK5 (a)〜(d): Plan Commit・Amendments の ancestry と不変
+#     - 先走り（H2）: `Plan Commit: pending` の packet があり、起点からの差分に classifier の
+#       rust・frontend・generated・env・unknown か scripts/**・.github/** があれば ERROR
+#   merge 済みの packet（起点の tree にある packet）: Workflow State の節を変えたら ERROR（archive への移動は受ける）
+#   検査対象の履歴が shallow なら ERROR（full history が必要）。
 # ============================================================================
 
 set -u  # 各 check を独立 FAIL=1 集約方式のため set -e は使わない
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 FAIL=0
 PLAN_DIR="docs/plans"
-WORKFLOW_STATE_PHASES="kickoff spec-check design plan-draft plan-gate plan-approved implementing archive"
-
-is_workflow_phase() {
-    local phase
-    for phase in $WORKFLOW_STATE_PHASES; do
-        [[ "$phase" == "$1" ]] && return 0
-    done
-    return 1
-}
-
 # ----------------------------------------------------------------------------
 # PK5: 単一 packet ファイルの Plan Commit / Amendments ancestry 検査
 # ----------------------------------------------------------------------------
@@ -138,8 +127,12 @@ check_plan_commit_ancestry() {
 
 }
 
+workflow_section() {
+    awk 'active && /^## / { exit } /^## Workflow State[[:space:]]*$/ { active=1; next } active { print }'
+}
+
 main() {
-    local file phase ws_section
+    local file
     # Only the target ancestry matters: an unrelated ref can retain a shallow marker.
     # rev-list treats a shallow boundary as a root; the raw commit still names its parents.
     local history_root history_roots
@@ -150,53 +143,101 @@ main() {
             exit 1
         fi
     done <<< "$history_roots"
-    if [[ -n "${WORKFLOW_BASE_SHA:-}" ]] && ! git merge-base "$WORKFLOW_BASE_SHA" HEAD >/dev/null 2>&1; then
-        echo "❌ [workflow-git] PK5: hosted base history unavailable"
-        exit 1
+
+    # D-145 (5): the single active definition lives in scripts/pr-gate.py (helper, PK1, PK4, PK5, H2).
+    local scope kind value origin=""
+    local -a active=()
+    scope="$(PYTHONDONTWRITEBYTECODE=1 python3 - "$SCRIPT_DIR/pr-gate.py" "${WORKFLOW_BASE_SHA:-}" <<'PY'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('pr_gate', sys.argv[1])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+names = [f'docs/plans/{n}' for n in sorted(os.listdir('docs/plans'))] if os.path.isdir('docs/plans') else []
+# \x1f: a non-whitespace separator, so an empty field never shifts the next one into its place.
+try:
+    origin = m.plan_origin(sys.argv[2] or None)
+    print('origin\x1f' + (origin or ''))
+    for path in m.active_packets(origin, names):
+        try:
+            state, problem = m.approval_state(path, open(path, encoding='utf-8').read())
+        except m.GateError as error:
+            state, problem = 'approved', f'{path}: Workflow State を読めない（{error}）'
+        print(f'active\x1f{path}\x1f{state}\x1f{problem or ""}')
+except m.GateError as error:
+    print(f'error\x1f{error}')
+PY
+)" || scope=$'error\x1fpython3 と scripts/pr-gate.py が必要'
+    local state problem
+    local -a pending=() drifts=()
+    while IFS=$'\x1f' read -r kind value state problem; do
+        case "$kind" in
+            origin) origin="$value" ;;
+            active)
+                active+=("$value")
+                [[ "$state" == pending ]] && pending+=("$value")
+                [[ -n "$problem" ]] && drifts+=("$problem") ;;
+            error)
+                echo "❌ [workflow-git] active な packet を決められない: $value"
+                exit 1 ;;
+        esac
+    done <<< "$scope"
+
+    local -A is_active=()
+    for file in "${active[@]}"; do
+        is_active["$file"]=1
+    done
+
+    # AR5: a merged packet may get typo and link fixes, never a rewritten Workflow State (the merge-time record).
+    if [[ -n "$origin" ]]; then
+        while IFS= read -r file; do
+            [[ -n "$file" && -z "${is_active[$file]:-}" ]] || continue
+            [[ "$(basename "$file")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}- ]] || continue
+            git cat-file -e "$origin:$file" 2>/dev/null || continue
+            if [[ "$(git show "$origin:$file" | workflow_section)" != "$(workflow_section < "$file")" ]]; then
+                echo "❌ [workflow-git] merge 済みの packet の Workflow State は書き換えない（merge の時点の記録）: $file"
+                FAIL=1
+            fi
+        done < <(find "$PLAN_DIR" -maxdepth 1 -name '*.md' -type f 2>/dev/null | sort)
     fi
 
-    # Merged lanes awaiting closeout keep packets whose squashed Plan Commit is not ancestral;
-    # only packets this branch's diff touches are its own ancestry evidence.
-    local start="" pk5_all=1 path
-    local -A pk5_touched=()
-    if [[ -n "${WORKFLOW_BASE_SHA:-}" && "$(git rev-parse "$WORKFLOW_BASE_SHA^{commit}")" != "$(git rev-parse HEAD)" ]]; then
-        start="$WORKFLOW_BASE_SHA"
-    else
-        start="$(git rev-parse --verify -q 'origin/main^{commit}')" || start=""
-    fi
-    if [[ -n "$start" && "$(git merge-base --all "$start" HEAD | wc -l)" -eq 1 ]]; then
-        # -z: the default core.quotePath would quote non-ASCII, `"` and `\` names so they never match.
-        pk5_all=0
-        while IFS= read -r -d '' path; do
-            pk5_touched["$path"]=1
-        done < <(git diff -z --no-renames --name-only "$start"...HEAD -- "$PLAN_DIR/")
-        wait "$!" || pk5_all=1
-    fi
+    # Final review C1: the plan sections after approval equal the latest approved snapshot (or a registered --amend).
+    for problem in "${drifts[@]}"; do
+        echo "❌ [workflow-git] $problem"
+        FAIL=1
+    done
 
-    while IFS= read -r file; do
-        [[ -n "$file" ]] || continue
-        # Phase / Evidence Mode は最初の `## Workflow State` の h2 の節だけから読む（helper と同じ範囲、D-102 D4）。
-        # Plan Commit / Amendments（check_plan_commit_ancestry）は file 全体のまま。
-        ws_section="$(awk 'active && /^## / { exit } /^## Workflow State[[:space:]]*$/ { active=1; next }
-            active { print }' "$file")"
+    for file in "${active[@]}"; do
+        # Evidence Mode は最初の `## Workflow State` の h2 の節だけから読む（helper と同じ範囲、D-102 D4）。
+        local ws_section
+        ws_section="$(workflow_section < "$file")"
         if grep -qE '^- Evidence Mode:' <<<"$ws_section" &&
             [[ "$(sed -n 's/^- Evidence Mode: *//p' <<<"$ws_section" | sed -E 's/[[:space:]]+$//')" != "github" ]]; then
             echo "❌ [workflow-git] Evidence Mode は廃止。書くなら github: $file"
             FAIL=1
         fi
-        phase="$(sed -n 's/^- Phase: *//p' <<<"$ws_section" | sed -E 's/[[:space:]]+$//')"
-        if ! is_workflow_phase "$phase"; then
-            echo "❌ [workflow-git] invalid tracked Phase in $file"
+        check_plan_commit_ancestry "$file"
+    done
+
+    # H2 / D-145 (3): before the plan is fixed, the branch carries no implementation.
+    if [[ "${#pending[@]}" -gt 0 ]]; then
+        local paths flags code
+        if ! paths="$(git diff --name-only --no-renames "$origin" HEAD --)" ||
+            ! flags="$(printf '%s\n' "$paths" | bash "$SCRIPT_DIR/ci/classify-changes.sh" --files-from-stdin 2>/dev/null)"; then
+            echo "❌ [workflow-git] 先走りの検査: 起点 $origin からの差分を分類できない"
+            exit 1
+        fi
+        code="$(printf '%s\n' "$flags" | grep -E '^(rust|frontend|generated|env|unknown)=true$' | cut -d= -f1 | paste -sd, -)"
+        local tooling
+        tooling="$(printf '%s\n' "$paths" | grep -E '^(scripts|\.github)/' | paste -sd' ' - || true)"
+        if [[ -n "$code" || -n "$tooling" ]]; then
+            echo "❌ [workflow-git] 計画の承認の前の実装: ${pending[*]} の Plan Commit が pending のまま、起点 $origin からの差分に実装がある（${code:+classifier: $code}${code:+${tooling:+; }}${tooling:+path: $tooling}）。Plan Review の後に scripts/plan-approve.sh で Plan Commit を固定してから実装を push する"
             FAIL=1
         fi
-        path="${file#"$REPO_ROOT"/}"
-        if ((pk5_all)) || [[ -n "${pk5_touched[$path]:-}" ]]; then
-            check_plan_commit_ancestry "$file"
-        fi
-    done < <(find "$REPO_ROOT/$PLAN_DIR" -maxdepth 1 -name '*.md' -type f 2>/dev/null | sort)
+    fi
 
     if [[ "$FAIL" -eq 0 ]]; then
-        echo "✅ [workflow-git] PK5 検査 OK"
+        echo "✅ [workflow-git] PK5・先走りの検査 OK（active な packet ${#active[@]} 件）"
+    elif [[ -z "${WORKFLOW_BASE_SHA:-}" ]]; then
+        echo "ℹ️  [workflow-git] 起点は origin/main と HEAD の merge-base。origin/main が古ければ git fetch origin してから回し直す"
     fi
 
     exit "$FAIL"

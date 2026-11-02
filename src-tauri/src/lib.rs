@@ -254,8 +254,8 @@ fn show_pre_window_fatal(message: &str) {
 /// - CMD-07: parse_and_validate_csv / commit_csv_import / rollback_csv_import / list_csv_imports
 /// - CMD-12: parse_and_validate_daily_report / commit_daily_report_import / rollback_daily_report_import / list_daily_report_imports
 /// - CMD-08: prepare_plu_export / confirm_plu_export_saved / list_plu_dirty
-/// - CMD-09: get_daily_sales / get_monthly_sales / export_sales_csv
-/// - CMD-10: get_active_stocktake / start_stocktake / get_stocktake_items / find_stocktake_item / get_last_completed_stocktake / get_stocktake_record / update_count / complete_stocktake
+/// - CMD-09: get_daily_sales / get_daily_report_sheet / get_monthly_sales / export_sales_csv
+/// - CMD-10: get_active_stocktake / start_stocktake / get_stocktake_items / find_stocktake_item / get_last_completed_stocktake / get_stocktake_record / save_stock_count / preview_stock_count_placement / zero_uncounted_items / list_recheck_products / complete_stocktake
 /// - CMD-11: get_settings / update_setting / list_logs / create_backup / check_auto_backup / list_backups / restore_backup / save_receipt_image
 ///
 /// Phase 2 以降で段階的に拡張する。
@@ -316,6 +316,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::csv_import_cmd::parse_and_validate_csv,
         cmd::csv_import_cmd::commit_csv_import,
         cmd::csv_import_cmd::rollback_csv_import,
+        cmd::csv_import_cmd::preview_rollback_csv_import,
         cmd::csv_import_cmd::list_csv_imports,
         cmd::csv_import_cmd::get_csv_import_record,
         // CMD-12: 日報取込み
@@ -323,6 +324,8 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::daily_report_import_cmd::commit_daily_report_import,
         cmd::daily_report_import_cmd::rollback_daily_report_import,
         cmd::daily_report_import_cmd::list_daily_report_imports,
+        cmd::daily_report_import_cmd::scan_register_sd,
+        cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
         // CMD-08: PLU書出し
         cmd::plu_export_cmd::prepare_plu_export,
         cmd::plu_export_cmd::confirm_plu_export_saved,
@@ -331,6 +334,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::plu_export_cmd::list_plu_dirty,
         // CMD-09: 売上集計
         cmd::sales_cmd::get_daily_sales,
+        cmd::sales_cmd::get_daily_report_sheet,
         cmd::sales_cmd::get_monthly_sales,
         cmd::sales_cmd::export_sales_csv,
         // CMD-10: 棚卸し
@@ -340,7 +344,10 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::stocktake_cmd::find_stocktake_item,
         cmd::stocktake_cmd::get_last_completed_stocktake,
         cmd::stocktake_cmd::get_stocktake_record,
-        cmd::stocktake_cmd::update_count,
+        cmd::stocktake_cmd::save_stock_count,
+        cmd::stocktake_cmd::preview_stock_count_placement,
+        cmd::stocktake_cmd::zero_uncounted_items,
+        cmd::stocktake_cmd::list_recheck_products,
         cmd::stocktake_cmd::complete_stocktake,
         cmd::integrity_cmd::run_integrity_check,
         cmd::integrity_cmd::fix_integrity,
@@ -353,6 +360,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::settings_cmd::check_auto_backup,
         cmd::settings_cmd::list_backups,
         cmd::settings_cmd::get_effective_backup_dir,
+        cmd::settings_cmd::inspect_backup,
         cmd::settings_cmd::restore_backup,
         cmd::settings_cmd::save_receipt_image,
     ]);
@@ -1212,7 +1220,11 @@ mod bindings_generation_tests {
             crate::db::migrate_legacy_db,
         )
         .unwrap();
-        assert_eq!(version_and_products(&conn), (crate::db::VB_VERSION, 0));
+        // 最新の版まで当たる（版の定数でなく app_max_version と比べる。b1 Matrix T1）
+        assert_eq!(
+            version_and_products(&conn),
+            (crate::db::migration::app_max_version(), 0)
+        );
         assert_eq!(
             file_hashes(&moved.join("cwd")),
             moved_before,
@@ -1246,7 +1258,11 @@ mod bindings_generation_tests {
             crate::db::migrate_legacy_db,
         )
         .unwrap();
-        assert_eq!(version_and_products(&conn), (crate::db::VB_VERSION, 0));
+        // 最新の版まで当たる（版の定数でなく app_max_version と比べる。b1 Matrix T1）
+        assert_eq!(
+            version_and_products(&conn),
+            (crate::db::migration::app_max_version(), 0)
+        );
         let restore_logs: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM operation_logs WHERE operation_type = 'backup_restore'",
@@ -1429,8 +1445,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // app_data_dir: tauri.conf.json の identifier から自動解決
-            // Linux: ~/.local/share/com.kosei.inventory/
-            // Windows: C:\Users\{user}\AppData\Roaming\com.kosei.inventory\
+            // Linux: ~/.local/share/com.inventory-system.desktop/
+            // Windows: C:\Users\{user}\AppData\Roaming\com.inventory-system.desktop\
             let app_data = run_startup_step(
                 StartupFailureKind::AppDataDir,
                 || app.path().app_data_dir(),
@@ -1485,6 +1501,7 @@ pub fn run() {
                 db: Mutex::new(conn),
                 preview_cache: Mutex::new(HashMap::new()),
                 daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
             });
 
             Ok(())
@@ -1531,6 +1548,7 @@ pub fn run() {
             cmd::csv_import_cmd::parse_and_validate_csv,
             cmd::csv_import_cmd::commit_csv_import,
             cmd::csv_import_cmd::rollback_csv_import,
+            cmd::csv_import_cmd::preview_rollback_csv_import,
             cmd::csv_import_cmd::list_csv_imports,
             cmd::csv_import_cmd::get_csv_import_record,
             // CMD-12: 日報取込み
@@ -1538,6 +1556,8 @@ pub fn run() {
             cmd::daily_report_import_cmd::commit_daily_report_import,
             cmd::daily_report_import_cmd::rollback_daily_report_import,
             cmd::daily_report_import_cmd::list_daily_report_imports,
+            cmd::daily_report_import_cmd::scan_register_sd,
+            cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
             // CMD-08: PLU書出し
             cmd::plu_export_cmd::prepare_plu_export,
             cmd::plu_export_cmd::confirm_plu_export_saved,
@@ -1546,6 +1566,7 @@ pub fn run() {
             cmd::plu_export_cmd::list_plu_dirty,
             // CMD-09: 売上集計
             cmd::sales_cmd::get_daily_sales,
+            cmd::sales_cmd::get_daily_report_sheet,
             cmd::sales_cmd::get_monthly_sales,
             cmd::sales_cmd::export_sales_csv,
             // CMD-10: 棚卸し
@@ -1555,7 +1576,10 @@ pub fn run() {
             cmd::stocktake_cmd::find_stocktake_item,
             cmd::stocktake_cmd::get_last_completed_stocktake,
             cmd::stocktake_cmd::get_stocktake_record,
-            cmd::stocktake_cmd::update_count,
+            cmd::stocktake_cmd::save_stock_count,
+            cmd::stocktake_cmd::preview_stock_count_placement,
+            cmd::stocktake_cmd::zero_uncounted_items,
+            cmd::stocktake_cmd::list_recheck_products,
             cmd::stocktake_cmd::complete_stocktake,
             // CMD-11 部分: 整合性チェック
             cmd::integrity_cmd::run_integrity_check,
@@ -1569,6 +1593,7 @@ pub fn run() {
             cmd::settings_cmd::check_auto_backup,
             cmd::settings_cmd::list_backups,
             cmd::settings_cmd::get_effective_backup_dir,
+            cmd::settings_cmd::inspect_backup,
             cmd::settings_cmd::restore_backup,
             cmd::settings_cmd::save_receipt_image,
         ])

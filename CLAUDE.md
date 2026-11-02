@@ -6,11 +6,9 @@ Tauri / React / SQLite の単店舗向けアプリ。日本語で応答し、識
 
 ## 共通の入口
 
-上で import した `AGENTS.md` の `Session Start` が唯一の読書ルート。依頼に関係する資料だけを読み、ここに順序やgateを複製しない。進め方の選定には `.agents/skills/inventory-workflow-start/SKILL.md`、実装には `inventory-implementation` を必要時に手順書として使える。`.claude/skills` の既存symlinkは同じSkill本文を共有する。
+上で import した `AGENTS.md` の `Session Start` が唯一の読書ルートで、ここに順序や gate を複製しない。`.claude/skills` の既存 symlink は `.agents/skills/` と同じ Skill 本文を共有する。
 
-役割・可用性・独立性は `docs/AGENT_OPERATING_MANUAL.md`、phase・検証・承認は `docs/DEV_WORKFLOW.md` が所有する。writerは自分を承認者にしない。並行編集にはworktree分離か非重複ownershipを使う。
-
-tracked project hook inventoryは空で、`claude-code-harness`はproject scopeで無効。Plan GateをClaude固有hookで再実装しない。
+tracked project hook inventoryは空で、`claude-code-harness`はproject scopeで無効。計画の固定（`scripts/plan-approve.sh`・PK5・先走りの検査）をClaude固有hookで再実装しない。
 
 ## 長い作業の報告
 
@@ -30,6 +28,4 @@ owner に渡すコピペ物（command・URL の一覧・checklist）は返答の
 
 停止時は `Ctrl+C`、別terminalから `claude --resume <session-id>`、再発時は `--fork-session` を検討する。transcript破損が疑われるAPI 400等では新規sessionでAGENTSの該当ルート、対象の現物、直近の引継ぎから再開する。
 
-projectの現在地は `Plans.md`、安定した事実は `docs/project-memory.md`、判断は `docs/decision-log.md` とdesign doc。個人auto-memoryは補助であり、書込みや読取りをgateにしない。repo固有の成果物は作業checkoutに保持し、`~/.claude/`等の個人領域へ移さない。
-
-npm 供給網ガード（D-030）と、データ保護、設計確認、テストを不都合だから削除・無効化しない原則はAGENTSと対象の正本に従う。
+完了は git log、lane の現在地は helper の status、関門・ブロッカーは `Plans.md`、安定した事実は `docs/project-memory.md`、判断は `docs/decision-log.md` とdesign doc（AGENTS の Memory Model）。個人auto-memoryは補助であり、書込みや読取りをgateにしない。repo固有の成果物は作業checkoutに保持し、`~/.claude/`等の個人領域へ移さない。

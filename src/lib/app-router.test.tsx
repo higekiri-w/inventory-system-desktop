@@ -1,6 +1,6 @@
 import { createMemoryHistory, RouterProvider, type ParsedLocation } from "@tanstack/react-router";
 import { getElementScrollRestorationEntry, scrollRestorationCache } from "@tanstack/router-core";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -36,8 +36,10 @@ vi.mock("@tauri-apps/api/webview", () => ({
 
 vi.mock("@/features/backup-restore/useAutoBackupCheck", () => ({
   useAutoBackupCheck: () => undefined,
-  suspendAutoBackupCheck: vi.fn(),
   resumeAutoBackupCheck: vi.fn(),
+  suspendAutoBackupCheckAndWait: vi.fn().mockResolvedValue(undefined),
+  holdAutoBackupCheckForRestore: vi.fn(),
+  releaseAutoBackupCheckAfterRestore: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router-devtools", () => ({
@@ -225,6 +227,9 @@ describe("UI-12 / DSR-17 app router configuration", () => {
   });
 
   afterEach(() => {
+    // 先に React の tree を外す（RootLayout が body の直下へ portal で描く要素〈UI-09a-D18 の印刷の案内〉を
+    // React の外から消すと、後の unmount が removeChild で落ちる）
+    cleanup();
     document.body.replaceChildren();
   });
 

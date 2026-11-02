@@ -2,6 +2,8 @@
 
 Phase 2 8-2 UI-07 CSV 取込み画面 (PR #62) の残検証 8/10 (3/10〜10/10) 用の合成 Z004 売上日報 fixture。
 
+> **D-118 の b1（2026-10-23）の後の用途**: 下の tracked の file は従来の形（精算の識別メタ〈マシンNo.・精算回数〉を持たない）なので、Z004 の preview は「精算回数の無い file は取り込めません。レジの SD の商品別の売上（Z004）を選んでください」で拒む（[32](../../../docs/function-design/32-biz-csv-import-service.md) の表の順 1）。b1 の L3 では `normal-small.csv` をこの拒否の入力に使う（L3-10）。下の「残検証 8/10 シナリオ対応表」の取込みの手順は b1 の前の記録で、今の build では順 1 で止まる。取り込める L3 の入力物は下の「b1 の L3 の fixture（生成）」の file を使う。
+
 本物 Z004 売上日報は Phase 4 UI-08 (PLU 書出し) 完成 → レジへ PLU 一括登録 → 1 日運用 → 翌日初取得というロングサイクルが必要で PR #62 完了の前提にできないため、UI-07 完成検証用の合成 fixture を分離する (memory `pr-merge-gate-scope-discipline.md` Plan B 採用根拠)。
 
 ## 仕様根拠
@@ -26,7 +28,9 @@ Phase 2 8-2 UI-07 CSV 取込み画面 (PR #62) の残検証 8/10 (3/10〜10/10) 
 
 ## ファイル一覧
 
-| ファイル | settlement_date | 行構成 | カバーシナリオ |
+（b1 の後は、全ての `.csv` が「精算回数の無い file」の拒否の入力。`setup-products.sql` は今も商品の投入に使える。）
+
+| ファイル | settlement_date | 行構成 | カバーシナリオ（b1 の前） |
 |---|---|---|---|
 | `normal-small.csv` | 2026-03-21 | 6 行 (販売 matched 4 + 未収録 JAN 1 = `4900000099999` の R119 検証用 + 返品 matched 1 `quantity=-1, amount=-594` for JAN `4900000000001`)、13 桁 JAN×3 + 14 桁末尾 E×1 | 3/10 PreviewStep + 4/10 件数 + 5/10 OK commit (matched 5 含む販売 4 + 返品 1 + unmatched 1 ErrorRow 共存) |
 | `duplicate-same-date.csv` | 2026-03-21 (= normal-small と同日) | 5 商品 (同 JAN range、別商品名 / 数量で別 file_hash) | 5'/10 `DuplicateStatus::OverwriteRequired` 経路 |
@@ -64,21 +68,21 @@ Phase 2 8-2 UI-07 CSV 取込み画面 (PR #62) の残検証 8/10 (3/10〜10/10) 
 
 ### Step 0: 実 DB パス (`$DB_PATH`) を 1 つ定義
 
-Tauri app が実 startup で開く `app_data_dir/inventory.db` を 1 変数に固定し、Step 1 (seed_demo) と Step 2 (setup-products.sql) で同一 DB を共有する。`src-tauri/tauri.conf.json` の `identifier` は `com.kosei.inventory` (確認: `rg identifier src-tauri/tauri.conf.json`)。
+Tauri app が実 startup で開く `app_data_dir/inventory.db` を 1 変数に固定し、Step 1 (seed_demo) と Step 2 (setup-products.sql) で同一 DB を共有する。`src-tauri/tauri.conf.json` の `identifier` は `com.inventory-system.desktop` (確認: `rg identifier src-tauri/tauri.conf.json`)。
 
 **Windows native (CMD):**
 ```cmd
-set DB_PATH=%APPDATA%\com.kosei.inventory\inventory.db
+set DB_PATH=%APPDATA%\com.inventory-system.desktop\inventory.db
 ```
 
 **Windows native (PowerShell):**
 ```ps
-$env:DB_PATH = "$env:APPDATA\com.kosei.inventory\inventory.db"
+$env:DB_PATH = "$env:APPDATA\com.inventory-system.desktop\inventory.db"
 ```
 
 **WSL2 dev (bash):**
 ```bash
-DB_PATH=~/.local/share/com.kosei.inventory/inventory.db
+DB_PATH=~/.local/share/com.inventory-system.desktop/inventory.db
 ```
 
 ### Step 1: seed_demo で 100 商品 + 6 部門 + suppliers / sale_records / inventory_movements 投入
@@ -132,7 +136,7 @@ sqlite3 "$DB_PATH" < tests/fixtures/z004/setup-products.sql
 
 ```bash
 # WSL2 ターミナルで repo root から実行
-sqlite3 "/mnt/c/Users/<USER>/AppData/Roaming/com.kosei.inventory/inventory.db" < tests/fixtures/z004/setup-products.sql
+sqlite3 "/mnt/c/Users/<USER>/AppData/Roaming/com.inventory-system.desktop/inventory.db" < tests/fixtures/z004/setup-products.sql
 ```
 
 確認:
@@ -207,3 +211,46 @@ cargo test --test architecture_test
 - memory `casio-sr-s4000-z-prefix-reference.md`: Z004 二態区分 (PLU 設定書出し vs 売上日報)
 - memory `feedback-z004-vs-plu-master-confusion.md`: 実機 `Z004_260311PLU(商品).CSV` が売上日報ではない判別
 - 後続 PR δ' (Phase 2 8-3 着手前必須): Vitest 導入 + reducer/parser test + 本 fixture 共用
+
+## b1 の L3 の fixture（生成）
+
+D-118 の b1（[Plan Packet](../../../docs/plans/2026-10-22-stocktake-count-runtime-b1.md) の Test Plan の「L3 の fixture の表」）の Windows L3 の入力物。精算日を L3 の日 T からの相対で決めるので file は tracked にせず、`src-tauri/src/io/l3_fixtures.rs` が T から作る（合成の値だけ。TD-296）。全て CP932・CRLF。Z004 は layout A（マシンNo. `0001`、精算回数は 4 桁の 0 埋め、時刻 `20:00`）。商品の CSV の部門ID は、作り直した空の DB にある初期の部門 `1`（`その他小物`）。
+
+| 商品 | 商品コード | JAN | 単位 | 在庫連動 | 初期在庫 | 売価 | 原価 |
+|---|---|---|---|---|---|---|---|
+| P1 | `L3-P1` | `2900000000018` | 個（`pcs`） | する | 10 | 1000 | 500.00 |
+| P2 | `L3-P2` | `2900000000025` | 個（`pcs`） | する | 10 | 1000 | 500.00 |
+| P3 | `L3-P3` | `2900000000032` | 個（`pcs`） | する | 10 | 1000 | 500.00 |
+| P4 | `L3-P4` | `2900000000049` | m | する | 5 m | 300 | 150.00 |
+| P5 | `L3-P5` | `2900000000056` | 個（`pcs`） | しない | 10 | 1000 | 500.00 |
+| P6 | `L3-P6` | `2900000000063` | 個（`pcs`） | する | 10 | 1000 | 500.00 |
+
+JAN は `29` で始まる店内の範囲の合成の 13 桁で、check digit が合う（`l3_fixtures.rs` の `jan`）。
+
+| file | 精算回数 | 精算日 | 行（商品 × 数量、金額） | 使う段 |
+|---|---|---|---|---|
+| `products-new.csv`（商品一括 import） | — | — | P1〜P6 の新規の行 | L3-2 |
+| `z004-0101.csv` | 101 | T−3 | P3 × 1（1000）、P5 × 1（1000） | L3-3 |
+| `z004-0102.csv` | 102 | T−2 | P1 × 1（1000） | L3-8 |
+| `z004-0102-other.csv` | 102 | T−2 | P1 × 2（2000） | L3-10（同じ精算の別の資料の拒否） |
+| `z004-0099.csv` | 99 | T | P2 × 1（1000） | L3-10（日付か番号の食い違いの拒否） |
+| `z004-0104.csv` | 104 | T | 正常な行が全て 0（P1 × 0） | L3-10（欠けの知らせ、取消と取り込み直し） |
+| `z004-0200.csv` | 200 | T+365 | P2 × 1（1000） | L3-10（欠けと未来の日付の知らせ。取り込まない） |
+| `z004-0103.csv` | 103 | T−1 | P3 × 1（1000） | L3-11 |
+| `products-jan-conflict.csv`（商品一括 import） | — | — | P1 の上書きの行（JAN を P2 の JAN に） | L3-12 |
+
+### 走らせ方
+
+通常の test（CI）は固定の T（`2026-01-15`）で 9 file を一時の folder に作り、`parse_z004`・`parse_product_csv` で読み戻して上の表と同じことを確かめる:
+
+```bash
+cd src-tauri && CARGO_TARGET_DIR=/tmp/shared-cargo-target cargo test --lib io::l3_fixtures
+```
+
+L3 の日に入力物を作る（`INVENTORY_L3_DAY` は L3 の日 T〈`YYYY-MM-DD`〉、`INVENTORY_L3_OUT` は repo の外の出力の folder。同じ読み戻しを当てる `#[ignore]` の test `write_b1_l3_fixtures`）:
+
+```bash
+cd src-tauri && INVENTORY_L3_DAY=2026-10-30 INVENTORY_L3_OUT=/mnt/c/Users/<USER>/Desktop/b1-l3 CARGO_TARGET_DIR=/tmp/shared-cargo-target cargo test --lib -- --ignored io::l3_fixtures
+```
+
+作った file は Coordinator が Windows の path を省略せずに owner へ渡す（owner は file を作らない）。

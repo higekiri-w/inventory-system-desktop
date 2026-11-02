@@ -221,8 +221,13 @@ pub fn find_distinct_operation_types(conn: &DbConnection) -> Result<Vec<String>,
 ///
 /// 20-io-product-repo.md §2.8
 pub fn delete_old_logs(conn: &DbConnection, retention_days: u32) -> Result<usize, DbError> {
-    let cutoff =
-        chrono::Local::now().date_naive() - chrono::Duration::days(i64::from(retention_days));
+    // MNT-02-D1: 日付の範囲の外（引けない）なら、それより前の記録は無いので 0 件
+    let Some(cutoff) = chrono::Local::now()
+        .date_naive()
+        .checked_sub_days(chrono::Days::new(u64::from(retention_days)))
+    else {
+        return Ok(0);
+    };
     let cutoff_str = format!("{}T00:00:00", cutoff.format("%Y-%m-%d"));
 
     conn.execute(
@@ -665,5 +670,26 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 3, "3件すべて残っている");
+    }
+
+    #[test]
+    fn test_delete_old_logs_req902_out_of_range_returns_zero() {
+        // REQ-902: ログ管理（操作ログ記録/一覧/自動削除）
+        // FUNC-2.8: delete_old_logs — 日付の範囲の外になる保持日数（u32::MAX）では
+        // panic せず何も消さず Ok(0)（MNT-02-D1）
+        let (_dir, conn) = setup_test_db();
+
+        let old = (chrono::Local::now().date_naive() - chrono::Days::new(3001))
+            .format("%Y-%m-%dT10:00:00")
+            .to_string();
+        insert_dated_log(&conn, "old_op", &old);
+
+        let deleted = delete_old_logs(&conn, u32::MAX).unwrap();
+        assert_eq!(deleted, 0, "範囲の外の保持日数では何も消さない");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "3001日前のログは残っている");
     }
 }

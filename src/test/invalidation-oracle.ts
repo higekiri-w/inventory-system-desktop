@@ -5,7 +5,7 @@ import { queryKeys } from "@/lib/query-keys";
 export type InvalidationKey = readonly unknown[];
 
 /**
- * D-052-C1〜C22 を test 側へ独立転記した oracle。
+ * D-052-C1〜C22 と C23（D-141）を test 側へ独立転記した oracle。
  * production の invalidation-contract.ts を参照してはならない。
  */
 export const d052InvalidationOracle = {
@@ -18,6 +18,18 @@ export const d052InvalidationOracle = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.inventoryRecords.stocktakeDetailRoot(),
   ],
+  // C23（D-141）: UI_TECH_STACK 冒頭の段落「商品の登録の entry に要再確認の一覧と商品フォームを足した別の entry」
+  productCreateSharedJan: () => [
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.pluDirty(),
+    queryKeys.stockMovements.root(),
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.inventoryRecords.stocktakeDetailRoot(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.recheckList(),
+  ],
   productUpdate: (productCode: string) => [
     queryKeys.productList.root(),
     queryKeys.productForm.product(productCode),
@@ -27,6 +39,7 @@ export const d052InvalidationOracle = {
     queryKeys.pluSlotSummary(),
     queryKeys.stockMovements.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   productImport: () => [
     queryKeys.productList.root(),
@@ -37,6 +50,7 @@ export const d052InvalidationOracle = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.productForm.root(),
     queryKeys.inventoryRecords.stocktakeDetailRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   receiving: () => [
     queryKeys.receivings.root(),
@@ -47,6 +61,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   returnExchange: (registerProcessed: boolean) => [
     queryKeys.returns.root(),
@@ -59,6 +74,7 @@ export const d052InvalidationOracle = {
           queryKeys.stockMovements.root(),
           queryKeys.productForm.root(),
           queryKeys.stocktake.itemsRoot(),
+          queryKeys.stocktake.recheckList(),
         ]
       : []),
   ],
@@ -72,6 +88,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   disposal: () => [
     queryKeys.disposals.root(),
@@ -82,6 +99,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   csvImportCommit: () => [
     queryKeys.csvImportLists(),
@@ -94,6 +112,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   csvImportRollback: () => [
     queryKeys.csvImportLists(),
@@ -106,6 +125,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   dailyReportImport: () => [
     queryKeys.dailyReportImportLists(),
@@ -116,8 +136,17 @@ export const d052InvalidationOracle = {
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),
     queryKeys.inventoryRecords.root(),
+    queryKeys.stocktake.recheckList(),
   ],
-  stocktakeCountUpdate: () => [queryKeys.stocktake.itemsRoot()],
+  stocktakeCountUpdate: () => [
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.stockMovements.root(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.recheckList(),
+  ],
   stocktakeComplete: () => [
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),
@@ -128,6 +157,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.inventoryRecords.root(),
+    queryKeys.stocktake.recheckList(),
   ],
   integrityFix: () => [
     queryKeys.productList.root(),
@@ -136,6 +166,7 @@ export const d052InvalidationOracle = {
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
   ],
   thresholdSave: () => [
     queryKeys.thresholdSettings.settings(),

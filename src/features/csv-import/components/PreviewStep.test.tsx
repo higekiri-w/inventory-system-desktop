@@ -7,186 +7,94 @@ import { PreviewStep } from "./PreviewStep";
 
 const preview: PreviewData = {
   file_info: {
-    filename: "Z004_0002.CSV",
+    filename: "Z004_0104.CSV",
     settlement_date: "2026-03-21",
     file_hash: "a".repeat(64),
   },
   matched_summary: { count: 2, total_amount: 900, warnings: [] },
   error_summary: { count: 0, items: [] },
-  duplicate_check: {
-    status: "AdditionalImportConfirmationRequired",
-    same_date_imports: [
-      {
-        id: 12,
-        filename: "Z004_0001.CSV",
-        total_items: 3,
-        total_amount: 1200,
-        imported_at: "2026-03-21T09:00:00",
-      },
-      {
-        id: 11,
-        filename: "Z004_0000.CSV",
-        total_items: 1,
-        total_amount: -300,
-        imported_at: "2026-03-21T08:00:00",
-      },
-    ],
-  },
+  settlement_gaps: [],
+  settlement_date_after_today: false,
   preview_created_at: "2026-03-21T10:00:00",
 };
 
-describe("PreviewStep REQ-401 same-day addition", () => {
-  it("test_additional_import_req401_alert_dialog_lists_all_cancel_then_confirms_once", async () => {
-    // REQ-401 / I-U1 / I-U2 / I-U5 / I-U6 / SPEC-SDI-D5: exact UI、全summary、cancel/Esc、single submit。
+describe("PreviewStep REQ-401 Z004（55 の D-118 の節）", () => {
+  it("U10 z004 preview shows notices without additional confirm", async () => {
+    // 知らせ（欠けた精算・日付のずれ）は取込みを止めない。同じ日の追加の確認の dialog を出さない（ADR D4）
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     render(
       <PreviewStep
-        preview={preview}
-        filename="Z004_0002.CSV"
+        preview={{
+          ...preview,
+          settlement_gaps: [
+            { from: 103, to: 103 },
+            { from: 105, to: 199 },
+          ],
+          settlement_date_after_today: true,
+        }}
+        filename="Z004_0200.CSV"
         onConfirm={onConfirm}
         onReselect={vi.fn()}
         isImporting={false}
-        importSuspended={false}
       />,
     );
 
-    // DSR-03 gated Amendment 4: 同日追加確認は画面上部の Alert 帯専用スロットに置き、
-    // 紐付け結果カードより DOM 順で先行する（owner L3-lite round 2 裁定）。
-    const alertBanner = screen.getByRole("alert");
-    expect(alertBanner).toHaveTextContent("同じ日の取込みがあります");
-    expect(alertBanner).toHaveAttribute("data-variant", "warning");
-    expect(alertBanner).toHaveTextContent(
-      "既存分を残したまま今回分を追加します。内容を確認してください。",
-    );
-    // gated Amendment 5（owner L3-lite round 3 裁定②）: 日報側と対称の warning tone。
-    expect(alertBanner).toHaveClass("border-warning", "bg-warning-soft", "text-warning-strong");
-    // DSR-08 / AC-L3-12: warning の Alert は部品が icon を描かないため、画面が三角 icon を置く。
-    expect(alertBanner.querySelectorAll("svg")).toHaveLength(1);
-    expect(alertBanner.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-    const matchingResultHeading = screen.getByText("紐付け結果");
+    const notice = screen.getByRole("alert", { name: "取込みの前の知らせ" });
+    expect(notice).toHaveAttribute("data-variant", "warning");
+    expect(notice.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
     expect(
-      alertBanner.compareDocumentPosition(matchingResultHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // Badge は主情報を上部 Alert に譲り、補助的な状態表示へ改名（gated Amendment 4）。
-    const badge = screen.getByText("同日データあり");
-    expect(badge).toBeInTheDocument();
-    expect(badge).toHaveAttribute("data-tone", "warning");
-    expect(badge.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
-    expect(screen.queryByText("追加確認")).not.toBeInTheDocument();
-    // gated Amendment 5（owner L3-lite round 3 裁定③）: 黒枠でなく soft warning token。
-    expect(badge.closest('[data-slot="badge"]')).toHaveClass(
-      "border-warning-border",
-      "bg-warning-soft",
-      "text-warning-strong",
-    );
-    await user.click(screen.getByRole("button", { name: "取り込む" }));
-    expect(screen.getByText("同じ日のデータを追加で取り込みますか？")).toBeInTheDocument();
-    const dialog = screen.getByRole("alertdialog");
-    expect(dialog).toHaveTextContent("既存分（2回）");
-    // gated Amendment 5（owner L3-lite round 3 裁定①）: 共通 alert-dialog.tsx の
-    // data-[size=default]:sm:max-w-lg に詳細度で勝つ data-size 修飾子付きの幅指定。
-    expect(dialog).toHaveClass("data-[size=default]:sm:max-w-3xl");
-    // UI-07-D13 の規定項目（import ID / filename(s) / 金額 / 取込み日時）が省略なく
-    // 全件表示されることを確認する（T3 項目完全性 oracle、gated Amendment 3/4 でも不変）。
-    // DSR-16 構造 assert: 既存分・今回分とも同一の列を揃えた表（比較目的の structured
-    // list）で render される（gated Amendment 4: 今回分の definition list 分離を廃止）。
-    const table = within(dialog).getByRole("table");
-    expect(within(table).getByRole("columnheader", { name: "取込み ID" })).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "ファイル名" })).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "合計金額" })).toBeInTheDocument();
-    expect(within(table).getByRole("columnheader", { name: "取込み日時" })).toBeInTheDocument();
-    // ヘッダ行 + 既存分2件 + 今回分1行 = 4行。per-card の反復ではなく1つの表に全件が並ぶ。
-    expect(within(table).getAllByRole("row")).toHaveLength(4);
-    expect(within(table).getByText("12")).toBeInTheDocument();
-    expect(table).toHaveTextContent("Z004_0001.CSV");
-    expect(table).toHaveTextContent("¥1,200 / 3件");
-    // 取込み日時は人間向け表示（既存 formatDateTime 慣行: ISOの"T"を空白へ）。
-    expect(table).toHaveTextContent("2026-03-21 09:00:00");
-    expect(within(table).getByText("11")).toBeInTheDocument();
-    expect(table).toHaveTextContent("Z004_0000.CSV");
-    expect(table).toHaveTextContent("¥-300 / 1件");
-    // 今回分は同一 table の最終行（ID 列に「今回」Badge、既存分と同列位置）。
-    expect(within(table).getByText("今回")).toBeInTheDocument();
-    expect(table).toHaveTextContent("Z004_0002.CSV");
-    expect(table).toHaveTextContent("¥900 / 2件");
-    expect(table).toHaveTextContent("2026-03-21 10:00:00");
-    // ⑰ SC6 / UIDISP-D6: 既存分と今回分の両 JSX site で折り返しを保ち書体を統一。
-    for (const name of ["2026-03-21 09:00:00", "2026-03-21 08:00:00", "2026-03-21 10:00:00"]) {
-      expect(within(table).getByRole("cell", { name })).toHaveClass(
-        "font-mono",
-        "tabular-nums",
-        "whitespace-normal",
-      );
-    }
-    await user.keyboard("{Escape}");
+      within(notice)
+        .getAllByRole("listitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      "精算 103 が取り込まれていません",
+      "精算 105〜199 が取り込まれていません",
+      "レジと PC の日付がずれている可能性があります",
+    ]);
+    const importButton = screen.getByRole("button", { name: "取り込む" });
+    expect(importButton).toBeEnabled();
+    await user.click(importButton);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(screen.getByText("精算日:")).toBeInTheDocument();
-    expect(onConfirm).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "取り込む" }));
-    await user.click(screen.getByRole("button", { name: "キャンセル" }));
-    expect(onConfirm).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole("button", { name: "取り込む" }));
-    expect(screen.getByRole("button", { name: "追加で取り込む" })).toHaveAttribute(
-      "data-variant",
-      "destructive",
-    );
-    await user.click(screen.getByRole("button", { name: "追加で取り込む" }));
+    expect(screen.queryByText("同じ日の取込みがあります")).not.toBeInTheDocument();
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(onConfirm).toHaveBeenCalledWith(true);
+    expect(onConfirm).toHaveBeenCalledWith();
   });
 
-  it("test_additional_import_req401_importing_disables_confirmation", async () => {
-    // REQ-401 / I-U6 / SPEC-SDI-D5: importing中は追加確認commandを開始できない。
+  it("U10 z004 preview without notices has no notice block", () => {
+    render(
+      <PreviewStep
+        preview={preview}
+        filename="Z004_0104.CSV"
+        onConfirm={vi.fn()}
+        onReselect={vi.fn()}
+        isImporting={false}
+      />,
+    );
+    expect(screen.queryByRole("alert", { name: "取込みの前の知らせ" })).not.toBeInTheDocument();
+    expect(screen.getByText("紐付け結果")).toBeInTheDocument();
+  });
+
+  it("REQ-401: importing 中は取り込むを押せない", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     render(
       <PreviewStep
         preview={preview}
-        filename="Z004_0002.CSV"
+        filename="Z004_0104.CSV"
         onConfirm={onConfirm}
         onReselect={vi.fn()}
         isImporting
-        importSuspended={false}
       />,
     );
-
     const importButton = screen.getByRole("button", { name: "取り込む" });
     expect(importButton).toBeDisabled();
     await user.click(importButton);
     expect(onConfirm).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 });
 
-describe("PreviewStep SPEC-STOP-D4 停止中（既定）", () => {
-  it("test_preview_step_req401_suspended_shows_preview_and_disables_import", async () => {
-    const user = userEvent.setup();
-    const onConfirm = vi.fn();
-    render(
-      <PreviewStep
-        preview={preview}
-        filename="Z004_0002.CSV"
-        onConfirm={onConfirm}
-        onReselect={vi.fn()}
-        isImporting={false}
-      />,
-    );
-
-    // プレビュー（ファイル情報・紐付け結果）は止めない。
-    expect(screen.getByText("2026-03-21")).toBeInTheDocument();
-    expect(screen.getByText("紐付け結果")).toBeInTheDocument();
-    const importButton = screen.getByRole("button", { name: "取り込む" });
-    expect(importButton).toBeDisabled();
-    await user.click(importButton);
-    expect(onConfirm).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "ファイルを選び直す（商品別CSV）" })).toBeEnabled();
-  });
-});
-
+// AdditionalImportConfirmDialog は日報取込みタブが使い続ける（55・packet の「不要にならないと確かめたもの」）
 it("⑰ SC6 / UIDISP-D6: 共有 formatDateTime を import しローカル定義を持たない", () => {
   expect(dateTimeSource).toMatch(
     /import\s*\{[^}]*\bformatDateTime\b[^}]*\}\s*from\s*"@\/lib\/date-time"/,

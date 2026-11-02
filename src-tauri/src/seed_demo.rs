@@ -118,7 +118,9 @@ pub struct SeedSummary {
 ///
 /// `--reset` フラグ経由で呼ばれる。seed 対象テーブルのみを FK 順序で削除する。
 pub fn delete_all(conn: &Connection) -> Result<(), SeedError> {
+    // stock_counts は products と stocktake_items を外部キーで参照するので先に消す（D-118 b1）
     let tables = [
+        "stock_counts",
         "inventory_movements",
         "sale_records",
         "price_history",

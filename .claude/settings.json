@@ -30,6 +30,7 @@
     "deny": []
   },
   "enabledPlugins": {
-    "claude-code-harness@claude-code-harness-marketplace": false
+    "claude-code-harness@claude-code-harness-marketplace": false,
+    "ponytail@ponytail": false
   }
 }

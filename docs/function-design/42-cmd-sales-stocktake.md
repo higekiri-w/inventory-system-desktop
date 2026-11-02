@@ -1,13 +1,13 @@
 ## 22. CMD-09: 売上集計コマンド群 / CMD-10: 棚卸しコマンド群 / CMD-01 追加: 一括インポート / CMD-11 部分: 整合性チェック
 
-### 計数の置き場と在庫の求め直しの契約（proposed・未実装、D-118）
+### 計数の置き場と在庫の求め直しの契約（D-118。b1 で実装済み）
 
-[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D5・D6）の CMD-10 の側。以下の現行の update_count の公開登録は、計数の新しい command と同じ runtime の配布の単位（停止 ADR の 5 つの入口を外す単位。SPEC-STK-CNT-D12）で外す。旧 ADR（時点証拠）の begin / save / abandon の 3 command・token・AppState の context の保管・DB 世代の失効は持たない（置き換えた）。
+[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D5・D6）の CMD-10 の側。b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)。停止 ADR の 5 つの入口を外す単位。SPEC-STK-CNT-D12）で、旧い数の上書きの command を外し、下の 4 つの command を足した。旧 ADR（時点証拠）の begin / save / abandon の 3 command・token・AppState の context の保管・DB 世代の失効は持たない（置き換えた）。
 
 | command | wire 入力 | wire 出力 |
 |---|---|---|
 | save_stock_count | request: SaveStockCountRequest（`product_code`・`count_value: i64`・`fresh: bool`・`business_date: String`・`stocktake_item_id: Option<i64>`） | Result<StockCountSaveResult, CmdError> |
-| preview_stock_count_placement | `product_code`・`business_date` | Result<CountPlacementPreview, CmdError>（`later_count_exists`） |
+| preview_stock_count_placement | `product_code`・`business_date` | Result<CountPlacementPreview, CmdError>（`later_count_exists` と、計数の欄に出す商品の文脈: `product_name`・`stock_unit`・写しの `stock`・`stock_range_low`・`stock_range_high`・`recount_reasons`・効く計数の `count_value`・`count_kind`・`count_business_date`〈計数が無ければ null〉。棚卸しの明細の無い商品を「今の数を入れる」で開くときの読取り。b1 の Plan Review round 1 の是正） |
 | zero_uncounted_items | `stocktake_id`・`product_codes: Vec<String>`・`business_date: String` | Result<Vec<StockCountSaveResult>, CmdError> |
 | list_recheck_products | なし | Result<Vec<CountRecoveryTarget>, CmdError> |
 
@@ -17,7 +17,20 @@
 - `complete_stocktake` の入力から `force_fill` を外す。拒否は [40 の回復型](40-cmd-product.md) の `completion_blocked`。
 - get_stocktake_items / get_stocktake_record は、明細ごとに効く計数の値・種類・日付、写しの在庫と範囲、要再確認の理由、差異（35 の新契約の「読取り」）を BIZ から透過する。get_stocktake_record は完了の後の差（差のある明細と差の合計。35 の新契約の「完了」）も透過する。
 - `run_integrity_check` / `fix_integrity` の command の署名は変えず、結果の型（`IntegrityMismatch`・`StockAdjustment`）は [36](36-biz-integrity-check.md) の新契約の 4 項目と `differing_fields` を透過する（[75](75-ui-integrity-check.md)）。
-- runtime では新しい command の tauri / specta 属性、collect_commands への登録、旧 update_count の公開登録の削除、bindings の生成と全 caller / mock の切替を一緒に行う。
+- b1 で新しい command の tauri / specta 属性、collect_commands への登録、旧い数の上書きの command の登録の削除、bindings の生成と全 caller / mock の切替を一緒に行った。
+
+b1 で足した command のシグネチャ（PC の今日は CMD が `chrono::Local` から読んで BIZ へ渡す）:
+
+```
+#[tauri::command]
+fn save_stock_count(state: State<AppState>, request: SaveStockCountRequest) -> Result<StockCountSaveResult, CmdError>
+#[tauri::command]
+fn preview_stock_count_placement(state: State<AppState>, product_code: String, business_date: String) -> Result<CountPlacementPreview, CmdError>
+#[tauri::command]
+fn zero_uncounted_items(state: State<AppState>, stocktake_id: i64, product_codes: Vec<String>, business_date: String) -> Result<Vec<StockCountSaveResult>, CmdError>
+#[tauri::command]
+fn list_recheck_products(state: State<AppState>) -> Result<Vec<CountRecoveryTarget>, CmdError>
+```
 
 ### 22.1 モジュール構成
 
@@ -55,10 +68,11 @@ src-tauri/src/
 | ValidationFailedAt { message, field } | "validation" | message をそのまま使用し、field も保持 |
 | StocktakeInProgress(msg) | "stocktake_in_progress" | msg をそのまま使用 |
 | StocktakeNotInProgress(msg) | "stocktake_not_in_progress" | msg をそのまま使用 |
+| StocktakeGuard { message, recovery } | "stocktake_guard" | message をそのまま使用し、`stocktake_recovery` に recovery を載せる（D-118 の b1。[40](40-cmd-product.md)） |
 
 **stocktake_in_progress を新設した理由**: 棚卸し開始時の「既に進行中」は一般的なバリデーションエラーとは性質が異なる。UI側で「進行中の棚卸しに移動」等の案内を出すために種別を分ける。
 
-**未入力商品の警告**: BIZ-06 は未入力時に `ValidationFailed` を返す（メッセージに件数含む）。CMD層は既存の `ValidationFailed → "validation"` 変換で対応。
+**完了の拒否**: BIZ-06 は未計数・要再確認・取り込んでいない精算を `StocktakeGuard`（code `completion_blocked`）で返す。CMD は回復型を写すだけで、対象の選別や回復の可否を判定しない。
 
 ---
 
@@ -83,7 +97,7 @@ fn get_daily_sales(
 3. Ok → DailySalesReport をそのまま返す
 4. Err(BizError) → CmdError に変換して返す
 
-#### get_daily_report_sheet（proposed・未実装、D-120）
+#### get_daily_report_sheet（D-120）
 
 **関数要求**: 指定日の日報の紙の内容（1 日 1 枚）を取得する。内容と規則は BIZ-05 の [34 §19.3a](34-biz-sales-service.md) の SALES-SHEET-D1〜D6 が持ち、CMD は変換だけを行う。
 
@@ -188,8 +202,6 @@ fn get_active_stocktake(
 
 #### start_stocktake
 
-> **現行 build では一時停止中**（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D2）: 下記の処理ステップは変えない。BIZ が引数・DB の状態によらず停止 error（`ValidationFailed`、[35 §20.0](35-biz-stocktake-service.md#200-現行buildの一時停止) の BIZ-06 停止文言）を返し、通常変換で kind = `validation`、field = null、error_id = null になる。
-
 **関数要求**: 新しい棚卸しを開始する
 
 **シグネチャ（Tauriコマンド）**:
@@ -206,6 +218,8 @@ fn start_stocktake(
 3. Ok → StartStocktakeResult を返す
 4. Err(BizError::StocktakeInProgress(msg)) → CmdError { kind: "stocktake_in_progress", message: msg }
 5. Err(other) → CmdError に通常変換
+
+自動の 0 の入力はしない（`StartStocktakeResult` は `stocktake_id`・`item_count`。35 §20.3）。
 
 #### get_stocktake_items
 
@@ -227,7 +241,7 @@ fn get_stocktake_items(
 **StocktakeItemListResponse構造体**:
 ```
 struct StocktakeItemListResponse {
-    items: Vec<StocktakeItemDetail>,   // 商品名・部門名付きのアイテム一覧
+    items: Vec<StocktakeItemDetail>,   // 商品名・部門名・単位、効く計数・写しの在庫と範囲・理由・差異（35「読取り」）
     progress: StocktakeProgress,        // 進捗（counted/total）
     total_count: u32,                   // ページング用の総件数
     page: u32,
@@ -264,33 +278,11 @@ fn find_stocktake_item(
 2. biz::stocktake_service::find_stocktake_item(&conn, stocktake_id, &code) を呼ぶ（IO層 stocktake_repo::find_stocktake_item_by_code の薄いラッパー）
 3. 該当アイテムがなければ None を返す
 
-#### update_count
+#### save_stock_count・preview_stock_count_placement・zero_uncounted_items・list_recheck_products
 
-> **現行 build では一時停止中**（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D2）: 下記の処理ステップは変えない。BIZ が引数・DB の状態によらず停止 error（`ValidationFailed`、[35 §20.0](35-biz-stocktake-service.md#200-現行buildの一時停止) の BIZ-06 停止文言）を返し、通常変換で kind = `validation`、field = null、error_id = null になる。
-
-**関数要求**: 棚卸しアイテムのカウントを更新する
-
-**シグネチャ（Tauriコマンド）**:
-```
-#[tauri::command]
-fn update_count(
-    state: State<AppState>,
-    stocktake_item_id: i64,
-    actual_count: i64,
-) -> Result<UpdateCountResult, CmdError>
-```
-
-**処理ステップ**:
-1. state.db.lock() でDB接続を取得
-2. UpdateCountRequest { stocktake_item_id, actual_count } を構築
-3. biz::stocktake_service::update_count(&conn, req) を呼ぶ
-4. BIZ層が actual_count < 0 を `ValidationFailed("カウント数は0以上で入力してください")` として拒否する
-5. Ok → UpdateCountResult を返す
-6. Err(BizError) → CmdError に変換
+シグネチャと入出力は本書冒頭の D-118 の節の表と code block。CMD は state.db.lock() で接続を取り、PC の今日（`chrono::Local`）を読んで BIZ（[35](35-biz-stocktake-service.md) §20.4）へ渡し、BizError を §22.3 で変換するだけ（業務条件を置かない）。
 
 #### complete_stocktake
-
-> **現行 build では一時停止中**（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D2）: 下記の処理ステップは変えない。BIZ が引数・DB の状態によらず停止 error（`ValidationFailed`、[35 §20.0](35-biz-stocktake-service.md#200-現行buildの一時停止) の BIZ-06 停止文言）を返し、通常変換で kind = `validation`、field = null、error_id = null になる。
 
 **関数要求**: 棚卸しを確定する
 
@@ -300,17 +292,17 @@ fn update_count(
 fn complete_stocktake(
     state: State<AppState>,
     stocktake_id: i64,
-    force_fill: bool,
 ) -> Result<StocktakeResult, CmdError>
 ```
 
 **処理ステップ**:
 1. state.db.lock() でDB接続を取得
-2. CompleteStocktakeRequest { stocktake_id, force_fill } を構築
+2. CompleteStocktakeRequest { stocktake_id, today: PC の今日 } を構築
 3. biz::stocktake_service::complete_stocktake(&mut conn, req) を呼ぶ
 4. Ok → StocktakeResult を返す（整合性チェック結果を含む。PR-5 で BIZ-07 統合後）
 5. Err(BizError::StocktakeNotInProgress(msg)) → CmdError { kind: "stocktake_not_in_progress" }
-6. Err(other) → CmdError に通常変換（ValidationFailed → "validation" で未入力警告を含む）
+6. Err(BizError::StocktakeGuard { message, recovery }) → CmdError { kind: "stocktake_guard", stocktake_recovery: Some(recovery) }（code `completion_blocked`。[40](40-cmd-product.md)）
+7. Err(other) → CmdError に通常変換（合計金額の範囲の外ほかは "validation"）
 
 #### get_last_completed_stocktake
 
@@ -355,6 +347,8 @@ fn get_stocktake_record(
 
 read-only であり、preview_cache / 冪等キー / 操作ログ記録には関与しない（[41-cmd-pos.md](41-cmd-pos.md) §17.5 get_csv_import_record と同型）。
 
+2026-10-23 追記（D-118 の b1）: CMD-10 は `get_active_stocktake`・`start_stocktake`・`get_stocktake_items`・`find_stocktake_item`・`get_last_completed_stocktake`・`get_stocktake_record`・`save_stock_count`・`preview_stock_count_placement`・`zero_uncounted_items`・`list_recheck_products`・`complete_stocktake` の 11（`src-tauri/src/lib.rs` の 2 つの一覧）。
+
 ---
 
 ### 22.6 CMD-01 追加: 一括インポートコマンド
@@ -397,6 +391,8 @@ fn commit_import(
 ```
 
 `old_jan_aliases` は、前の JAN の問い（[30](30-biz-product-service.md) BIZ-01-D9）に「ある」と答えた上書きの行の `{ product_code, old_jan }` の組（`OldJanAliasAnswer`、30 §4.8。`old_jan` は preview の `old_jan_question` の値をそのまま返す）。省略できる引数にはしない（UI は 1 つの build で常に送る。空の一覧が全て「ない」）。generated の呼出しは `commands.commitImport(validRows, overwriteCodes, oldJanAliases)`。CMD は検査を持たず BIZ に渡すだけ（形の検査と commit の判定は BIZ の §4.9 手順 0b・2 e.）。error の型・field・message・回復は 30 §4.9.2 の判定表（J1〜J7）が持ち、CMD は既存の変換（§22.3 の `ValidationFailedAt` の行と、40 §5.3 の `ValidationFailed → "validation"`）でそのまま写す: `ValidationFailedAt { message, field }` は kind `validation` で field を保ち（現物 `src-tauri/src/cmd/mod.rs` の `impl From<BizError> for CmdError` の `field: Some(field)`、test `test_cmd_error_req205_from_validation_failed_at_preserves_field`）、`ValidationFailed` は kind `validation`・field null になる。field `"old_jan_aliases"` が付くのは判定表の J6 だけ（増える wire はこの field の値だけ）。
+
+（D-118 の b1）確定の TX で行が共有 JAN の不変条件か在庫連動を始める検査に当たったときの error（kind `validation`、field null、最初に当たった行を名指す message で確定全体を戻す）と回復は [30](30-biz-product-service.md) の「計数の置き場と在庫の求め直しの契約」の節が持ち、CMD は既存の変換で写す。`ImportResult`（TS 名 `ProductImportResult`）の形は変えない。
 
 **処理ステップ**:
 1. state.db.lock() でDB接続を取得
@@ -464,7 +460,7 @@ preview_import, commit_import,
 get_daily_sales, get_monthly_sales, export_sales_csv,
 
 // CMD-10（stocktake_cmd.rs）
-start_stocktake, get_stocktake_items, update_count, complete_stocktake,
+start_stocktake, get_stocktake_items, complete_stocktake,
 
 // CMD-11 部分（integrity_cmd.rs）
 run_integrity_check, fix_integrity,
@@ -489,7 +485,7 @@ run_integrity_check, fix_integrity,
 ### 22.10 validation test contract
 
 CMD-01 `preview_import`、CMD-09 `get_monthly_sales`、CMD-10
-`get_stocktake_items` / `update_count`、CMD-11 `fix_integrity` のvalidation / conversion
+`get_stocktake_items`、CMD-11 `fix_integrity` のvalidation / conversion
 testは、`tauri::test::mock_builder`でmanaged `AppState`を構築し、対象のproduction
 command関数を呼ぶ。test内で `is_empty()`、閾値比較、mode変換、`CmdError`構築を
 再実装してはならない。

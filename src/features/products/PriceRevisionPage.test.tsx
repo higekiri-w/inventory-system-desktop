@@ -435,7 +435,13 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     mockReviseProductPrice
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "synthetic failure", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "synthetic failure",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -623,7 +629,13 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
       if (code === "P-003") {
         return Promise.resolve({
           status: "error",
-          error: { kind: "internal", message: "履歴失敗", field: null, error_id: null },
+          error: {
+            kind: "internal",
+            message: "履歴失敗",
+            field: null,
+            error_id: null,
+            stocktake_recovery: null,
+          },
         });
       }
       const changedAt =
@@ -730,7 +742,13 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     await user.type(input, "保持する取引先");
     mockCreateSupplier.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "追加失敗", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "追加失敗",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     await user.click(screen.getByRole("button", { name: "追加する" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("追加失敗");
@@ -744,11 +762,23 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     mockListDepartments
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "部門失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "部門失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "部門失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "部門失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValue({
         status: "ok",
@@ -808,11 +838,23 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     mockSearchProducts
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一覧失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一覧失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一覧失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一覧失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValue({
         status: "ok",

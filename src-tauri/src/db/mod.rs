@@ -23,6 +23,8 @@ mod schema_v1;
 mod schema_v10;
 #[cfg(test)]
 pub(crate) use schema_v10::{insert_pre_vb_product, VB_VERSION};
+mod schema_v11;
+mod schema_v12;
 mod schema_v2;
 mod schema_v3;
 mod schema_v4;
@@ -31,10 +33,6 @@ mod schema_v6;
 mod schema_v7;
 mod schema_v8;
 mod schema_v9;
-
-// 時点証拠 schema（⑤ まで registry に登録せず test の helper だけが当てる。D-109 (2)(3)）
-#[cfg(test)]
-mod schema_time_evidence;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -78,7 +76,7 @@ pub use sales_repo::{
 #[allow(unused_imports)]
 pub use stocktake_repo::{
     LastStocktakeSummary, NewStocktakeItem, ProductForStocktake, Stocktake, StocktakeItem,
-    StocktakeItemDetail, StocktakeItemForComplete, StocktakeProgress, UncountedItem,
+    StocktakeItemRow, StocktakeProgress, UncountedItem,
 };
 #[allow(unused_imports)]
 pub use system_repo::{AppSetting, NewOperationLog, OperationLog};

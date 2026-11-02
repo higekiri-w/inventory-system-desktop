@@ -4,6 +4,7 @@ set -euo pipefail
 
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HARNESS_KEY="claude-code-harness@claude-code-harness-marketplace"
+PONYTAIL_KEY="ponytail@ponytail"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -26,6 +27,9 @@ validate_inventory() {
     jq -e '(.hooks // {}) == {}' "$settings" >/dev/null ||
         return 1
     jq -e --arg key "$HARNESS_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
+        return 1
+    # D-147: the ponytail plugin stays off in this project (AGENTS.md and writer.md carry the rule instead).
+    jq -e --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
         return 1
     # SPEC-WF-HARNESS5-D4: subagent nesting stays off (depth 1).
     jq -e '.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH == "1"' "$settings" >/dev/null ||
@@ -210,6 +214,18 @@ cp -a "$fixture" "$plugin_mutant"
 jq --arg key "$HARNESS_KEY" '.enabledPlugins[$key] = true' \
     "$fixture/.claude/settings.json" > "$plugin_mutant/.claude/settings.json"
 expect_rejected "CH2 harness true" "$plugin_mutant"
+
+ponytail_true_mutant="$tmp/ponytail-true-mutant"
+cp -a "$fixture" "$ponytail_true_mutant"
+jq --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] = true' \
+    "$fixture/.claude/settings.json" > "$ponytail_true_mutant/.claude/settings.json"
+expect_rejected "D-147 ponytail true" "$ponytail_true_mutant"
+
+ponytail_missing_mutant="$tmp/ponytail-missing-mutant"
+cp -a "$fixture" "$ponytail_missing_mutant"
+jq --arg key "$PONYTAIL_KEY" 'del(.enabledPlugins[$key])' \
+    "$fixture/.claude/settings.json" > "$ponytail_missing_mutant/.claude/settings.json"
+expect_rejected "D-147 ponytail missing" "$ponytail_missing_mutant"
 
 script_mutant="$tmp/script-mutant"
 cp -a "$fixture" "$script_mutant"

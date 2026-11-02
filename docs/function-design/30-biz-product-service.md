@@ -1,12 +1,13 @@
 ## 4. BIZ-01: 商品管理ロジック
 
-### 計数の置き場と在庫の求め直しの契約（D-118。(a) は実装済み、(b) は proposed・未実装）
+### 計数の置き場と在庫の求め直しの契約（D-118。(a) と b1 で実装済み）
 
-[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2・D4・D8）の BIZ-01 の側。旧 ADR（時点証拠）の版・非連動化の記録・`ej_unverified` による有効化の拒否と既定値 false・本番前 preflight は持たない（置き換えた）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは 1 つ目の項目（`ProductUpdates.stock_quantity` を外し、初期在庫の movement〈業務日は登録した TX の PC の今日〉と `recompute_stock`）。共有 JAN と在庫連動を始める検査の項目は (b)（proposed・未実装）。
+[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2・D4・D8）の BIZ-01 の側。旧 ADR（時点証拠）の版・非連動化の記録・`ej_unverified` による有効化の拒否と既定値 false・本番前 preflight は持たない（置き換えた）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは 1 つ目の項目（`ProductUpdates.stock_quantity` を外し、初期在庫の movement〈業務日は登録した TX の PC の今日〉と `recompute_stock`）。共有 JAN と在庫連動を始める検査の項目は b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入った。
 
 - 汎用 `ProductUpdates` の `stock_quantity` 欄は外した（[20](20-io-product-repo.md)。production で `Some` を渡す呼出しは無かった）。create と商品一括 import の新規行は、初期数量を初期在庫の movement（`business_date` = 登録日、`phase=0`）として同じ TX で INSERT し、[31](31-biz-inventory-service.md) の `recompute_stock` で写しを書く。商品一括 import の既存商品の上書きは在庫を変えない（今のまま）。
-- 共有 JAN（SPEC-STK-CNT-D4）: 不変条件は 1 つ。変更の後に、在庫連動の商品と同じ JAN を持つ別の商品があってはならない。create・update（JAN・在庫連動の変更）・商品一括 import の TX の中で、変更の後の状態でこれを検査し、どの経路でも、どちらの商品を変える場合でも（例: 在庫連動の商品 A が自分の JAN を非連動の C と同じ値に変える、非連動の C が A と同じ JAN に変える、C を在庫連動にする）拒否する（既存の `validation` kind、field `pos_stock_sync` か `jan_code`、message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」。`ValidationFailedAt`。回復型〈`stocktake_guard`〉には載せない）。商品一括 import では当該行だけを error 行にし、他の正常行は続ける。preview だけの検証で確定を通さない。
-- 在庫連動を始める（SPEC-STK-CNT-D8）: 既存の商品の false → true は、連動なしで取り込んだ Z004 の売上（`sale_records`、`is_voided=0`、`stock_linked=0`、個数 ≠ 0 か金額 ≠ 0）が全て効く計数に確実に入っている（ADR D3 の判定表で「入る」）ときだけ許す。「入っていない」か「決まらない」売上があるとき、効く計数が衝突しているとき、効く計数が無く連動なしの売上が 1 件でもあるときは `recount_required` で拒否し、message「連動しない間の売上があります。今の数を入れてから在庫連動にしてください」と回復先（[40](40-cmd-product.md) の回復型。進行中の棚卸しにその商品の明細があれば action `active_count`、なければ `count_now`）を返す。効く計数が無い商品は、連動なしの売上が 1 件でもあれば拒否する。true → false は記録も確認も要らない。`pos_stock_sync` の既定値（新規の商品・商品一括 import の省略時の true、DB の `DEFAULT 1`）は変えない。
+- 共有 JAN（SPEC-STK-CNT-D4）: 不変条件は 1 つ。変更の後に、在庫連動の商品と同じ JAN を持つ別の商品があってはならない。create・update（在庫連動の変更。update は JAN を変えない: `ProductUpdateRequest` に `jan_code` は無く、商品フォームの edit の JAN 欄は読取専用〈BIZ-01-D1 の「edit は jan_code 変更不可」、[51](51-ui-product-form.md) UI-01b-D5〉。update の検査は在庫連動を始める〈false → true〉保存だけで、ほかの欄だけの保存は組を新しく作らないので検査しない〈移行の前からある組の商品の修正も通る。組は [36](36-biz-integrity-check.md) の整合性の画面で知らせる〉）・商品一括 import（新規の行と、JAN と在庫連動を書く上書きの行。JAN が変わる経路は上書きの行だけ）の TX の中で、変更の後の状態でこれを検査し、どの経路でも、どちらの商品を変える場合でも（例: 一括 import の上書きで在庫連動の商品 A の JAN を非連動の C と同じ値に変える、一括 import の上書きで非連動の C の JAN を A と同じ値に変える、商品の修正か一括 import の上書きで C を在庫連動にする）拒否する（JAN の経路の書き分けは b1 の Plan Review round 1 の是正、2026-10-22）（既存の `validation` kind、field `pos_stock_sync`〈create は §4.2 の step 3b、update は §4.4 の在庫連動を始める保存。JAN が他の商品にある新規登録は step 3a の `JanInUse` が先に止めるので、field `jan_code` で返す経路は無い。BIZ-01-D11〉、message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」。`ValidationFailedAt`。回復型〈`stocktake_guard`〉には載せない）。商品一括 import では当該行だけを error 行にし、他の正常行は続ける。preview だけの検証で確定を通さない。
+- 商品一括 import の判定の状態と確定の拒否（b1 の Plan Review round 2 の是正、2026-10-22。下の在庫連動を始める検査も同じ）: preview は、新規の行（valid_rows）を CSV の順に、DB の今の状態に先の新規の行の変更を当てた状態で判定し（同じ CSV の新規の行どうしで、在庫連動の商品と同じ JAN の別の商品ができる組は、後の行が error 行）、重複の行（上書きの候補）は、DB の今の状態に全ての新規の行の変更を当てた状態で判定する（確定は新規の行の後に上書きの行を処理する。[60](60-ui-product-import.md) の送る行の並び。ほかの重複の行は上書きするかが preview の時点で分からないので当てない。§4.9.2 の preview の判定と同じ）。確定は送られた行の順に、TX の中のその時点の状態（先に処理した行の変更を含む）で同じ検査をし、当たる行が 1 つでもあれば（preview の後に DB が変わったか、上書きを選んだ行どうしが当たった場合だけ起きる）、何も書かずに `BizError::ValidationFailed`（field なし）で確定全体を戻す。message は最初に当たった行を名指す: 「商品 {商品コード} の行: {preview の行の error と同じ文}。読み込みの後に登録か売上が変わったか、上書きを選んだほかの行と重なったため、取込みを止めました（どの行も取り込んでいません）。その行をスキップにするか、ファイルを選び直してもう一度読み込んでください」。形は §4.9 の単位の再検証（BIZ-01-D8）と §4.9.2 の J3・J4・J7 と同じ（行を名指して確定全体を戻し、preview へ導く）で、結果の型 `ImportResult`（TS 名 `ProductImportResult`）と画面の結果は変えない。当たった行だけを飛ばして他を確定する形は採らない（結果の型に行の拒否の一覧を足し、結果の画面を作り直すことになり、確定の後に利用者が何を取り込まなかったかを別の画面で読み直すことになる）。
+- 在庫連動を始める（SPEC-STK-CNT-D8）: 既存の商品の false → true は、連動なしで取り込んだ Z004 の売上（`sale_records`、`is_voided=0`、`stock_linked=0`、個数 ≠ 0 か金額 ≠ 0）が全て効く計数に確実に入っている（ADR D3 の判定表で「入る」）ときだけ許す。「入っていない」か「決まらない」売上があるとき、効く計数が衝突しているとき、効く計数が無く連動なしの売上が 1 件でもあるときは `recount_required` で拒否し、message「連動しない間の売上があります。今の数を入れてから在庫連動にしてください」と回復先（[40](40-cmd-product.md) の回復型。進行中の棚卸しにその商品の明細があれば action `active_count`、なければ `count_now`）を返す。効く計数が無い商品は、連動なしの売上が 1 件でもあれば拒否する。在庫連動を始める保存が共有 JAN の不変条件と `recount_required` の両方に当たるときは、共有 JAN の拒否を先に返す（数えても直らない拒否を先に名指す。商品の修正と一括 import の行の両方。b1 の Plan Review round 2 の是正）。true → false は記録も確認も要らない。`pos_stock_sync` の既定値（新規の商品・商品一括 import の省略時の true、DB の `DEFAULT 1`）は変えない。
 
 既存の価格改定・supplier・PLU の枠（D-117 で解放しない。[33 §16.6](33-biz-plu-export-service.md)）・初期在庫の意味は不変。拒否理由と回復先は[共通 error の新契約](40-cmd-product.md)で型付きに渡し、DB / 数量範囲外は従来の失敗経路で TX 全体を戻す。
 
@@ -56,10 +57,11 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
 - supplier_id: Option<i64>
 - pos_stock_sync: bool
 - plu_target: bool（D-028: スキャニングPLU書出し対象フラグ。UI-01b が jan_code の 13 桁数字判定から初期値を提案し、利用者が変更した確定値を渡す。pos_stock_sync と同じ「UI で初期値提案 + 変更可」パターン）
+- shared_jan_custom_code: bool（BIZ-01-D11。true は「JAN を持ったまま独自コードで登録し、同じ JAN の商品の群に加える」。UI-01b は step 3a の `JanInUse` を受けた確認のダイアログからだけ true を送る〈[51](51-ui-product-form.md) UI-01b-D26〉。jan_code が None なら意味を持たない〈今どおり発番〉）
 
 **ProductCreateResult構造体**:
 - product_code: String（発番された場合は独自コード）
-- warnings: Vec<String>
+- warnings: Vec<String>（step 3a2 で在庫連動を外した商品ごとの知らせ。それ以外は空）
 
 **処理ステップ**:
 1. **バリデーション**
@@ -73,7 +75,7 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
 
 **enum 契約化（D-061 / D-064、二層化）**: wire 経路（CMD 境界の request/response）は tax_rate/stock_unit を generated enum で型検査する。一方、file 由来の `ImportRow.tax_rate: String` / `stock_unit: Option<String>` は維持する。file 経路の値域 guard は BIZ が持つ: tax_rate と stock_unit（preview が code か表示の語を code に正規化し、missing / 空文字は `None` のまま保持して INSERT 時に `"pcs"`、一覧に無い値は行の error。BIZ-01-D8）。
 
-**設計判断（BIZ-01-D1、JAN 形式 validation、2026-08-11）**: step 1g として jan_code が Some の場合の形式検証を追加する。適用は手入力 create 経路のみ。CSV/Z004 import 経路と既存 DB 行は対象外（実店舗データ互換のため寛容性を意図的に維持し、preview_import / commit_import は検証を追加しない）。edit は jan_code 変更不可（product_repo 契約）のため対象外。検証対象は受領済みの正規化後 wire 値であり、trim と全角→半角正規化は 51 UI-01b-D17（frontend）が実行済み、BIZ は再正規化しない。検証内容 = ASCII 数字 8 桁または 13 桁、かつモジュラス 10 チェックディジット整合。違反は `ValidationFailed`（文言は 51 UI-01b-D17 の 2 文言と完全一致）。チェックディジット判定は BIZ 所有の core validator（新設 module）が行い、CASIO adapter（io/plu_formatter）の CV17 出力検証関数は共有しない — adapter 詳細を core 契約へ昇格しない（[ARCHITECTURE.md POS Adapter Boundary](../ARCHITECTURE.md) / D-023）。EAN-8 は 7 桁データ部の先頭桁（idx 0）に重み 3 を割り当てる交互配分（idx 偶数 = 3 / 奇数 = 1）で、EAN-13（idx 偶数 = 1 / 奇数 = 3）とは重み配分の偶奇が逆である（既存 adapter 関数のコピー実装禁止）。core validator（BIZ）/ frontend validator（51 の `jan-code.ts`）/ adapter validator（io、不変）は同一 GS1 標準の意図的独立実装とし、golden 独立転記 oracle は 2 profile で拘束する: EAN-13 は三側共通（valid `4901234567887` / invalid `4901234567890`、偶奇反転 mutation の kill case = `4901234567887`）、EAN-8（GS1 公表例 `96385074` / synthetic `49123456`、kill case = `49123456`）は core/frontend の二側のみ（adapter は EAN-13 専用のため置かない）。ISBN-10 は許容しない（本は 13 桁 JAN で登録 = owner 裁定 2026-08-11）。
+**設計判断（BIZ-01-D1、JAN 形式 validation、2026-08-11。適用の経路は 2026-10-27 に BIZ-01-D10 で改めた）**: step 1g として jan_code が Some の場合の形式検証を追加する。適用は手入力 create 経路と商品 CSV の取込み（preview_import の行の検証と commit_import の TX を開く前の再検証。BIZ-01-D10、D-140。判定は下の core validator を共有し、文は経路ごとに持つ）。Z004 の取込み（商品を作らない）と既存 DB 行は対象外。edit は jan_code 変更不可（product_repo 契約）のため対象外。検証対象は受領済みの正規化後 wire 値であり、trim と全角→半角正規化は 51 UI-01b-D17（frontend）が実行済み、BIZ は再正規化しない。検証内容 = ASCII 数字 8 桁または 13 桁、かつモジュラス 10 チェックディジット整合。違反は `ValidationFailed`（文言は 51 UI-01b-D17 の 2 文言と完全一致）。チェックディジット判定は BIZ 所有の core validator（新設 module）が行い、CASIO adapter（io/plu_formatter）の CV17 出力検証関数は共有しない — adapter 詳細を core 契約へ昇格しない（[ARCHITECTURE.md POS Adapter Boundary](../ARCHITECTURE.md) / D-023）。EAN-8 は 7 桁データ部の先頭桁（idx 0）に重み 3 を割り当てる交互配分（idx 偶数 = 3 / 奇数 = 1）で、EAN-13（idx 偶数 = 1 / 奇数 = 3）とは重み配分の偶奇が逆である（既存 adapter 関数のコピー実装禁止）。core validator（BIZ）/ frontend validator（51 の `jan-code.ts`）/ adapter validator（io、不変）は同一 GS1 標準の意図的独立実装とし、golden 独立転記 oracle は 2 profile で拘束する: EAN-13 は三側共通（valid `4901234567887` / invalid `4901234567890`、偶奇反転 mutation の kill case = `4901234567887`）、EAN-8（GS1 公表例 `96385074` / synthetic `49123456`、kill case = `49123456`）は core/frontend の二側のみ（adapter は EAN-13 専用のため置かない）。ISBN-10 は許容しない（本は 13 桁 JAN で登録 = owner 裁定 2026-08-11）。
 
 **設計判断（BIZ-01-D2、plu_target 初期提案判定の二重実装契約、2026-08-11）**: `should_default_plu_target`（一覧 inline 導出と CSV import の初期 plu_target 導出が使用）と frontend `suggestPluTarget`（51 UI-01b-D18）は「ASCII 数字 13 桁のみ true」の同一意味論を持つ意図的二重実装である。BIZ 側の入力 domain は正規化後 wire 値であり trim を行わない（現実装どおり）。実装統合（wire 越え SSOT 化）は行わず、両側に同一ケース表の独立転記 oracle drift-guard test を置いて意味論 drift を機械検出する。
 
@@ -82,12 +84,19 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
    - 実装時の差分: 元の設計ではステップ3だったが、generate_custom_code 内の increment_next_seq が DB を更新するため TX 内に含める必要あり
 
 3. **product_codeの決定**（TX内）
-   a. jan_codeがSome:
-      - product_code = jan_code.clone()
-      - product_repo::find_by_product_code() で重複チェック → 既存あり → BizError::DuplicateProductCode(product_code)
+   a. jan_codeがSome で shared_jan_custom_code = false（BIZ-01-D11）:
+      - product_repo::find_by_jan_code(J) と product_repo::find_by_product_code(J) で、JAN が J の商品と商品コードが J の商品を集める（J は jan_code の値。商品コードの昇順、同じ商品は 1 つ）
+      - 1 件でもあれば → BizError::JanInUse(message)（message は BIZ-01-D11 の形で全ての商品を名指す）。何も書かない
+      - 無ければ product_code = jan_code.clone()（JAN が他の商品に無いときは JAN を商品コードにする今の形、repo 外の回答台帳 TD-338）
+   a2. jan_codeがSome で shared_jan_custom_code = true（BIZ-01-D11）:
+      - generate_custom_code(&tx, department_id) を呼ぶ（後述）→ product_code を取得。jan_code は J のまま持つ
+      - product_repo::find_by_jan_code(J) の商品のうち pos_stock_sync = true の各商品（商品コードの昇順。廃番の商品を含む）を、product_repo::update_product（`ProductUpdates { pos_stock_sync: Some(false), .. }`）で在庫連動なしにし、商品ごとに `recompute_stock`（[31](31-biz-inventory-service.md)。在庫連動の切替の TX はその商品を求め直す、ADR SPEC-STK-CNT-D2 の表の「在庫連動の切替」の行。§4.4 の update と同じ）と操作ログ（operation_type = "product_update"、summary = "商品を更新しました: {商品コード}"、detail_json = `{"pos_stock_sync":{"old":true,"new":false}}`。BIZ-01-D7 の形）を書き、warnings に「同じ JAN の商品 {商品コード}「{商品名}」の「POS販売で在庫を減らす」を「減らさない」にしました」を足す（文は商品フォームの画面の語。BIZ-01-D11 の message の形の項）
+      - JAN が J の商品が無くても（読んだ後に変わった等）失敗にせず、独自コードで登録する（外す商品は 0、warnings は空）
    b. jan_codeがNone:
       - generate_custom_code(&tx, department_id) を呼ぶ（後述）→ product_codeを取得
       - jan_code = None のまま
+
+3b. **共有 JAN の不変条件**（冒頭の「計数の置き場と在庫の求め直しの契約」の共有 JAN の項、ADR SPEC-STK-CNT-D4）: step 3 の後の状態（step 3a2 で外した後）で検査し、当たれば BizError::ValidationFailedAt（message「同じ JAN の商品（{同じ JAN を持つほかの商品コード}）があるため、在庫連動にできません」、field `pos_stock_sync`）。step 3a で JAN が他の商品に無いことを確かめ、step 3a2 で同じ JAN の商品を在庫連動なしにするので、当たるのは step 3a2 の経路で新しい商品を在庫連動にして送ったときだけ（UI-01b は送らない）
 
 4. **productsにINSERT**
    - NewProduct構造体を構築してproduct_repo::insert_product()を呼ぶ
@@ -115,13 +124,26 @@ fn create_product(conn: &mut DbConnection, req: ProductCreateRequest) -> Result<
 8. **COMMIT**
 
 9. **結果返却**
-   - ProductCreateResult { product_code, warnings: [] }
+   - ProductCreateResult { product_code, warnings }（warnings は step 3a2 で足したもの。それ以外の経路は空）
 
 **エラーハンドリング**:
 - バリデーション失敗 → BizError::ValidationFailed(message)。トランザクション開始前なのでROLLBACK不要
-- 重複コード → BizError::DuplicateProductCode(code)。TX内で発生 → RAII自動ROLLBACK。JAN の重複で起きる。独自コードは §4.3 が既存の番号を飛ばすため（BIZ-01-D6）、既存の商品に当たって止まることはない
+- JAN を他の商品が使っている（step 3a）→ BizError::JanInUse(message)。TX内で、まだ何も書いていない → RAII自動ROLLBACK
+- 共有 JAN の不変条件（step 3b）→ BizError::ValidationFailedAt。step 3a2 で外した在庫連動と next_seq の引上げも RAII自動ROLLBACK で戻る
+- 重複コード → BizError::DuplicateProductCode(code)。TX内で発生 → RAII自動ROLLBACK。JAN が他の商品にあるときは step 3a が先に `JanInUse` を返すので、起きるのは INSERT の一意制約に当たったとき（step 3a の後に同じ商品コードが入った等）だけ。独自コードは §4.3 が既存の番号を飛ばすため（BIZ-01-D6）、既存の商品に当たって止まることはない
 - DB操作失敗（INSERT等）→ RAII自動ROLLBACK → BizError::DatabaseError(DbError)
 - 棚卸しアイテム追加失敗 → RAII自動ROLLBACK → BizError::DatabaseError(DbError)
+
+**設計判断（BIZ-01-D11、JAN が他の商品にあるときは知らせ、独自コードで群に加える道を出す、2026-10-27、D-141）**: 新規登録で入れた JAN を他の商品が使っているとき（JAN が同じ商品か、商品コードがその JAN の商品）、黙って JAN を商品コードにせず、`JanInUse` で使っている商品を名指して止める。利用者が独自コードで登録すると選んだら（`shared_jan_custom_code = true`）、独自コードを振り、JAN を持たせ、同じ JAN の在庫連動の商品を同じ TX で在庫連動なしにする（repo 外の回答台帳 TD-349。後から加える色に独自コードを振り、同じ JAN を各色に持たせる形。TD-352 の「群は全色を独自コード」とは下の例外の項だけ違う）。
+- message の形: 「この JAN（{J}）はほかの商品が使っています: {商品コード}「{商品名}」、…」。各商品の後ろに、次の印を 1 つの括弧に「・」でつないで付ける（当たらない商品には括弧を付けない）: JAN が J でなく商品コードだけが J なら「商品コードだけ同じ」、在庫連動なら「POS販売で在庫を減らす」、廃番なら「廃番」（この順。例「（商品コードだけ同じ・POS販売で在庫を減らす）」「（POS販売で在庫を減らす・廃番）」）。並びは商品コードの昇順。件数で省かない（群は色の数で、画面のダイアログが全てを出す）。CMD は kind `duplicate`・field `jan_code` で返す（[40](40-cmd-product.md)）。
+- 文の語: `JanInUse` の message と step 3a2 の warnings は、商品フォームの画面の語（在庫の節の欄の名「POS販売で在庫を減らす」と値「減らす」「減らさない」、[51](51-ui-product-form.md) の冒頭の `recount_required` の項）で書き、画面に無い「在庫連動」を使わない。読むのは商品フォームだけ（`rg -n 'createProduct' src --glob '!src/lib/bindings.ts' --glob '!*.test.*'` が `ProductFormPage.tsx` と `product-form-request.ts`〈request の組み立て〉だけ、`create_product` の BIZ の呼出し側は `cmd/product_cmd.rs` だけ。2026-10-29）なので、BIZ の文を画面の語にしても他の画面へ波及しない。冒頭の共有 JAN の項の message（「在庫連動にできません」。商品フォームと商品一括 import の両方が読む）は本決定で変えない（[backlog](../backlog.md) の候補）。
+- TD-352 からの例外: 群の 1 色目を先に商品フォームで登録すると、JAN がほかの商品に無いので商品コードは JAN（J）になる（TD-338）。2 色目以降を本決定の道で加えても、1 色目の商品コードは J のまま残る（商品コードは主キーで、修正の画面でも読取専用〈[51](51-ui-product-form.md) UI-01b-D5〉。変えると全参照の書換えになる〈[master-tables](../db-design/master-tables.md) の困りそうなケースの SP-102-04 と同じ理由〉）。このため群の中で 1 色目だけが独自コードでなく、TD-352 の「全色を独自コード」の例外になる。既存の商品を独自コードへ振り直す処理は足さない。害: Z004 の照合は `jan_code` だけで行い、売上は群の先頭（商品コードの昇順）に記録し在庫を動かさない（[pos-tables](../db-design/pos-tables.md) の Z004 のマスタ照合、ADR D4）ので、商品コードが J のままでも在庫は黙ってずれない。例外を受け入れるかは owner の確認を待つ（packet の Q3。AI の review〈PR #212 の計画の review round 1〉から出た問い）。
+- 在庫連動を外す理由: 同じ JAN の商品はレジの売上でどれが売れたか見分けられず、ADR SPEC-STK-CNT-D4 の不変条件（在庫連動の商品と同じ JAN を持つ別の商品があってはならない）で、新しい商品も既存の商品も在庫連動にできない。外さずに拒むと、利用者は登録の画面を離れて既存の商品の修正で在庫連動を外し、入力をやり直すことになる（D-127 の「その場で直せる」に反する）。true → false は記録も確認も要らない変更（冒頭の節の「在庫連動を始める」の項）なので、登録の確認のダイアログで名指して同意を得たうえで、登録と同じ TX で外す。外した商品は operation log と warnings で名指す。
+- 却下 (a) 今の形（JAN を商品コードにし、JAN の商品コードがあるときだけ `DuplicateProductCode`）: 2 色目は商品 CSV でしか入れられない（TD-349 の起点）。JAN が別の商品コードの商品にだけあるときは、知らせも同意も無く、JAN を商品コードにした商品が群に加わる（後から加える色に独自コードを振る形にならない）。
+- 却下 (b) 知らせずに自動で独自コードにする: 同じ品を 2 つ登録する誤り（廃番にした商品の登録し直し等）に気づけない。
+- 却下 (c) 既存の在庫連動の商品は外さずに拒み、その商品の修正へ案内する: 上の在庫連動を外す理由。owner の判断を待つ選択肢として残す（[decision-log](../decision-log.md) D-141 の Alternatives）。
+- 却下 (d) D4 を緩め、既存の商品の在庫連動を残す: レジの売上で既存の商品の在庫だけが減り、別の色が売れても減る（黙ってずれる）。D4 の改訂は店内コードの lane の Revisit（ADR）で、本決定の範囲の外。
+- Revisit: 店内コードの lane で共有 JAN の群の扱い（ADR の Revisit）が変わったとき。商品フォームの edit で JAN を変えられるようにするとき（同じ知らせを edit にも置く）。
 
 ---
 
@@ -485,7 +507,8 @@ struct OldJanAliasAnswer {
    - 部門ID: 整数変換可能、departments に存在すること
    - 売価: 0以上の整数。原価: 小数 2 桁までの円（SPEC-UNIT-D10 の `原価` の行の error の分け方）
    - 税率: '10', '8', '0' のいずれか
-   - `PLU対象=1` かつ JAN が 13 桁数字でない、または check digit 不正の場合は preview warning を付けて `plu_target=0` に正規化する
+   - 商品コードと JANコードの形（BIZ-01-D10）: 指数の形の `商品コード`・`JANコード`、13 桁の数字の `商品コード` で `JANコード` が空の行、`JANコード` が BIZ-01-D1 の判定（ASCII 数字 8 桁か 13 桁で、チェックディジットが合う）を通らない行は行の error。重複の分類（手順 5）より前なので、上書きの候補の行にも当たる
+   - `PLU対象=1` かつ JAN が 13 桁数字でない（空か 8 桁。形の誤った JAN は上の BIZ-01-D10 の行の error が先に止める）場合は preview warning を付けて `plu_target=0` に正規化する
    - バリデーション失敗 → error_rows に追加
 
 5. **重複チェック**
@@ -529,9 +552,10 @@ struct ImportResult {
 
 **処理ステップ**:
 
-0. **商品コードの上限の再検証**（BIZ-01-D5）
+0. **商品コードの上限と、商品コード・JANコードの形の再検証**（BIZ-01-D5・BIZ-01-D10）
    - TX を開く前に valid_rows の全行を §4.8 step 4 と同じ判定で調べる（wire から来る行を信頼しない）
    - 1 行でも 100 文字（UTF-16 code unit）を超えれば BizError::ValidationFailed("商品コードは100文字以内で入力してください") を返し、DB を変えない（正常な行も登録しない）
+   - 1 行でも BIZ-01-D10 の形に当たれば、valid_rows の順で最初に当たった行の、preview の行の error と同じ最初の文で BizError::ValidationFailed を返し、DB を変えない（正常な行も登録しない）。判定は行の値だけで DB を読まないので、preview を通った行では起きない（preview を通らない wire にだけ当たる）
 
 0b. （proposed・未実装、D-122）**前の JAN の答えの形の検査**: TX を開く前に §4.9.2 の判定表の「TX を開く前」の行（J1・J2）を確かめ、満たさなければその行の error を返し、DB を変えない
 
@@ -561,10 +585,28 @@ struct ImportResult {
 
 **エラーハンドリング**:
 - TX内でのDB操作失敗 → BizError::DatabaseError（TX自動ロールバック）
-- 個別行のバリデーションエラー → preview_import で事前に検出済みのため通常到達しない。商品コードの上限だけは step 0 で再検証する（BIZ-01-D5）
+- 個別行のバリデーションエラー → preview_import で事前に検出済みのため通常到達しない。商品コードの上限と、商品コード・JANコードの形は step 0 で再検証する（BIZ-01-D5・BIZ-01-D10）
+- （D-118 の b1）共有 JAN の不変条件か在庫連動を始める検査に当たる行（preview の後に DB が変わったか、上書きを選んだ行どうしが当たった場合）→ 上の「計数の置き場と在庫の求め直しの契約」の節の形で `BizError::ValidationFailed`（field なし、最初に当たった行を名指す）、TX 全体を戻す
 - （proposed・未実装、D-122）前の JAN の答えの形・別名の判定を満たさない → §4.9.2 の判定表の行の error（step 0b の行は DB を変えず、step 2 e. の行は TX 全体を戻す）
 
 **設計判断（BIZ-01-D5、商品コードの長さ上限、2026-09-25）**: 商品コードの上限は 100 文字（owner 決定 2026-09-25）。在庫照会の route search `selected` / `q` の zod `.max(100)` と揃え、「登録できるのに照会で選べない」食い違いを消す。数え方は zod `.max()` と同じ UTF-16 code unit（Rust は `encode_utf16().count()`、定数 `constants::PRODUCT_CODE_MAX_LEN`）。文字数（`chars().count()`）では BMP 外の文字で照会より多く通し、byte 数（`len()`）ではかなで照会より少なく通すため採らない。判定は BIZ に置き、任意の文字列が入る唯一の経路である商品 CSV の取込み（preview_import の行検証と commit_import の TX 前の再検証）で閉じる。手入力の create_product は JAN（BIZ-01-D1）か §4.3 の発番で上限に届かず、update_product は product_code を変えないため判定を置かない。DB CHECK は置かない: `products.product_code` を外部キーで参照する定義が 8 あり、SQLite は CHECK の追加に `products` の再作成が要る一方、上の BIZ の判定で入口が閉じるため。
+
+**設計判断（BIZ-01-D10、商品 CSV の商品コードと JANコードの形、2026-10-27、D-140）**: 商品 CSV の取込みは、黙って入るとレジの売上（Z004）に引き当たらないか、誤ったコードのまま変えられない（SP-102-04）形の行を、preview の行の error で名指して止める（owner の決定、repo 外の回答台帳 TD-421・TD-426）。判定は行の値（IO-03 が前後の空白を除いた後）だけで行い、DB を読まない。preview（§4.8 手順 4。重複の分類より前なので新規の行と上書きの候補の行の両方）と commit（§4.9 手順 0。TX を開く前、wire の行を信頼しない）で同じ判定を 1 か所の関数で使う。
+
+| # | 当たる行 | 行の error の文（`{値}` は CSV の値） |
+|---|---|---|
+| F1 | `商品コード` か `JANコード` が指数の形（ASCII 数字が 1 つ以上、任意で `.` と ASCII 数字 1 つ以上、`E` か `e`、`+`、ASCII 数字 1 つ以上。例 `4.90123E+12`・`5E+12`）。列ごとに判定し、両方が当たれば 2 つ出す | `{列}が指数の形です: '{値}'。Excel が桁を落として書いた値です。元の Excel でその列を文字列の値にして（TEXT の列）保存し直してください。セルを選んだときの上の欄（数式バー）に E+ が出るなら、元の資料から全部の桁を入れ直してください`（`{列}` は `商品コード` か `JANコード`。直し方は初期投入の手順書の流れ 1 の手順 4 の `TEXT` の列と同じで、普通は列ごとに 1 回で直り、使い手に 1 行ずつ打ち直させない。D-127） |
+| F2 | `商品コード` が ASCII 数字ちょうど 13 桁で、`JANコード` が空（列が無い場合を含む） | `商品コードが13桁の数字でJANコードが空です: '{値}'。JANを商品コードにした商品は、JANコードにも同じ値を入れてください` |
+| F3 | `JANコード` が空でなく F1 に当たらず、BIZ-01-D1 の core validator（`biz::jan_code::validate`）が長さか文字で外す | `JANコードが8桁か13桁の数字ではありません: '{値}'。先頭の0が落ちていないかを見て、商品のバーコードの数字を元の資料から文字列で入れ直してください` |
+| F4 | `JANコード` が空でなく F1 に当たらず、同じ validator がチェックディジットで外す | `JANコードのチェックディジットが合いません: '{値}'。商品のバーコードの数字を元の資料から入れ直してください` |
+
+- 行の errors の中の順: 形の検査の文は全部、`JANコード` を読んだ直後の 1 か所に、上の表の順（F1 の `商品コード`、F1 の `JANコード`、F2、F3、F4）で入れる（F1 の `JANコード` と F3・F4 は排他、F2 と F1 の `JANコード` も排他）。行の error は今と同じく `ImportErrorRow.errors` の文字列で、wire の型は変えない。
+- 通るもの（今のまま）: `JANコード` の空（JAN を持たない商品）、独自コードの行（`JANコード` が空でも）、13 桁の数字の `商品コード` に `JANコード` があり F3・F4 を通る行（`商品コード` と同じ値でなくても通る）、先頭 2 の店内コードと共有 JAN（グループコード）でチェックディジットが合う値（GS1 の同じモジュラス 10。実物のバーコードは合う）、12 桁・14 桁の数字の `商品コード` で `JANコード` が空の行（F2 は 13 桁だけ）。12 桁を通す理由: 値だけで「JAN を商品コードにした行」と言えるのは 13 桁ちょうどだけで、12 桁の数字は先頭の 0 が落ちた 13 桁の JAN とほかの数字のコードを値で分けられず、店の今の独自コードに数字だけのものがあるかは確かめていない（8 桁と同じ前提。Revisit）。この形は、当面は初期投入の手順書の流れ 1 の手順 4 の不一致の確かめ（数字だけの `商品コード` が `JANコード` と同じでない行が 0）が拾う（止めるかは下の Revisit で決める）。
+- 文を手入力の create（51 UI-01b-D17 と完全一致の 2 文）と分ける理由: CSV の行は Excel で直すので、原因の見当（先頭の 0、Excel の桁落ち）と直す場所（元の資料、文字列で入れる）を名指す。判定（validator）は共有し、文だけを経路が持つ。
+- 上書きの行で `商品コード` が 13 桁の数字の商品の JAN を消す行（`JANコード` が空か列が無い）は F2 で止まる（その JAN を商品コードにした商品から JAN を消すと Z004 が引き当たらない）。13 桁の数字でない商品の JAN を消す上書き（意図した契約。上の BIZ-01-D8 の上書きの段の `plu_dirty` の項、§4.9.2 の「JAN を空にする変更」）は止めない。
+- 却下: 形の誤りを warning にして取り込む（黙って入る形が残り、初期投入で見落とす。TD-421 の答え b は止める）。行を補う（`JANコード` を `商品コード` から補う、指数の形を数に戻す。指数の形は桁が既に失われ、補った値は誤る。13 桁の独自コードを JAN と見なす誤りも作る）。DB の CHECK（既存の DB 行の互換と `products` の作り直し。master-tables の「jan_code の形式 validation を DB に置かない理由」）。frontend で検査する（preview の行の分類は BIZ が持つ。UI に判定を写さない）。
+- 範囲: 本判定より前に入った DB の行（開発・試験 DB）は直さず、その商品を上書きする CSV の行だけが当たる（その行の JAN を直して取り込む）。Z004 の取込みは商品を作らないので対象外のまま。
+- Revisit: 8 桁の JAN を商品コードにする形（初期投入の手順書の J4 の a）を採るとき（8 桁の数字の `商品コード` で `JANコード` が空の行も F2 に足すか）。手入力の create は 8 桁の JAN もそのまま商品コードにする（§4.2 の手順 3 の product_code の決定。`test_create_product_req101_accepts_valid_jan_8_and_jan_13` が `96385074`・`49123456` で assert する）ので、J4 の答えと関係なく導入の後に 8 桁の JAN の商品コードの商品ができ、その商品を CSV で上書きして `JANコード` を空にすると JAN が黙って消える（Z004 が引き当たらない。13 桁と違い F2 は止めない）。8 桁の JAN をレジがどう Z004 に書くかが分かったとき（13 桁で `00000` から始まる `JANコード` を止めるか）。店の独自コードに数字だけのものが無いと分かったとき（12 桁の数字の `商品コード` で `JANコード` が空の行〈先頭の 0 が落ちた 13 桁の JAN を商品コードにした行〉も止めるか）。
 
 ---
 
@@ -630,6 +672,7 @@ enum BizError {
     ValidationFailedAt { message: String, field: String },
     NotFound(String),
     DuplicateProductCode(String),
+    JanInUse(String),                 // BIZ-01-D11: 新規登録で入れた JAN を他の商品が使っている（message は BIZ が作る）
     DatabaseError(DbError),
     ImportError(String),
     IdempotencyConflict(String),

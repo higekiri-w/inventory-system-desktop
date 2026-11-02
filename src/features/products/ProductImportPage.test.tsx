@@ -188,6 +188,44 @@ describe("ProductImportPage (UI-01c / REQ-104)", () => {
     });
   });
 
+  it("J3 commit rejection shows the named row and keeps the preview", async () => {
+    // 60 の D-118 の節: 確定の TX で行が拒まれたら Alert に BIZ の文をそのまま出し、
+    // 「戻る」で preview と上書きの選択に戻る（kind validation は preview へ戻る今の分岐）
+    const user = userEvent.setup();
+    const duplicateRow = makeImportRow({ line_no: 3, product_code: "P-002", name: "布" });
+    const preview = makePreview({
+      duplicate_rows: [{ line_no: 3, import_row: duplicateRow, existing_product_code: "P-002" }],
+    });
+    const message =
+      "商品 P-002 の行: 同じ JAN の商品（P-009）があるため、在庫連動にできません。読み込みの後に登録か売上が変わったか、上書きを選んだほかの行と重なったため、取込みを止めました（どの行も取り込んでいません）。その行をスキップにするか、ファイルを選び直してもう一度読み込んでください";
+    mockPreviewImport.mockResolvedValue({ status: "ok", data: preview });
+    mockCommitImport.mockResolvedValue({
+      status: "error",
+      error: {
+        kind: "validation",
+        message,
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+
+    renderWithClient(<ProductImportPage />);
+    uploadCsv();
+    await user.click(await screen.findByLabelText("P-002 を上書き"));
+    await user.click(screen.getByRole("button", { name: "インポート実行" }));
+    await user.click(await screen.findByRole("button", { name: "上書きして実行" }));
+
+    expect(await screen.findByText("インポートに失敗しました")).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.queryByText("インポート完了")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "戻る" }));
+    expect(await screen.findByLabelText("P-002 を上書き")).toBeChecked();
+    expect(screen.getByText("P-001")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "インポート実行" })).toBeEnabled();
+  });
+
   it("UI-01c-D8: エラー行だけの preview では commit を実行しない", async () => {
     mockPreviewImport.mockResolvedValue({
       status: "ok",

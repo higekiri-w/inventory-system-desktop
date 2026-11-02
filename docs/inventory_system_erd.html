@@ -23,7 +23,7 @@
 <body><main>
 <h1>現行DBのER図</h1>
 <p><a href="diagrams/current-system.md">現行構造・画面遷移・業務フロー</a> · <a href="DB_DESIGN.md">テーブル定義</a> · <a href="research/2026-09-16-diagram-audit.md">図面からの設計点検</a></p>
-<p class="note">対象は <code>src-tauri/src/db/migration.rs</code> が登録する現行 schema（v1〜v10）。実店舗DBは参照していない。図は実装の説明であり、業務上の正しさの保証ではない。採用済み仕様と実装が食い違う点は設計点検に分けて記録する。</p>
+<p class="note">対象は <code>src-tauri/src/db/migration.rs</code> が登録する現行 schema（v1〜v12）。実店舗DBは参照していない。図は実装の説明であり、業務上の正しさの保証ではない。採用済み仕様と実装が食い違う点は設計点検に分けて記録する。</p>
 <ul>
 <li>線は<strong>物理FKのみ</strong>。点線は非識別関係（子の主キーに親キーを含まない）。端の丸は0を許容し、三つ又は複数を表す。親側が0..1の参照はNULL許容。</li>
 <li><code>inventory_movements.reference_type + reference_id</code> と <code>plu_slots.scanning_code = products.jan_code</code> はアプリ側の論理関連で、FKの線を引かない。</li>
@@ -191,6 +191,8 @@
     INTEGER skipped_count "NOT NULL; default 0"
     TEXT status "NOT NULL; completed / completed_partial / rolled_back"
     TEXT imported_at "NOT NULL"
+    TEXT machine_no "v11; CHECK NOT NULL and not empty"
+    INTEGER settlement_no "v11; CHECK NOT NULL and >= 0"
   }
 
   csv_import_errors {
@@ -219,6 +221,7 @@
     TEXT note "NULL allowed"
     BOOLEAN is_voided "NOT NULL; default 0"
     TEXT created_at "NOT NULL"
+    INTEGER stock_linked "NOT NULL; default 0; v11; 0 / 1; stock link at import"
   }
 
   daily_report_imports {
@@ -233,6 +236,7 @@
     TEXT imported_at "NOT NULL"
     TEXT rolled_back_at "NULL allowed"
     TEXT note "NULL allowed"
+    INTEGER settlement_no "NULL allowed"
   }
 
   daily_report_summary_lines {
@@ -284,7 +288,7 @@
     TEXT created_at "NOT NULL"
     TEXT business_date "NOT NULL; v9; YYYY-MM-DD"
     INTEGER phase "NOT NULL; v9; 0 / 1"
-    INTEGER settlement_no "NULL allowed; v9; NOT NULL only when phase = 1"
+    INTEGER settlement_no "NULL allowed; v9; NOT NULL only when phase = 1; v11: phase = 1 iff reference_type = csv_import"
   }
 
   price_history {
@@ -303,6 +307,9 @@
     TEXT completed_at "NULL allowed"
     TEXT status "NOT NULL; default 'in_progress'; in_progress / completed"
     INTEGER total_cost "NULL allowed"
+    INTEGER cutoff_import_id "NULL allowed; v11; MAX(csv_imports.id) at completion"
+    INTEGER cutoff_count_id "NULL allowed; v11; MAX(stock_counts.id) at completion"
+    INTEGER cutoff_movement_id "NULL allowed; v11; MAX(inventory_movements.id) at completion"
   }
 
   stocktake_items {
@@ -313,6 +320,7 @@
     INTEGER actual_count "NULL allowed"
     INTEGER valuation_cost_price_centi "NULL allowed; 1/100 yen; cost at completion"
     TEXT counted_at "NULL allowed"
+    INTEGER valuation_quantity "NULL allowed; v11; max(stock, 0) at completion"
   }
 
   stock_counts {
@@ -325,6 +333,7 @@
     INTEGER seen_movement_id "NULL allowed; NOT NULL when fresh"
     INTEGER stocktake_item_id FK "NULL allowed"
     TEXT counted_at "NOT NULL"
+    INTEGER seen_import_id "NULL allowed; v11; fresh only; MAX(csv_imports.id) at save"
   }
 
   plu_slots {

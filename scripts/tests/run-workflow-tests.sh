@@ -24,6 +24,8 @@ bash scripts/tests/doc-consistency-plan-packet.test.sh
 
 bash scripts/tests/workflow-git-checks.test.sh
 
+bash scripts/tests/plan-approve.test.sh
+
 bash scripts/tests/reading-order-drift.test.sh
 
 bash scripts/tests/ci-workflow.test.sh

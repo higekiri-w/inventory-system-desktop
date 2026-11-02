@@ -180,7 +180,13 @@ describe("ProductListPage (UI-01a)", () => {
     mockListDepartments.mockResolvedValue({ status: "ok", data: [] });
     mockBulkSetPluTarget.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "synthetic failure", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "synthetic failure",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     renderWithClient(<ProductListPage search={{ plu: "synced" }} onSearchChange={vi.fn()} />);
     await screen.findByText("P-0001");
@@ -247,7 +253,13 @@ describe("ProductListPage (UI-01a)", () => {
   it("keeps controls visible when product query fails", async () => {
     mockSearchProducts.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "取得に失敗しました", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "取得に失敗しました",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     mockListDepartments.mockResolvedValue({ status: "ok", data: [makeMockDepartment()] });
 
@@ -306,6 +318,7 @@ describe("ProductListPage (UI-01a)", () => {
         message: "部門取得に失敗しました",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
 

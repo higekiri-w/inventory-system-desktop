@@ -94,7 +94,13 @@ fn quantity_hundredths_to_units(quantity_hundredths: i64) -> f64
 
   `quantity_hundredths as f64 / 100.0`。整数どうしの割り算の丸めで、`130` は `1.3`、`400` は `4.0` の最近接の倍精度になり、serde の出力も `1.3` / `4.0` になる。
 - 棄却案: 倍精度（REAL / `f64`）で保存する（月次の部門集計は `SUM` で足すので 0.1 の積み上げで誤差が出る）、文字列のまま保存する（`SUM` できず月次集計が壊れる）、四捨五入して整数にする（レジの値と食い違う）、小数の行の個数を NULL にする（月次集計が NULL 安全側に倒れて、その部門の月の個数が丸ごと「未取得」になる）、wire も 100 倍の整数で返す（UI-09a-D16 の「数は `toLocaleString`」と既存の部門別集計の表示が 100 倍の値を出す。UI 側の割り戻しが全 site に要る）。
-- 単位の拡張（[backlog](../backlog.md) の「単位の拡張」。Z004 の小数を 100 倍の整数で受け、商品の単位が長さなら BIZ で cm に換算する案）と同じ 100 倍の整数の表し方にそろえる。日報の個数は部門の数で商品の単位を持たないので、換算はしない。
+- POS の数量（Z004・EJ）を 100 倍の整数で読む契約（[10](10-common-rules.md) SPEC-UNIT-D8）と同じ 100 倍の整数の表し方にそろえる。日報の個数は部門の数で商品の単位を持たないので、換算はしない。
+
+**IO-07-D6（数の上限、[D-142](../decision-log.md)）**:
+
+- 金額と件数の列（Z001・Z002・Z005 の整数の列の全部）は絶対値 `9999999999` 以下、個数の列（IO-07-D2 の 100 倍の整数）は絶対値 `999999999`（`9999999.99`）以下だけを受ける。数の形をしていて `i64` に収まらない値も上限の越えにする（形の誤りではない）。検査は数を読む 2 つの関数（`parse_optional_i64`・`parse_optional_hundredths`）の 1 か所に置き、上限は `src-tauri/src/constants.rs` の定数に置く（[10](10-common-rules.md) の「入力の上限と安全な整数の範囲」の (a) の表の行）。
+- 越える値は `number_too_large`（§29.5。その束は取り込めない）で、文は列を名指して `{帳票}の{列}の値が大きすぎます`（例 `Z001の金額列の値が大きすぎます`、`Z005の個数列の値が大きすぎます`。列の語は今の「変換できません」の文と同じ）。形の誤り（`invalid_number`、文は `…を変換できません`）とは `error_type` で分ける（BIZ-08 が `error_type` だけで利用者への文を選べるように。[37](37-biz-daily-report-import-service.md) BIZ-08-D2a）。この文は帳票と列の語だけで作り、値・file 名・行番号を入れない（BIZ-08-D2a がこの文を利用者へ渡すため）。
+- 理由: 日次売上の公式日報と日報の紙の値（金額・件数・個数の和）を、読取りで範囲を検査せずに JS の number で正確に運べる範囲に収める（D-142。和が越えるには 1 つの集計に金額で 900,720 本の取込みの行が要る）。上限はレジの帳票の桁より大きく取り、小さな店の 1 日の行には届かない（実データの最大の桁は Contract Probe で数える。日報の紙の runtime の packet）。
 
 **IO-07-D3（同じ精算の 3 ファイルかを精算回数で確かめる、D-104）**:
 
@@ -108,15 +114,15 @@ fn quantity_hundredths_to_units(quantity_hundredths: i64) -> f64
 **IO-07-D4（「レコード」列は行の位置、ラベルで対応づける、D-104）**:
 
 - layout A の「レコード」列は 3 帳票とも行の位置そのもの（先頭 0 付き 4 桁の `0001`〜。Excel で保存し直した形は先頭の 0 が落ちる）で、帳票仕様の行コード（例: 総売 101）ではない（手元の実データはどのファイルも行の位置）。
-- `gross_sales` / `net_sales` / `cash` / `credit` はラベルだけで決める（総売 → `gross_sales`、純売 → `net_sales`、現金 → `cash`、クレジット → `credit`。ASCII の別名 `gross_sales` 等も受ける。今の実装。`credit` の規則は IO-07-D4a で外す）。それ以外の行は並び順の `summary_N` / `payment_N`。「レコード」列の値は鍵に使わない。
+- `gross_sales` / `net_sales` / `cash` はラベルだけで決める（総売 → `gross_sales`、純売 → `net_sales`、現金 → `cash`。ASCII の別名 `gross_sales` 等も受ける。`credit` の鍵は導かない、IO-07-D4a）。それ以外の行は並び順の `summary_N` / `payment_N`。「レコード」列の値は鍵に使わない。
 - 罠: コードで対応づけ、先頭の 0 を正規化して比べると、Z002 の 3 行目（`0003`）がクレジットでない行なのに `credit` に、1 行目（`0001`）が `cash` になる。コードの比較は実データで 1 行も当たらず、正規化した瞬間に誤った鍵を作るので、比較そのものを持たない。
-- `credit` の鍵は全角の `クレジット` を含むラベルだけで、半角の `ｸﾚｼﾞｯﾄ` は `credit` にしない（並び順の `payment_N` のまま）。実データの Z002 には半角の `ｸﾚｼﾞｯﾄ` を含むラベルの行が 1 本の中に複数あり、全角の `クレジット` の行は無い。半角も `credit` にすると、1 本の中の複数の行が同じ鍵になり、BIZ-05 の支払の集約（今の実装は `payment_key` で group 化。D-120 の後の 24 §14.21 手順 3 は位置と名称の組で足す。IO-07-D4a）が別の項目を 1 行に足す。`credit` の鍵を読む業務の処理は無い（表示の行の鍵だけ）。支払の行の鍵の作り直しは backlog の「既存の支払集計（Z002）で異なる項目が 1 行に合算されうる」で扱う。
-- **IO-07-D4a（実データに合わせた鍵の見直し、proposed・未実装、[D-120](../decision-log.md)）**: 意味の鍵は、読む処理のある `gross_sales` / `net_sales`（BIZ-08 の必須サマリの検査、§37.3 手順 6 と親の総売・純売）と、`cash` だけにする。`credit` の鍵を導く規則は外す（実データで 1 行も当たらず〈全角の `クレジット` を含む行は 0〉、読む処理も無い。外しても実データの鍵は変わらない）。半角カナを全角へそろえる正規化は入れない（そろえると Z002 の 1 本の中の 4 つの位置の行が同じ `credit` になり、上の合算が起きる）。手元の Z 帳票の 2026-09-30 版での集計（2026-10-04 に数えた、repo 外。数と位置だけ）で、`総売` を含む名称は Z001 の 1 行目だけ、`純売` は 2 行目だけ、`現金` は Z002 の 1 行目だけで、どれも全本にあった。`payment_key` と `line_key` は保存を続けるが、同じ日の取込みをまたいで足す鍵には使わず、位置と名称の組で足す（24 §14.21 手順 3、34 SALES-SHEET-D2）。鍵の作り直し（並び順の `payment_N` が別の項目を足す）は、この足す鍵の変更で塞ぐ。
+- クレジットの行（全角の `クレジット` も半角の `ｸﾚｼﾞｯﾄ` も）は並び順の `payment_N` にする（IO-07-D4a）。実データの Z002 には半角の `ｸﾚｼﾞｯﾄ` を含むラベルの行が 1 本の中に複数あり、全角の `クレジット` の行は無い。半角も `credit` にすると、1 本の中の複数の行が同じ鍵になり、`payment_key` で group 化する足し方（D-120 の前の BIZ-05 の支払の集約）では別の項目を 1 行に足す（下の IO-07-D4a の「上の合算」）。今の BIZ-05 の支払集計は `payment_key` でなく位置と名称の組で足す（34 §19.3 手順 3）。`credit` の鍵を読む業務の処理は無い（表示の行の鍵だけ）。
+- **IO-07-D4a（実データに合わせた鍵の見直し、[D-120](../decision-log.md)）**: 意味の鍵は、読む処理のある `gross_sales` / `net_sales`（BIZ-08 の必須サマリの検査、§37.3 手順 6 と親の総売・純売）と、`cash` だけにする。`credit` の鍵を導く規則は外す（実データで 1 行も当たらず〈全角の `クレジット` を含む行は 0〉、読む処理も無い。外しても実データの鍵は変わらない）。半角カナを全角へそろえる正規化は入れない（そろえると Z002 の 1 本の中の 4 つの位置の行が同じ `credit` になり、上の合算が起きる）。手元の Z 帳票の 2026-09-30 版での集計（2026-10-04 に数えた、repo 外。数と位置だけ）で、`総売` を含む名称は Z001 の 1 行目だけ、`純売` は 2 行目だけ、`現金` は Z002 の 1 行目だけで、どれも全本にあった。`payment_key` と `line_key` は保存を続けるが、同じ日の取込みをまたいで足す鍵には使わず、位置と名称の組で足す（24 §14.21 手順 3、34 SALES-SHEET-D2）。鍵の作り直し（並び順の `payment_N` が別の項目を足す）は、この足す鍵の変更で塞ぐ。
 - 棄却案: コードを先頭 0 を落として比べる（上の罠）、コードを位置として使う（帳票の行の並びがレジの設定で変わりうる。2022 年に精算の途中でラベルの並びが変わった日がある）、半角の `ｸﾚｼﾞｯﾄ` も `credit` にする（上の合算）。
 
 **IO-07-D5（束の精算回数を返す、[D-111](../decision-log.md#d-111-毎日の売上データはレジの-sd-から直接読むcv17-は-plu-の書込みだけ2026-10-06)）**:
 
-- 3 本とも精算回数を読め（IO-07-D3）、値がそろう束だけ `settlement_no = Some(値)` にする。1 本でも読めない束（layout B を含む）と、値が違う束（`settlement_mismatch`）は `None`。
+- 3 本とも精算回数を読め（IO-07-D3）、値がそろう束だけ `settlement_no = Some(値)` にする。1 本でも読めない束（layout B を含む）と、値が違う束（`settlement_mismatch`）は `None`。そろった値が `i64` に収まらない束も `None`（DB の INTEGER と照合の型は `i64`。読めないのと同じ扱いで、SD の経路では BIZ-08-D6 が止める。IO-07-D3 の一致の判定はこの変換の前の値で行い、変えない）。`0000` は `Some(0)`。
 - 使い道は BIZ-08 の「同じ精算を別の bytes で二重に取り込まない」guard（BIZ-08-D4）と、SD の経路で `None` の束を取り込まない guard（BIZ-08-D6）だけ。IO は精算回数の意味（系列・リセット・欠番）を解釈しない。
 - 棄却案: 1 本でも読めた値を束の値にする（layout B の束では Z001 だけの値になり、ほかの 2 本の出所を確かめない値で guard が判定する）、文字列で返す（IO-07-D3 は先頭の 0 を落として整数で比べる。`0005` と `5` が別の値になる）。
 
@@ -169,7 +175,7 @@ CV17 1.1.1 では、SD取込み後にツール内部ディレクトリへ常在�
 |---|---|---|
 | 共通 | CRLF複数行。7行プリアンブル（マシン/ファイル/モード/精算回数/日付/時刻/空行）→ 1行ヘッダ → 4列データ行。第1列の「レコード」は行の位置（先頭 0 付き 4 桁の `0001`〜、IO-07-D4） | ヘッダ行を検出し、それ以前はメタとして読み飛ばす。ただし「精算回数」の行だけは読む（IO-07-D3）。ヘッダ後の非空行が4列でない場合は `invalid_format` |
 | Z001 | 4列は `record_code, label, quantity_or_count, amount`。ヘッダの第3列は「個数/件数」、第4列は「金額」。日付は `YYYY/M/D` または `YYYY-MM-DD` を受けて `YYYY-MM-DD` へ正規化する | 総売ラベルの行を `gross_sales`、純売ラベルの行を `net_sales` にする（ラベルだけで決める、IO-07-D4）。総売の行は第3列を `quantity_hundredths`（小数 2 桁まで、IO-07-D2）、それ以外の行は第3列を `count`（整数）、第4列を `amount` として保存する |
-| Z002 | 4列は `record_code, label, count, amount`。ヘッダの第3列は「個数/件数」、第4列は「金額」。日付は `YYYY/M/D` または `YYYY-MM-DD` を受けて `YYYY-MM-DD` へ正規化する | 第3列を `count`（整数）、第4列を `amount` として `payment_lines` に変換する。現金ラベルの行は `cash`、クレジットラベルの行は `credit`（ラベルだけで決める、IO-07-D4。`credit` の規則は IO-07-D4a で外す） |
+| Z002 | 4列は `record_code, label, count, amount`。ヘッダの第3列は「個数/件数」、第4列は「金額」。日付は `YYYY/M/D` または `YYYY-MM-DD` を受けて `YYYY-MM-DD` へ正規化する | 第3列を `count`（整数）、第4列を `amount` として `payment_lines` に変換する。現金ラベルの行は `cash`、他の行は並び順の `payment_N`（ラベルだけで決める、IO-07-D4。`credit` の鍵は導かない、IO-07-D4a） |
 | Z005 | 4列は `record_code, department_label, quantity, amount`。全フィールドがクォートされる場合がある。日付は `YYYY-MM-DD` または `YYYY/M/D` を受けて `YYYY-MM-DD` へ正規化する | 第2列を `raw_department_name`、第3列を `quantity_hundredths`（小数 2 桁まで、IO-07-D2）、第4列を必須 `amount` として `department_lines` に変換する。`count` は `None` |
 
 **layout B: 連結型**
@@ -185,7 +191,7 @@ CV17 1.1.1 では、SD取込み後にツール内部ディレクトリへ常在�
 
 どちらの layout にも該当しない構造、またはヘッダ後の4列反復が崩れた構造は `invalid_format` として安全に落とす。
 
-**行の構成と性質（2026-09-27、repo 外の匿名化要約と帳票仕様から。実値・実ラベルは記録しない）**: 匿名化要約（2026-07 の 2 回の採取）では、Z001 は 8 行目がヘッダ（layout A の 7 行プリアンブルの直後）でデータ 28〜29 行、Z002 も同じ 4 列形状でデータ約 50 行だった。その後の手元の Z 帳票の 2026-09-30 版での集計（2026-10-04 に数えた、repo 外。数と位置だけ）では、データの行は Z001 28・Z002 50・Z005 21 で全本同じだった（2026-10-04 追記）。行の名前ごとの照合は生の CSV を開かない決まりのため未実施で、Z001 の行の種類は `SRS4000_JA3.pdf` の日計明細の精算の印字例（p.33）から、部門・総売・純売・在高（現金・券・信用）・税の対象額と税額・非課税・高額券の枚数・丸め・取引中止・戻モード・電卓・領収書の類と推定する（CV17 の Z001 が印字と同じ行の集合かは未確認）。同書 p.57 の表で日計明細の精算は取引データをクリアする（点検はクリアしない）ため、Z001 の各行は前回の精算から今回までの件数・金額で、同日の 2 回の精算は足すとその日の値になると帳票仕様からは言える。構成比は標準で印字されず、CSV も個数/件数と金額の列だけを持つ。実物の同日 2 回精算の Z001 / Z002 は、2026-09-27 の時点では未確認だったため、日次売上の画面では Z001 の行は合算せず取込みごとに表示する（D-096）。その後の同じ集計で、同日に 2 回以上精算した 19 日のすべてで Z001 の行の数・名称・並びは精算の間で同じだった（Z002・Z005 は 1 日だけ同じ位置の名称が差し替わった）。足した値がレジスターツールの日報の値と行ごとに同じかは、まだ確かめていない。日報の紙（1 日 1 枚）は、レジスターツールがその日の精算を全部足した日報を表示していること（店主の答え、repo 外の回答台帳 TD-280・TD-305。足すことがレジスターツールの仕様かは未確認の前提）に合わせ、Z001 も位置と名称の組で足す（[34](34-biz-sales-service.md) SALES-SHEET-D2、D-120）。行ごとにレジスターツールの足した値と同じになるかは未確認の前提で、日報の紙の runtime の lane の L3 で確かめる。
+**行の構成と性質（2026-09-27、repo 外の匿名化要約と帳票仕様から。実値・実ラベルは記録しない）**: 匿名化要約（2026-07 の 2 回の採取）では、Z001 は 8 行目がヘッダ（layout A の 7 行プリアンブルの直後）でデータ 28〜29 行、Z002 も同じ 4 列形状でデータ約 50 行だった。その後の手元の Z 帳票の 2026-09-30 版での集計（2026-10-04 に数えた、repo 外。数と位置だけ）では、データの行は Z001 28・Z002 50・Z005 21 で全本同じだった（2026-10-04 追記）。行の名前ごとの照合は生の CSV を開かない決まりのため未実施で、Z001 の行の種類は `SRS4000_JA3.pdf` の日計明細の精算の印字例（p.33）から、部門・総売・純売・在高（現金・券・信用）・税の対象額と税額・非課税・高額券の枚数・丸め・取引中止・戻モード・電卓・領収書の類と推定する（CV17 の Z001 が印字と同じ行の集合かは未確認）。同書 p.57 の表で日計明細の精算は取引データをクリアする（点検はクリアしない）ため、Z001 の各行は前回の精算から今回までの件数・金額で、同日の 2 回の精算は足すとその日の値になると帳票仕様からは言える。構成比は標準で印字されず、CSV も個数/件数と金額の列だけを持つ。実物の同日 2 回精算の Z001 / Z002 は、2026-09-27 の時点では未確認だったため、日次売上の画面では Z001 の行は合算せず取込みごとに表示する（D-096）。その後の同じ集計で、同日に 2 回以上精算した 19 日のすべてで Z001 の行の数・名称・並びは精算の間で同じだった（Z002・Z005 は 1 日だけ同じ位置の名称が差し替わった）。足した値がレジスターツールの日報の値と行ごとに同じかは、まだ確かめていない。日報の紙（1 日 1 枚）は、レジスターツールがその日の精算を全部足した日報を表示していること（店主の答え、repo 外の回答台帳 TD-280・TD-305。足すことがレジスターツールの仕様かは未確認の前提）に合わせ、Z001 も位置と名称の組で足す（[34](34-biz-sales-service.md) SALES-SHEET-D2、D-120）。行ごとにレジスターツールの足した値と同じになるかは未確認の前提で、紙へ切り替える前の [56](56-ui-daily-sales.md) UI-09a-D19 の (2) で確かめる（[D-142](../decision-log.md) の (5)。D-120 の Guarantee range の「runtime の lane の L3 で確かめる」の置き場を移した）。
 
 ### 29.5 エラーハンドリング
 
@@ -199,6 +205,7 @@ CV17 1.1.1 では、SD取込み後にツール内部ディレクトリへ常在�
 | invalid_date | 日付抽出不可または不一致 | commit不可 |
 | settlement_mismatch | 精算回数を読めたファイルが 2 本以上あり、値が違う（IO-07-D3） | commit不可。利用者向けの文は BIZ-08-D2 |
 | invalid_number | 金額/件数が整数でない、個数が小数 2 桁までの数でない（IO-07-D2） | commit不可 |
+| number_too_large | 数が上限を越える（IO-07-D6、D-142） | commit不可。利用者向けの文は BIZ-08-D2a |
 
 ### 29.6 非目的
 
@@ -214,9 +221,9 @@ CV17 1.1.1 では、SD取込み後にツール内部ディレクトリへ常在�
 
 #### 29.7.1 目的と置き場所
 
-`register_sd`（module `io::register_sd`、未実装）は、レジ（CASIO SR-S4000）の SD を探し、売上の file（Z・EJ）の名前を列挙し、指定された 1 file の生バイトを読取り専用で読む IO 層の関数群である。file の中身の解釈は IO-07（日報）・IO-02（Z004）・IO-08（EJ）が行い、どの file を取込みの候補にするか・取込み済みかの判断は BIZ（日報は BIZ-08 §37.9）が行う。DB を呼ばず、SD に書かない。
+`register_sd`（module `io::register_sd`）は、レジ（CASIO SR-S4000）の SD を探し、売上の file（Z・EJ）の名前を列挙し、指定された 1 file の生バイトを読取り専用で読む IO 層の関数群である。file の中身の解釈は IO-07（日報）・IO-02（Z004）・IO-08（EJ）が行い、どの file を取込みの候補にするか・取込み済みかの判断は BIZ（日報は BIZ-08 §37.9）が行う。DB を呼ばず、SD に書かない。
 
-本節は IO-09 の function-design の正本である。新しい function-design の file を作ると `src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` への登録が要り、docs だけの設計 lane では行えないため、IO-07 の文書に置く。runtime の lane は同 map の `29-io-daily-report-parser.md` の行に `io::register_sd` を足す（登録義務）。
+本節は IO-09 の function-design の正本である。新しい function-design の file を作ると `src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` への登録が要り、docs だけの設計 lane では行えないため、IO-07 の文書に置く。同 map の `29-io-daily-report-parser.md` の行に `io::register_sd` を登録している。
 
 #### 29.7.2 SD の配置と名前（adapter facts）
 
@@ -296,9 +303,9 @@ enum RegisterSdError {
     // 自動で探して 0 件・2 件以上は error にせず `Ok(vec)` で返す（§29.7.4 手順 2。止めて案内するのは BIZ-08 §37.9 手順 1）
     NotRegisterSd,                  // Selected の path から root を解決できない
     MissingSalesArea,               // root に `XZ` が無い
-    InvalidPath,                    // read の相対 path が root の外を指す
+    InvalidPath,                    // read の相対 path か、列挙・読取りの実体の path（IO-09-D5）が root の外を指す
     TooLarge { relative_path: String },
-    Io { relative_path: String, kind: std::io::ErrorKind },
+    Io { relative_path: String, kind: std::io::ErrorKind }, // relative_path は root からの相対 path。ただし `check_selected_file_present`（§29.7.4 手順 5）だけは選んだ file の path の文字列そのもの（root が無いので相対にできない）。どちらも診断にだけ使い、利用者向けの文に入れない（BIZ は固定の文にする）
 }
 ```
 
@@ -317,10 +324,10 @@ fn check_selected_file_present(path: &Path) -> Result<(), RegisterSdError> // �
 
 **処理ステップ**:
 
-1. `find_register_sd_roots`: Windows では `GetLogicalDrives` の各 drive のうち `GetDriveTypeW` が `DRIVE_REMOVABLE` のものだけを見て、`<drive>:\CASIO\SR500_550_4000` が directory なら root にする（大文字小文字は区別しない）。network・固定 disk・CD の drive は見ない（応答しない network drive で止まらない）。依存は既存の `windows-sys`（`Win32_Storage_FileSystem`、`src-tauri/Cargo.toml` の `[target.'cfg(windows)'.dependencies]`）で、新しい crate を足さない。Windows 以外（開発機・CI）では空の列を返す。
+1. `find_register_sd_roots`: Windows では `GetLogicalDrives` の各 drive のうち `GetDriveTypeW` が `DRIVE_REMOVABLE` のものだけを見て、`<drive>:\CASIO\SR500_550_4000` が directory なら root にする（大文字小文字は区別しない）。network・固定 disk・CD の drive は見ない（応答しない network drive で止まらない）。IO-09 の関数が file system を見る間は、どれも（本関数・`resolve_register_sd_root`・`check_selected_file_present`・`list_register_sd_entries`・`read_register_sd_file`。純関数の `locate_in_register_sd_roots` は見ない）その thread の error mode を `SetThreadErrorMode(SEM_FAILCRITICALERRORS, &old)` にし、返る前（途中で返る場合を含む）に `old` へ戻す。module の中に 1 つの guard（作ると設定し、drop で `old` へ戻す。Windows 以外は何もしない）を置き、5 関数の最初で作る。SD をレジに差したままの日は PC の読取り機の口が空で、空の口を見ても Windows の error の dialog を出さず、その drive を root にしないだけにする。SD を抜いた後の SD の path（手で選んだ file の在否を見る手順 5、scan の途中で抜いた後の列挙・読取り）も空の口を見るので、同じく dialog を出さずに `Io` を返す（[71](71-mnt-backup.md) §71.11.3 の「error の dialog を出さない」と同じ）。依存は既存の `windows-sys`（`src-tauri/Cargo.toml` の `[target.'cfg(windows)'.dependencies]`、`=0.61.2`）で、新しい crate を足さない。feature は、`GetLogicalDrives`・`GetDriveTypeW` の `Win32_Storage_FileSystem`、定数 `DRIVE_REMOVABLE` の `Win32_System_WindowsProgramming`、`SetThreadErrorMode`・`SEM_FAILCRITICALERRORS`・型 `THREAD_ERROR_MODE` の `Win32_System_Diagnostics_Debug`（最後のものは PC の外の控えの runtime〈D-114〉も足すので、先に merge した lane が足す）。`CASIO\SR500_550_4000` の folder 名は 1 つの定数で持ち、71 MNT-01-D10 の判定と共有する（文字列を二重に持たない、D-114）。定数は `crate::io`（`src-tauri/src/io/mod.rs`）に、2 つの要素の配列 `pub(crate) const REGISTER_SD_FOLDER: [&str; 2] = ["CASIO", "SR500_550_4000"];` で置き、どちらの lane が先に merge しても置き場と形を変えない。`\` を含む 1 つの文字列にしない（Linux の開発機・CI の一時 directory では `\` が区切りにならず、`Path::join` が 1 つの名前にする）。path は要素ごとに `join` し、手順 3 の `CASIO`・`SR500_550_4000` の判定と test の tree もこの定数の要素で行う。MNT から IO の定数を参照するのは [ARCHITECTURE](../ARCHITECTURE.md) の「レイヤー間の呼び出し原則」の MNT-03 が IO-01 を呼ぶのと同じ向きで、IO から MNT は参照しない。Windows 以外（開発機・CI）では空の列を返す。
 2. 0 件なら `Ok(vec![])`、2 件以上もそのまま `Ok` で返す（IO は件数で error にしない。0 件の「SD が見つかりません」と 2 件以上の「売上を読む SD だけを差してください」は BIZ-08 §37.9 手順 1 が決める）。
 3. `resolve_register_sd_root`: 選ばれた path が drive の root・`CASIO`・`SR500_550_4000` のどれかで、そこから `CASIO\SR500_550_4000` に当たる directory が見つかれば root にする。それ以外は `NotRegisterSd`。選ばれた path は取外し可能な drive でなくてよい（reader が固定 disk として見える PC と、SD の写しを読む復旧に使う）。SD の写しは drive の直下でなく folder の中に置き（例 `D:\SDの写し\CASIO\SR500_550_4000`）、その `CASIO` か `SR500_550_4000` を選ぶ（drive の直下の写しは、その drive の上の保存先への backup を止める。71 MNT-01-D10）。
-4. `locate_in_register_sd_roots`: 手でファイルを選ぶ経路（UI-07-D16）の file が、`find_register_sd_roots` の返した root（取外し可能な drive の `CASIO\SR500_550_4000`、IO-09-D1 と同じ規則）の下にあるかを、path の文字列だけで決める。`path` が絶対 path で、`.`・`..` の要素を持たず、要素の列が `roots` のどれかの `path` の要素の列で始まる（大文字小文字は区別しない）なら、その root と残りの要素を `\` でつないだ `relative_path` を返す。それ以外（root の外、相対 path、`..` を含む、`roots` が空）は `None`。file を開かず、名前の規則（IO-09-D2）でも分けない（root の下なら名前に依らず SD の file として扱う）。BIZ が `find_register_sd_roots` を 1 回呼んでその結果を渡す（test は一時 directory の root を渡す）。
+4. `locate_in_register_sd_roots`: 手でファイルを選ぶ経路（UI-07-D16）の file が、`find_register_sd_roots` の返した root（取外し可能な drive の `CASIO\SR500_550_4000`、IO-09-D1 と同じ規則）の下にあるかを、path の文字列だけで決める。`path` と root の `path` は文字列として扱い（`std::path` の要素の分け方は OS で違い、Windows の形の path を Linux の開発機・CI の test で同じに分けられないので使わない）、`\` と `/` のどちらでも区切って要素の列にする。絶対 path は、先頭が drive 文字・`:`・区切り（`E:\`・`e:/`）のものか、先頭が区切りのもの（`/tmp/…`。test の一時 directory）。`path` が絶対 path で、空・`.`・`..` の要素を持たず（先頭の区切りの前の空は数えない）、要素の列が `roots` のどれかの `path` の要素の列で始まる（要素ごとに比べ、大文字小文字は区別しない。`SR500_550_4000X` は `SR500_550_4000` の下でない）なら、残りの要素を `\` でつないだ `relative_path` を返す。それ以外（root の外、相対 path、`..` を含む、`roots` が空）は `None`。file を開かず、名前の規則（IO-09-D2）でも分けない（root の下なら名前に依らず SD の file として扱う）。BIZ が `find_register_sd_roots` を 1 回呼んでその結果を渡す（test は一時 directory の root を渡す）。
 5. `check_selected_file_present`: 手順 4 が `None` を返した手で選んだ file について、`std::fs::metadata(path)` でその時点で在り、通常の file（`is_file()`）かを確かめる。読めない（在らない・権限が無い・drive が無い）、または通常の file でなければ `Io { relative_path: path の文字列, kind }`（通常の file でないときの kind は `InvalidInput`）。file を開かず、中身を読まない。用途: SD の上の file を選んだ後に SD を抜くと、手順 1 の root が無くなり手順 4 が `None` を返す。この file を PC 上の file として扱わず止めるため（BIZ-08 §37.3 手順 1a）。
 
 **IO-09-D1（root の見つけ方）**: 自動で探すのは取外し可能な drive の中の決まった folder だけで、見つからない・2 つ以上のときは推測で選ばない。既定は自動で探し、見つからなければ利用者が folder を選ぶ（owner 決定 2026-10-06、D-111、UI-07-D15）。選ぶ経路も同じ IO で持つ。
@@ -345,7 +352,7 @@ fn list_register_sd_entries(root: &RegisterSdRoot, from: NaiveDate) -> Result<Re
    - EJ: `^EJ(\d{2})(\d{2})(\d{2})(_(\d{4}))?\.TXT$`。`XZ` では連番なし、`XZ_BKUP` では連番ありだけを EJ とする。日付は 20yy 年。
    - どれにも当たらない file は `Unknown` として返す（名前と size だけ。中身を読まない）。SD-07 の旧い folder の未知の file はこれに当たる。
 5. `date` が `from` より前の Z・EJ（`XZ` 直下の EJ を除く）は返さない。系列番号（`nnn`）は決め打ちにせず、Z006・Z009・Z011 や未知の番号もそのまま返す（使うかは BIZ が決める）。
-6. 列挙の途中で読めなくなった（SD を抜いた等）ら `Io`。途中までの一覧を返さない。
+6. 列挙の途中で読めなくなった（SD を抜いた等）ら `Io`。入る folder（`XZ`・`XZ_BKUP`・年・月の folder）か返す file（`Unknown` を含む）の実体の path が root の外（IO-09-D5）なら `InvalidPath`。どちらも途中までの一覧を返さない。
 
 **IO-09-D2（名前で分類し、中身で判定する）**: 名前は列挙と組分けの手がかりにだけ使い、取込み済みか・同じ精算かは中身（hash と精算回数）で決める（IO-07-D3 と同じ線引き）。名前が規則に合わない file は読まずに `Unknown` で返し、推測で Z や EJ にしない。年・月の folder の絞り込みは、全期間の `XZ_BKUP` を毎回読まないための列挙の範囲で、取込み済みの判定には使わない。
 
@@ -361,14 +368,21 @@ fn read_register_sd_file(root: &RegisterSdRoot, relative_path: &str, max_bytes: 
 
 **処理ステップ**:
 
-1. `relative_path` を `\` で分け、空・`.`・`..`・drive 指定・絶対 path の要素があれば `InvalidPath`。root と結合した path が root の下でなければ `InvalidPath`。
-2. `std::fs::File::open`（読取り専用）で開き、`max_bytes + 1` byte まで読む。超えたら `TooLarge`（全体を読まない）。開けない・読めないは `Io`。読み終えたら handle を閉じる（関数の外へ handle を持ち出さない）。
+1. `relative_path` を `\` で分け、空・`.`・`..`・drive 指定・絶対 path の要素があれば `InvalidPath`。root に要素ごとに `join` した path を開く前に実体の path に解き、root の下でなければ `InvalidPath` で開かない（IO-09-D5）。
+2. 手順 1 で解いた path を `std::fs::File::open`（読取り専用）で開き、`max_bytes + 1` byte まで読む。超えたら `TooLarge`（全体を読まない）。開けない・読めないは `Io`。読み終えたら handle を閉じる（関数の外へ handle を持ち出さない）。
 3. 形を測る: CP932 の strict decode の成否、先頭の UTF-8 BOM、改行が CRLF だけか、最後が CRLF か。測るだけで、直さない・捨てない。
 4. `RegisterSdFile` を返す。
 
-**IO-09-D3（SD を書き換えない）**: `io::register_sd` は SD への書込み・作成・改名・移動・削除・属性の変更・時刻の変更を行う関数を持たない。そのため、この module が使ってよい file system の API を次の許可の列に限る（列にない API は使わない。禁止の語を数える形にしない）: `std::fs::File::open`（読取り専用で開く）、`std::fs::read_dir`、`std::fs::metadata`、型の `std::fs::{File, ReadDir, DirEntry, Metadata, FileType}`、`std::io::Read` の読取りの method（`read`・`read_to_end`・`take`）、`File::metadata`・`DirEntry::{path, file_name, file_type, metadata}`・`Metadata::{is_file, is_dir, len}`、`std::path` の文字列の操作と `Path::is_dir`・`Path::is_file`（中で `metadata` を読むだけ）、Windows の `windows_sys` の `GetLogicalDrives`・`GetDriveTypeW`（と定数 `DRIVE_REMOVABLE`）。使わないものの例（許可の列にないので使えない）: `OpenOptions`、`File::create`・`File::create_new`、`fs::write`・`fs::copy`・`fs::rename`・`fs::hard_link`・`fs::soft_link`・`create_dir*`・`remove_*`・`fs::set_permissions`、`File` の `set_len`・`set_modified`・`set_times`・`set_permissions`、`std::io::Write`、`windows_sys` の上の 2 関数以外。runtime の lane が source の検査 test（Matrix の `register_sd::module_uses_only_allowed_fs_api`）で、`src-tauri/src/io/register_sd.rs` の `std::fs` / `fs::` / `File::` / `OpenOptions` / `std::io::Write` / `windows_sys` の出現が許可の列の中だけかを確かめる（`use std::fs::*` と別名の `use std::fs as …` も許可の列の外として red）。file は読取り専用で開き、読んだら閉じる。Windows が読取りで FAT の最終アクセス日を変える・`System Volume Information` を作ることはアプリでは止められないが、店は CV17 の取込みのために毎日この PC で同じ SD を書込み可能なまま差してきており（SD-25）、新しい種類の副作用は増えない。(a) の段階（IO-09 と SD 直読みの runtime の lane）では、CV17 と同じく `XZ` から `XZ_BKUP` へ移す案は採らない（owner 決定 2026-10-06、D-111。この段階では SD は動かさない。移す操作は D-111 (1) の (b) の後続の lane が別の module で作る）。動かさない前提（Z・EJ が `XZ` に残っても精算が続く）は、Z の名前が日付と同じ日の精算ごとの接尾字で決まり別の日の Z とぶつからないこと（SD-02・SD-08）と、EJ が約 1 か月 `XZ` に残っても精算が続いた店の実績（SD-09、repo 外の回答台帳 TD-139）で受け入れた。取込み済みを `XZ_BKUP` へ移す操作（D-111 (1) の (b)、後続の lane）ができるまで店は CV17 の取込みを今の運用のまま続けるので（D-111 の運用の制約）、Z が `XZ` に何日も溜まる状態は生じない。`XZ` の file が数千本になったときのレジの振舞いは (b) の lane の前提（D-111 の Revisit）。読んだ原本の写しは PC 側のアプリの folder に書き（§29.8、IO-10）、書く module を `io::register_sd` と分けて、この module に書込みの API が無いことを保つ。
+**IO-09-D3（SD を書き換えない）**: `io::register_sd` は SD への書込み・作成・改名・移動・削除・属性の変更・時刻の変更を行う関数を持たない。そのため、この module が使ってよい file system の API を次の許可の列に限る（列にない API は使わない。禁止の語を数える形にしない）: `std::fs::File::open`（読取り専用で開く）、`std::fs::read_dir`、`std::fs::metadata`、`std::fs::canonicalize`（実体の path を得るだけで、file system を変えない。IO-09-D5）、型の `std::fs::{File, ReadDir, DirEntry, Metadata, FileType}`、`std::io::Read` の読取りの method（`read`・`read_to_end`・`take`）、`File::metadata`・`DirEntry::{path, file_name, file_type, metadata}`・`Metadata::{is_file, is_dir, len}`、`std::path` の文字列の操作と `Path::is_dir`・`Path::is_file`（中で `metadata` を読むだけ）、Windows の `windows_sys` の `GetLogicalDrives`・`GetDriveTypeW`（と定数 `DRIVE_REMOVABLE`）と、thread の error mode の `SetThreadErrorMode`（と定数 `SEM_FAILCRITICALERRORS`、引数の型 `THREAD_ERROR_MODE`。§29.7.4 手順 1。file system を変えない。ほかの型〈`BOOL`・`PCWSTR`〉は名指しせず推論で書く）。使わないものの例（許可の列にないので使えない）: `OpenOptions`、`File::create`・`File::create_new`、`fs::write`・`fs::copy`・`fs::rename`・`fs::hard_link`・`fs::soft_link`・`create_dir*`・`remove_*`・`fs::set_permissions`、`File` の `set_len`・`set_modified`・`set_times`・`set_permissions`、`std::io::Write`、`windows_sys` の上の 3 関数以外。runtime の lane が source の検査 test（Matrix の `register_sd::module_uses_only_allowed_fs_api`）で、`src-tauri/src/io/register_sd.rs` の `std::fs` / `fs::` / `File::` / `OpenOptions` / `std::io::Write` / `windows_sys` の出現が許可の列の中だけかを確かめる（`use std::fs::*` と、`std` の項目を `as` で改名する形〈`use std::fs as f`・`use std::{fs as f}`・`use std::fs::{self as f}`・`use std::fs::File as F` など〉も許可の列の外として red。`crate::`・`super::` で始まる path〈`use` の group の中の項目を含む〉は、`super::` の folder 名の定数〈§29.7.4 手順 1〉だけを許し、それ以外〈`super::pos_source_copy`・`super::image_manager`・`crate::db`・`crate::mnt` など〉を red にする。この module から別の module を呼べば、許可の列の外の API を使うのと同じになりうる。書く module を名前で並べる形は、書く module が増えるたびに漏れるので採らない）。file は読取り専用で開き、読んだら閉じる。Windows が読取りで FAT の最終アクセス日を変える・`System Volume Information` を作ることはアプリでは止められないが、店は CV17 の取込みのために毎日この PC で同じ SD を書込み可能なまま差してきており（SD-25）、新しい種類の副作用は増えない。(a) の段階（IO-09 と SD 直読みの runtime の lane）では、CV17 と同じく `XZ` から `XZ_BKUP` へ移す案は採らない（owner 決定 2026-10-06、D-111。この段階では SD は動かさない。移す操作は D-111 (1) の (b) の後続の lane が別の module で作る）。動かさない前提（Z・EJ が `XZ` に残っても精算が続く）は、Z の名前が日付と同じ日の精算ごとの接尾字で決まり別の日の Z とぶつからないこと（SD-02・SD-08）と、EJ が約 1 か月 `XZ` に残っても精算が続いた店の実績（SD-09、repo 外の回答台帳 TD-139）で受け入れた。取込み済みを `XZ_BKUP` へ移す操作（D-111 (1) の (b)、後続の lane）ができるまで店は CV17 の取込みを今の運用のまま続けるので（D-111 の運用の制約）、Z が `XZ` に何日も溜まる状態は生じない。`XZ` の file が数千本になったときのレジの振舞いは (b) の lane の前提（D-111 の Revisit）。読んだ原本の写しは PC 側のアプリの folder に書き（§29.8、IO-10）、書く module を `io::register_sd` と分けて、この module に書込みの API が無いことを保つ。
 
 **IO-09-D4（形は測って BIZ が止める）**: SD-24 の符号化・改行・BOM は「状態」なので IO は決め打ちにせず測って返し、外れた file を取込みの候補にしないのは BIZ（BIZ-08-D3）が決める。行数・列数は各 parser の構造の検査（IO-07 の `invalid_format`、IO-02、IO-08）に任せ、固定の行数を IO で求めない（Z004 の 5,000 枠も含め、レジの設定で変わりうる）。
+
+**IO-09-D5（root の下かは実体の path で比べる）**: `list_register_sd_entries` と `read_register_sd_file` は、file system を見る path（root、入る folder、返す file、開く file）を使う前に `std::fs::canonicalize` で実体の path に解き（symbolic link・junction を辿る。Windows では `\\?\` の前置の付く形になる）、解いた path が解いた root の下か（`Path::starts_with`、要素ごとの比較）を比べる。比べる両側を同じ関数で解くので、前置・大文字小文字・短い名前の形がそろう。下でなければ `InvalidPath` で、その folder に入らず、その file を開かない。解けない（在らない・SD を抜いた）は `Io`。`read_dir`・`metadata`・`File::open` には確かめた解いた path をそのまま渡し、元の path で開き直さない。
+- root そのもの: `find_register_sd_roots`・`resolve_register_sd_root` が返した path を解いたものを root にする。root の folder 自身が link なら、その指す先を SD の root とみなす（選んだ場所、または SD の決まった folder そのものなので、指す先を読むのはその先を選んだのと同じ）。
+- root の下を指す link は通す。実体が root の下なので root の外を読まない。同じ file を 2 つの path で列挙しても、同じ bytes の組は 37 §37.9 手順 6 で 1 つにまとまる。
+- 確かめてから開くまでの間に、path の途中が外を指す link に替わる余地は受け入れる。SD とその写しは利用者の媒体・folder で、アプリが読む間に別の process が link を差し替える相手を想定しない。写しに入った link は読む前から在り、上の比較が止める。
+- `locate_in_register_sd_roots`（§29.7.4 手順 4）は file を開かない文字列の判定のままにする。手で選ぶ経路の bytes は利用者が dialog で選んだ file で、IO-09 は開かない。link の先の file を SD の file と扱っても、写し（BIZ-08-D5）と精算回数の検査（BIZ-08-D6）の効く側に倒れる。
+- 理由: SD card の標準の形式（FAT32・exFAT）は link を持たない（推定。§29.7.2 は形式を採取していない）が、PC の中の SD の写し（§29.7.4 手順 3）は PC の folder で、写した道具や人が link・junction を入れうる。path の文字列だけの比較は、`XZ` が root の外への directory の link のときに通り、open が link の先の file を読む。Windows の通常の open も link の先を開く（[Microsoft: Symbolic Link Effects on File Systems Functions](https://learn.microsoft.com/en-us/windows/win32/fileio/symbolic-link-effects-on-file-systems-functions)）。`canonicalize` は Unix の `realpath`、Windows の `CreateFile` と `GetFinalPathNameByHandle` にあたる（[Rust: std::fs::canonicalize](https://doc.rust-lang.org/std/fs/fn.canonicalize.html)）。
 
 #### 29.7.7 エラーハンドリング
 
@@ -378,7 +392,7 @@ fn read_register_sd_file(root: &RegisterSdRoot, relative_path: &str, max_bytes: 
 | （error でない）2 つ以上の列 | 自動で root が 2 つ以上 | 推測で選ばず、売上の SD だけを差すよう案内 |
 | NotRegisterSd | 選んだ folder がレジの SD でない | 選び直しを案内 |
 | MissingSalesArea | `XZ` が無い | 読まずに止める |
-| InvalidPath | 相対 path が root の外 | 内部の誤り。診断ログ |
+| InvalidPath | 読取りの相対 path が root の外（文字列の検査。列挙が作る path では起きない内部の誤り）、または列挙・読取りの実体の path が root の外（root の下の link・junction が外を指す、IO-09-D5） | BIZ-08 §37.9 手順 3 の固定の文で scan 全体を止める（途中の結果を使わない） |
 | TooLarge | 上限を超える | その束・file を候補にしない（読めない） |
 | Io | 列挙・読取りの途中の失敗 | 読み全体を失敗にし、途中の結果を使わない |
 | Io（`check_selected_file_present`） | 手で選んだ file がその時点で無い・読めない・通常の file でない | PC の file として通さず、37 §37.3 手順 1a (iii) の固定の文で止める |
@@ -392,12 +406,15 @@ fn read_register_sd_file(root: &RegisterSdRoot, relative_path: &str, max_bytes: 
 | 改行を正規化して読む前提で形を測らない | 取込み前の原本が取込み後と同じ bytes であることは未確認の前提（SD-23）で、形を観測したのは `XZ_BKUP` の分だけで（SD-24）、形は状態の値なので決め打ちにしない（IO-09-D4）。測らないと、外れた file を黙って読む |
 | `XZ_BKUP` を読まない | CV17 の取込みを誰かが続けると、精算の分が `XZ_BKUP` にしか無い日ができる |
 | 全期間の `XZ_BKUP` を毎回読む | 全期間の Z004 を毎回読むことになり遅い。取込み済みは hash で分かるので、範囲は BIZ の窓で足りる |
+| root の下かを path の文字列だけで比べる | root の下の link・junction が外を指すと、文字列の検査を通って外の file を読む（IO-09-D5） |
+| root の下の link をすべて止める（71 §71.11.3 の媒体の「reparse point を追わない」と同じ形） | link かを見る別の API（`symlink_metadata`・`GetFileAttributesW`）と規則が要り、守る性質（root の外を読まない）は実体の path の比較だけで成り立つ。71 は媒体に書く・消す側で、link を辿ると別の場所に書きうるので追わない。IO-09 は読むだけ |
+| 開いた handle から実体の path を確かめる（Windows の `GetFinalPathNameByHandleW`） | 確かめてから開くまでの link の差し替えを防ぐが、許可の列と `cfg(windows)` の本体が増え、IO-09-D5 の想定（読む間に別の process が差し替えない）では要らない |
 
 ### 29.8 IO-10: SD から読んだ原本の写しの保存（D-111）
 
 #### 29.8.1 目的と置き場所
 
-`pos_source_copy`（module `io::pos_source_copy`、未実装）は、SD から読んで取り込んだ file の生バイトを、PC 側のアプリのデータ folder に写しとして書く IO 層の関数である。CV17 の取込みをやめると PC 側に原本の写しが無くなる（CV17 は `EcrDatas` に写しを置いていた）ための代わり（owner 決定 2026-10-06）。SD には書かない（書く先はアプリのデータ folder だけ）。どの file をいつ書くか・失敗したらどうするかは BIZ（日報は BIZ-08-D5）が決める。本節も §29.7.1 と同じ理由で IO-07 の文書に置き、runtime の lane は `design_compliance_test.rs` の map の `29-io-daily-report-parser.md` の行に `io::pos_source_copy` を足す。
+`pos_source_copy`（module `io::pos_source_copy`）は、SD から読んで取り込んだ file の生バイトを、PC 側のアプリのデータ folder に写しとして書く IO 層の関数である。CV17 の取込みをやめると PC 側に原本の写しが無くなる（CV17 は `EcrDatas` に写しを置いていた）ための代わり（owner 決定 2026-10-06）。SD には書かない（書く先はアプリのデータ folder だけ）。どの file をいつ書くか・失敗したらどうするかは BIZ（日報は BIZ-08-D5）が決める。本節も §29.7.1 と同じ理由で IO-07 の文書に置き、`design_compliance_test.rs` の map の `29-io-daily-report-parser.md` の行に `io::pos_source_copy` を登録している。
 
 置き場所は既存の規則に合わせ、アプリのデータ folder（`app_data_dir`。DB の `inventory.db` と同じ folder、[71](71-mnt-backup.md) §71.7）の下の相対 path にする。レシート画像の `images/receipts/`（[28](28-io-image-manager.md) IO-06）と同じく、DB には app_data_dir からの相対 path を残す。
 

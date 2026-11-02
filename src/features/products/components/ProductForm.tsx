@@ -37,6 +37,7 @@ import { formatCostInput, isLengthUnit, unitCostFromPack } from "@/lib/unit-quan
 import { suggestPluTarget } from "../lib/jan-code";
 import type { ProductFormValues, ProductTaxRate } from "../lib/product-form-request";
 import { DiscontinueConfirmDialog } from "./DiscontinueConfirmDialog";
+import { StockRecheckBadge } from "@/features/stock-inquiry/components/StockRecheckBadge";
 import { StockUnitField } from "./StockUnitField";
 import { PriceHistorySection } from "./PriceHistorySection";
 
@@ -51,6 +52,10 @@ export interface ProductFormProps {
   productCodeLabel?: string;
   productName?: string;
   isDiscontinued?: boolean;
+  /** 修正の画面の「現在庫」の隣に「要再確認」の badge を出す（写しの stock_recheck。51） */
+  stockRecheck?: boolean;
+  /** 在庫の節の「数量単位」「POS販売で在庫を減らす」の行のすぐ下に出す案内（在庫連動を始める拒否。51） */
+  stockSyncNotice?: React.ReactNode;
   isSaving: boolean;
   isTogglePending?: boolean;
   saveDisabled?: boolean;
@@ -84,6 +89,8 @@ export function ProductForm({
   productCodeLabel,
   productName,
   isDiscontinued = false,
+  stockRecheck = false,
+  stockSyncNotice,
   isSaving,
   isTogglePending = false,
   saveDisabled = false,
@@ -419,7 +426,12 @@ export function ProductForm({
         }
       >
         <div className="space-y-1 md:w-1/2">
-          <Label htmlFor="initial-stock">{mode === "create" ? "初期在庫（必須）" : "現在庫"}</Label>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="initial-stock">
+              {mode === "create" ? "初期在庫（必須）" : "現在庫"}
+            </Label>
+            {mode === "edit" && stockRecheck ? <StockRecheckBadge /> : null}
+          </div>
           <Input
             id="initial-stock"
             className={mode === "edit" ? "bg-muted" : undefined}
@@ -451,6 +463,7 @@ export function ProductForm({
             update("posStockSync", checked);
           }}
         />
+        {stockSyncNotice}
       </FormSection>
 
       {mode === "edit" && productCodeLabel !== undefined ? (

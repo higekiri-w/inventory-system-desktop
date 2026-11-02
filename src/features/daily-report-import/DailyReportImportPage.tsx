@@ -1,5 +1,15 @@
-import { AlertCircle, CheckCircle2, Loader2, TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  CircleDashed,
+  CopyCheck,
+  Download,
+  FileX2,
+  Loader2,
+  TriangleAlertIcon,
+} from "lucide-react";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -16,26 +26,62 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { DailyReportImportResult, DailyReportPreviewData } from "@/lib/bindings";
+import type {
+  DailyReportImportResult,
+  DailyReportPreviewData,
+  DailyReportSdCandidate,
+  DailyReportSdCandidateStatus,
+  DailyReportSdScan,
+} from "@/lib/bindings";
 import { describeError } from "@/lib/describe-error";
-import { useDailyReportImportFlow } from "./hooks/useDailyReportImportFlow";
+import {
+  DAILY_REPORT_SERIES,
+  useDailyReportImportFlow,
+  type DailyReportManualFile,
+  type DailyReportPendingReplacement,
+  type DailyReportSeries,
+} from "./hooks/useDailyReportImportFlow";
 import { AdditionalImportConfirmDialog } from "../csv-import/components/AdditionalImportConfirmDialog";
 
-export function DailyReportImportPage() {
+export function DailyReportImportPage({
+  onBlockingChange,
+}: {
+  /** UI-07-D15 (6)・55 §55.7: 取込み・取消の応答を待つ間を親（CsvImportPage）へ上げ、タブの切替えも止める */
+  onBlockingChange?: (isBlocking: boolean) => void;
+} = {}) {
   const flow = useDailyReportImportFlow();
-  const { state } = flow;
+  const { state, isBlocking } = flow;
+  useEffect(() => {
+    onBlockingChange?.(isBlocking);
+  }, [isBlocking, onBlockingChange]);
 
   const content = (() => {
     switch (state.status) {
       case "idle":
-      case "parsing":
+      case "scanning":
+      case "sd_list":
         return (
-          <DailyReportParseStep
-            isParsing={flow.isParsing || state.status === "parsing"}
+          <DailyReportSourceStep
+            scanning={state.status === "scanning"}
+            scan={state.status === "sd_list" ? state.scan : null}
+            scanError={flow.scanError}
+            manualFiles={flow.manualFiles}
+            pendingReplacement={flow.pendingReplacement}
             selectionError={state.lastSelectionError}
+            onScan={() => {
+              flow.scanSd();
+            }}
+            onChooseLocation={() => void flow.chooseSdLocation()}
+            onConfirmCandidate={flow.confirmSdCandidate}
             onChooseFiles={() => void flow.chooseFiles()}
+            onRemoveFile={flow.removeManualFile}
+            onConfirmReplacement={flow.confirmReplacement}
+            onCancelReplacement={flow.cancelReplacement}
+            onConfirmFiles={flow.confirmManualFiles}
           />
         );
+      case "parsing":
+        return <DailyReportParsingStep />;
       case "preview":
         return (
           <DailyReportPreviewStep
@@ -44,7 +90,10 @@ export function DailyReportImportPage() {
             isImporting={flow.isImporting}
             selectionError={state.lastSelectionError}
             onConfirm={flow.confirmImport}
-            onChooseFiles={() => void flow.chooseFiles()}
+            onChooseFiles={
+              // UI-07-D15 (4): SD から来た preview の「ファイルを選び直す」は一覧へ戻る
+              state.sdOrigin ? flow.backToSdList : () => void flow.chooseFiles()
+            }
           />
         );
       case "importing":
@@ -59,6 +108,7 @@ export function DailyReportImportPage() {
             onRollback={() => {
               flow.rollback(state.result.daily_report_import_id);
             }}
+            onBackToSdList={state.sdOrigin ? flow.backToSdList : undefined}
           />
         );
       case "error":
@@ -79,43 +129,244 @@ export function DailyReportImportPage() {
   return content;
 }
 
-function DailyReportParseStep({
-  isParsing,
-  selectionError,
-  onChooseFiles,
-}: {
-  isParsing: boolean;
-  selectionError: string | null;
-  onChooseFiles: () => void;
-}) {
-  if (isParsing) {
-    return (
-      <div
-        className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border p-8"
-        role="status"
-        aria-live="polite"
-      >
-        <Loader2 className="size-8 animate-spin text-ongoing" aria-hidden="true" />
-        <p className="text-sm font-medium">日報ファイルを解析中…</p>
-      </div>
-    );
-  }
-
+function DailyReportParsingStep() {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>日報ファイル</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <Button variant="outline" onClick={onChooseFiles}>
-          日報ファイルを選択
+    <div
+      className="flex min-h-52 flex-col items-center justify-center gap-3 rounded-lg border p-8"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="size-8 animate-spin text-ongoing" aria-hidden="true" />
+      <p className="text-sm font-medium">日報ファイルを解析中…</p>
+    </div>
+  );
+}
+
+/** UI-07-D15 (3): 状態は色だけで示さず、日本語の label と icon を併用する */
+const CANDIDATE_STATUS: Record<
+  DailyReportSdCandidateStatus,
+  { label: string; icon: ReactNode; tone?: "success" | "warning" | "destructive" }
+> = {
+  NotImported: {
+    label: "取り込めます",
+    icon: <Download aria-hidden="true" />,
+    tone: "success",
+  },
+  Imported: { label: "取込み済み", icon: <CheckCircle2 aria-hidden="true" /> },
+  SameSettlementImported: {
+    label: "同じ精算を取込み済み",
+    icon: <CopyCheck aria-hidden="true" />,
+    tone: "warning",
+  },
+  Incomplete: {
+    label: "ファイルがそろっていません",
+    icon: <CircleDashed aria-hidden="true" />,
+    tone: "warning",
+  },
+  Unreadable: {
+    label: "読めません",
+    icon: <FileX2 aria-hidden="true" />,
+    tone: "destructive",
+  },
+};
+
+/** UI-07-D15 (3) の一覧の上の文（状態の数だけで決める） */
+function scanSummary(scan: DailyReportSdScan): string | null {
+  const count = (status: DailyReportSdCandidateStatus) =>
+    scan.candidates.filter((candidate) => candidate.status === status).length;
+  if (count("NotImported") > 0) return null;
+  const unusable = count("Incomplete") + count("Unreadable");
+  if (unusable > 0) {
+    return `取り込める精算はありません。取り込めない精算が ${String(unusable)} 件あります（「ファイルがそろっていません」「読めません」の行）。`;
+  }
+  return "新しい精算はありません";
+}
+
+function DailyReportSourceStep({
+  scanning,
+  scan,
+  scanError,
+  manualFiles,
+  pendingReplacement,
+  selectionError,
+  onScan,
+  onChooseLocation,
+  onConfirmCandidate,
+  onChooseFiles,
+  onRemoveFile,
+  onConfirmReplacement,
+  onCancelReplacement,
+  onConfirmFiles,
+}: {
+  scanning: boolean;
+  scan: DailyReportSdScan | null;
+  scanError: string | null;
+  manualFiles: DailyReportManualFile[];
+  pendingReplacement: DailyReportPendingReplacement | null;
+  selectionError: string | null;
+  onScan: () => void;
+  onChooseLocation: () => void;
+  onConfirmCandidate: (candidateKey: string) => void;
+  onChooseFiles: () => void;
+  onRemoveFile: (series: DailyReportSeries) => void;
+  onConfirmReplacement: () => void;
+  onCancelReplacement: () => void;
+  onConfirmFiles: () => void;
+}) {
+  const summary = scan ? scanSummary(scan) : null;
+  const complete = DAILY_REPORT_SERIES.every((series) =>
+    manualFiles.some((file) => file.series === series),
+  );
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>レジの SD から読む</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button onClick={onScan} disabled={scanning}>
+            {scanning && <Loader2 className="animate-spin text-ongoing" aria-hidden="true" />}
+            {scanning ? "SD を読んでいます…" : "SD から読む"}
+          </Button>
+          <SelectionErrorMessage message={scanError} />
+          {scanError !== null && (
+            <Button variant="outline" onClick={onChooseLocation}>
+              場所を選ぶ
+            </Button>
+          )}
+          {scan && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium" role="status">
+                読み終わりました。いつもの取込みが済んでいれば、SD
+                はレジに戻してください（次の精算に要ります）。
+              </p>
+              {summary && <p className="text-sm">{summary}</p>}
+              {scan.skipped_unknown_count > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  読まなかったファイル {scan.skipped_unknown_count.toLocaleString()} 件
+                </p>
+              )}
+              {scan.candidates.length > 0 && (
+                <ul className="divide-y rounded-md border" aria-label="SD の精算の一覧">
+                  {scan.candidates.map((candidate) => (
+                    <SdCandidateRow
+                      key={candidate.candidate_key}
+                      candidate={candidate}
+                      onConfirm={onConfirmCandidate}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <section className="space-y-3" aria-label="ファイルを選んで取り込む">
+        <Button variant="link" className="h-auto px-0" onClick={onChooseFiles}>
+          ファイルを選んで取り込む
         </Button>
         <SelectionErrorMessage message={selectionError} />
-        <p className="text-sm text-muted-foreground">
-          Z001 / Z002 / Z005 の3ファイルを選択します。
+        {manualFiles.length > 0 && (
+          <div className="space-y-3">
+            <ul className="divide-y rounded-md border" aria-label="選んだファイル">
+              {DAILY_REPORT_SERIES.flatMap((series) => {
+                const file = manualFiles.find((item) => item.series === series);
+                if (!file) return [];
+                return [
+                  <li key={series} className="flex items-center justify-between gap-3 p-2 text-sm">
+                    <span>
+                      <span className="mr-2 font-medium">{series}</span>
+                      {file.filename}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        onRemoveFile(series);
+                      }}
+                    >
+                      外す
+                    </Button>
+                  </li>,
+                ];
+              })}
+            </ul>
+            <Button onClick={onConfirmFiles} disabled={!complete}>
+              確認する
+            </Button>
+          </div>
+        )}
+        <p className="text-xs text-muted-foreground">
+          SD が読めないときや過去の分は、Z001 / Z002 / Z005 を 1 つずつ選んで取り込めます。
         </p>
-      </CardContent>
-    </Card>
+      </section>
+
+      <AlertDialog
+        open={pendingReplacement !== null}
+        onOpenChange={(open) => {
+          if (!open) onCancelReplacement();
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingReplacement?.incoming.series} のファイルを置き換えますか？
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              選んであった {pendingReplacement?.previous.filename} を外して、
+              {pendingReplacement?.incoming.filename} を使います。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            {/* 1 回の操作で queue を 1 つだけ進める: キャンセル・Esc は onOpenChange だけ、置き換えるは close の要求を止める */}
+            <AlertDialogCancel>キャンセル</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                onConfirmReplacement();
+              }}
+            >
+              置き換える
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+function SdCandidateRow({
+  candidate,
+  onConfirm,
+}: {
+  candidate: DailyReportSdCandidate;
+  onConfirm: (candidateKey: string) => void;
+}) {
+  const status = CANDIDATE_STATUS[candidate.status];
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
+      <div className="space-y-1">
+        <p className="font-medium">{candidate.report_date ?? candidate.path_date}</p>
+        <p className="text-xs text-muted-foreground">{candidate.source_filenames.join(" / ")}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" tone={status.tone}>
+          {status.icon}
+          {status.label}
+        </Badge>
+        {candidate.status === "NotImported" && (
+          <Button
+            size="sm"
+            onClick={() => {
+              onConfirm(candidate.candidate_key);
+            }}
+          >
+            確認する
+          </Button>
+        )}
+      </div>
+    </li>
   );
 }
 
@@ -312,12 +563,15 @@ function DailyReportResultStep({
   filenames,
   isRollingBack,
   onRollback,
+  onBackToSdList,
 }: {
   result: DailyReportImportResult;
   reportDate: string;
   filenames: string[];
   isRollingBack: boolean;
   onRollback: () => void;
+  /** UI-07-D15 (6): SD から来た結果だけ */
+  onBackToSdList?: () => void;
 }) {
   return (
     <Card>
@@ -346,6 +600,11 @@ function DailyReportResultStep({
               日次売上を見る
             </Link>
           </Button>
+          {onBackToSdList && (
+            <Button variant="outline" onClick={onBackToSdList} disabled={isRollingBack}>
+              SD の一覧へ戻る
+            </Button>
+          )}
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="outline" disabled={isRollingBack}>

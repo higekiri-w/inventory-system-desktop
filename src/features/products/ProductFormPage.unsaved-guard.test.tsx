@@ -169,4 +169,77 @@ describe("ProductFormPage unsaved guard (UI-USW-D1/D3 / SPEC-UISN-2/3)", () => {
     });
     expect(blockedAtNavigate).toBe(false);
   });
+
+  it("U12 recovery link passes through the unsaved-changes guard", async () => {
+    // 51・UI-USW-D1: 導線は route の遷移で離脱の確認を通る（baseline を揃えて guard を外さない）
+    const user = userEvent.setup();
+    const blockedAtLink: boolean[] = [];
+    mockGetProduct.mockResolvedValue({
+      status: "ok",
+      data: makeMockProductWithRelations({ product_code: "P-005", pos_stock_sync: false }),
+    });
+    mockUpdateProduct.mockResolvedValue({
+      status: "error",
+      error: {
+        kind: "stocktake_guard",
+        message: "連動しない間の売上があります。今の数を入れてから在庫連動にしてください",
+        field: null,
+        error_id: null,
+        stocktake_recovery: {
+          code: "recount_required",
+          targets: [
+            {
+              product_code: "P-005",
+              product_name: "連動なしの糸",
+              stock_unit: "pcs",
+              stock: 7,
+              stock_range_low: null,
+              stock_range_high: null,
+              stocktake_item_id: null,
+              stocktake_id: null,
+              action: "count_now",
+              block_reason: null,
+              recount_reasons: [],
+            },
+          ],
+          settlement_pending: null,
+        },
+      },
+    });
+    const { rerenderPage } = renderWithClient(
+      <ProductFormPage
+        mode="edit"
+        productCode="P-005"
+        onNavigateToList={vi.fn()}
+        onNavigateToStocktake={() => {
+          blockedAtLink.push(shouldBlockCurrentNavigation());
+          attemptNavigation();
+        }}
+      />,
+    );
+
+    await user.click(await screen.findByLabelText("POS販売で在庫を減らす"));
+    await user.click(screen.getByRole("button", { name: "保存する" }));
+    await user.click(await screen.findByRole("button", { name: "今の数を入れる" }));
+    rerenderPage();
+
+    expect(blockedAtLink).toEqual([true]);
+    expect(await screen.findByText("編集内容が保存されていません")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "編集を続ける" }));
+    rerenderPage();
+    await waitFor(() => {
+      expect(screen.queryByText("編集内容が保存されていません")).not.toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("POS販売で在庫を減らす")).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "今の数を入れる" }));
+    rerenderPage();
+    expect(blockedAtLink).toEqual([true, true]);
+    expect(await screen.findByText("編集内容が保存されていません")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "破棄して移動" }));
+    const proceed = mockUseBlocker.mock.results[mockUseBlocker.mock.results.length - 1]?.value as {
+      proceed?: () => void;
+    };
+    expect(proceed.proceed).toHaveBeenCalledTimes(1);
+  });
 });

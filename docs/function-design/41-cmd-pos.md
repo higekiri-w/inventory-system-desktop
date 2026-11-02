@@ -1,14 +1,15 @@
 ## 17. CMD-07: Z004商品別CSV取込みコマンド群 / CMD-08: PLU書出しコマンド群
 
-### 計数の置き場と在庫の求め直しの契約（proposed・未実装、D-118）
+### 計数の置き場と在庫の求め直しの契約（D-118。b1 で実装済み）
 
 [棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D4・D7）の CMD-07 の側。公開の parse_and_validate_csv の bytes / filename、commit_csv_import の previewToken、rollback_csv_import の import ID は変えない。旧 ADR（時点証拠）の準備照会（`get_pos_stock_readiness`）・stock_review・保留と取消の保留の回復型・source の cache は持たない（置き換えた）。
 
-- `additionalImportConfirmed` は Z004 では使わない（同じ精算日の別の精算は確認なしに入る。[32](32-biz-csv-import-service.md) の新契約）。runtime で入力から外し、bindings と UI-07 を同じ変更で直す。
+- 同じ日の追加の確認のフラグは Z004 では使わない（同じ精算日の別の精算は確認なしに入る。[32](32-biz-csv-import-service.md) の新契約）。b1 で入力から外し、bindings と UI-07 を同じ変更で直した。
 - preview の拒否（精算回数の無い file・別の machine_no・同じ精算の別版・精算の順の食い違い）は既存の `import_error` kind と BIZ の message で返す（回復型に載せない）。
-- preview と ImportResult に知らせ（`notices`: 欠けた精算回数の区間〈`{ from: i64, to: i64 }`。1 つなら from = to〉の一覧と、精算日が PC の今日より後の知らせ。32 の新契約）を足す。ImportResult と RollbackResult に、求め直しの後に要再確認になった商品の一覧（`recheck_targets: Vec<CountRecoveryTarget>`、[40](40-cmd-product.md)）を足す。売上 0 の正常な完了を失敗に変えない。
+- preview と ImportResult に知らせ（`settlement_gaps: Vec<SettlementGap>`: 欠けた精算回数の区間〈`{ from: i64, to: i64 }`。1 つなら from = to〉の一覧と、`settlement_date_after_today: bool`。32 の新契約）を足した。ImportResult と RollbackResult に、求め直しの後に要再確認になった商品の一覧（`recheck_targets: Vec<CountRecoveryTarget>`、[40](40-cmd-product.md)）を足す。売上 0 の正常な完了を失敗に変えない。
 - CMD は PC の今日（ローカルの日付）を BIZ へ渡す（精算日が今日より後の知らせのため）。
-- commit と rollback は停止 ADR の 5 つの入口を外すのと同じ runtime の配布の単位で新しい経路に繋ぐ（SPEC-STK-CNT-D12）。bindings の生成と UI-07 の分岐・preview の mock の更新は runtime で同時に行う。
+- preview token は確定の成功のときだけ消す（拒否・失敗では消さない）。今の同じ日の取込みの状況の変化を message の文字列で見て消す分岐は、同じ日の追加の確認を Z004 で使わなくなるので外す（2026-10-22、b1 の起票で決めた。preview の後に状況が変わった拒否は、同じ token で確定し直しても同じ拒否になり、30 分の期限で消える。message の文字列で分岐しない）。
+- commit と rollback は停止 ADR の 5 つの入口を外すのと同じ b1 の配布の単位で新しい経路に繋いだ（SPEC-STK-CNT-D12）。
 
 > **2026-06-30 REQ-401 redesign note**: 本書のCMD-07は既存Z004商品別CSV取込みのTauri command契約を記録する。current operation のZ001/Z002/Z005日報取込みは [45-cmd-daily-report-import.md](45-cmd-daily-report-import.md) のCMD-12で扱う。CMD-07へ日報bundleを追加しない。
 
@@ -94,6 +95,7 @@ let result = biz::some_function(&mut conn, ...);
 | BizError | CmdError.kind | CmdError.message |
 |----------|--------------|------------------|
 | ImportError(msg) | "import_error" | msg をそのまま使用 |
+| SettlementConflict { message, csv_import_id } | "import_error" | message をそのまま使用。`related_csv_import_id: Some(csv_import_id)`（[32](32-biz-csv-import-service.md) の表の順 4 の拒否だけ。ほかの変換と CMD が作る error は None で、wire は null。TS では任意の field） |
 | ExportError(msg) | "export_error" | msg をそのまま使用 |
 | IdempotencyConflict(msg) | "idempotency_conflict" | msg をそのまま使用 |
 | ValidationFailed(msg) | "validation" | msg をそのまま使用（既存） |
@@ -139,7 +141,7 @@ struct ParseAndValidateResponse {
 }
 ```
 
-`PreviewData.duplicate_check` のwire形状は `status: DuplicateStatus` と `same_date_imports: Vec<SameDateCsvImportSummary>` で固定する。summaryは `id / filename / total_items / total_amount / imported_at` を持ち、順序は `imported_at DESC, id DESC`。単一parentだけを示すfieldは公開しない。
+`PreviewData` は知らせ（`settlement_gaps`・`settlement_date_after_today`）を持ち、同じ日の取込みの一覧は持たない（D-118 の b1。32 §15.2）。CMD は PC の今日（`chrono::Local`）を BIZ へ渡す。
 
 **処理ステップ**（17.3のロック区間最小化パターンに従う）:
 1. file_bytes.len() > 20 * 1024 * 1024 → CmdError { kind: "validation", message: "ファイルサイズが上限(20MB)を超えています", field: None } を即返却
@@ -188,10 +190,8 @@ struct ParseAndValidateResponse {
         }
       ]
     },
-    "duplicate_check": {
-      "status": "NoDuplicate",
-      "same_date_imports": []
-    },
+    "settlement_gaps": [],
+    "settlement_date_after_today": false,
     "preview_created_at": "2026-03-21T19:30:00"
   },
   "preview_token": "550e8400-e29b-41d4-a716-446655440000"
@@ -202,8 +202,6 @@ struct ParseAndValidateResponse {
 
 #### commit_csv_import
 
-> **現行 build では一時停止中**（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D2）: 下記の処理ステップは変えない。手順 1〜3 の token 検査は従来どおり先に走り、有効な token では手順 6 の BIZ が停止 error（`ImportError`、[32 §15.0](32-biz-csv-import-service.md#150-現行buildの一時停止) の BIZ-03 停止文言）を返す。手順 8 の通常変換で kind = `import_error`、field = null、error_id = null になり、token はキャッシュに残る（手順 7 の成功時削除と、snapshot 不一致時の削除には到達しない）。
-
 **関数要求**: プレビュー済みデータの取込みを確定する。preview_tokenでキャッシュを復元してBIZ-03のcommitを実行する
 
 **シグネチャ（Tauriコマンド）**:
@@ -212,14 +210,12 @@ struct ParseAndValidateResponse {
 fn commit_csv_import(
     state: State<AppState>,
     preview_token: String,
-    additional_import_confirmed: bool,
 ) -> Result<ImportResult, CmdError>
 ```
 
 **入力型**:
 ```
 preview_token: String       // parse_and_validate_csvが返したトークン
-additional_import_confirmed: bool // 同日別hashを既存分へ追加する確認済みフラグ
 ```
 
 **出力型**:
@@ -231,6 +227,9 @@ struct ImportResult {
     total_items: i64,
     total_amount: i64,
     skipped_count: i64,
+    settlement_gaps: Vec<SettlementGap>,
+    settlement_date_after_today: bool,
+    recheck_targets: Vec<CountRecoveryTarget>, // 求め直しの後に要再確認になった商品（40）
 }
 ```
 
@@ -240,16 +239,15 @@ struct ImportResult {
 3. キャッシュミス（不存在/追い出し/再起動） → CmdError { kind: "import_error", message: "プレビューが見つかりません。再度ファイルを選択してください" }
    - 有効期限切れ（created_at.elapsed() > 30分） → cache.remove → CmdError { kind: "import_error", message: "プレビューの有効期限が切れました（30分）。再度ファイルを選択してください" }
 4. state.db.lock() でDB接続を取得
-5. CommitRequest { additional_import_confirmed, cached_data } を構築（preview_tokenの検証・cache対応確認はCMD層で完了し、BIZ requestへ重複保持しない。BIZ-03-D1）
+5. CommitRequest { cached_data, today: PC の今日 } を構築（preview_tokenの検証・cache対応確認はCMD層で完了し、BIZ requestへ重複保持しない。BIZ-03-D1）
 6. biz::csv_import_service::commit_csv_import(&mut conn, req) を呼ぶ（BIZ実行中はcache lockなし）
 7. Ok → state.preview_cache.lock() → キャッシュからtoken削除 → ImportResult を返す
-8. Err(BizError) → CmdError に変換して返す。通常の失敗はキャッシュを保持して再試行可能にする。BIZが `同日の取込み状況が変わりました。再度プレビューしてください` を返した場合だけtokenを削除し、同じpreviewでの再試行を禁止する
+8. Err(BizError) → CmdError に変換して返す。拒否・失敗ではキャッシュを保持する（token を消すのは手順 7 の成功のときだけ。message の文字列で分岐しない。preview の後に状況が変わった拒否は、同じ token で確定し直しても同じ拒否になり、30 分の期限で消える）
 
 **入力例**:
 ```json
 {
-  "preview_token": "550e8400-e29b-41d4-a716-446655440000",
-  "additional_import_confirmed": false
+  "preview_token": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -260,15 +258,16 @@ struct ImportResult {
   "status": "completed_partial",
   "total_items": 45,
   "total_amount": 28500,
-  "skipped_count": 3
+  "skipped_count": 3,
+  "settlement_gaps": [],
+  "settlement_date_after_today": false,
+  "recheck_targets": []
 }
 ```
 
 ---
 
 #### rollback_csv_import
-
-> **現行 build では一時停止中**（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D2）: 下記の処理ステップは変えない。BIZ が対象の有無・status によらず停止 error（`ImportError`、[32 §15.0](32-biz-csv-import-service.md#150-現行buildの一時停止) の BIZ-03 停止文言）を返し、通常変換で kind = `import_error`、field = null、error_id = null になる。
 
 **関数要求**: 指定したCSV取込みをロールバック（論理無効化）する
 
@@ -293,7 +292,7 @@ struct RollbackResult {
     success: bool,
     voided_sale_count: u64,
     voided_movement_count: usize,
-    stock_corrections: Vec<StockCorrection>,
+    recheck_targets: Vec<CountRecoveryTarget>, // 補償の movement は作らない（ADR D7）
 }
 ```
 
@@ -316,10 +315,7 @@ struct RollbackResult {
   "success": true,
   "voided_sale_count": 45,
   "voided_movement_count": 42,
-  "stock_corrections": [
-    { "product_code": "4976383262108", "old_stock": 14, "new_stock": 17 },
-    { "product_code": "4976383262207", "old_stock": 2, "new_stock": 10 }
-  ]
+  "recheck_targets": []
 }
 ```
 
@@ -428,6 +424,31 @@ fn get_csv_import_record(
 5. Err(other) → 17.4 の変換表に従い CmdError に変換して返す
 
 read-only command であり、preview キャッシュ・idempotency・operation log 記録には関与しない（[31-biz-inventory-service.md](31-biz-inventory-service.md) §12.6a の read-only 責務分離と同じ）。
+
+#### preview_rollback_csv_import
+
+**関数要求**: 取消の確認（[55](55-ui-csv-import.md) UI-07-D18）が、取り消す前に何が起きるかを読む。[32-biz-csv-import-service.md](32-biz-csv-import-service.md) §15.6b を呼ぶだけで、何も書かない（BIZ が取消を TX の中で当てて戻す。BIZ-03-D2）
+
+**シグネチャ（Tauriコマンド）**:
+```
+#[tauri::command]
+#[specta::specta]
+fn preview_rollback_csv_import(
+    state: State<AppState>,
+    csv_import_id: i64,
+) -> Result<RollbackPreview, CmdError>
+```
+
+**出力型**: [32-biz-csv-import-service.md](32-biz-csv-import-service.md) §15.6b の RollbackPreview
+
+**処理ステップ**:
+1. state.db.lock() でDB接続を取得
+2. biz::csv_import_service::preview_rollback_csv_import(&mut conn, csv_import_id) を呼ぶ
+3. Ok → RollbackPreview をそのまま返す
+4. Err(BizError::NotFound) → kind `not_found`、Err(BizError::ValidationFailed)（取消済み）→ kind `validation`
+5. Err(other) → 17.4 の変換表に従い CmdError に変換して返す
+
+preview キャッシュ・idempotency・operation log 記録には関与しない（get_csv_import_record と同じ）。登録は §17.9 の 2 面（`src-tauri/src/lib.rs` の Specta の登録〈`collect_commands!`〉と runtime の登録〈`tauri::generate_handler!`〉）。2 面と宣言・bindings の wire 名の一致は `scripts/check-command-drift.sh` が静的に確かめる。
 
 ---
 
@@ -701,6 +722,7 @@ CMD-07/CMD-08が**やらないこと**を明示する。
     cmd::csv_import_cmd::parse_and_validate_csv,
     cmd::csv_import_cmd::commit_csv_import,
     cmd::csv_import_cmd::rollback_csv_import,
+    cmd::csv_import_cmd::preview_rollback_csv_import,
     cmd::csv_import_cmd::list_csv_imports,
     cmd::csv_import_cmd::get_csv_import_record,
     // CMD-08（新規）
@@ -712,10 +734,12 @@ CMD-07/CMD-08が**やらないこと**を明示する。
 
 現行実装（`lib.rs`）では command 登録は 2 箇所に分離している: `export_specta_bindings()` 内の `collect_commands![...]`（bindings 生成用）と `.invoke_handler(tauri::generate_handler![...])`（実行時 dispatch 用）。新規 command は**両方**へ登録する。collect_commands のみでは bindings diff が clean のまま IPC 実呼出しが「command not found」になる（CSV取込み詳細 Design Phase、Plan Review round 1 P2 起源）。
 
-SPEC-SDI-D3 の実装commitでは `DuplicateStatus`、`DuplicateCheck`、`SameDateCsvImportSummary`、`commit_csv_import` 引数へ `#[specta::specta]` / `specta::Type` を維持し、`src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止し、wire名は Rust `additional_import_confirmed` / TypeScript `additionalImportConfirmed` とする。
+wire の型を変えたら `src/lib/bindings.ts` を generator で再生成する（生成物の手編集は禁止）。Z004 の同じ日の追加の確認の型と引数は D-118 の b1 で外した（日報の取込みの同日追加の確認は [45](45-cmd-daily-report-import.md) のまま）。
 
 ### 更新履歴
 
 | 日付 | PR | 内容 |
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D3/D4: same-date summary DTO、`additional_import_confirmed`、snapshot mismatch時のtoken破棄、bindings再生成義務を正本化。 |
+| 2026-10-23 | stocktake-count-runtime-b1（D-118 の b1） | 冒頭の D-118 の節を現行に。commit_csv_import から同じ日の追加の確認のフラグを外し、token は成功のときだけ消す。知らせと `recheck_targets`、停止の注記を外した（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)） |
+| 2026-10-25 | z004-rollback-entry（PR #197） | CMD-07 に `preview_rollback_csv_import` を足し（§17.5、§17.9 の 2 面に登録）、§17.4 に順 4 の拒否の `SettlementConflict` → kind `import_error`・`related_csv_import_id` の行を足した（[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |

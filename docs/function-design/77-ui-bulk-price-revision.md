@@ -119,7 +119,7 @@ CMD の署名と wire DTO の正本は [40-cmd-product.md](40-cmd-product.md) �
 ## 77.7 Loading / Empty / Error
 
 - Loading: 共通 ListSkeleton を使い、表の列構造を保つ。取引先候補だけの失敗で商品一覧全体を隠さない
-- Empty: filter なしで商品 0 件なら商品一覧への導線、filter ありなら `条件に一致する商品がありません` と `絞り込みを解除` を表示する
+- Empty: filter なしで商品 0 件なら商品一覧への導線（`/products`。D-138 の後は label を「商品と在庫を開く」にする。先の route は同じ。proposed・未実装）、filter ありなら `条件に一致する商品がありません` と `絞り込みを解除` を表示する
 - 一覧取得失敗: ページ上部 Alert に日本語説明と `再試行` を出す。確定済みと断定しない
 - 取引先追加失敗: dialog の入力を保持し、空文字 validation は field 近傍、内部 error は再試行可能な Alert で示す
 - 行確定失敗: 他行を消さず、該当行だけ `確定できませんでした` + error 内容 + `再試行` を表示する。入力値はその場に保持する

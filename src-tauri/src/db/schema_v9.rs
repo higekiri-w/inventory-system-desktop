@@ -468,7 +468,13 @@ mod tests {
         // REQ-903 / MNT-03-D17 手順 4〜7 / SPEC-STK-CNT-D1・D9 / Matrix M1
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::db::init_database(dir.path().join("fresh.db").to_str().unwrap()).unwrap();
-        assert_eq!(version(&conn), (10, 10));
+        assert_eq!(
+            version(&conn),
+            (
+                crate::db::migration::app_max_version(),
+                crate::db::migration::app_max_version()
+            )
+        );
         let columns = |table: &str| -> Vec<Vec<Value>> {
             dump(
                 &conn,
@@ -533,8 +539,10 @@ mod tests {
                 other => panic!("{other:?}"),
             })
             .collect();
+        // v9 の 9 列がこの順で先頭に並ぶ（後の版の vZ が seen_import_id を足す。それは vZ の M1 が見る。
+        // b1 Matrix T1）
         assert_eq!(
-            counts,
+            counts[..9],
             [
                 "id",
                 "product_code",
@@ -937,11 +945,24 @@ mod tests {
         );
 
         // vL の後の全商品で、求め直し（BIZ の derive_stock）が写しと同じ
+        let counts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM stock_counts", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(counts, 0);
         for row in dump(&conn, "SELECT product_code, stock_quantity FROM products") {
             let (Value::Text(code), Value::Integer(stock)) = (&row[0], &row[1]) else {
                 panic!("{row:?}")
             };
-            let derived = crate::biz::stock_ledger::derive_stock(&conn, code).unwrap();
+            // v9 の DB に Z004 の取込みと計数は無い（取込みがあれば v9 で止まり、計数の保存の経路は b1）ので、
+            // 精算の一覧と計数を空にして同じ求め直しを当てる（最新の読取りは vZ の列を読む。b1 Matrix T1）
+            let ledger = crate::biz::stock_ledger::Ledger {
+                movements: crate::db::inventory_repo::list_ledger_movements_for_product(
+                    &conn, code,
+                )
+                .unwrap(),
+                ..Default::default()
+            };
+            let derived = crate::biz::stock_ledger::derive_ledger(&ledger).unwrap();
             assert_eq!((derived.stock, derived.range), (*stock, None), "{code}");
         }
 

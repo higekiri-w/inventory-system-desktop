@@ -3,13 +3,13 @@
 
 use crate::biz::csv_import_service::test_support::*;
 use crate::biz::csv_import_service::*;
-use crate::biz::{
-    integrity_service, inventory_service, sales_service, stocktake_service, BizError,
-};
+use crate::biz::stocktake_service::{self, CompletionBlockReason};
+use crate::biz::{integrity_service, inventory_service, sales_service, BizError};
 use crate::db::inventory_repo::{self, MovementType, NewMovement};
 use crate::db::{self, DbConnection};
 use rusqlite::types::Value;
 use serde_json::json;
+use std::collections::BTreeSet;
 
 const DATE: &str = "2026-09-16";
 const CODES: [&str; 2] = ["XFA-SYNC", "XFA-NOSYNC"];
@@ -80,6 +80,8 @@ struct World {
     imports: Vec<Import>,
     receiving: Option<inventory_service::ReceivingCreateRequest>,
     trace: Vec<String>,
+    /// 次に取り込む精算回数（新しい file ごとに 1 つ進める。取り込み直しは同じ file の番号のまま）
+    next_no: i64,
 }
 
 impl World {
@@ -99,6 +101,7 @@ impl World {
             imports: Vec::new(),
             receiving: None,
             trace: Vec::new(),
+            next_no: 1,
         }
     }
 
@@ -188,22 +191,21 @@ impl World {
 
     fn import_new(&mut self, sku: usize, quantity: i32, amount: i32) -> usize {
         // 合成の商品名を変え、同日でも別hashのファイルを作る。oracleはparse結果を使わない。
+        // 精算回数は新しい file ごとに進める（32 の順 4: 同じ精算の別の版は取り込まない）
         let label = format!("合成{}-{}", self.trace.len(), self.imports.len());
-        let bytes = make_z004_bytes(DATE, &[(JANS[sku], &label, quantity, amount)]);
+        let no = self.next_no;
+        self.next_no += 1;
+        let bytes = make_z004_bytes(no, DATE, &[(JANS[sku], &label, quantity, amount)]);
         self.commit_bytes(sku, quantity, amount, bytes)
     }
 
     fn commit_bytes(&mut self, sku: usize, quantity: i32, amount: i32, bytes: Vec<u8>) -> usize {
         let preview = parse_and_build_cache(self.conn(), bytes.clone(), "XFA-synthetic.csv");
-        let confirmed = matches!(
-            preview.preview_data.duplicate_check.status,
-            DuplicateStatus::AdditionalImportConfirmationRequired
-        );
-        let result = commit::legacy_commit_csv_import(
+        let result = commit_csv_import(
             self.conn_mut(),
             CommitRequest {
-                additional_import_confirmed: confirmed,
                 cached_data: build_cached(preview),
+                today: DATE.to_string(),
             },
         )
         .unwrap();
@@ -222,7 +224,7 @@ impl World {
     fn rollback(&mut self, index: usize) {
         self.trace.push(format!("Rollback(import={index})"));
         let import = self.imports[index].clone();
-        let result = rollback::legacy_rollback_csv_import(self.conn_mut(), import.id).unwrap();
+        let result = rollback_csv_import(self.conn_mut(), import.id).unwrap();
         assert!(result.success);
         if import.active {
             self.model.csv(
@@ -251,6 +253,7 @@ impl World {
                 CsvParseAndValidateRequest {
                     file_bytes: import.bytes,
                     filename: "same-hash.csv".into(),
+                    today: DATE.to_string(),
                 },
             );
             assert!(matches!(result, Err(BizError::ImportError(_))));
@@ -412,105 +415,279 @@ fn test_cross_feature_req201_req202_req203_req204_req401_model() {
     println!("XFA_NORMAL traces={traces}; model comparisons after every operation: PASS");
 }
 
+// --- STK-1・STK-2 と対照の trace（Matrix の X の節の「trace の新しい形」。ADR D3・D6、35） ---
+//
+// D = DATE を今日 T とする。World の初めに精算 1（精算日 D−1、正常な行が全て 0）を取り込む。
+// oracle: (a) 未取込みの売上が無い時点で、SKU0 が要再確認なら範囲が物理の数を含み、そうでなければ写しが
+// 物理の数と同じ（黙ってずれない）、(b) 完了が通ったら写しが完了の前と同じで物理の数と同じ、
+// (c) trace ごとの completion_blocked の列が期待と同じ。
+
+const PREVIOUS_DAY: &str = "2026-09-15";
+
 #[derive(Clone, Copy, Debug)]
 enum Temporal {
+    /// 棚卸しを開始する
     Start,
+    /// SKU0 の既定の計数（日付 D、値は物理の数）
     Count,
+    /// SKU0 の fresh な計数（今日 D）
+    Recount,
+    /// 業務日 D の入出庫
     Move(Operation),
+    /// 物理の数 −2。次の精算に載る
     PosSale,
-    ImportPending,
+    /// 次の精算回数・精算日 D の Z004 を、未取込みの売上の行で取り込む（無ければ全て 0 の file）
+    Close,
+    /// XFA-NOSYNC を 0 にしてから完了する。completion_blocked なら理由の集合を積んで続ける
     Complete,
+    /// 保留した精算（STK-2 の fixture）を取り込む
+    ImportHeld,
 }
 
-fn temporal_trace(actions: &[Temporal]) -> Option<String> {
-    let mut world = World::new();
-    let mut physical = INITIAL[0];
-    let mut pending = 0;
-    let mut stocktake = None;
-    let mut completed = false;
-    for (index, action) in actions.iter().enumerate() {
+/// 保留した精算（STK-2）: 精算 2（精算日 D−2）の SKU0 × 2。物理の数は数える前に 8
+struct Held {
+    bytes: Vec<u8>,
+    quantity: i64,
+}
+
+struct TemporalWorld {
+    world: World,
+    physical: i64,
+    pending: i64,
+    held: Option<Held>,
+    stocktake: Option<i64>,
+    zeroed: bool,
+    blocked: Vec<BTreeSet<CompletionBlockReason>>,
+    completed: bool,
+}
+
+fn zero_row(no: i64, date: &str) -> Vec<u8> {
+    make_z004_bytes(no, date, &[(JANS[0], "空", 0, 0)])
+}
+
+impl TemporalWorld {
+    fn new(late: bool) -> Self {
+        let mut world = World::new();
+        let held = if late {
+            commit_bytes(world.conn_mut(), zero_row(1, "2026-09-13"), "s1").unwrap();
+            commit_bytes(world.conn_mut(), zero_row(3, PREVIOUS_DAY), "s3").unwrap();
+            world.next_no = 4;
+            Some(Held {
+                bytes: make_z004_bytes(2, "2026-09-14", &[(JANS[0], "遅い記録", 2, 198)]),
+                quantity: 2,
+            })
+        } else {
+            commit_bytes(world.conn_mut(), zero_row(1, PREVIOUS_DAY), "s1").unwrap();
+            world.next_no = 2;
+            None
+        };
+        let physical = INITIAL[0] - held.as_ref().map_or(0, |h| h.quantity);
+        Self {
+            world,
+            physical,
+            pending: 0,
+            held,
+            stocktake: None,
+            zeroed: false,
+            blocked: Vec::new(),
+            completed: false,
+        }
+    }
+
+    fn copy(&self) -> (i64, bool, Option<(i64, i64)>) {
+        stock_copy(self.world.conn(), CODES[0])
+    }
+
+    fn item_id(&self, code: &str) -> i64 {
+        self.world
+            .conn()
+            .query_row(
+                "SELECT id FROM stocktake_items WHERE stocktake_id=?1 AND product_code=?2",
+                (self.stocktake.unwrap(), code),
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn save(&mut self, fresh: bool) {
+        let item = self.item_id(CODES[0]);
+        stocktake_service::save_stock_count(
+            self.world.conn_mut(),
+            &stocktake_service::SaveStockCountRequest {
+                product_code: CODES[0].to_string(),
+                count_value: self.physical,
+                fresh,
+                business_date: DATE.to_string(),
+                stocktake_item_id: Some(item),
+            },
+            DATE,
+        )
+        .unwrap();
+    }
+
+    fn act(&mut self, action: Temporal) -> Option<String> {
         match action {
             Temporal::Start => {
-                stocktake = Some(
-                    stocktake_service::legacy_start_stocktake(world.conn_mut())
+                self.stocktake = Some(
+                    stocktake_service::start_stocktake(self.world.conn_mut())
                         .unwrap()
                         .stocktake_id,
                 );
             }
-            Temporal::Count => {
-                let id = world
-                    .conn()
-                    .query_row(
-                        "SELECT id FROM stocktake_items WHERE stocktake_id=?1 AND product_code=?2",
-                        (stocktake.unwrap(), CODES[0]),
-                        |r| r.get(0),
-                    )
-                    .unwrap();
-                stocktake_service::legacy_update_count(
-                    world.conn(),
-                    &stocktake_service::UpdateCountRequest {
-                        stocktake_item_id: id,
-                        actual_count: physical,
-                    },
-                )
-                .unwrap();
-            }
+            Temporal::Count => self.save(false),
+            Temporal::Recount => self.save(true),
             Temporal::Move(operation) => {
-                physical += match operation {
+                self.physical += match operation {
                     Operation::Receive => 3,
                     Operation::ManualSale => -2,
                     Operation::Dispose => -1,
                     Operation::Return => 1,
-                    _ => panic!("not a physical-movement diagnostic action"),
+                    _ => panic!("not a physical-movement action"),
                 };
-                world.perform(*operation);
+                self.world.perform(operation);
             }
             Temporal::PosSale => {
-                physical -= 2;
-                pending += 2;
+                self.physical -= 2;
+                self.pending += 2;
             }
-            Temporal::ImportPending => {
-                assert!(pending > 0, "fixture must contain an unimported sale");
-                world.import_new(0, pending, pending * 99);
-                pending = 0;
+            Temporal::Close => {
+                let no = self.world.next_no;
+                self.world.next_no += 1;
+                let quantity = i32::try_from(self.pending).unwrap();
+                let bytes = if quantity == 0 {
+                    zero_row(no, DATE)
+                } else {
+                    make_z004_bytes(no, DATE, &[(JANS[0], "締め", quantity, quantity * 99)])
+                };
+                commit_bytes(self.world.conn_mut(), bytes, "close").unwrap();
+                self.pending = 0;
+            }
+            Temporal::ImportHeld => {
+                let held = self.held.take().expect("fixture must hold a settlement");
+                commit_bytes(self.world.conn_mut(), held.bytes, "held").unwrap();
             }
             Temporal::Complete => {
-                // 対象外のSKUはforce_fill。確定失敗を時点問題の再現として数えない。
-                stocktake_service::legacy_complete_stocktake(
-                    world.conn_mut(),
+                let stocktake_id = self.stocktake.unwrap();
+                if !self.zeroed {
+                    stocktake_service::zero_uncounted_items(
+                        self.world.conn_mut(),
+                        stocktake_id,
+                        &[CODES[1].to_string()],
+                        DATE,
+                        DATE,
+                    )
+                    .unwrap();
+                    self.zeroed = true;
+                }
+                let before = self.copy();
+                let result = stocktake_service::complete_stocktake(
+                    self.world.conn_mut(),
                     &stocktake_service::CompleteStocktakeRequest {
-                        stocktake_id: stocktake.unwrap(),
-                        force_fill: true,
+                        stocktake_id,
+                        today: DATE.to_string(),
                     },
-                )
-                .expect("fixture/BIZ completion error, not a temporal model mismatch");
-                completed = true;
+                );
+                match result {
+                    Ok(_) => {
+                        self.completed = true;
+                        let after = self.copy();
+                        // (b) 完了は在庫を動かさず、写しは物理の数と同じ
+                        if after != before || after.0 != self.physical || after.1 {
+                            return Some(format!(
+                                "(b) before={before:?} after={after:?} physical={}",
+                                self.physical
+                            ));
+                        }
+                    }
+                    Err(BizError::StocktakeGuard { recovery, .. }) => self.blocked.push(
+                        recovery
+                            .targets
+                            .iter()
+                            .filter_map(|target| target.block_reason)
+                            .collect(),
+                    ),
+                    Err(error) => panic!("fixture/BIZ completion error: {error:?}"),
+                }
             }
         }
-        // 未取込みがある間の差は許す。確定後、反映が揃った時点だけを物理oracleと比較。
-        if completed && pending == 0 && world.stock(0) != physical {
-            let internal = integrity_service::run_integrity_check(world.conn()).unwrap();
-            return Some(format!("prefix={:?}; expected physical={physical}, actual stock={}, internal mismatches={}", &actions[..=index], world.stock(0), internal.mismatch_count));
+        // (a) 未取込みの売上が無い時点で、黙ってずれない
+        if self.pending == 0 && self.held.is_none() {
+            let (stock, recheck, range) = self.copy();
+            let ok = match (recheck, range) {
+                (true, Some((low, high))) => low <= self.physical && self.physical <= high,
+                (false, None) => stock == self.physical,
+                _ => false,
+            };
+            if !ok {
+                return Some(format!(
+                    "(a) copy={:?} physical={}",
+                    self.copy(),
+                    self.physical
+                ));
+            }
+        }
+        None
+    }
+}
+
+/// trace を走らせ、completion_blocked の理由の集合の列を返す。oracle (a)(b) が破れたら Err
+fn temporal_trace(
+    late: bool,
+    actions: &[Temporal],
+) -> Result<Vec<Vec<CompletionBlockReason>>, String> {
+    let mut world = TemporalWorld::new(late);
+    for (index, action) in actions.iter().enumerate() {
+        if let Some(failure) = world.act(*action) {
+            let internal = integrity_service::run_integrity_check(world.world.conn()).unwrap();
+            return Err(format!(
+                "prefix={:?}; {failure}; internal mismatches={}",
+                &actions[..=index],
+                internal.mismatch_count
+            ));
         }
     }
     assert!(
-        completed && pending == 0,
-        "fixture must reach the comparison checkpoint"
+        world.completed,
+        "fixture must complete the stocktake: {actions:?}"
     );
-    None
+    Ok(world
+        .blocked
+        .into_iter()
+        .map(|set| set.into_iter().collect())
+        .collect())
 }
 
 #[test]
 fn test_cross_feature_req205_controls() {
-    // REQ-205 / REQ-401: XFA-D2。正しい順序まで診断がFAILにしない対照。
+    // REQ-205 / REQ-401: XFA-D2（Matrix X3。期待を変える: 新しい完了は締めの精算を待ち、同じ日の記録で
+    // 要再確認にする）。どの対照も oracle を破らない
+    use CompletionBlockReason::{Recheck, SettlementPending};
     use Temporal::*;
-    for actions in [
-        vec![Start, Count, Complete],
-        vec![Start, Count, Move(Operation::ManualSale), Count, Complete],
-        vec![Start, PosSale, Count, ImportPending, Complete],
-        vec![Start, Count, PosSale, Complete, ImportPending],
+    for (actions, expected) in [
+        (vec![Start, Count, Close, Complete], vec![]),
+        (
+            vec![
+                Start,
+                Count,
+                Move(Operation::ManualSale),
+                Recount,
+                Close,
+                Complete,
+            ],
+            vec![],
+        ),
+        (
+            vec![Start, PosSale, Count, Close, Complete, Recount, Complete],
+            vec![vec![Recheck]],
+        ),
+        (
+            vec![
+                Start, Count, PosSale, Complete, Close, Complete, Recount, Complete,
+            ],
+            vec![vec![SettlementPending], vec![Recheck]],
+        ),
     ] {
-        assert!(temporal_trace(&actions).is_none(), "{actions:?}");
+        assert_eq!(temporal_trace(false, &actions), Ok(expected), "{actions:?}");
     }
 }
 
@@ -579,41 +756,63 @@ fn test_cross_feature_req904_req203_model_detects_consistent_corruption() {
 }
 
 #[test]
-#[ignore = "XFA: explicit diagnostic; known stocktake temporal contract conflict"]
-fn diagnostic_cross_feature_req205_count_then_movement() {
-    // REQ-205 / REQ-201 / REQ-202 / REQ-203 / REQ-204 / REQ-401: XFA-D2,D4。
-    // diagnostic_は既知FAILをREQ coverageへ計上しないための意図的な接頭辞。
+fn test_cross_feature_req205_count_then_movement_is_kept() {
+    // REQ-205 / REQ-201 / REQ-202 / REQ-203 / REQ-204 / REQ-401: XFA-D2,D4（STK-1。Matrix X1、
+    // 停止 ADR SPEC-STOP-D3 の診断を新しい経路で PASS する回帰 test にした）。数えた後の入出庫が完了で
+    // 打ち消されない。同じ日の記録は決まらないので 1 回目の完了は要再確認で止まり、入れ直しの後に通る
+    use CompletionBlockReason::Recheck;
     use Temporal::*;
-    let mut failures = Vec::new();
     for operation in [
         Operation::Receive,
         Operation::ManualSale,
         Operation::Dispose,
         Operation::Return,
     ] {
-        if let Some(failure) = temporal_trace(&[Start, Count, Move(operation), Complete]) {
-            failures.push(failure);
-        }
+        let actions = [
+            Start,
+            Count,
+            Move(operation),
+            Close,
+            Complete,
+            Recount,
+            Complete,
+        ];
+        assert_eq!(
+            temporal_trace(false, &actions),
+            Ok(vec![vec![Recheck]]),
+            "{actions:?}"
+        );
     }
-    if let Some(failure) = temporal_trace(&[Start, Count, PosSale, ImportPending, Complete]) {
-        failures.push(failure);
-    }
-    assert!(
-        failures.is_empty(),
-        "XFA_TEMPORAL_FAIL\n{}",
-        failures.join("\n")
+    let actions = [Start, Count, PosSale, Close, Complete, Recount, Complete];
+    assert_eq!(
+        temporal_trace(false, &actions),
+        Ok(vec![vec![Recheck]]),
+        "{actions:?}"
     );
 }
 
 #[test]
-#[ignore = "XFA: explicit diagnostic; known stocktake temporal contract conflict"]
-fn diagnostic_cross_feature_req205_req401_late_import() {
-    // REQ-205 / REQ-401: XFA-D2,D4。現物で一度だけ起きた販売の遅い記録。
+fn test_cross_feature_req205_req401_late_import_not_double_counted() {
+    // REQ-205 / REQ-401: XFA-D2,D4（STK-2。Matrix X2）。完了の後に届いた過去の精算が二重に減らない。
+    // 精算 1（D−3）・3（D−1）を取り込み、精算 2（D−2、SKU0 × 2）を保留した World。欠けた 2 の隣の精算日が
+    // 計数の日付 D を挟まないので完了は止まらず、精算 2 は計数の日付より前なので計数に入る
     use Temporal::*;
-    let failure = temporal_trace(&[Start, PosSale, Count, Complete, ImportPending]);
-    assert!(
-        failure.is_none(),
-        "XFA_LATE_IMPORT_FAIL: {}",
-        failure.unwrap()
-    );
+    let actions = [Start, Count, Close, Complete, ImportHeld];
+    assert_eq!(temporal_trace(true, &actions), Ok(vec![]));
+
+    // 完了の後の取込みで完了の評価額を書き換えない
+    let mut world = TemporalWorld::new(true);
+    for action in [Start, Count, Close, Complete] {
+        assert_eq!(world.act(action), None);
+    }
+    let stocktake_id = world.stocktake.unwrap();
+    let total = |world: &TemporalWorld| {
+        stocktake_service::get_stocktake_record(world.world.conn(), stocktake_id)
+            .unwrap()
+            .total_cost
+    };
+    let before = total(&world);
+    assert_eq!(world.act(ImportHeld), None);
+    assert_eq!(world.copy(), (8, false, None));
+    assert_eq!(total(&world), before);
 }

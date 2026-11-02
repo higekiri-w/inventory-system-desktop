@@ -83,6 +83,12 @@ run_check() {
     (cd "$repo" && bash "$CHECK_SCRIPT" 2>&1)
 }
 
+# D-145 (5): active packets are measured from origin/main; the fixtures' main starts at "base".
+base_commit() {
+    commit_all "$1" "base" > /dev/null
+    git -C "$1" update-ref refs/remotes/origin/main HEAD
+}
+
 # 旧 state-only 系 subject の commit を作る（T-G5 / T-G6 用）。差分がないと
 # `git commit` が失敗するため、ダミーのログファイルへの追記を伴わせる。
 state_only_commit() {
@@ -110,12 +116,12 @@ capture_check() {
 repo="$tmp/pk5-ancestry-ok"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
 
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 
 printf 'impl\n' > "$repo/impl.txt"
@@ -131,13 +137,13 @@ assert_not_contains "$output" "PK5:" "ancestry 正例で PK5 出力が発生し�
 repo="$tmp/pk5-squash-negative"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 git -C "$repo" branch feature
 
 git -C "$repo" switch -q feature
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 printf 'impl\n' > "$repo/impl.txt"
 commit_all "$repo" "feat: implement" > /dev/null
@@ -156,12 +162,12 @@ assert_contains "$output" "は現在の HEAD の祖先ではありません" "sq
 repo="$tmp/pk5-rewrite"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
 
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 b_sha="$(commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める")"
 
 printf 'impl\n' > "$repo/impl.txt"
@@ -169,7 +175,7 @@ commit_all "$repo" "feat: implement" > /dev/null
 
 # 不正な書き換え: original を b_sha に差し替える（b_sha 自体は HEAD の祖先なので
 # ancestry 検査だけでは検出できず、rewrite 検出が唯一の網であることを確認する）
-write_packet "$repo" "packet.md" "$b_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$b_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を修正" > /dev/null
 
 capture_check "$repo" output
@@ -183,18 +189,18 @@ assert_not_contains "$output" "は現在の HEAD の祖先ではありません"
 repo="$tmp/pk5-amendments-ok"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
 
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 
 printf 'impl\n' > "$repo/impl.txt"
 c_sha="$(commit_all "$repo" "feat: implement")"
 
-write_packet "$repo" "packet.md" "$a_sha" "$c_sha"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$c_sha"
 commit_all "$repo" "docs(plans): gated amendment を記録" > /dev/null
 
 capture_check "$repo" output
@@ -204,11 +210,11 @@ assert_not_contains "$output" "PK5:" "Amendments 正例で PK5 出力が発生�
 # MG-D5 / F1: two amendments retain their order; only token separators may differ.
 printf 'second amendment\n' >> "$repo/impl.txt"
 d_sha="$(commit_all "$repo" 'feat: second amendment')"
-write_packet "$repo" "packet.md" "$a_sha" "$c_sha, $d_sha"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$c_sha, $d_sha"
 commit_all "$repo" 'docs(plans): append second amendment' > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -eq 0 ]] || fail "ordered amendment append rejected: $output"
-write_packet "$repo" "packet.md" "$a_sha" "  $c_sha  ,   $d_sha  "
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "  $c_sha  ,   $d_sha  "
 valid_amendments_head="$(commit_all "$repo" 'docs(plans): amendment separators only')"
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -eq 0 ]] || fail "amendment formatting change rejected: $output"
@@ -222,7 +228,7 @@ for variant in reorder replacement removal spelling; do
         removal) changed="$c_sha" ;;
         spelling) changed="${c_sha:0:12}, $d_sha" ;;
     esac
-    write_packet "$repo" "packet.md" "$a_sha" "$changed"
+    write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$changed"
     commit_all "$repo" "docs(plans): invalid amendment $variant" > /dev/null
     capture_check "$repo" output
     [[ "$CHECK_STATUS" -ne 0 ]] || fail "amendment $variant was accepted"
@@ -232,7 +238,7 @@ done
 git -C "$repo" switch -q --detach "$valid_amendments_head"
 
 # MG-D5 / S-P3-1: recorded amendment removal fails even though every remaining SHA is ancestral.
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): remove recorded amendment" > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -ne 0 ]] || fail "registered amendment removal was accepted"
@@ -247,10 +253,10 @@ sha40_repo() {
     repo="$tmp/pk5-sha40-$1"
     init_repo "$repo"
     printf 'base\n' > "$repo/README.md"
-    commit_all "$repo" "base" > /dev/null
-    write_packet "$repo" "packet.md" "pending" "none"
+    base_commit "$repo"
+    write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
     a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-    write_packet "$repo" "packet.md" "$a_sha" "none"
+    write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
     commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
     printf 'impl\n' > "$repo/impl.txt"
     c_sha="$(commit_all "$repo" "feat: implement")"
@@ -258,7 +264,7 @@ sha40_repo() {
 
 # T3-1
 sha40_repo short
-write_packet "$repo" "packet.md" "$a_sha" "${c_sha:0:8}"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "${c_sha:0:8}"
 commit_all "$repo" "docs(plans): short amendment" > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -ne 0 ]] || fail "PK5-SHA40: short Amendments accepted: $output"
@@ -270,7 +276,7 @@ sha40_repo malformed
 sha40_valid_head="$(git -C "$repo" rev-parse HEAD)"
 for token in "${c_sha}0" "${c_sha^^}" "abc1234"; do
     git -C "$repo" switch -qc "malformed-${token:0:3}-${#token}" "$sha40_valid_head"
-    write_packet "$repo" "packet.md" "$a_sha" "${token},"
+    write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "${token},"
     commit_all "$repo" "docs(plans): malformed amendment" > /dev/null
     capture_check "$repo" output
     [[ "$CHECK_STATUS" -ne 0 ]] || fail "PK5-SHA40: malformed Amendments token '$token' accepted: $output"
@@ -280,7 +286,7 @@ echo "PASS: PK5-SHA40: malformed Amendments token"
 
 # T3-3
 sha40_repo duplicate
-write_packet "$repo" "packet.md" "$a_sha" "$c_sha, $c_sha"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$c_sha, $c_sha"
 commit_all "$repo" "docs(plans): duplicate amendment" > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -ne 0 ]] || fail "PK5-SHA40: duplicate Amendments accepted: $output"
@@ -291,10 +297,10 @@ echo "PASS: PK5-SHA40: duplicate Amendments"
 repo="$tmp/pk5-sha40-short-plan"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
-write_packet "$repo" "packet.md" "pending" "none"
+base_commit "$repo"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-write_packet "$repo" "packet.md" "${a_sha:0:8}" "none"
+write_packet "$repo" "2026-01-01-packet.md" "${a_sha:0:8}" "none"
 commit_all "$repo" "docs(plans): short Plan Commit" > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -ne 0 ]] || fail "PK5-SHA40: short Plan Commit accepted: $output"
@@ -302,7 +308,7 @@ assert_contains "$output" "Plan Commit '${a_sha:0:8}' $SHA40_MSG" "PK5-SHA40: sh
 # 書式の ERROR の後も Amendments の照合へ進む（set -u の下で落ちない）
 printf 'impl\n' > "$repo/impl.txt"
 c_sha="$(commit_all "$repo" "feat: implement")"
-write_packet "$repo" "packet.md" "${a_sha:0:8}" "$c_sha"
+write_packet "$repo" "2026-01-01-packet.md" "${a_sha:0:8}" "$c_sha"
 commit_all "$repo" "docs(plans): amendment after short Plan Commit" > /dev/null
 capture_check "$repo" output
 [[ "$CHECK_STATUS" -ne 0 ]] || fail "PK5-SHA40: short Plan Commit with an amendment accepted: $output"
@@ -317,13 +323,13 @@ echo "PASS: PK5-SHA40: short Plan Commit"
 repo="$tmp/pk5-rebase-map-ignored"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 git -C "$repo" branch feature
 
 git -C "$repo" switch -q feature
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 old_plan_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-write_packet "$repo" "packet.md" "$old_plan_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$old_plan_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 printf 'impl\n' > "$repo/impl.txt"
 commit_all "$repo" "feat: implement" > /dev/null
@@ -338,7 +344,7 @@ old_patch_id="$(git -C "$repo" show --pretty=format: --binary "$old_plan_sha" | 
 new_patch_id="$(git -C "$repo" show --pretty=format: --binary "$new_plan_sha" | git patch-id --stable | awk '{print $1}')"
 [[ -n "$old_patch_id" && "$old_patch_id" == "$new_patch_id" ]] || fail "T-G2 fixture: rebase 前後の plan-first が patch-id 同値でない"
 
-append_rebase_map "$repo" "packet.md" "$old_plan_sha" "$new_plan_sha"
+append_rebase_map "$repo" "2026-01-01-packet.md" "$old_plan_sha" "$new_plan_sha"
 commit_all "$repo" "docs(plans): rebase map を記録" > /dev/null
 
 capture_check "$repo" output
@@ -351,15 +357,15 @@ assert_contains "$output" "は現在の HEAD の祖先ではありません" "Re
 repo="$tmp/pk5-amendments-non-descendant"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 
 git -C "$repo" branch plan-branch
 git -C "$repo" branch unrelated-branch
 
 git -C "$repo" switch -q plan-branch
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 
 git -C "$repo" switch -q unrelated-branch
@@ -371,7 +377,7 @@ git -C "$repo" merge -q --no-edit plan-branch > /dev/null
 git -C "$repo" merge -q --no-edit unrelated-branch > /dev/null
 
 # unrelated-branch の U は main の祖先だが、plan-branch の A の子孫ではない
-write_packet "$repo" "packet.md" "$a_sha" "$u_sha"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$u_sha"
 commit_all "$repo" "docs(plans): gated amendment を記録" > /dev/null
 
 capture_check "$repo" output
@@ -385,9 +391,9 @@ assert_not_contains "$output" "は現在の HEAD の祖先ではありません"
 repo="$tmp/pk5-amendments-not-in-head"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
 
 git -C "$repo" switch -qc side-branch
@@ -395,7 +401,7 @@ printf 'side\n' > "$repo/side.txt"
 s_sha="$(commit_all "$repo" "feat: side amendment")"
 git -C "$repo" switch -q main
 
-write_packet "$repo" "packet.md" "$a_sha" "$s_sha"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "$s_sha"
 commit_all "$repo" "docs(plans): gated amendment を記録" > /dev/null
 
 capture_check "$repo" output
@@ -409,8 +415,8 @@ assert_not_contains "$output" "の descendant ではありません" "非 ancest
 repo="$tmp/pk5-pending-skip"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
-write_packet "$repo" "packet.md" "pending" "none"
+base_commit "$repo"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 commit_all "$repo" "docs(plans): plan-draft" > /dev/null
 
 capture_check "$repo" output
@@ -436,9 +442,9 @@ init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
 base_sha="$(commit_all "$repo" "base")"
 git -C "$repo" update-ref refs/remotes/origin/main "$base_sha"
-write_packet "$repo" "packet.md" "pending" "none"
+write_packet "$repo" "2026-01-01-packet.md" "pending" "none"
 a_sha="$(commit_all "$repo" "docs(plans): plan-first")"
-write_packet "$repo" "packet.md" "$a_sha" "none"
+write_packet "$repo" "2026-01-01-packet.md" "$a_sha" "none"
 commit_all "$repo" "docs(plans): Plan Commit を確定して implementing へ進める" > /dev/null
 add_retired_subject_commits "$repo"
 
@@ -468,7 +474,7 @@ assert_not_contains "$output" "STATECAP" "packet 0 件で STATECAP 出力が発�
 repo="$tmp/pk5-diff-scope"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
-commit_all "$repo" "base" > /dev/null
+base_commit "$repo"
 git -C "$repo" switch -qc lane-x
 write_packet "$repo" "2026-01-01-x.md" "pending" "none"
 x_plan="$(commit_all "$repo" "docs(plans): X plan-first")"
@@ -499,30 +505,38 @@ run_scoped "$main_sha"
 git -C "$repo" update-ref refs/remotes/origin/main "$main_sha"
 run_scoped ""
 [[ "$CHECK_STATUS" -eq 0 ]] || fail "D4 (a2): env-unset origin/main route checked the merged packet: $output"
-# (a3) the start point resolves but `git diff` fails: every packet is checked (fail-closed)
-fail_diff_bin="$tmp/fail-diff-bin"
-mkdir -p "$fail_diff_bin"
-printf '#!/usr/bin/env bash\n[[ "${1:-}" == diff ]] && exit 128\nexec %q "$@"\n' "$(command -v git)" > "$fail_diff_bin/git"
-chmod +x "$fail_diff_bin/git"
+# (a3) PH6 (rewritten from "every packet is checked"): the origin tree cannot be read -> ERROR naming the reason,
+# never a fall back to every packet.
+fail_tree_bin="$tmp/fail-tree-bin"
+mkdir -p "$fail_tree_bin"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" == ls-tree ]] && exit 128\nexec %q "$@"\n' "$(command -v git)" > "$fail_tree_bin/git"
+chmod +x "$fail_tree_bin/git"
 set +e
-output="$(cd "$repo" && env -u WORKFLOW_BASE_SHA PATH="$fail_diff_bin:$PATH" bash "$CHECK_SCRIPT" 2>&1)"
+output="$(cd "$repo" && env -u WORKFLOW_BASE_SHA PATH="$fail_tree_bin:$PATH" bash "$CHECK_SCRIPT" 2>&1)"
 CHECK_STATUS=$?
 set -e
-[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (a3): failed diff was treated as an empty scope: $output"
-assert_contains "$output" "$x_packet の Plan Commit" "D4 (a3): merged packet not checked after a failed diff"
-# (d) no start point: every packet is checked
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (a3): unreadable origin tree was treated as an empty scope: $output"
+assert_contains "$output" "active な packet を決められない" "D4 (a3): reason missing"
+assert_not_contains "$output" "$x_packet の Plan Commit" "D4 (a3): fell back to every packet"
+# (d) PH6 (rewritten): no start point -> ERROR that names it (not every packet).
 git -C "$repo" update-ref -d refs/remotes/origin/main
 run_scoped ""
-[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (d): unresolved start point skipped the merged packet"
-assert_contains "$output" "$x_packet の Plan Commit" "D4 (d): merged packet not checked without a start point"
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (d): unresolved start point passed"
+assert_contains "$output" "起点を解決できない" "D4 (d): reason missing"
+assert_not_contains "$output" "$x_packet の Plan Commit" "D4 (d): fell back to every packet"
 git -C "$repo" update-ref refs/remotes/origin/main "$main_sha"
-# (b) the branch rewrites the merged packet: it becomes a target
+# (b) AR5 (rewritten from "a touched merged packet is a PK5 target"): a typo fix in a merged packet passes even
+# though its squashed Plan Commit is not ancestral; rewriting its Workflow State is an ERROR.
 git -C "$repo" switch -qc lane-y-touches-x "$y_head"
-printf '\nedited by another lane\n' >> "$repo/$x_packet"
-commit_all "$repo" "docs(plans): touch X" > /dev/null
+printf '\n## Scope\n\nedited by another lane\n' >> "$repo/$x_packet"
+commit_all "$repo" "docs(plans): typo in X" > /dev/null
 run_scoped ""
-[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (b): rewriting a merged packet escaped PK5"
-assert_contains "$output" "$x_packet の Plan Commit" "D4 (b): touched merged packet reason missing"
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "D4 (b) AR5: body fix of a merged packet rejected: $output"
+sed -i 's/^- Amendments: none$/- Amendments: '"$y_plan"'/' "$repo/$x_packet"
+commit_all "$repo" "docs(plans): rewrite X's record" > /dev/null
+run_scoped ""
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (b) AR5: rewritten Workflow State of a merged packet accepted"
+assert_contains "$output" "merge 済みの packet の Workflow State は書き換えない" "D4 (b) AR5: reason missing"
 # (c) own packet whose Plan Commit is not ancestral (rebased plan-first)
 git -C "$repo" switch -qc lane-z-old "$main_sha"
 write_packet "$repo" "2026-01-03-z.md" "pending" "none"
@@ -552,7 +566,7 @@ for name in '2026-01-04-日本語.md' '2026-01-05-"q".md'; do
     assert_contains "$output" "docs/plans/$name の Plan Commit" "D4 (c2): own packet reason missing for $name"
     assert_not_contains "$output" "$x_packet" "D4 (c2): merged packet checked with a start point"
 done
-# (f) criss-cross: two merge-bases between origin/main and HEAD check every packet
+# (f) PH6 (rewritten): criss-cross, two merge-bases between origin/main and HEAD -> ERROR naming it.
 git -C "$repo" switch -qc criss-p "$main_sha"
 printf 'p\n' > "$repo/p.txt"; p1="$(commit_all "$repo" "p1")"
 git -C "$repo" switch -qc criss-q "$main_sha"
@@ -563,23 +577,24 @@ git -C "$repo" merge -q --no-edit "$q1" > /dev/null
 git -C "$repo" update-ref refs/remotes/origin/main criss-q
 [[ "$(git -C "$repo" merge-base --all criss-q HEAD | wc -l)" -eq 2 ]] || fail "D4 (f) fixture: expected two merge-bases"
 run_scoped ""
-[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (f): ambiguous merge-base skipped the merged packet"
-assert_contains "$output" "$x_packet の Plan Commit" "D4 (f): merged packet not checked on criss-cross"
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "D4 (f): ambiguous merge-base passed"
+assert_contains "$output" "merge-base が一意でない" "D4 (f): reason missing"
+assert_not_contains "$output" "$x_packet の Plan Commit" "D4 (f): fell back to every packet"
 echo "PASS: PK5 diff scope"
 
 echo "PASS: workflow-git-checks"
 
-# T-G4: Evidence Mode 行は任意（あれば github だけ）。Phase は marker の有無に関わらず 8 値のどれか。
+# T-G4 / PH3 (rewritten): Evidence Mode 行は任意（あれば github だけ）。Phase の行の値は評価しない（D-145 (3)）。
 repo="$tmp/github-mode"
 init_repo "$repo"
 printf 'base\n' > "$repo/README.md"
 base_sha="$(commit_all "$repo" base)"
 git -C "$repo" update-ref refs/remotes/origin/main "$base_sha"
-write_packet "$repo" packet.md pending none
+write_packet "$repo" 2026-01-01-packet.md pending none
 plan_sha="$(commit_all "$repo" plan-first)"
-write_packet "$repo" packet.md "$plan_sha" none
+write_packet "$repo" 2026-01-01-packet.md "$plan_sha" none
 commit_all "$repo" implementation > /dev/null
-packet="$repo/docs/plans/packet.md"
+packet="$repo/docs/plans/2026-01-01-packet.md"
 capture_check "$repo" output
 [[ "$CHECK_STATUS" == 0 ]] || fail "markerless implementing packet rejected: $output"
 sed -i '/^- Phase:/i\- Evidence Mode: github' "$packet"
@@ -591,43 +606,30 @@ for marker in legacy mystery; do
     [[ "$CHECK_STATUS" != 0 ]] || fail "Evidence Mode: $marker accepted"
     assert_contains "$output" "Evidence Mode は廃止。書くなら github" "Evidence Mode: $marker reason missing"
 done
-sed -i 's/^- Evidence Mode:.*/- Evidence Mode: github/; s/^- Phase:.*/- Phase: local-verified/' "$packet"
+sed -i '/^- Evidence Mode:/d; s/^- Phase:.*/- Phase: local-verified/' "$packet"
 capture_check "$repo" output
-[[ "$CHECK_STATUS" != 0 ]] || fail "late tracked Phase accepted with marker"
-sed -i '/^- Evidence Mode:/d' "$packet"
-capture_check "$repo" output
-[[ "$CHECK_STATUS" != 0 ]] || fail "late tracked Phase accepted without marker"
-assert_contains "$output" "invalid tracked Phase" "markerless late Phase reason missing"
+[[ "$CHECK_STATUS" == 0 ]] || fail "PH3: a Phase value outside the old enum was evaluated: $output"
 sed -i '/^- Phase:/d' "$packet"
 capture_check "$repo" output
-[[ "$CHECK_STATUS" != 0 ]] || fail "packet without Phase accepted"
+[[ "$CHECK_STATUS" == 0 ]] || fail "PH3: a packet without Phase was rejected by the git check: $output"
 sed -i '/^## Workflow State/a\\n- Phase: implementing' "$packet"
-capture_check "$repo" output
-[[ "$CHECK_STATUS" == 0 ]] || fail "restored packet rejected: $output"
-echo "PASS: workflow state marker and phase"
+echo "PASS: workflow state marker; Phase not evaluated"
 
-# D-102 D4: Phase / Evidence Mode are read only from the first `## Workflow State` h2 section.
-printf '%s\n' '' '## Scope' '' '- Phase: 本文の箇条' '- Evidence Mode: legacy の語' >> "$packet"
+# D-102 D4: Evidence Mode is read only from the first `## Workflow State` h2 section.
+printf '%s\n' '' '## Notes' '' '- Evidence Mode: legacy の語' >> "$packet"
 capture_check "$repo" output
 [[ "$CHECK_STATUS" == 0 ]] || fail "body bullets outside Workflow State were read: $output"
-echo "PASS: body bullets outside Workflow State are ignored"
-sed -i '/^- Phase: implementing$/d; s/^- Phase: 本文の箇条$/- Phase: implementing/; /^- Evidence Mode: legacy の語$/d' "$packet"
-capture_check "$repo" output
-[[ "$CHECK_STATUS" != 0 ]] || fail "Phase outside Workflow State was counted"
-assert_contains "$output" "invalid tracked Phase" "Phase outside Workflow State reason missing"
-echo "PASS: Phase outside Workflow State does not count"
-sed -i '/^- Phase: implementing$/d' "$packet"
-sed -i '/^## Workflow State/a\\n- Phase: implementing' "$packet"
-capture_check "$repo" output
-[[ "$CHECK_STATUS" == 0 ]] || fail "restored packet rejected after D4 scenarios: $output"
 cp "$packet" "$tmp/d4-packet.md"
-sed -i '/^- Phase: implementing$/d' "$packet"
-sed -i 's/^## Scope$/## Workflow State\n\n- Phase: implementing\n\n## Scope/' "$packet"
+sed -i 's/^## Notes$/## Workflow State\n\n- Evidence Mode: legacy\n\n## Notes/' "$packet"
 capture_check "$repo" output
-[[ "$CHECK_STATUS" != 0 ]] || fail "Phase in a second Workflow State section was counted"
-assert_contains "$output" "invalid tracked Phase" "second Workflow State section reason missing"
-echo "PASS: only the first Workflow State section is read"
+# Final review C1 (rewritten): two Workflow State sections are ambiguous for the approval judgement (the helper's rule),
+# and the second section's Evidence Mode is still not what stops it.
+[[ "$CHECK_STATUS" != 0 ]] || fail "two Workflow State sections were accepted"
+assert_contains "$output" "missing/ambiguous" "ambiguous Workflow State reason missing"
+assert_not_contains "$output" "Evidence Mode は廃止" "Evidence Mode in a second Workflow State section was counted"
+echo "PASS: a second Workflow State section is ambiguous, its Evidence Mode is not read"
 cp "$tmp/d4-packet.md" "$packet"
+commit_all "$repo" "restore" > /dev/null
 
 # MG-D4: a real shallow clone must fail, even if its visible tip looks consistent.
 shallow="$tmp/shallow"
@@ -643,6 +645,101 @@ git -C "$shallow" config user.email test@example.invalid
 empty_tree="$(git -C "$shallow" mktree < /dev/null)"
 complete_root="$(printf 'complete root\n' | git -C "$shallow" commit-tree "$empty_tree")"
 git -C "$shallow" switch -q --detach "$complete_root"
+# D-145 (5): the active origin is this complete target itself (no lane commits); the shallow main stays elsewhere.
+git -C "$shallow" update-ref refs/remotes/origin/main "$complete_root"
 capture_check "$shallow" output
 [[ "$CHECK_STATUS" == 0 ]] || fail "unrelated shallow marker rejected complete target: $output"
 echo "PASS: unrelated shallow boundary excluded"
+
+# ============================================================================
+# D-145 (3) H2: 計画の承認の前の実装を止める（PH4・PH5・PH8・PH9）。AR5: archive への移動は受ける。
+# ============================================================================
+early_repo() {
+    repo="$tmp/early-$1"
+    init_repo "$repo"
+    printf 'base\n' > "$repo/README.md"
+    base_commit "$repo"
+    write_packet "$repo" "2026-02-01-lane.md" "pending" "none"
+    plan_sha="$(commit_all "$repo" "docs(plans): plan-first")"
+}
+# PH4: pending + implementation (each code kind, and scripts/** / .github/** by path) -> ERROR naming it.
+for change in "src/app.ts:frontend" "src-tauri/src/x.rs:rust" ".env.example:env" "weird/x.bin:unknown" \
+              "scripts/tool.sh:scripts/tool.sh" ".github/pull_request_template.md:.github/pull_request_template.md"; do
+    path="${change%%:*}"; reason="${change#*:}"
+    early_repo "ph4-${path//\//-}"
+    mkdir -p "$repo/$(dirname "$path")"; printf 'x\n' > "$repo/$path"
+    commit_all "$repo" "feat: early" > /dev/null
+    capture_check "$repo" output
+    [[ "$CHECK_STATUS" -ne 0 ]] || fail "PH4: implementation before approval accepted ($path)"
+    assert_contains "$output" "計画の承認の前の実装" "PH4: reason missing ($path)"
+    assert_contains "$output" "$reason" "PH4: kind/path not named ($path)"
+done
+echo "PASS: PH4"
+# PH5: pending + docs and the packet only -> passes (plan-first is never stopped).
+early_repo ph5
+printf 'design\n' > "$repo/docs-design.md"; mkdir -p "$repo/docs"; printf 'spec\n' > "$repo/docs/spec.md"
+commit_all "$repo" "docs: design" > /dev/null
+capture_check "$repo" output
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "PH5: docs-only plan-first stopped: $output"
+echo "PASS: PH5"
+# PH8: after approval the same implementation passes.
+early_repo ph8
+write_packet "$repo" "2026-02-01-lane.md" "$plan_sha" "none"
+commit_all "$repo" "docs(plans): Plan Commit を固定する" > /dev/null
+mkdir -p "$repo/src"; printf 'x\n' > "$repo/src/app.ts"; commit_all "$repo" "feat: after approval" > /dev/null
+capture_check "$repo" output
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "PH8: implementation after approval stopped: $output"
+echo "PASS: PH8"
+# PH9: WORKFLOW_BASE_SHA empty or = HEAD falls back to origin/main; origin/main = HEAD means no lane commit (0 active).
+early_repo ph9
+mkdir -p "$repo/src"; printf 'x\n' > "$repo/src/app.ts"; head_sha="$(commit_all "$repo" "feat: early")"
+set +e
+output="$(cd "$repo" && WORKFLOW_BASE_SHA="$head_sha" bash "$CHECK_SCRIPT" 2>&1)"; CHECK_STATUS=$?
+set -e
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "PH9: dispatch (env = HEAD) skipped the lane packet"
+assert_contains "$output" "計画の承認の前の実装" "PH9: dispatch fallback reason missing"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+set +e
+output="$(cd "$repo" && WORKFLOW_BASE_SHA="$head_sha" bash "$CHECK_SCRIPT" 2>&1)"; CHECK_STATUS=$?
+set -e
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "PH9: main checkout (origin/main = HEAD) was not 0 active: $output"
+assert_contains "$output" "active な packet 0 件" "PH9: 0 active not reported"
+echo "PASS: PH9"
+# AR5: a merged packet moved to docs/archive/plans (the #215 shape) passes; the active packet keeps PK5.
+repo="$tmp/ar5-archive"
+init_repo "$repo"
+printf 'base\n' > "$repo/README.md"
+commit_all "$repo" "base" > /dev/null
+write_packet "$repo" "2026-01-01-x.md" "pending" "none"
+x_plan="$(commit_all "$repo" "X plan-first")"
+write_packet "$repo" "2026-01-01-x.md" "$x_plan" "none"
+commit_all "$repo" "X approved" > /dev/null
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" switch -qc closeout
+mkdir -p "$repo/docs/archive/plans"
+git -C "$repo" mv docs/plans/2026-01-01-x.md docs/archive/plans/2026-01-01-x.md
+sed -i 's/^- Phase: .*/- Phase: archive/' "$repo/docs/archive/plans/2026-01-01-x.md"
+commit_all "$repo" "docs: closeout X" > /dev/null
+capture_check "$repo" output
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "AR5: archive move rejected: $output"
+echo "PASS: AR5"
+
+# Final review C1: after approval, the plan sections must equal the latest approved snapshot (or register --amend).
+repo="$tmp/plan-drift"
+init_repo "$repo"
+printf 'base\n' > "$repo/README.md"
+base_commit "$repo"
+write_packet "$repo" "2026-02-02-drift.md" "pending" "none"
+printf '\n## Scope\n\n- reviewed item\n' >> "$repo/docs/plans/2026-02-02-drift.md"
+plan_sha="$(commit_all "$repo" "docs(plans): plan-first")"
+sed -i "s/^- Plan Commit: pending$/- Plan Commit: $plan_sha/; s/^- Phase: plan-gate$/- Phase: implementing/" "$repo/docs/plans/2026-02-02-drift.md"
+commit_all "$repo" "docs(plans): Plan Commit を固定する" > /dev/null
+capture_check "$repo" output
+[[ "$CHECK_STATUS" -eq 0 ]] || fail "C1: unchanged plan after approval rejected: $output"
+printf -- '- unreviewed item\n' >> "$repo/docs/plans/2026-02-02-drift.md"
+commit_all "$repo" "docs(plans): widen scope silently" > /dev/null
+capture_check "$repo" output
+[[ "$CHECK_STATUS" -ne 0 ]] || fail "C1: plan change after approval accepted"
+assert_contains "$output" "計画の節が承認の後に変わった" "C1: reason missing"
+assert_contains "$output" "plan-approve.sh docs/plans/2026-02-02-drift.md --amend" "C1: next step missing"
+echo "PASS: C1 plan change after approval"

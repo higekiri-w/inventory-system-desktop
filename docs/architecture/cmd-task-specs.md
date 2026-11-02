@@ -1,8 +1,8 @@
 # タスク仕様（CMD層）
 
-## 計数の置き場と在庫の求め直しの契約（proposed・未実装、D-118。(a) は command を足さない）
+## 計数の置き場と在庫の求め直しの契約（D-118。b1 で実装済み。(a) は command を足さない）
 
-SPEC-STK-CNT-D4〜D6（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）は command の名前と引数を変えず、CMD-11 の `run_integrity_check`・`fix_integrity` の戻り値の型（[36](../function-design/36-biz-integrity-check.md)）だけが変わった。以下は (b)。CMD-10 は [42](../function-design/42-cmd-sales-stocktake.md) の `save_stock_count` / `preview_stock_count_placement` / `zero_uncounted_items` / `list_recheck_products` を足し、無検査の update_count の公開登録を外す。CMD-07 は [41](../function-design/41-cmd-pos.md) の知らせと要再確認の一覧を透過し、Z004 では追加確認の入力を使わない。CMD は PC の今日を BIZ へ渡し、業務条件を置かない。共通の回復 payload は [40](../function-design/40-cmd-product.md)。tauri / specta 属性・collect_commands・bindings・全 caller の同期は runtime で行い、この docs の同期では生成しない。旧 ADR（時点証拠）の token・context の保管・DB 世代・準備照会は置き換えた。
+SPEC-STK-CNT-D4〜D6（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）は command の名前と引数を変えず、CMD-11 の `run_integrity_check`・`fix_integrity` の戻り値の型（[36](../function-design/36-biz-integrity-check.md)）だけが変わった。以下は b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入った。CMD-10 は [42](../function-design/42-cmd-sales-stocktake.md) の `save_stock_count` / `preview_stock_count_placement` / `zero_uncounted_items` / `list_recheck_products` を足し、無検査の数の上書きの command の公開登録を外した。CMD-07 は [41](../function-design/41-cmd-pos.md) の知らせと要再確認の一覧を透過し、Z004 では追加確認の入力を使わない。CMD は PC の今日を BIZ へ渡し、業務条件を置かない。共通の回復 payload は [40](../function-design/40-cmd-product.md)。tauri / specta 属性・collect_commands・bindings・全 caller の同期は b1 で同じ PR に入れた。旧 ADR（時点証拠）の token・context の保管・DB 世代・準備照会は置き換えた。
 
 > **親文書**: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
@@ -24,6 +24,8 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | revise_product_price | PriceRevisionInput（product_code, new_selling_price, new_cost_price_centi, assign_supplier_id?） | BIZ-01 行単位価格改定 | PriceRevisionResult（product_code, changed, plu_dirty_set, supplier_assigned） |
 | create_supplier | name | BIZ-01 取引先（メーカー/ブランド）追加 | Supplier（同名は既存行） |
 | list_price_history | product_code, limit | BIZ-01 価格履歴参照 | PriceHistoryEntry[]（DESC、既定10・上限100） |
+
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`search_products`（`src-tauri/src/cmd/product_cmd.rs`）の入力 `ProductSearchQuery`（`src-tauri/src/db/product_repo.rs`）が PLU の絞り込み `plu`（`PluMigrationFilter`）を持ち、絞り込みに一致する全件の PLU 対象を一括で変える `bulk_set_plu_target`（`src-tauri/src/cmd/product_cmd.rs`。入力は `ProductBulkFilter` と `plu_target`、[40](../function-design/40-cmd-product.md) CMD-01-D4。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### CMD-02: 入庫コマンド群
 
@@ -58,7 +60,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 |-----------|------|-----------|------|
 | get_stock_detail | product_code | BIZ-01 在庫詳細 | StockDetail（stock_quantity, selling_price, cost_price_centi, last_receiving_date, last_sale_date） |
 | list_low_stock | LowStockQuery（include_discontinued?） | BIZ-01 在庫少一覧 | LowStockList（items[]） |
-| list_movements | MovementQuery（product_code, date_from?, date_to?, movement_type?） | BIZ-02 在庫変動履歴 | MovementList（items[], total_count） |
+| list_movements | MovementQuery（product_code, date_from?, date_to?〈業務日〉, movement_type?, page, per_page） | BIZ-02 在庫変動履歴（movement と計数の合成） | PaginatedResult<StockHistoryItem>（items[]〈movement か計数の行〉, total_count, page, per_page。[44](../function-design/44-cmd-inventory.md)） |
 
 ### CMD-07: Z004商品別CSV取込みコマンド群
 
@@ -67,6 +69,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | parse_and_validate_csv | FileBytes, filename | BIZ-03 Stage1+2 | ParseValidateResult（preview_data, preview_token） |
 | commit_csv_import | CommitRequest（preview_token, additional_import_confirmed） | BIZ-03 Stage4 | ImportResult（csv_import_id, status, total_items, skipped_count） |
 | rollback_csv_import | csv_import_id | BIZ-03 ロールバック | RollbackResult（success, voided_sale_count, stock_corrections） |
+| preview_rollback_csv_import | csv_import_id | BIZ-03 取消の前の読取り（取消を TX で当てて戻す。何も書かない） | RollbackPreview（csv_import_id, settlement_no, recheck_targets, affected_stocktakes） |
 | list_csv_imports | ListQuery（page, per_page） | BIZ-03経由 | PaginatedResult\<CsvImport\> |
 
 ### CMD-12: 日報取込みコマンド群
@@ -95,6 +98,8 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | confirm_plu_export_saved | product_codes[], prepared_rows[memory_no] | BIZ-04 | PluExportConfirmResult（updated_count, confirmed_at） |
 | list_plu_dirty | なし | BIZ-04経由 | Vec\<ProductResponse\>（plu_target=1 かつ plu_dirty=1 の商品一覧。D-028） |
 
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`get_plu_slot_summary` が件数の要約（`src-tauri/src/biz/plu_export_service.rs` の `PluRegisterSnapshotSummary`。`free_count`・`release_pending_count` ほか）を返し、`prepare_plu_export` の結果（同じ file の `PluExportPreparedResult` と `src-tauri/src/cmd/plu_export_cmd.rs` の `PluExportPrepareResponse`）が `over_limit_warning` を持ち、利用者が選ぶ Z004 で占有を照合する `import_plu_register_snapshot`（`src-tauri/src/cmd/plu_export_cmd.rs`。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。CMD-12 の `scan_register_sd` はまだ無い。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
+
 ### CMD-09: 売上集計コマンド群
 
 | コマンド名 | 入力 | 呼び出すBIZ | 出力 |
@@ -109,8 +114,11 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 |-----------|------|-----------|------|
 | start_stocktake | なし | BIZ-06 開始 | Result（stocktake_id） |
 | get_stocktake_items | StocktakeQuery（stocktake_id, department_id?, counted_only?, page） | BIZ-06 棚卸しアイテム一覧 | StocktakeItemList（items[], progress{counted, total}） |
-| update_count | UpdateCountRequest（stocktake_item_id, actual_count） | BIZ-06 カウント | Result（success, difference） |
-| complete_stocktake | stocktake_id, force_fill | BIZ-06 確定 | StocktakeResult（total_cost, adjusted_items[]） |
+| save_stock_count | SaveStockCountRequest（product_code, count_value, fresh, business_date, stocktake_item_id?） | BIZ-06 計数の保存 | StockCountSaveResult（D-118 の b1。42） |
+| preview_stock_count_placement | product_code, business_date | BIZ-06 後入力の確認と計数の欄の文脈 | CountPlacementPreview |
+| zero_uncounted_items | stocktake_id, product_codes, business_date | BIZ-06 0 にする | StockCountSaveResult[] |
+| list_recheck_products | なし | BIZ-06 要再確認の一覧 | CountRecoveryTarget[] |
+| complete_stocktake | stocktake_id | BIZ-06 確定 | StocktakeResult（total_cost, total_items, integrity_result）。拒否は `stocktake_guard`（completion_blocked） |
 
 ### CMD-11: 設定・ログコマンド群
 

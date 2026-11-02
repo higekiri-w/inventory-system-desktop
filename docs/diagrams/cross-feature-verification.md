@@ -51,7 +51,7 @@
 - 通常の業務操作について、有限の操作集合から順序付きの組合せを作り、その前後に同日追加取込み・取消・再送・拒否・再接続を組み合わせる。無限の状態空間を網羅したとは主張しない。
 - 最初に期待と異なった操作までのprefix、期待値、実値を失敗出力へ残す。これは最初の失敗prefixであり、全ての操作削除候補から求めた最小反例とは呼ばない。
 - 接続を閉じて同じ合成DBへ再接続する検証はDB永続化の確認であり、Tauriの再起動やCMDのpreview cache失効の検証とは区別する。
-- 棚卸しの開始・カウント・確定と商品別CSVの確定・取消は現行 build で停止している（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md)）。停止後の harness は 5 入口の旧本体 `legacy_start_stocktake` / `legacy_update_count` / `legacy_complete_stocktake` / `legacy_commit_csv_import` / `legacy_rollback_csv_import` を呼び、XFA-D2 の診断は停止の拒否ではなく旧本体で既知の不具合を再現し続ける。停止の拒否で STK-1 / STK-2 を解消扱いにしない。
+- 棚卸しと商品別CSVの書く操作の停止（[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md)、superseded）は D-118 の b1 で外した。harness は新しい経路（計数の保存・完了・Z004 の確定と取消）を呼ぶ。STK-1・STK-2 の診断 2 本は、新しい経路で PASS する通常の回帰 test（`test_cross_feature_req205_count_then_movement_is_kept`・`test_cross_feature_req205_req401_late_import_not_double_counted`）に移した（XFA-D4 の「修正が採用された際は通常の回帰テストへ移す」）。
 
 ### XFA-D4: 通常テストと診断の判定
 
@@ -148,7 +148,9 @@ cargo test --offline --lib cross_feature_tests -- --ignored --nocapture
 | カウント後の入庫/販売/廃棄/返品/取込み→確定 | FAIL | 下記XFA-T1。確定は成功し、その後の数量比較で失敗 |
 | POS販売→カウント→確定→遅いCSV取込み | FAIL | 下記XFA-T2。取込みも成功し、その後の数量比較で失敗 |
 
-### XFA-T1: 保存した実数が後続の現物移動を打ち消す
+### XFA-T1: 保存した実数が後続の現物移動を打ち消す（D-118 の b1 の前の結果）
+
+D-118 の b1 で計数の置き場（ADR D5）と求め直しに置き換え、下の不具合は通常の回帰 test で止める。以下は置き換える前の記録。
 
 初期在庫とカウントを10とした合成シナリオ。いずれも処理は成功し、数量の比較で失敗した。全ケースで内部整合性チェックは不整合0だった。
 
@@ -162,7 +164,9 @@ cargo test --offline --lib cross_feature_tests -- --ignored --nocapture
 
 [STK-1](../research/2026-09-16-diagram-audit.md#stk-1-カウント後の入出庫を棚卸し確定が打ち消す) を複数の入口から再現したもの。同じ失敗原因を別々の新規不具合として水増ししない。
 
-### XFA-T2: 棚卸しに含まれた過去の販売を遅いCSVが再度減算する
+### XFA-T2: 棚卸しに含まれた過去の販売を遅いCSVが再度減算する（D-118 の b1 の前の結果）
+
+D-118 の b1 で精算の窓（ADR D3）に置き換え、下の不具合は通常の回帰 test で止める。以下は置き換える前の記録。
 
 | 順序 | 出来事 | 現物モデル | アプリ在庫 |
 |---|---|---:|---:|

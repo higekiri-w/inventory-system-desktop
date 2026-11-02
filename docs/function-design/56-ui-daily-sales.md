@@ -23,7 +23,7 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 
 ### 56.1 概要
 
-`/reports/daily` route 配下に配置する読み取り専用ダッシュボード。SP-501-01〜07 + REQ-501 に直接対応する。SCREEN_DESIGN.md の主動線「CSV取込み完了 → 売上レポート確認」を成立させる。
+`/reports/daily` route 配下に配置する読み取り専用ダッシュボード。SP-501-01〜07 + REQ-501 に直接対応する。SCREEN_DESIGN.md の主要な画面間遷移「売上データ取込み完了 → 売上レポート」を成立させる。
 
 **REQ-401再設計後の表示領域**:
 
@@ -44,7 +44,7 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 - `official_daily_report === null` の場合は「この日付のレジ日報は未取込みです。」の軽量 note を表示し、画面全体 error や大きな EmptyState にはしない。
 - `official_daily_report` がある場合は、総売上 / 純売上、支払集計、部門別集計を表示する。支払行の `amount` は nullable のため「未取得」を許容し、部門行の `amount` は必須金額として表示する。
 - `official_daily_report.source_import_count` が1以上なら、公式セクションに `N回の取込みを合算` と表示する（N が 2 以上の日の文は UI-09a-D16 のとおり直す）。複数parentのgross/netまたは明細optional値がNULL安全側へ伝播した場合も「未取得」を維持し、0として見せない。
-- `official_daily_report.warnings` が非空の場合は、公式日報セクション内に warning トーンの注記（アイコン + テキスト）を表示する。注記の見出しは `日報の確認が必要です` にする（部門未対応と支払集計〈UI-09a-D16 の支払集計の段〉の warning を同じ注記に並べるため。proposed・未実装、D-120。今の `日報の部門確認が必要です` を置き換える）。上部 Alert 帯は取得失敗やデータ安全系状態に限定し、部門未対応 warning とは混ぜない。
+- `official_daily_report.warnings` が非空の場合は、公式日報セクション内に warning トーンの注記（アイコン + テキスト）を表示する。注記の見出しは `日報の確認が必要です` にする（部門未対応と支払集計〈UI-09a-D16 の支払集計の段〉の warning を同じ注記に並べるため。D-120。前の `日報の部門確認が必要です` を置き換えた）。上部 Alert 帯は取得失敗やデータ安全系状態に限定し、部門未対応 warning とは混ぜない。
 - official があり `items.length === 0` の場合、商品別明細セクションは「商品別明細は未取込み」と表示する。「売上なし」と誤読される文言は使わない。
 
 `UI-09a-D15`: 同日の複数active importは日報サマリ、商品別明細ともBIZ-05の加算済み結果を表示する（支払集計を足さない日は UI-09a-D16 の支払集計の段、D-120）。UIで最新1回へ絞らず、公式日報seriesと商品別seriesを互いに足さない。rollback後のrefetchでは残存active importのaggregateへ直ちに収束する。日計（Z001）の行は UI-09a-D16 のとおり取込みごとに並べ、合算しない。
@@ -64,7 +64,7 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 | 既存の部門の表の見出し | h3 | `部門別集計（Z005）` |
 | Z001 の表の列見出し | th | `名称` / `個数/件数` / `金額` |
 | 1 回の日の文 | 既存の `p` | `{N}回の取込みを合算`（既存のまま。例 `1回の取込みを合算`） |
-| 2 回以上の日の文 | 既存の `p` の文を置き換える | `総売上・純売上・支払集計・部門別集計は{N}回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。`（括弧の部分は D-120 で足す。proposed・未実装。下の支払集計の段） |
+| 2 回以上の日の文 | 既存の `p` の文を置き換える | `総売上・純売上・支払集計・部門別集計は{N}回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。`（括弧の部分は D-120 で足した。下の支払集計の段） |
 | 2 回以上の日の取込みごとの見出し | h4（`日計（Z001）` の h3 の下） | `{N}回目の取込み（取込み日時 {日時}）`。`{日時}` は `YYYY-MM-DD HH:mm`（例 `1回目の取込み（取込み日時 2026-03-21 18:05）`） |
 | 行の無い取込み | `p` | `この取込みの日計（Z001）の行はありません。` |
 | 値の無い欄 | td | `—` |
@@ -77,9 +77,9 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 - 同じ日に 2 回以上取り込んだ日（`source_import_count` が 2 以上）: `日計（Z001）` の h3 の下に、取込みごとの表を返された順（取込みの古い順）に並べ、各表の直前に取込みごとの h4 を置く。`{N}` はその日に表示中の取込みの中での古い順の番号で、レジの精算回数ではない（取り消した取込みは数えず、残りで振り直す）。`{日時}` は `imported_at` の秒を落として `T` を空白にした形（見出しとして読みやすさを優先する。秒までの取込み日時は、同じ日に追加で取り込むときの確認の dialog の既存分の表〈UI-07-D13〉で見える）。合算した表は出さない。文は上の表の 2 回以上の日の文にする。
 - 行が 0 件の取込み: 取込みの経路では作られない（完了した取込みは総売か純売の行を必ず持つ）が、`lines` が空なら、その取込みの位置（2 回以上の日は h4 の下、1 回の日は h3 の下）に表の代わりに上の表の文を出し、取込み自体は落とさない。
 - 変えないもの: 総売上 / 純売上の metric、部門別集計の合算と行、未取込みの note、部門未対応の warning の文、取得失敗の上部 Alert と再試行、商品別明細との分離（UI-09a-D12）、UI-09a-D15 の合算表示、前日の取得（`SummaryCardsBar` の前日比は日計を使わない）、日次 CSV 出力の列。
-- 支払集計の合算は、日報の紙と同じ規則（[34](34-biz-sales-service.md) SALES-SHEET-D2）に変える（proposed・未実装、D-120）。今と同じ行と値になる日の範囲と、範囲の外の日の値は 24 §14.21 手順 3 が持つ。精算の間で名称か並びが変わった日は、位置と名称ごとの行に分かれる（D2 の 2）。そのうえ 1 回の精算の中に同じ名称の行が 2 行以上ある日は、足さずに取込みの古い順に全行を並べる（D2 の 3。表の行と列は変えない。取込みの区切りは画面の表に出さず、3 の日の文が紙〈`日報を印刷`〉で取込みごとに見られると案内する）。2 の日と 3 の日は、BIZ-05 の `warnings` のその日の文（34 §19.3 手順 3。3 の日は 3 の文だけ）を既存の warning の注記として出し、使い手に黙って通さない。この日にも事実と合うように、上の表の 2 回以上の日の文は足していない表を除くと書き、warning の注記の見出しは部門に限らない語にする（REQ-401 第2スライス表示詳細）。同じ `payment_key` の行が 2 つ返りうるので、支払集計の表の行の key は `${payment_key}-${index}`（index は返された配列の位置。部門別集計の行の key と同じ形）にする。wire の `payment_key` の意味は変えない。
+- 支払集計の合算は、日報の紙と同じ規則（[34](34-biz-sales-service.md) SALES-SHEET-D2）で足す（D-120）。今と同じ行と値になる日の範囲と、範囲の外の日の値は 34 §19.3 手順 3 が持つ。精算の間で名称か並びが変わった日は、位置と名称ごとの行に分かれる（D2 の 2）。そのうえ 1 回の精算の中に同じ名称の行が 2 行以上ある日は、足さずに取込みの古い順に全行を並べる（D2 の 3。表の行と列は変えない。取込みの区切りは画面の表に出さず、3 の日の文が紙〈`日報を印刷`〉で取込みごとに見られると案内する）。2 の日と 3 の日は、BIZ-05 の `warnings` のその日の文（34 §19.3 手順 3。3 の日は 3 の文だけ）を既存の warning の注記として出し、使い手に黙って通さない。この日にも事実と合うように、上の表の 2 回以上の日の文は足していない表を除くと書き、warning の注記の見出しは部門に限らない語にする（REQ-401 第2スライス表示詳細）。同じ `payment_key` の行が 2 つ返りうるので、支払集計の表の行の key は `${payment_key}-${index}`（index は返された配列の位置。部門別集計の行の key と同じ形）にする。wire の `payment_key` の意味は変えない。
 
-#### 日報の紙（印刷、proposed・未実装、D-120）
+#### 日報の紙（印刷、D-120）
 
 `UI-09a-D17`（1 日 1 枚の紙）: 日次売上の `ExportBar` の印刷ボタンで、その日のレジの日報を 1 枚の紙に印刷する。内容は BIZ-05 の `get_daily_report_sheet`（[34 §19.3a](34-biz-sales-service.md)、SALES-SHEET-D1〜D6）をそのまま描き、UI で足し算・並べ替え・行の絞り込みをしない。今の Excel の横長の並び（4 つの帳票の枠を横に並べ、縮小して 1 枚に入れる形）は写さない（owner の決定、repo 外の回答台帳 TD-296 の 15）。
 
@@ -110,9 +110,9 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 - 色: 黒の文字と細い罫線だけにし、色を使わない（色で伝える意味が無い。負の数も色でなく `-` で示す）。
 - 画面での見え方: 紙の内容は画面には出さず、印刷のときだけ出す（`@media print`、UI-09a-D18）。印刷の前の見た目は印刷の dialog のプレビューで見る。
 
-`UI-09a-D18`（印刷の手段）: WebView の印刷（`window.print()`）を使い、`@page { size: A4 portrait; margin: 10mm }` と `@media print` で紙の内容だけを出す（アプリの枠・サイドバー・画面の他の部分を印刷しない）。印刷先・枚数・用紙は OS の印刷の dialog で選ぶ（アプリにプリンタの設定の画面を作らない）。Windows の WebView2 でこの手段が dialog を出し、A4 縦と余白の指定が効くことは未確認の前提で、runtime の lane が実装の前に確かめる（packet の Contract Probe）。効かなければ、Rust 側の CMD が同じ紙の内容を 1 つの HTML の file にしてアプリの data の folder の固定の file（毎回上書き。どの印刷かは紙の中の印刷の時刻で見分ける）に書き、導入済みの `tauri-plugin-opener` の Rust の API `open_path`（`with` を渡さない）で、その PC で `.html` に関連付けられた既定のアプリで開いて、そこで印刷する（新しい依存も capability も足さない。frontend の `opener:default` は local の file を開く許可を持たないので、frontend からは開かない）。`open_path` はブラウザを指定する API ではなく、file の関連付けの先のアプリで開く（関連付けがエディタなら HTML のソースが開く）ので、この道を採る条件は、店の PC の `.html` の関連付けが印刷できるブラウザであることを runtime の lane が Contract Probe で確かめること（確かめられなければこの道を採らない）。HTML に入れる値（名称・商品名・数）は全部 HTML escape する。書込みか `open_path` が失敗したら CMD は error を返し、UI は成功と扱わず既存の CmdError の文を出す。この道を採るときは、[42](42-cmd-sales-stocktake.md) に command（名前・引数・返り値・§22.8 の登録）を足す Gated Amendment を出す（今は wire を決めない）。棄却案: PDF を作る（PDF を作る依存を足す）、Excel の file を出す（店が開いて印刷する手順が残り、手で写す作業を無くす目的に合わない）、OS の印刷の API を Rust から呼ぶ（OS ごとの code が要る）。
+`UI-09a-D18`（印刷の手段）: WebView の印刷（`window.print()`）を使い、`@page { size: A4 portrait; margin: 10mm }` と `@media print` で紙の内容だけを出す（アプリの枠・サイドバー・画面の他の部分を印刷しない）。`日報を印刷` を押さずに印刷の操作（Ctrl+P 等。どの画面でも）をしたときは、白紙の代わりに `この画面の印刷には対応していません。日報は日次売上の画面の「日報を印刷」から印刷してください。` の 1 行を紙に出す（アプリの root の外に置き、画面には出さず印刷のときだけ出す。紙の内容を描いている間は描かず、日報の紙と同じ印刷に出さない。D-127）。印刷先・枚数・用紙は OS の印刷の dialog で選ぶ（アプリにプリンタの設定の画面を作らない）。Windows の WebView2 でこの手段が dialog を出し、A4 縦と余白の指定が効くことは未確認の前提で、runtime の lane が実装の後の L3（packet の Matrix の L3-1。Contract Probe の P1）で確かめる（code が小さく、Windows の build と owner の操作を L3 の 1 回にまとめる。2026-10-29、runtime の lane の Plan Review round 1）。効かなければ、Rust 側の CMD が同じ紙の内容を 1 つの HTML の file にしてアプリの data の folder の固定の file（毎回上書き。どの印刷かは紙の中の印刷の時刻で見分ける）に書き、導入済みの `tauri-plugin-opener` の Rust の API `open_path`（`with` を渡さない）で、その PC で `.html` に関連付けられた既定のアプリで開いて、そこで印刷する（新しい依存も capability も足さない。frontend の `opener:default` は local の file を開く許可を持たないので、frontend からは開かない）。`open_path` はブラウザを指定する API ではなく、file の関連付けの先のアプリで開く（関連付けがエディタなら HTML のソースが開く）ので、この道を採る条件は、店の PC の `.html` の関連付けが印刷できるブラウザであることを runtime の lane が Contract Probe で確かめること（確かめられなければこの道を採らない）。HTML に入れる値（名称・商品名・数）は全部 HTML escape する。書込みか `open_path` が失敗したら CMD は error を返し、UI は成功と扱わず既存の CmdError の文を出す。この道を採るときは、[42](42-cmd-sales-stocktake.md) に command（名前・引数・返り値・§22.8 の登録）を足す Gated Amendment を出す（今は wire を決めない）。棄却案: PDF を作る（PDF を作る依存を足す）、Excel の file を出す（店が開いて印刷する手順が残り、手で写す作業を無くす目的に合わない）、OS の印刷の API を Rust から呼ぶ（OS ごとの code が要る）。
 
-`UI-09a-D19`（紙の切替えの時期）: 新しい紙へ切り替える日までは、店は今の Excel への貼付けと印刷をそのまま続ける（アプリの紙は比べるときだけ印刷する）。切り替える前に、(1) runtime の lane の L3 で owner が紙の並びを実機の印刷で比べて決め、(2) 店のアプリの運用が始まった後の実際の 1 日（同じ日に 2 回以上精算した日があればその日も）で、アプリの紙と今の Excel の紙を横に並べて値が同じことを確かめる（運用開始の前の UI-09a-D13 の導入前受入とは別。順は D13 の受入 → 運用開始 → この確かめ）。切り替える日は月の初めか元日にする（店主の答え: 並びを変えるなら月初めや元旦からのように時期を選ぶ、TD-279）。既定は (2) の後の最初の月の初めで、それが 12 月（年末の棚卸しの月）にかかるなら元日。どちらにするかは owner が店と決める。切り替えた日から、店は毎日の取込みの後に `日報を印刷` で印刷して綴じ、Excel への貼付けをやめる。前の綴りはそのまま残す。切り替えた後に紙に不都合が見つかれば、翌日から Excel の貼付けに戻せる（アプリの側は何も変えない。紙はいつでも過去の日の分を印刷し直せる）。
+`UI-09a-D19`（紙の切替えの時期）: 新しい紙へ切り替える日までは、店は今の Excel への貼付けと印刷をそのまま続ける（アプリの紙は比べるときだけ印刷する）。切り替える前に、(1) runtime の lane の L3 で owner が紙の並びを実機の印刷で比べて決め、(2) 店のアプリの運用が始まった後の実際の 1 日（同じ日に 2 回以上精算した日があればその日も）で、アプリの紙と今の Excel の紙を横に並べて値が同じことを確かめる（今の Excel の紙はレジスターツールの日報を貼ったものなので、紙の値がレジスターツールの日報と行ごとに同じかという D-120 の Guarantee range の未確認の前提も、ここで確かめる。D-142 の (5)。運用開始の前の UI-09a-D13 の導入前受入とは別。順は D13 の受入 → 運用開始 → この確かめ）。切り替える日は月の初めか元日にする（店主の答え: 並びを変えるなら月初めや元旦からのように時期を選ぶ、TD-279）。既定は (2) の後の最初の月の初めで、それが 12 月（年末の棚卸しの月）にかかるなら元日。どちらにするかは owner が店と決める。切り替えた日から、店は毎日の取込みの後に `日報を印刷` で印刷して綴じ、Excel への貼付けをやめる。前の綴りはそのまま残す。切り替えた後に紙に不都合が見つかれば、翌日から Excel の貼付けに戻せる（アプリの側は何も変えない。紙はいつでも過去の日の分を印刷し直せる）。
 
 **ファイル構成（18 file = lib 7 + hooks 2 + components 6 + page 1 + types 1 + route 1）**:
 
@@ -135,9 +135,12 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 | `src/components/patterns/DepartmentFilter.tsx` | shadcn Select 単一選択、hook 側 `derived.departmentOptions` を pure に描画（PR-B で 3 feature のローカル実装を統合、allLabel 既定「すべての部門」、[59-ui-shared-patterns.md](59-ui-shared-patterns.md)） | 50-70 |
 | `src/features/daily-sales/components/SummaryCardsBar.tsx` | 4 カード（売上合計 / 販売点数 / 売上明細数 + Tooltip / 前日比） | 90-130 |
 | `src/features/daily-sales/components/ProductTable.tsx` | shadcn Table 6 列 + 列ソート（5 列対応）+ 部門小計行 + 手動バッジ + 単価列 null = 「—」placeholder | 140-180 |
-| `src/features/daily-sales/components/ExportBar.tsx` | CSV 出力 button（active）+ 印刷 button（今は aria-disabled + Tooltip。D-120 の後は `日報を印刷`、UI-09a-D17） | 50-70 |
+| `src/features/daily-sales/components/ExportBar.tsx` | CSV 出力 button（active）+ `日報を印刷`（押せない理由をボタンの下に文で出す、押したときに読み直してから紙を描いて印刷する。印刷する間だけ `DailyReportSheet` を描く。UI-09a-D17） | 140-170 |
+| `src/features/daily-sales/components/DailyReportSheet.tsx` | 日報の紙（`document.body` の直下へ portal、画面では隠し印刷のときだけ出す。UI-09a-D17・D18） | 200-230 |
+| `src/features/daily-sales/components/PrintUnsupportedNotice.tsx` | Ctrl+P の案内の 1 行（`document.body` の直下へ portal、印刷のときだけ出す。紙を描く間は描かない。`RootLayout` に置く。UI-09a-D18） | 30-45 |
+| `src/features/daily-sales/hooks/useDailyReportSheet.ts` | `commands.getDailyReportSheet(date)` の useQuery（key `queryKeys.dailyReportSheet(date)`） | 15-25 |
 
-合計 **18 file**。frontend code 1000-1300 行 + 関数設計 500-600 行 + test 270-340 行。
+合計 **21 file**。frontend code 1000-1300 行 + 関数設計 500-600 行 + test 270-340 行。
 
 ---
 
@@ -372,7 +375,7 @@ export function calculateEffectiveUnitPrice(item: DailySaleItem): number | null 
 - BIZ-05 `DailySalesReport` の `GrandTotal` は `{ count_points, length_cm, amount }` のみ、source 別 count を返さない（数量は種類ごとの 2 つ。[共通規則](10-common-rules.md) SPEC-UNIT-D3・D11、§56.10 の「単位と数量」）
 - UI で `items` 配列を再走査して `auto / manual` カウントを派生計算
 - 将来 BIZ-05 を拡張して `GrandTotal.auto_count` / `manual_count` を追加すれば本関数は削除可能（Backlog 候補）
-- `source: string` に対する防御的 if-else 実装（`src/features/daily-sales/lib/compute-summary.ts` の `computeSalesLineSummary`）で `"auto"` / `"manual"` を識別、未知値は内訳に含めない（防御的設計、bindings.ts では literal union 化されていない）
+- `source`（bindings の `DailySaleSource`、`"auto"` / `"manual"`）を `switch` で分け（`src/features/daily-sales/lib/compute-summary.ts` の `computeSalesLineSummary`）、`default` の `never` で網羅を型で確かめる（値が増えれば compile error）
 
 ---
 
@@ -388,7 +391,7 @@ export function calculateEffectiveUnitPrice(item: DailySaleItem): number | null 
 | `SegmentedControl` visual primitive | TabsHeader（日次 / 月次 切替、router-driven `<Link>` 視覚表現、UI-09b PR #66 で `src/components/sales/` 共通化）。二択切替の見た目は `src/components/ui/segmented-control.tsx` の list/item/active/inactive class を使い、active border は押しボタン状に見えない `border-stone-300` とする |
 | `Table` | ProductTable（6 列） |
 | `SortableHeader<T extends string>` | `src/components/sales/SortableHeader.tsx` を共通ownerとし、ProductTableの5列（`product_code` / `name` / `quantity` / `unit_price` / `amount`）で利用（UI-TABLE-D1） |
-| `Tooltip` | SummaryCardsBar（売上明細数）、ExportBar（印刷 disabled。D-120 の後は押せない理由を文で出す、UI-09a-D17） |
+| `Tooltip` | SummaryCardsBar（売上明細数）。日次の ExportBar の印刷は Tooltip を使わず、押せない理由をボタンの下に文で出す（UI-09a-D17） |
 | `Badge` | ProductTable（手動行の②分類の stone の「手動」バッジ、`variant="secondary"`） |
 | `Alert` | DailySalesPage（当日 fail 時の画面全体 error） |
 | `Skeleton` | DailySalesPage / ProductTable（loading 時） |
@@ -588,7 +591,7 @@ export function makeMockItem(overrides: Partial<DailySaleItem> = {}): DailySaleI
 
 | やらないこと | 理由 | 責務を持つモジュール |
 |---|---|---|
-| 印刷ボタンの本実装 | 2026-10-17 に日報の紙として設計した（UI-09a-D17〜D19、D-120）。実装は後続の runtime の lane。プリンタの設定の画面は作らない（OS の印刷の dialog を使う） | 日報の紙の runtime の lane（[backlog](../backlog.md)） |
+| プリンタの設定の画面 | 印刷先・枚数・用紙は OS の印刷の dialog で選ぶ（UI-09a-D18） | OS |
 | 月次タブの本実装 | UI-09b（8-5 PR）scope | UI-09b 着手時 |
 | 税率別合計の表示 | モックアップ + SP-501 明示なし | BIZ-05 DTO 拡張後の別 PR（Backlog 「税率別合計の必要性確認」） |
 | BIZ-05 への source 別 count 追加 | UI 派生で軽量に実装可能 | 必要になったら BIZ 拡張で削除（`computeSalesLineSummary` を破棄可能に設計） |
@@ -614,3 +617,6 @@ export function makeMockItem(overrides: Partial<DailySaleItem> = {}): DailySaleI
 | 2026-10-06 | z001-display（runtime、起票） | UI-09a-D16 の「値」に負の数の書き方（金額 `¥-1,234`、件数 `-1`、同じ section の既存の 2 表と同じ）を補った（owner 決定 2026-10-06、[Plan Packet](../archive/plans/2026-10-06-z001-display.md)）。 |
 | 2026-10-17 | 日報の紙と意味づけ（design） | UI-09a-D17〜D19（proposed・未実装、D-120）: 1 日 1 枚の日報の紙（印刷ボタン、並びの既定、文字の大きさの下限 9 pt、色を使わない）、印刷の手段（WebView の印刷、効かなければ `.html` の既定のアプリで開く）、紙の切替えの時期。UI-09a-D13 の紙の用途の記述を直し、支払集計の合算を紙と同じ規則（34 SALES-SHEET-D2）にすると書き、足さない日にも事実と合うよう、2 回以上の日の文・warning の注記の見出し・紙の題を直した。名称か並びの変わった日（D2 の 2）も支払集計の warning を注記に出す。 |
 | 2026-10-08 | 単位の拡張 design lane | §56.10 の単価派生に単位の拡張の後（proposed・未実装、D-113 / SPEC-UNIT-D3、owner の決定 TD-203）を追加: 長さの商品の数量は m、単価は 1 m あたり、小計・合計は点と m の 2 本（TD-206・TD-207）。 |
+| 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | UI-09a-D18 の未確認の前提（WebView2 の印刷）を確かめる時を「実装の前」から「実装の後の L3（L3-1）」に直した。UI-09a-D19 の (2) が、紙の値がレジスターツールの日報と行ごとに同じかの確かめ（D-120 の Guarantee range の未確認の前提）を兼ねることを書いた（D-142 の (5)）。 |
+| 2026-10-31 | 日報の紙の runtime（実装、D-120） | UI-09a-D16〜D18 の proposed の注記を外し、§56.1 のファイル構成に紙の component と hook を足した。§56.7 の Tooltip の行と §56.13 の印刷ボタンの行を実装に合わせた。 |
+| 2026-11-01 | 日報の紙の runtime（Final Review round 1 の是正） | UI-09a-D18 に、`日報を印刷` を押さずに印刷したときの案内の 1 行と、紙を描く間は出さないことを足した（D-127）。§56.1 のファイル構成に案内の component を足した。 |

@@ -1,52 +1,161 @@
 // src/features/daily-sales/components/ExportBar.tsx
 //
-// CSV 出力 button (active) + 印刷 button (aria-disabled + Tooltip)。
-// 印刷は SP-501-07 仕様未定のため Phase 2 では disabled。Phase 4 で window.print 検討。
-// 設計: docs/function-design/56-ui-daily-sales.md §56.7
+// CSV 出力 button + 日報の印刷ボタン（UI-09a-D17）。押せない理由はボタンの下に文で出す（Tooltip だけにしない）。
+// 押したときは (1) 紙の内容を読み直し、(2) 失敗か 0 件なら印刷せず、(3) 読み直した値と押した時刻で
+// 紙を描き直し、(4) DOM に反映された後に window.print() を呼ぶ（SALES-SHEET-D6）。押した時刻は (1) の前に取る。
+// 紙を描く間は Ctrl+P の案内（PrintUnsupportedNotice）を消す（UI-09a-D18）。読み直しを待つ間に画面を離れたら
+// 読み直しの結果を採らず、案内を消さない（案内を戻す者がいなくなり、どの画面の Ctrl+P も白紙になるため）。
+// 設計: docs/function-design/56-ui-daily-sales.md UI-09a-D17・D18、§56.7
+
+import { Link } from "@tanstack/react-router";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import type { DailyReportSheet as Sheet, DailyReportSourceKind } from "@/lib/bindings";
+import { describeError } from "@/lib/describe-error";
+import { DailyReportSheet, SOURCE_TITLES, sourceNotice } from "./DailyReportSheet";
+import { setDailyReportSheetPrinting } from "./PrintUnsupportedNotice";
 
 export interface ExportBarProps {
   onExportCsv: () => void;
   isExporting: boolean;
+  date: string;
+  sheetQuery: Pick<UseQueryResult<Sheet>, "data" | "error" | "isError" | "isPending" | "refetch">;
 }
 
-export function ExportBar({ onExportCsv, isExporting }: ExportBarProps) {
+export function ExportBar({ onExportCsv, isExporting, date, sheetQuery }: ExportBarProps) {
+  // 読み直した紙の内容と押した時刻。印刷する間だけ紙を描き、描いた後の effect で印刷する。
+  // 親の query の再描画を待たず、refetch の結果そのものを描く（古い内容で印刷しない、SALES-SHEET-D6）
+  const [printing, setPrinting] = useState<{ sheet: Sheet; printedAt: Date } | null>(null);
+  const [isRefetching, setIsRefetching] = useState(false);
+
+  useEffect(() => {
+    if (printing === null) return;
+    window.print();
+    setPrinting(null);
+    setDailyReportSheetPrinting(false);
+  }, [printing]);
+
+  // 画面を離れた後は読み直しの結果を採らない（handlePrint が await の後に見る）。
+  // 紙を描いた後に離れても、案内を消したままにしない。window.print() が throw したときも
+  // error の境界が ExportBar を外すので、ここで戻る
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      setDailyReportSheetPrinting(false);
+    };
+  }, []);
+
+  const sheet = sheetQuery.data;
+  const canPrint =
+    !sheetQuery.isPending && !sheetQuery.isError && sheet !== undefined && sheet.import_count >= 1;
+
+  const handlePrint = async () => {
+    // 押した時刻は読み直しの前に取る（読み直しの間に分をまたいでも押した時刻を出す、UI-09a-D17）
+    const printedAt = new Date();
+    setIsRefetching(true);
+    const result = await sheetQuery.refetch();
+    if (!mounted.current) return;
+    setIsRefetching(false);
+    if (result.isError || result.data === undefined || result.data.import_count === 0) return;
+    // 紙を描く前に Ctrl+P の案内を消す（紙と案内を同じ印刷に出さない、UI-09a-D18）
+    setDailyReportSheetPrinting(true);
+    setPrinting({ sheet: result.data, printedAt });
+  };
+
   return (
-    <div className="flex items-center gap-2">
-      <Button
-        type="button"
-        variant="default"
-        onClick={onExportCsv}
-        disabled={isExporting}
-        aria-label="CSV を保存"
-      >
-        {isExporting ? "出力中..." : "CSV 出力"}
-      </Button>
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              role="button"
-              aria-disabled="true"
-              tabIndex={0}
-              className="inline-flex cursor-not-allowed items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium opacity-60"
-              onClick={(e) => {
-                e.preventDefault();
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                }
-              }}
-            >
-              印刷
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>準備中（Phase 4 で実装予定）</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          variant="default"
+          onClick={onExportCsv}
+          disabled={isExporting}
+          aria-label="CSV を保存"
+        >
+          {isExporting ? "出力中..." : "CSV 出力"}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          aria-disabled={!canPrint || isRefetching}
+          onClick={() => {
+            if (!canPrint || isRefetching) return;
+            void handlePrint();
+          }}
+        >
+          日報を印刷
+        </Button>
+      </div>
+      <PrintStatus date={date} sheetQuery={sheetQuery} />
+      {printing !== null && (
+        <DailyReportSheet sheet={printing.sheet} printedAt={printing.printedAt} />
+      )}
+    </div>
+  );
+}
+
+function PrintStatus({
+  date,
+  sheetQuery,
+}: {
+  date: string;
+  sheetQuery: ExportBarProps["sheetQuery"];
+}) {
+  if (sheetQuery.isPending) return null;
+  if (sheetQuery.isError) {
+    return (
+      <div className="flex items-center gap-2 text-sm" role="alert">
+        <span>{describeError(sheetQuery.error)}</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void sheetQuery.refetch();
+          }}
+        >
+          再試行
+        </Button>
+      </div>
+    );
+  }
+  const sheet = sheetQuery.data;
+  if (sheet === undefined) return null;
+  if (sheet.import_count === 0) {
+    return (
+      <p className="text-sm">
+        <span>この日のレジ日報は未取込みのため、印刷できません。</span>{" "}
+        <Link to="/csv-import" className="font-medium text-primary underline underline-offset-4">
+          売上データ取込みを開く
+        </Link>
+      </p>
+    );
+  }
+  const changed = sheet.label_changed_sources;
+  const skipped = sheet.plu_import.skipped_count;
+  if (changed.length === 0 && skipped === 0) return null;
+  return (
+    <div className="space-y-1 text-sm">
+      {/* 紙の上の知らせと同じ文を帳票ごとに 1 行（UI-09a-D17） */}
+      {changed.map((source: DailyReportSourceKind) => (
+        <p key={source}>{`${SOURCE_TITLES[source]}：${sourceNotice(sheet, source) ?? ""}`}</p>
+      ))}
+      {skipped >= 1 && (
+        <p>
+          <span>{`数えていない PLU の行が ${skipped.toLocaleString("ja-JP")} 行あります`}</span>{" "}
+          <Link
+            to="/inventory/records"
+            search={{ recordType: "csv_import", status: "active", dateFrom: date, dateTo: date }}
+            className="font-medium text-primary underline underline-offset-4"
+          >
+            取込みの記録を開く
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

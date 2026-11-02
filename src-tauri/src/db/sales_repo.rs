@@ -42,6 +42,8 @@ pub struct NewSaleRecord {
     pub source_line_no: Option<i64>,
     pub reason: Option<String>,
     pub note: Option<String>,
+    /// 取込みのときの在庫連動（Z004 の確定だけが `pos_stock_sync` を渡し、手動の売上ほかは false。pos-tables）
+    pub stock_linked: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -56,8 +58,8 @@ pub struct NewSaleRecord {
 pub fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result<i64, DbError> {
     let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     conn.execute(
-        "INSERT INTO sale_records (csv_import_id, product_code, sale_date, quantity, amount, source, source_line_no, reason, note, is_voided, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+        "INSERT INTO sale_records (csv_import_id, product_code, sale_date, quantity, amount, source, source_line_no, reason, note, is_voided, created_at, stock_linked)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11)",
         rusqlite::params![
             record.csv_import_id,
             record.product_code,
@@ -69,6 +71,7 @@ pub fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result
             record.reason,
             record.note,
             now,
+            record.stock_linked,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -106,6 +109,9 @@ pub struct NewCsvImport {
     pub total_amount: i64,
     pub skipped_count: i64,
     pub status: String,
+    /// 精算の鍵（pos-tables。Z004 の確定だけが作る）
+    pub machine_no: String,
+    pub settlement_no: i64,
 }
 
 /// csv_import_errors INSERT用（created_at は自動設定）
@@ -204,6 +210,8 @@ pub struct NewDailyReportImport {
     pub net_amount: Option<i64>,
     pub status: String,
     pub note: Option<String>,
+    /// 束の精算回数（IO-07-D5）。None は NULL（24 §14.14、BIZ-08-D4）
+    pub settlement_no: Option<i64>,
 }
 
 /// daily_report_summary_lines INSERT用
@@ -249,14 +257,144 @@ pub struct NewDailyReportDepartmentLine {
 // CSV取込み関数（BIZ-03 用）
 // ---------------------------------------------------------------------------
 
+/// active な Z004 の取込みの精算（24「active な Z004 の精算の一覧」の 1 行）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SettlementRow {
+    pub import_id: i64,
+    pub machine_no: String,
+    pub settlement_no: i64,
+    pub settlement_date: String,
+}
+
+/// machine_no の照合先（24「Z004 の取込みの machine_no の照合先」）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MachineNoRef {
+    pub import_id: i64,
+    pub machine_no: String,
+    pub settlement_no: i64,
+    pub status: CsvImportStatus,
+    pub imported_at: String,
+}
+
+/// active（completed / completed_partial）な Z004 の取込みの精算を settlement_no の昇順で返す（24）
+pub(crate) fn list_active_settlements(conn: &DbConnection) -> Result<Vec<SettlementRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, machine_no, settlement_no, settlement_date FROM csv_imports
+         WHERE status IN ('completed','completed_partial')
+         ORDER BY settlement_no, id",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SettlementRow {
+                import_id: row.get(0)?,
+                machine_no: row.get(1)?,
+                settlement_no: row.get(2)?,
+                settlement_date: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// 取り消したものを含む全ての Z004 の取込みの最大の取込みID（無ければ None。24「Z004 の取込みの最大の取込みID」）。
+/// fresh な計数と棚卸しの完了の取込みのカーソル（ADR D3・D6）
+pub(crate) fn max_csv_import_id(conn: &DbConnection) -> Result<Option<i64>, DbError> {
+    Ok(conn.query_row("SELECT MAX(id) FROM csv_imports", [], |row| row.get(0))?)
+}
+
+/// 取り消したものを含む Z004 の取込みのうち machine_no が引数と違うもの 1 件（active を優先し、
+/// 同じ状態の中では import ID の最大）。無ければ None（24。BIZ-03 の順 2）
+pub(crate) fn find_machine_no_mismatch(
+    conn: &DbConnection,
+    machine_no: &str,
+) -> Result<Option<MachineNoRef>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, machine_no, settlement_no, status, imported_at FROM csv_imports
+         WHERE machine_no <> ?1
+         ORDER BY status IN ('completed','completed_partial') DESC, id DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query([machine_no])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(MachineNoRef {
+            import_id: row.get(0)?,
+            machine_no: row.get(1)?,
+            settlement_no: row.get(2)?,
+            status: parse_csv_import_status(3, &row.get::<_, String>(3)?)?,
+            imported_at: row.get(4)?,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// 同じ machine_no・settlement_no の active な取込みの ID と hash（0 件か 1 件。24。BIZ-03 の順 4）
+pub(crate) fn find_active_imports_for_settlement(
+    conn: &DbConnection,
+    machine_no: &str,
+    settlement_no: i64,
+) -> Result<Vec<(i64, String)>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, file_hash FROM csv_imports
+         WHERE machine_no = ?1 AND settlement_no = ?2 AND status IN ('completed','completed_partial')
+         ORDER BY id",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![machine_no, settlement_no], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// その取込みの売上か movement を持つ商品（Z004 の確定・取消の求め直しの対象。無効の行も含む）
+pub(crate) fn list_import_product_codes(
+    conn: &DbConnection,
+    import_id: i64,
+) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT product_code FROM sale_records WHERE csv_import_id = ?1
+         UNION
+         SELECT product_code FROM inventory_movements
+         WHERE reference_type = 'csv_import' AND reference_id = ?1
+         ORDER BY product_code",
+    )?;
+    let rows = stmt
+        .query_map([import_id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// 商品の、取込みのときの連動が `stock_linked` の有効な売上（個数 ≠ 0 か金額 ≠ 0）を持つ active な取込みの ID
+/// （連動 = 1 は ADR D3 の理由 1 の行の判定、連動 = 0 は D8 の在庫連動を始める検査。今の `pos_stock_sync` を見ない）
+pub(crate) fn list_sale_import_ids(
+    conn: &DbConnection,
+    product_code: &str,
+    stock_linked: bool,
+) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT s.csv_import_id FROM sale_records s
+         JOIN csv_imports c ON c.id = s.csv_import_id
+         WHERE s.product_code = ?1 AND s.is_voided = 0 AND s.stock_linked = ?2
+           AND (s.quantity <> 0 OR s.amount <> 0)
+           AND c.status IN ('completed','completed_partial')
+         ORDER BY s.csv_import_id",
+    )?;
+    let rows = stmt
+        .query_map(rusqlite::params![product_code, stock_linked], |row| {
+            row.get(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// csv_imports に1行INSERTし、挿入されたIDを返す
 ///
 /// 24-io-csv-import-repo.md §14.4
 pub fn insert_csv_import(conn: &DbConnection, record: &NewCsvImport) -> Result<i64, DbError> {
     let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     conn.execute(
-        "INSERT INTO csv_imports (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO csv_imports (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at,
+             machine_no, settlement_no)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             record.filename,
             record.settlement_date,
@@ -266,6 +404,8 @@ pub fn insert_csv_import(conn: &DbConnection, record: &NewCsvImport) -> Result<i
             record.skipped_count,
             record.status,
             now,
+            record.machine_no,
+            record.settlement_no,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -596,8 +736,8 @@ pub fn insert_daily_report_import(
     conn.execute(
         "INSERT INTO daily_report_imports (
             report_date, source_adapter, bundle_hash, source_files_json,
-            gross_amount, net_amount, status, imported_at, note
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            gross_amount, net_amount, status, imported_at, note, settlement_no
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             record.report_date,
             record.source_adapter,
@@ -608,6 +748,7 @@ pub fn insert_daily_report_import(
             record.status,
             now,
             record.note,
+            record.settlement_no,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -768,6 +909,38 @@ pub fn find_daily_report_imports_by_report_date(
     Ok(imports)
 }
 
+/// 同じ対象日・同じ精算回数で bundle_hash の違う completed の日報取込みの id（BIZ-08-D4）
+///
+/// 24-io-csv-import-repo.md §14.18a。settlement_no が NULL の行は `= ?` に当たらず照合されない
+pub fn find_same_settlement_daily_report_import(
+    conn: &DbConnection,
+    report_date: &str,
+    settlement_no: i64,
+    bundle_hash: &str,
+) -> Result<Option<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM daily_report_imports
+         WHERE report_date = ?1 AND settlement_no = ?2 AND bundle_hash <> ?3 AND status = 'completed'
+         ORDER BY id DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![report_date, settlement_no, bundle_hash])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(row.get(0)?)),
+        None => Ok(None),
+    }
+}
+
+/// completed の日報取込みの対象日の最大（SD の scan の窓の始まり、37 §37.9 手順 2）
+pub(crate) fn latest_completed_daily_report_date(
+    conn: &DbConnection,
+) -> Result<Option<String>, DbError> {
+    Ok(conn.query_row(
+        "SELECT MAX(report_date) FROM daily_report_imports WHERE status = 'completed'",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// daily_report_imports を rolled_back に更新する
 ///
 /// 24-io-csv-import-repo.md §14.19
@@ -858,19 +1031,21 @@ pub fn list_daily_report_imports(
 // ---------------------------------------------------------------------------
 
 /// rusqlite::Row → CsvImport の変換
+fn parse_csv_import_status(index: usize, value: &str) -> rusqlite::Result<CsvImportStatus> {
+    match value {
+        "completed" => Ok(CsvImportStatus::Completed),
+        "completed_partial" => Ok(CsvImportStatus::CompletedPartial),
+        "rolled_back" => Ok(CsvImportStatus::RolledBack),
+        value => Err(rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            format!("unknown csv import status: {value}").into(),
+        )),
+    }
+}
+
 fn row_to_csv_import(row: &rusqlite::Row) -> rusqlite::Result<CsvImport> {
-    let status = match row.get::<_, String>(7)?.as_str() {
-        "completed" => CsvImportStatus::Completed,
-        "completed_partial" => CsvImportStatus::CompletedPartial,
-        "rolled_back" => CsvImportStatus::RolledBack,
-        value => {
-            return Err(rusqlite::Error::FromSqlConversionFailure(
-                7,
-                rusqlite::types::Type::Text,
-                format!("unknown csv import status: {value}").into(),
-            ))
-        }
-    };
+    let status = parse_csv_import_status(7, &row.get::<_, String>(7)?)?;
     Ok(CsvImport {
         id: row.get(0)?,
         filename: row.get(1)?,
@@ -945,7 +1120,8 @@ pub struct OfficialDailyReportRow {
     pub report_date: String,
     pub gross_amount: Option<i64>,
     pub net_amount: Option<i64>,
-    pub payment_lines: Vec<OfficialDailyPaymentRow>,
+    /// 支払の行（足さない。親の古い順・行の位置の順。24 §14.21 手順 3・8 の (a)）
+    pub payment_lines: Vec<OfficialDailyPaymentLineRow>,
     pub department_lines: Vec<OfficialDailyDepartmentRow>,
     pub summary_imports: Vec<OfficialDailySummaryImportRow>,
 }
@@ -967,12 +1143,39 @@ pub struct OfficialDailySummaryLineRow {
     pub amount: Option<i64>,
 }
 
+/// 支払（Z002）の 1 行。足さずに返す（24 §14.21 手順 3。wire に出さない）
 #[derive(Debug, serde::Serialize)]
-pub struct OfficialDailyPaymentRow {
-    pub payment_key: String,
+pub struct OfficialDailyPaymentLineRow {
+    pub daily_report_import_id: i64,
+    pub imported_at: String,
+    pub id: i64,
+    pub sort_order: i64,
     pub label: String,
+    pub payment_key: String,
     pub amount: Option<i64>,
     pub count: Option<i64>,
+}
+
+/// 日報の紙の読取り（24 §14.21a）。`import_ids` は completed の親の `imported_at ASC, id ASC`。
+/// 行は帳票ごとに親の古い順・行の位置の順（db は IO-07 の型を参照しないので帳票は field で分ける）
+#[derive(Debug, serde::Serialize)]
+pub struct DailyReportSheetLinesRow {
+    pub import_ids: Vec<i64>,
+    pub summary_lines: Vec<DailyReportSheetLineRow>,
+    pub payment_lines: Vec<DailyReportSheetLineRow>,
+    pub department_lines: Vec<DailyReportSheetLineRow>,
+}
+
+/// Z001・Z002・Z005 の 1 行（保存されたまま。Z005 の `label` は `raw_department_name`）
+#[derive(Debug, serde::Serialize)]
+pub struct DailyReportSheetLineRow {
+    pub daily_report_import_id: i64,
+    pub sort_order: i64,
+    pub label: String,
+    /// 個数の100倍の整数（IO-07-D2）。Z002 は NULL
+    pub quantity_hundredths: Option<i64>,
+    pub count: Option<i64>,
+    pub amount: Option<i64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1070,60 +1273,33 @@ pub fn get_completed_daily_report_aggregate(
     let gross_amount = sum_optional_strict(parents.iter().rev().map(|parent| parent.2))?;
     let net_amount = sum_optional_strict(parents.iter().rev().map(|parent| parent.3))?;
 
+    // 支払の行は足さずに返す。足し方は BIZ-05 の SALES-SHEET-D2（24 §14.21 手順 3）
     let mut payment_stmt = conn
         .prepare(
-            "SELECT l.payment_key, l.label, l.amount, l.count, l.sort_order, l.id
+            "SELECT l.daily_report_import_id, i.imported_at, l.id, l.sort_order, l.label,
+                    l.payment_key, l.amount, l.count
              FROM daily_report_payment_lines l
              INNER JOIN daily_report_imports i ON i.id = l.daily_report_import_id
              WHERE i.report_date = ?1 AND i.status = 'completed'
-             ORDER BY l.sort_order ASC, l.id ASC",
+             ORDER BY i.imported_at ASC, i.id ASC, l.sort_order ASC, l.id ASC",
         )
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
     let payment_lines = payment_stmt
         .query_map([report_date.as_str()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<i64>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
+            Ok(OfficialDailyPaymentLineRow {
+                daily_report_import_id: row.get(0)?,
+                imported_at: row.get(1)?,
+                id: row.get(2)?,
+                sort_order: row.get(3)?,
+                label: row.get(4)?,
+                payment_key: row.get(5)?,
+                amount: row.get(6)?,
+                count: row.get(7)?,
+            })
         })
         .map_err(|e| DbError::QueryFailed(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-    type PaymentGroup = (String, Vec<Option<i64>>, Vec<Option<i64>>, i64, i64);
-    let mut payment_groups: std::collections::BTreeMap<String, PaymentGroup> =
-        std::collections::BTreeMap::new();
-    for (key, label, amount, count, sort_order, id) in payment_lines {
-        let group = payment_groups
-            .entry(key)
-            .or_insert_with(|| (label.clone(), Vec::new(), Vec::new(), sort_order, id));
-        group.1.push(amount);
-        group.2.push(count);
-        if (sort_order, id) < (group.3, group.4) {
-            group.0 = label;
-            group.3 = sort_order;
-            group.4 = id;
-        }
-    }
-    let mut payment_lines: Vec<_> = payment_groups
-        .into_iter()
-        .map(|(payment_key, (label, amounts, counts, sort_order, id))| {
-            Ok((
-                (sort_order, id),
-                OfficialDailyPaymentRow {
-                    payment_key,
-                    label,
-                    amount: sum_optional_strict(amounts)?,
-                    count: sum_optional_strict(counts)?,
-                },
-            ))
-        })
-        .collect::<Result<_, DbError>>()?;
-    payment_lines.sort_by_key(|item| item.0);
-    let payment_lines = payment_lines.into_iter().map(|item| item.1).collect();
 
     let mut department_stmt = conn
         .prepare(
@@ -1272,6 +1448,87 @@ pub fn get_completed_daily_report_aggregate(
     }))
 }
 
+/// 指定日の completed 日報取込みの id と、配下の Z001・Z002・Z005 の全行を足さずに返す（24 §14.21a）
+pub fn get_daily_report_sheet_lines(
+    conn: &DbConnection,
+    report_date: &str,
+) -> Result<DailyReportSheetLinesRow, DbError> {
+    let mut parent_stmt = conn.prepare(
+        "SELECT id FROM daily_report_imports
+         WHERE report_date = ?1 AND status = 'completed'
+         ORDER BY imported_at ASC, id ASC",
+    )?;
+    let import_ids = parent_stmt
+        .query_map([report_date], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if import_ids.is_empty() {
+        return Ok(DailyReportSheetLinesRow {
+            import_ids,
+            summary_lines: Vec::new(),
+            payment_lines: Vec::new(),
+            department_lines: Vec::new(),
+        });
+    }
+
+    let read_lines = |table: &str, label: &str, quantity: &str| {
+        let mut stmt = conn.prepare(&format!(
+            "SELECT l.daily_report_import_id, l.sort_order, l.{label}, {quantity}, l.count, l.amount
+             FROM {table} l
+             INNER JOIN daily_report_imports i ON i.id = l.daily_report_import_id
+             WHERE i.report_date = ?1 AND i.status = 'completed'
+             ORDER BY i.imported_at ASC, i.id ASC, l.sort_order ASC, l.id ASC"
+        ))?;
+        let lines = stmt
+            .query_map([report_date], |row| {
+                Ok(DailyReportSheetLineRow {
+                    daily_report_import_id: row.get(0)?,
+                    sort_order: row.get(1)?,
+                    label: row.get(2)?,
+                    quantity_hundredths: row.get(3)?,
+                    count: row.get(4)?,
+                    amount: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            // 親の読取りの後に確定した取込みの行を混ぜない（24 §14.21a 手順 2）
+            .filter(|line| import_ids.contains(&line.daily_report_import_id))
+            .collect::<Vec<_>>();
+        Ok::<_, DbError>(lines)
+    };
+    let summary_lines = read_lines(
+        "daily_report_summary_lines",
+        "label",
+        "l.quantity_hundredths",
+    )?;
+    let payment_lines = read_lines("daily_report_payment_lines", "label", "NULL")?;
+    let department_lines = read_lines(
+        "daily_report_department_lines",
+        "raw_department_name",
+        "l.quantity_hundredths",
+    )?;
+
+    Ok(DailyReportSheetLinesRow {
+        import_ids,
+        summary_lines,
+        payment_lines,
+        department_lines,
+    })
+}
+
+/// 指定の精算日の active な Z004 の取込みの数と skipped_count の和（24 §14.21b）
+pub fn get_active_z004_import_totals(
+    conn: &DbConnection,
+    settlement_date: &str,
+) -> Result<(i64, i64), DbError> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(skipped_count), 0) FROM csv_imports
+         WHERE settlement_date = ?1 AND status IN ('completed','completed_partial')",
+        [settlement_date],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?)
+}
+
 /// NULL を伝える合計。どれかが NULL なら NULL、i64 を溢れたら QueryFailed（24 §14.21 手順 7）
 fn sum_optional_strict(
     values: impl IntoIterator<Item = Option<i64>>,
@@ -1411,220 +1668,6 @@ pub fn get_monthly_sales_by_department(
         .map_err(|e| DbError::QueryFailed(e.to_string()))
 }
 
-/// 資料の受領と精算の同一性（SPEC-STK-TIME-D2 / D3）。⑤ まで test だけが呼ぶ（D-109 (3)）。
-/// 24-io-csv-import-repo.md「時点証拠契約（proposed）」の表の 1〜5 行。業務の判定は BIZ が行う
-#[cfg(test)]
-pub(crate) mod time_evidence {
-    use crate::db::{DbConnection, DbError};
-    use rusqlite::OptionalExtension;
-
-    /// 同一性の拒否の理由（pos_import_sources.identity_rejection_code の CHECK）
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum IdentityRejectionCode {
-        IdentityConflict,
-        MissingIdentity,
-    }
-
-    impl IdentityRejectionCode {
-        fn as_str(self) -> &'static str {
-            match self {
-                Self::IdentityConflict => "identity_conflict",
-                Self::MissingIdentity => "missing_identity",
-            }
-        }
-
-        fn parse(value: &str) -> Result<Self, DbError> {
-            match value {
-                "identity_conflict" => Ok(Self::IdentityConflict),
-                "missing_identity" => Ok(Self::MissingIdentity),
-                other => Err(DbError::QueryFailed(format!(
-                    "不明な identity_rejection_code: {other}"
-                ))),
-            }
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub(crate) struct NewPosImportSource {
-        pub file_hash: String,
-        pub received_at: String,
-        pub settlement_date: String,
-        pub machine_no: Option<String>,
-        pub report_kind: Option<String>,
-        pub settlement_no: Option<String>,
-        pub settled_at: Option<String>,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) struct PosImportSource {
-        pub id: i64,
-        pub file_hash: String,
-        pub received_at: String,
-        pub settlement_date: String,
-        pub machine_no: Option<String>,
-        pub report_kind: Option<String>,
-        pub settlement_no: Option<String>,
-        pub settled_at: Option<String>,
-        pub identity_rejection_code: Option<IdentityRejectionCode>,
-        pub identity_rejected_at: Option<String>,
-    }
-
-    /// 同じ精算日の active import と、その source の識別メタ（source なしは各 None）
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub(crate) struct ActiveImportIdentity {
-        pub csv_import_id: i64,
-        pub settlement_date: String,
-        pub source_id: Option<i64>,
-        pub machine_no: Option<String>,
-        pub report_kind: Option<String>,
-        pub settlement_no: Option<String>,
-    }
-
-    const SOURCE_COLUMNS: &str = "id, file_hash, received_at, settlement_date, machine_no,
-        report_kind, settlement_no, settled_at, identity_rejection_code, identity_rejected_at";
-
-    fn row_to_source(row: &rusqlite::Row) -> rusqlite::Result<(PosImportSource, Option<String>)> {
-        Ok((
-            PosImportSource {
-                id: row.get(0)?,
-                file_hash: row.get(1)?,
-                received_at: row.get(2)?,
-                settlement_date: row.get(3)?,
-                machine_no: row.get(4)?,
-                report_kind: row.get(5)?,
-                settlement_no: row.get(6)?,
-                settled_at: row.get(7)?,
-                identity_rejection_code: None,
-                identity_rejected_at: row.get(9)?,
-            },
-            row.get(8)?,
-        ))
-    }
-
-    fn with_code(
-        (mut source, code): (PosImportSource, Option<String>),
-    ) -> Result<PosImportSource, DbError> {
-        source.identity_rejection_code = code
-            .as_deref()
-            .map(IdentityRejectionCode::parse)
-            .transpose()?;
-        Ok(source)
-    }
-
-    /// 受領の upsert。同じ hash が既にあれば最初の ID と受領時刻の行をそのまま返す（REPLACE・再採番しない）
-    pub(crate) fn upsert_pos_import_source(
-        conn: &DbConnection,
-        new: &NewPosImportSource,
-    ) -> Result<PosImportSource, DbError> {
-        conn.execute(
-            "INSERT INTO pos_import_sources (file_hash, received_at, settlement_date, machine_no,
-                report_kind, settlement_no, settled_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(file_hash) DO NOTHING",
-            rusqlite::params![
-                new.file_hash,
-                new.received_at,
-                new.settlement_date,
-                new.machine_no,
-                new.report_kind,
-                new.settlement_no,
-                new.settled_at
-            ],
-        )?;
-        let row = conn.query_row(
-            &format!("SELECT {SOURCE_COLUMNS} FROM pos_import_sources WHERE file_hash = ?1"),
-            [&new.file_hash],
-            row_to_source,
-        )?;
-        with_code(row)
-    }
-
-    /// 最大の source ID。空なら 0（cursor の空集合）
-    pub(crate) fn max_pos_import_source_id(conn: &DbConnection) -> Result<i64, DbError> {
-        Ok(conn.query_row(
-            "SELECT COALESCE(MAX(id), 0) FROM pos_import_sources",
-            [],
-            |row| row.get(0),
-        )?)
-    }
-
-    pub(crate) fn get_pos_import_source(
-        conn: &DbConnection,
-        id: i64,
-    ) -> Result<Option<PosImportSource>, DbError> {
-        conn.query_row(
-            &format!("SELECT {SOURCE_COLUMNS} FROM pos_import_sources WHERE id = ?1"),
-            [id],
-            row_to_source,
-        )
-        .optional()?
-        .map(with_code)
-        .transpose()
-    }
-
-    /// 同じ帳票種別で machine_no / settlement_no が一致する別の受領 source（未取込み・取消済みを含む）。
-    /// NULL は `=` で一致しない
-    pub(crate) fn find_settlement_identity_candidates(
-        conn: &DbConnection,
-        report_kind: &str,
-        machine_no: &str,
-        settlement_no: &str,
-        exclude_source_id: i64,
-    ) -> Result<Vec<PosImportSource>, DbError> {
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {SOURCE_COLUMNS} FROM pos_import_sources
-             WHERE report_kind = ?1 AND machine_no = ?2 AND settlement_no = ?3 AND id <> ?4
-             ORDER BY id"
-        ))?;
-        let rows = stmt.query_map(
-            rusqlite::params![report_kind, machine_no, settlement_no, exclude_source_id],
-            row_to_source,
-        )?;
-        rows.map(|row| with_code(row?)).collect()
-    }
-
-    /// 同じ精算日の active import（completed / completed_partial）を csv_imports 起点で全件返す。
-    /// LEFT JOIN で source なし・メタ欠けの行も残す
-    pub(crate) fn list_active_import_identities(
-        conn: &DbConnection,
-        settlement_date: &str,
-    ) -> Result<Vec<ActiveImportIdentity>, DbError> {
-        let mut stmt = conn.prepare(
-            "SELECT ci.id, ci.settlement_date, ci.source_id, s.machine_no, s.report_kind, s.settlement_no
-             FROM csv_imports ci
-             LEFT JOIN pos_import_sources s ON s.id = ci.source_id
-             WHERE ci.settlement_date = ?1 AND ci.status IN ('completed', 'completed_partial')
-             ORDER BY ci.id",
-        )?;
-        let rows = stmt.query_map([settlement_date], |row| {
-            Ok(ActiveImportIdentity {
-                csv_import_id: row.get(0)?,
-                settlement_date: row.get(1)?,
-                source_id: row.get(2)?,
-                machine_no: row.get(3)?,
-                report_kind: row.get(4)?,
-                settlement_no: row.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    }
-
-    /// 同一性の拒否を初回だけ 2 列一緒に保存する。保存したら true、既にあれば書かずに false
-    pub(crate) fn record_identity_rejection(
-        conn: &DbConnection,
-        source_id: i64,
-        code: IdentityRejectionCode,
-        rejected_at: &str,
-    ) -> Result<bool, DbError> {
-        let affected = conn.execute(
-            "UPDATE pos_import_sources SET identity_rejection_code = ?2, identity_rejected_at = ?3
-             WHERE id = ?1 AND identity_rejection_code IS NULL",
-            rusqlite::params![source_id, code.as_str(), rejected_at],
-        )?;
-        Ok(affected == 1)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // テスト
 // ---------------------------------------------------------------------------
@@ -1681,6 +1724,7 @@ mod tests {
             source_line_no: None,
             reason: Some("plu_unregistered".to_string()),
             note: None,
+            stock_linked: false,
         };
         let id = insert_sale_record(&conn, &record).unwrap();
         assert!(id > 0);
@@ -1705,8 +1749,9 @@ mod tests {
 
         // csv_imports にダミーレコードを作成
         conn.execute(
-            "INSERT INTO csv_imports (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at)
-             VALUES ('Z004_test', '2026-04-06', 'abc123', 1, 500, 0, 'completed', '2026-04-06T00:00:00')",
+            "INSERT INTO csv_imports (filename, settlement_date, file_hash, total_items, total_amount, skipped_count, status, imported_at,
+                 machine_no, settlement_no)
+             VALUES ('Z004_test', '2026-04-06', 'abc123', 1, 500, 0, 'completed', '2026-04-06T00:00:00', '0001', 1)",
             [],
         ).unwrap();
         let csv_id = conn.last_insert_rowid();
@@ -1721,6 +1766,7 @@ mod tests {
             source_line_no: Some(5),
             reason: None,
             note: None,
+            stock_linked: false,
         };
         let id = insert_sale_record(&conn, &record).unwrap();
         assert!(id > 0);
@@ -1751,6 +1797,7 @@ mod tests {
             source_line_no: None,
             reason: None,
             note: None,
+            stock_linked: false,
         };
         let result = insert_sale_record(&conn, &record);
         assert!(
@@ -1776,6 +1823,7 @@ mod tests {
             source_line_no: None,
             reason: None,
             note: None,
+            stock_linked: false,
         };
         let result = insert_sale_record(&conn, &record);
         assert!(
@@ -1799,6 +1847,8 @@ mod tests {
             total_amount: 5000,
             skipped_count: 0,
             status: status.to_string(),
+            machine_no: "0001".to_string(),
+            settlement_no: 1,
         };
         insert_csv_import(conn, &record).unwrap()
     }
@@ -1977,6 +2027,7 @@ mod tests {
                 source_line_no: Some(7),
                 reason: None,
                 note: None,
+                stock_linked: false,
             },
         )
         .unwrap();
@@ -1992,6 +2043,7 @@ mod tests {
                 source_line_no: Some(8),
                 reason: None,
                 note: None,
+                stock_linked: false,
             },
         )
         .unwrap();
@@ -2026,8 +2078,8 @@ mod tests {
         ] {
             conn.execute(
                 "INSERT INTO inventory_movements
-                 (product_code, movement_type, quantity, stock_after, reference_type, reference_id, note, is_voided, created_at, business_date, phase)
-                 VALUES ('DETAIL-MOVE', 'sale_auto', -1, 9, 'csv_import', ?1, NULL, ?2, ?3, '2026-04-01', 0)",
+                 (product_code, movement_type, quantity, stock_after, reference_type, reference_id, note, is_voided, created_at, business_date, phase, settlement_no)
+                 VALUES ('DETAIL-MOVE', 'sale_auto', -1, 9, 'csv_import', ?1, NULL, ?2, ?3, '2026-04-01', 1, 1)",
                 rusqlite::params![reference_id, is_voided, created_at],
             )
             .unwrap();
@@ -2114,6 +2166,7 @@ mod tests {
                 source_line_no: Some(i + 1),
                 reason: None,
                 note: None,
+                stock_linked: false,
             };
             insert_sale_record(&conn, &record).unwrap();
         }
@@ -2137,8 +2190,8 @@ mod tests {
 
         // inventory_movements に直接INSERT（テスト用）
         conn.execute(
-            "INSERT INTO inventory_movements (product_code, movement_type, quantity, stock_after, reference_type, reference_id, is_voided, created_at, business_date, phase)
-             VALUES ('VM-P1', 'sale_auto', -3, 7, 'csv_import', ?1, 0, '2026-03-21T00:00:00', '2026-04-01', 0)",
+            "INSERT INTO inventory_movements (product_code, movement_type, quantity, stock_after, reference_type, reference_id, is_voided, created_at, business_date, phase, settlement_no)
+             VALUES ('VM-P1', 'sale_auto', -3, 7, 'csv_import', ?1, 0, '2026-03-21T00:00:00', '2026-04-01', 1, 1)",
             rusqlite::params![import_id],
         ).unwrap();
 
@@ -2166,8 +2219,8 @@ mod tests {
         seed_product(&conn, "INV7-P1");
 
         conn.execute(
-            "INSERT INTO inventory_movements (product_code, movement_type, quantity, stock_after, reference_type, reference_id, is_voided, created_at, business_date, phase)
-             VALUES ('INV7-P1', 'sale_auto', -5, 5, 'csv_import', 999, 0, '2026-03-21T00:00:00', '2026-04-01', 0)",
+            "INSERT INTO inventory_movements (product_code, movement_type, quantity, stock_after, reference_type, reference_id, is_voided, created_at, business_date, phase, settlement_no)
+             VALUES ('INV7-P1', 'sale_auto', -5, 5, 'csv_import', 999, 0, '2026-03-21T00:00:00', '2026-04-01', 1, 1)",
             [],
         ).unwrap();
 
@@ -2238,6 +2291,7 @@ mod tests {
             net_amount: Some(11000),
             status: status.to_string(),
             note: Some("synthetic fixture".to_string()),
+            settlement_no: None,
         }
     }
 
@@ -2249,6 +2303,43 @@ mod tests {
     ) -> i64 {
         let record = new_daily_report_import(report_date, bundle_hash, status);
         insert_daily_report_import(conn, &record).unwrap()
+    }
+
+    /// 支払の行を (親 id, 位置, 名称, payment_key, 金額, 件数) の並びで見る
+    type PaymentLineView<'a> = (i64, i64, &'a str, &'a str, Option<i64>, Option<i64>);
+
+    fn payment_line_tuples(report: &OfficialDailyReportRow) -> Vec<PaymentLineView<'_>> {
+        report
+            .payment_lines
+            .iter()
+            .map(|line| {
+                (
+                    line.daily_report_import_id,
+                    line.sort_order,
+                    line.label.as_str(),
+                    line.payment_key.as_str(),
+                    line.amount,
+                    line.count,
+                )
+            })
+            .collect()
+    }
+
+    fn payment_line(
+        import_id: i64,
+        sort_order: i64,
+        label: &str,
+        amount: i64,
+    ) -> NewDailyReportPaymentLine {
+        NewDailyReportPaymentLine {
+            daily_report_import_id: import_id,
+            source_file: "Z002".to_string(),
+            payment_key: format!("payment_{sort_order}"),
+            label: label.to_string(),
+            amount: Some(amount),
+            count: Some(1),
+            sort_order,
+        }
     }
 
     #[test]
@@ -2502,9 +2593,16 @@ mod tests {
         assert_eq!(report.source_import_count, 2);
         assert_eq!(report.gross_amount, Some(24000));
         assert_eq!(report.net_amount, Some(22000));
-        assert_eq!(report.payment_lines[0].payment_key, "old");
-        assert_eq!(report.payment_lines[1].payment_key, "cash");
-        assert_eq!(report.payment_lines[2].payment_key, "credit");
+        // 24 §14.21 手順 3: 支払の行は足さずに親の古い順・行の位置の順で返す。
+        // 足した値と並びの期待は BIZ の test_daily_sales_payment_out_of_range_all_active_parents_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (old_id, 1, "旧現金", "old", Some(1), Some(1)),
+                (latest_id, 1, "現金", "cash", Some(9000), Some(5)),
+                (latest_id, 2, "クレジット", "credit", Some(2000), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines.len(), 1);
     }
 
@@ -2589,9 +2687,15 @@ mod tests {
         assert_eq!(report.source_import_count, 2);
         assert_eq!(report.gross_amount, None);
         assert_eq!(report.net_amount, Some(400));
-        assert_eq!(report.payment_lines[0].label, "現金新");
-        assert_eq!(report.payment_lines[0].amount, None);
-        assert_eq!(report.payment_lines[0].count, Some(3));
+        // 24 §14.21 手順 3: 支払の行は足さずに返し、NULL を 0 にしない。
+        // 足した値の期待は BIZ の test_daily_sales_payment_out_of_range_null_fixture_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (first, 2, "現金旧", "cash", None, Some(1)),
+                (second, 1, "現金新", "cash", Some(200), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines[0].raw_department_name, "新名");
         assert_eq!(report.department_lines[0].amount, 300);
         assert_eq!(report.department_lines[0].quantity_hundredths, None);
@@ -2693,11 +2797,15 @@ mod tests {
         let report = get_completed_daily_report_aggregate(&conn, "2026-03-21")
             .unwrap()
             .unwrap();
-        assert_eq!(report.payment_lines.len(), 1);
-        assert_eq!(report.payment_lines[0].payment_key, "cash");
-        assert_eq!(report.payment_lines[0].label, "現金 新");
-        assert_eq!(report.payment_lines[0].amount, Some(300));
-        assert_eq!(report.payment_lines[0].count, Some(3));
+        // 24 §14.21 手順 3: 支払の行は足さずに返す。代表の選び方と足した値の期待は
+        // BIZ の test_daily_sales_payment_out_of_range_identities_req501 へ移した
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (first, 4, "現金 旧", "cash", Some(100), Some(1)),
+                (second, 1, "現金 新", "cash", Some(200), Some(2)),
+            ]
+        );
         assert_eq!(report.department_lines.len(), 3);
         let known = report
             .department_lines
@@ -2962,6 +3070,7 @@ mod tests {
             source_line_no: None,
             reason: None,
             note: None,
+            stock_linked: false,
         };
         let id = insert_sale_record(conn, &record).unwrap();
         if is_voided {
@@ -3583,5 +3692,253 @@ mod tests {
             .map(|import| import.daily_report_import_id)
             .collect();
         assert_eq!(ids_b, day_b);
+    }
+
+    fn settlement_no_of(conn: &DbConnection, id: i64) -> Option<i64> {
+        conn.query_row(
+            "SELECT settlement_no FROM daily_report_imports WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_req401_insert_daily_report_import_stores_settlement_no() {
+        // REQ-401 / 24 §14.14: settlement_no を保存し、None は NULL
+        let (_dir, conn) = setup_test_db();
+        let mut with = new_daily_report_import("2026-10-06", "H1", "completed");
+        with.settlement_no = Some(5);
+        let with_id = insert_daily_report_import(&conn, &with).unwrap();
+        let without_id = insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-06", "H2", "completed"),
+        )
+        .unwrap();
+        assert_eq!(settlement_no_of(&conn, with_id), Some(5));
+        assert_eq!(settlement_no_of(&conn, without_id), None);
+    }
+
+    #[test]
+    fn test_req401_find_same_settlement_daily_report_import_matches_only_completed_other_hash() {
+        // REQ-401 / 24 §14.18a / BIZ-08-D4: completed・同じ精算回数・別の hash だけを返す
+        let (_dir, conn) = setup_test_db();
+        let insert = |hash: &str, status: &str, settlement_no: Option<i64>| {
+            let mut record = new_daily_report_import("2026-10-06", hash, status);
+            record.settlement_no = settlement_no;
+            insert_daily_report_import(&conn, &record).unwrap()
+        };
+        let h1 = insert("H1", "completed", Some(5));
+        insert("H2", "rolled_back", Some(5));
+        insert("H3", "completed", None);
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 5, "H1").unwrap(),
+            None
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 5, "H9").unwrap(),
+            Some(h1)
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-06", 6, "H9").unwrap(),
+            None
+        );
+        assert_eq!(
+            find_same_settlement_daily_report_import(&conn, "2026-10-07", 5, "H9").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_req401_latest_completed_daily_report_date_ignores_rolled_back() {
+        // REQ-401 / 37 §37.9 手順 2: 窓は completed の最大の対象日から（rolled_back だけの日は数えない）
+        let (_dir, conn) = setup_test_db();
+        assert_eq!(latest_completed_daily_report_date(&conn).unwrap(), None);
+        insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-01", "A", "completed"),
+        )
+        .unwrap();
+        insert_daily_report_import(
+            &conn,
+            &new_daily_report_import("2026-10-09", "B", "rolled_back"),
+        )
+        .unwrap();
+        assert_eq!(
+            latest_completed_daily_report_date(&conn)
+                .unwrap()
+                .as_deref(),
+            Some("2026-10-01")
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // 日報の紙の読取り（24 §14.21 手順 3・§14.21a・§14.21b、D-120）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_completed_daily_report_aggregate_req501_payment_lines_unsummed_in_order() {
+        // REQ-501 / 24 §14.21 手順 3: 同じ位置・名称の支払の行を足さず、親の imported_at ASC, id ASC・
+        // 行の sort_order ASC, id ASC で、親の id・行の id・sort_order・payment_key 付きで返す
+        let (_dir, conn) = setup_test_db();
+        let later = seed_daily_report_import(&conn, "2026-03-21", "pay-later", "completed");
+        let earlier = seed_daily_report_import(&conn, "2026-03-21", "pay-earlier", "completed");
+        set_imported_at(&conn, later, "2026-03-21T20:00:00");
+        set_imported_at(&conn, earlier, "2026-03-21T12:00:00");
+        insert_daily_report_payment_lines(
+            &conn,
+            &[
+                payment_line(later, 2, "項目B", 20),
+                payment_line(later, 1, "現金", 10),
+                payment_line(earlier, 1, "現金", 5),
+            ],
+        )
+        .unwrap();
+
+        let report = get_completed_daily_report_aggregate(&conn, "2026-03-21")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            payment_line_tuples(&report),
+            [
+                (earlier, 1, "現金", "payment_1", Some(5), Some(1)),
+                (later, 1, "現金", "payment_1", Some(10), Some(1)),
+                (later, 2, "項目B", "payment_2", Some(20), Some(1)),
+            ]
+        );
+        let ids: Vec<i64> = report.payment_lines.iter().map(|line| line.id).collect();
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 3, "行の id を持つ");
+        assert_eq!(report.payment_lines[0].imported_at, "2026-03-21T12:00:00");
+    }
+
+    #[test]
+    fn test_get_daily_report_sheet_lines_reads_completed_only_in_order() {
+        // REQ-501 / 24 §14.21a: completed の親だけ（行の無い親も import_ids に残す）、帳票ごとに
+        // 親の古い順・位置の順、値は保存されたまま（空白・NULL）、Z005 は raw_department_name
+        let (_dir, conn) = setup_test_db();
+        let later = seed_daily_report_import(&conn, "2026-03-21", "sheet-later", "completed");
+        let earlier = seed_daily_report_import(&conn, "2026-03-21", "sheet-earlier", "completed");
+        let empty = seed_daily_report_import(&conn, "2026-03-21", "sheet-empty", "completed");
+        let rolled = seed_daily_report_import(&conn, "2026-03-21", "sheet-rolled", "rolled_back");
+        seed_daily_report_import(&conn, "2026-03-22", "sheet-other-day", "completed");
+        set_imported_at(&conn, later, "2026-03-21T20:00:00");
+        set_imported_at(&conn, earlier, "2026-03-21T12:00:00");
+        set_imported_at(&conn, empty, "2026-03-21T21:00:00");
+        insert_daily_report_summary_lines(
+            &conn,
+            &[
+                summary_line(later, "総売", Some(200), None, Some(500), 1),
+                summary_line(earlier, "  項目A ", None, Some(3), None, 2),
+                summary_line(earlier, "総売", Some(130), None, Some(1000), 1),
+                summary_line(rolled, "総売", Some(100), None, Some(9), 1),
+            ],
+        )
+        .unwrap();
+        insert_daily_report_payment_lines(
+            &conn,
+            &[
+                payment_line(later, 1, "現金", 10),
+                payment_line(rolled, 1, "現金", 99),
+            ],
+        )
+        .unwrap();
+        insert_daily_report_department_lines(
+            &conn,
+            &[NewDailyReportDepartmentLine {
+                daily_report_import_id: earlier,
+                source_file: "Z005".to_string(),
+                department_id: None,
+                raw_department_name: "部門 レジ".to_string(),
+                normalized_department_name: Some("部門マスタ".to_string()),
+                amount: 7,
+                quantity_hundredths: Some(250),
+                count: None,
+                sort_order: 1,
+            }],
+        )
+        .unwrap();
+
+        let sheet = get_daily_report_sheet_lines(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.import_ids, [earlier, later, empty]);
+        let view = |lines: &[DailyReportSheetLineRow]| {
+            lines
+                .iter()
+                .map(|line| {
+                    (
+                        line.daily_report_import_id,
+                        line.sort_order,
+                        line.label.clone(),
+                        line.quantity_hundredths,
+                        line.count,
+                        line.amount,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            view(&sheet.summary_lines),
+            [
+                (earlier, 1, "総売".to_string(), Some(130), None, Some(1000)),
+                (earlier, 2, "  項目A ".to_string(), None, Some(3), None),
+                (later, 1, "総売".to_string(), Some(200), None, Some(500)),
+            ]
+        );
+        assert_eq!(
+            view(&sheet.payment_lines),
+            [(later, 1, "現金".to_string(), None, Some(1), Some(10))]
+        );
+        assert_eq!(
+            view(&sheet.department_lines),
+            [(
+                earlier,
+                1,
+                "部門 レジ".to_string(),
+                Some(250),
+                None,
+                Some(7)
+            )]
+        );
+
+        let none = get_daily_report_sheet_lines(&conn, "2026-03-23").unwrap();
+        assert!(none.import_ids.is_empty());
+        assert!(none.summary_lines.is_empty());
+    }
+
+    #[test]
+    fn test_get_active_z004_import_totals_counts_active_only() {
+        // REQ-501 / 24 §14.21b: completed・completed_partial の数と skipped_count の和、無い日は (0, 0)
+        let (_dir, conn) = setup_test_db();
+        assert_eq!(
+            get_active_z004_import_totals(&conn, "2026-03-21").unwrap(),
+            (0, 0)
+        );
+        for (settlement_no, hash, status, skipped) in [
+            (1, "z-a", "completed", 0),
+            (2, "z-b", "completed_partial", 3),
+            (3, "z-c", "rolled_back", 5),
+        ] {
+            insert_csv_import(
+                &conn,
+                &NewCsvImport {
+                    filename: "Z004.CSV".to_string(),
+                    settlement_date: "2026-03-21".to_string(),
+                    file_hash: hash.to_string(),
+                    total_items: 1,
+                    total_amount: 1,
+                    skipped_count: skipped,
+                    status: status.to_string(),
+                    machine_no: "0001".to_string(),
+                    settlement_no,
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            get_active_z004_import_totals(&conn, "2026-03-21").unwrap(),
+            (2, 3)
+        );
     }
 }

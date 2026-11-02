@@ -39,6 +39,8 @@ describe("buildCreateProductRequest (UI-01b-D4/D6)", () => {
       initial_stock: 10,
       pos_stock_sync: true,
       plu_target: false,
+      // REQ-101 / UI-01b-D26: 1 回目の登録は独自コードの道を選ばない
+      shared_jan_custom_code: false,
     });
   });
 
@@ -332,5 +334,30 @@ describe("product form request の単位と上限（UI-01b-D22 / REQ-101）", ()
     expect(
       productToFormValues(makeMockProductWithRelations({ cost_price_centi: 8333 })).costPrice,
     ).toBe("83.33");
+  });
+});
+
+describe("productToFormValues の現在庫（D-118 b2、51）", () => {
+  it("U4 productToFormValues formats recheck range for read-only stock", () => {
+    // REQ-102 / SPEC-STK-CNT-D3・SPEC-UNIT-D3（Matrix U4）: 要再確認なら範囲、長さは m、そうでなければ 1 つの値。
+    // 範囲の文字は送信しない（未変更の update request は空）
+    const recheck = makeMockProductWithRelations({
+      stock_quantity: 9,
+      stock_recheck: true,
+      stock_range_low: 7,
+      stock_range_high: 12,
+    });
+    expect(productToFormValues(recheck).initialStock).toBe("7〜12 個");
+    expect(buildUpdateProductRequest(productToFormValues(recheck), recheck).request).toEqual({});
+    const length = makeMockProductWithRelations({
+      stock_quantity: 450,
+      stock_unit: "m",
+      stock_recheck: true,
+      stock_range_low: 400,
+      stock_range_high: 450,
+    });
+    expect(productToFormValues(length).initialStock).toBe("4〜4.5 m");
+    const plain = makeMockProductWithRelations({ stock_quantity: 3 });
+    expect(productToFormValues(plain).initialStock).toBe("3 個");
   });
 });

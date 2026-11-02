@@ -211,7 +211,13 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     const user = userEvent.setup();
     mockListSuppliers.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "取引先取得失敗", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "取引先取得失敗",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     mockCreateReceiving.mockResolvedValue({
       status: "ok",
@@ -501,7 +507,13 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     mockCreateReceiving
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -538,7 +550,13 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     mockCreateReceiving
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -860,7 +878,13 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     mockReviseProductPrice
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "更新失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "更新失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -962,7 +986,13 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
       })
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "更新失敗", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "更新失敗",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       });
 
     renderWithClient(<ReceivingPage />);

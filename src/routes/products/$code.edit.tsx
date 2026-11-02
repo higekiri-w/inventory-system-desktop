@@ -28,6 +28,9 @@ function RouteComponent() {
       onNavigateToList={(returnTo) => {
         void navigate({ to: "/products", search: parseProductListSearchFromReturnTo(returnTo) });
       }}
+      onNavigateToStocktake={(stocktakeSearch) => {
+        void navigate({ to: "/stocktake", search: stocktakeSearch });
+      }}
     />
   );
 }

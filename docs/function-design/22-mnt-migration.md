@@ -13,6 +13,11 @@ src-tauri/src/
     schema_v5.rs  -- PLU slot 永続割当テーブル追加
     schema_v6.rs  -- suppliers.updated_at 追加
     schema_v7.rs  -- 日報の個数を100倍の整数へ（quantity → quantity_hundredths）
+    schema_v8.rs  -- 単位を12種へ（§16 の vU）
+    schema_v9.rs  -- 在庫の並びの鍵・計数の表・写しの列（§19 の vL）
+    schema_v10.rs -- 原価を1/100円の列へ（§16 の vB）
+    schema_v11.rs -- Z004の精算の鍵・売上の連動・棚卸しの完了の列（§20 の vZ）
+    schema_v12.rs -- 日報の束の精算回数の列（§17 の vS）
 ```
 
 ### 3.2 migrate
@@ -77,6 +82,14 @@ fn get_initial_schema() -> &'static str
 **処理ステップ**:
 1. DB_DESIGN.mdの全18テーブル定義に基づくCREATE TABLE文を文字列定数として返す
 2. CHECK制約、INDEX、初期データINSERT（departments 21件、app_settings初期値）も含む
+
+**MNT-03-D21: 初期データの直しはリリースの前は v1 の literal で行い、migration を足さない（2026-10-23、D-123）**
+
+- 決定: v1 の初期データは正本（`departments` は [master-tables](../db-design/master-tables.md) §2 の「初期データ（全21部門）」）と同じ値にする。リリース（店の PC への初回の導入）の前に食い違いを直すときは `src-tauri/src/db/schema_v1.rs` の `get_initial_schema` の literal を直し、既存の DB を直す migration を足さない。最初の適用は部門 12（宅急便）の `code_prefix` を `'TK'` から NULL にする直し（owner の決定、repo 外の回答台帳 TD-395）。NULL は SQL の NULL で書き、空文字にしない（`generate_custom_code` は `None` だけを拒む。[30 §4.3](30-biz-product-service.md) の処理ステップ 2）
+- 理由: 店の PC の DB は初回の導入で空から作られ v1 が当たる（`init_database` → `migrate`。初めて入れる版の条件は D-123 (4)）ので、literal の直しが店の DB に届く。直す前に作った開発・試験 DB はリリースの前まで作り直してよい（D-123 (1)、§16 の作り直しの手順）。migration にすると、開発・試験 DB のためだけの版がリリースの後も残り、並走の lane の版の番号の取り合いに加わる（D-127）
+- 範囲: 同じ版の DB でも、直す前に作った DB は古い値のまま残る（部門 12 なら `'TK'` のままで独自コードを発番できる。Z005 の部門別売上は `code_prefix` を読まないので記録の意味は変わらない。[pos-tables](../db-design/pos-tables.md) §12e）。作り直しで揃い、legacy の DB の取込み（§12）と復元（[71](71-mnt-backup.md)）は直す前の file を持ち込むので同じ扱い。直す前に作った DB を見分けて止まる検査は無いので、残す DB の有無は初回の導入の前に確かめる。リリースの後は初期データの直しも値のある DB を移す migration で行う（D-123 (5)）
+- 棄却: 既存の DB を直す migration を足す（例 `UPDATE departments SET code_prefix = NULL WHERE id = 12 AND code_prefix = 'TK'`。v1 を直すかどうかに関わらず、上の理由の版が残る）
+- 再検討: リリースの日が決まったとき。作り直さずに残す DB がリリースの前にできたとき（D-123 の Revisit の、店の PC で本番の前に試しに動かす場合）は、その DB に当てる migration を足す
 
 ---
 
@@ -336,7 +349,7 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **vU の手順**（`MigrationKind::Custom`、表の作り直し。SQLite は CHECK を ALTER で変えられない）:
 
-1. TX の外で `PRAGMA foreign_keys` の値を読み、OFF にする（v2・時点証拠の migration と同じ形。TX の中の `PRAGMA foreign_keys` は no-op）
+1. TX の外で `PRAGMA foreign_keys` の値を読み、OFF にする（v2 と同じ形。TX の中の `PRAGMA foreign_keys` は no-op）
 2. BEGIN。`products` の行数と、`stock_unit` の値ごとの件数（手順 6 (c) が比べる相手）を読む。続けて下の「vU の上限の検査」を行う（読取りだけ）。上限の外の値が 1 件でもあれば ROLLBACK し、`PRAGMA foreign_keys` を手順 1 の値に戻して、何も変えず版も記録せず `DbError::MigrationFailed`（message に `上限の検査` と表名・列名）
 3. `products_new` を、vU を適用する時点の `products` と同じ列・同じ順・同じ制約で作り、`stock_unit` の CHECK だけを 12 個の code（`pcs` `sheet` `hon` `bag` `box` `roll` `kumi` `set` `ball` `cho` `m` `cm`）にする。既定値 `'pcs'` は変えない。列の並びは vU の直前の版の schema から写す（先に時点証拠の migration が `products` に列を足していれば、その列も含める）
 4. 全列を列名で並べて `INSERT INTO products_new (…) SELECT … FROM products`。値は変えない
@@ -357,7 +370,7 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 - 記録ごとの和は、基準数量で割る前の値で比べる（[共通規則](10-common-rules.md) SPEC-UNIT-D6 の合計はこの値以下なので、通った記録の合計は必ず範囲内。長さの商品の記録は実際の合計の 100 倍まで厳しく止まる）。積か和が i64 を溢れる記録も上限の外にする（SQLite は整数の積の溢れを REAL にし、整数の `SUM` の溢れを error にする。python の sqlite3 で確かめた、2026-10-11）。
 - 検査は値の範囲だけを見る。
-- vU を適用する時点で、時点証拠の migration が数量の列を足していれば（`stocktake_recounts.system_stock`・`actual_count`。`src-tauri/src/db/schema_time_evidence.rs` の `SCHEMA_SQL` の `stocktake_recounts`）、同じ在庫の上限で含める（手順 3 と同じ扱いで、後に入る lane の義務）。（2026-10-16 の D-118 で時点証拠の migration は作らないことになり、この段は当たらない。`stock_counts.count_value` と写しの範囲の列は (a) の v9〈§19〉で入った。写しの値と範囲は `recompute_stock` が書く前に同じ在庫の上限で検査する〈[31](31-biz-inventory-service.md)、test `test_stock_ledger_req903_recompute_rejects_out_of_range_value_and_range_end`〉。`count_value` の列の CHECK は `>= 0` だけで、上限の検査は計数を保存する経路〈(b)〉が持つ）
+- vU を適用する時点で時点証拠の migration の列は無い（D-118 で時点証拠の migration は作らないことになった）。計数の値と写しの範囲の上限は v9 と計数の保存の検査が守る。
 - 止まった後の進め方: DB は何も変わっていない。vU がその起動の最初の migration なら版も変わらず、旧版のアプリでそのまま開ける（先に別の migration が COMMIT していれば、下の回復の手順）。上限の外の値はアプリの画面では消せないことがある（商品の原価や在庫を直しても、価格の履歴・明細・変動の列に値が残る。記録は書き換えない契約）ので、更新を保留して新しい版を起動せず（起動のたびに同じ所で止まる）、管理者が対応を決める（上限の外の表名・列名は message にあるので、値を直す SQL を当てるか、上限の契約を見直すか。どちらも R4 の判断で owner に諮る）。
 
 **MNT-03-D14 / D-119 原価と単位の起点の migration（vB）**（原価の lane で実装、版 10、D-128）: 原価の 1/100 円は既存の DB の円の値を変換して入れない（owner の決定 U4 = b、repo 外の回答台帳 TD-297）。vB は原価の列を持つ表に行が 1 つも無い DB（新しく作った DB）にだけ当たり、列の名前を変えるだけで値を変えない。行のある開発・試験 DB は vB で止まり、作り直す（owner は作り直しを承認した。作り直す DB と保全の範囲は原価の lane の packet が示す）。本番の DB は無い。値の変換が無いので、変換の範囲の検査・余りの検証・旧版へ戻す手順を持たない。
@@ -375,18 +388,18 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **作り直しの手順**（D-119）: 作り直しは、移す file を 1 つずつ挙げる形にしない（挙げ漏れた 1 つが次の起動で読まれ、空の DB にならない。作業フォルダの旧 DB の取込み、確定済みの復元の manifest の補完がその例）。アプリが自分の data を置く folder を、folder ごと丸ごと移す。
 
-- アプリの data の folder: アプリの識別子（`src-tauri/tauri.conf.json` の `identifier`、`com.kosei.inventory`）の名前の folder の全部。`{app_data}`（`app.path().app_data_dir()`、`src-tauri/src/lib.rs` の `run`。Windows は `%APPDATA%\com.kosei.inventory`）と、同じ名前の端末ごとの folder（Windows は `%LOCALAPPDATA%\com.kosei.inventory`。WebView の保存〈localStorage〉の置き場。下の「確かめた前提」）。`{app_data}` の下にアプリが置く物は、今の現物では DB と `-wal`・`-shm`（`src-tauri/src/lib.rs` の `prepare_database_with_init` の `db_path`）、取込みの一時名 `inventory.db.migrating`（`src-tauri/src/db/mod.rs` の `migrate_legacy_db_with_ops`）、復元の遺物 `.restore_manifest`・`.restore_manifest.tmp`・`.restore_backup`（`src-tauri/src/mnt/restore.rs` の `MANIFEST_SUFFIX`・`MANIFEST_TEMP_SUFFIX`・`BACKUP_SUFFIX`）、backup の既定の保存先 `backups`（`src-tauri/src/mnt/backup.rs` の `resolve_backup_dir`）、診断ログ `logs`（`src-tauri/src/lib.rs` の `run` の `DiagnosticLogConfig`）、入庫の伝票の画像 `images/receipts`（`src-tauri/src/io/image_manager.rs` の `RECEIPTS_DIR` と `save_receipt_image_with_date`）。folder ごと移すので、この一覧は移す物の条件ではなく、後から足される物（例: SD の読取りの写し）も一緒に移る。
+- アプリの data の folder: アプリの識別子（`src-tauri/tauri.conf.json` の `identifier`、`com.inventory-system.desktop`）の名前の folder の全部。`{app_data}`（`app.path().app_data_dir()`、`src-tauri/src/lib.rs` の `run`。Windows は `%APPDATA%\com.inventory-system.desktop`）と、同じ名前の端末ごとの folder（Windows は `%LOCALAPPDATA%\com.inventory-system.desktop`。WebView の保存〈localStorage〉の置き場。下の「確かめた前提」）。`{app_data}` の下にアプリが置く物は、今の現物では DB と `-wal`・`-shm`（`src-tauri/src/lib.rs` の `prepare_database_with_init` の `db_path`）、取込みの一時名 `inventory.db.migrating`（`src-tauri/src/db/mod.rs` の `migrate_legacy_db_with_ops`）、復元の遺物 `.restore_manifest`・`.restore_manifest.tmp`・`.restore_backup`（`src-tauri/src/mnt/restore.rs` の `MANIFEST_SUFFIX`・`MANIFEST_TEMP_SUFFIX`・`BACKUP_SUFFIX`）、backup の既定の保存先 `backups`（`src-tauri/src/mnt/backup.rs` の `resolve_backup_dir`）、診断ログ `logs`（`src-tauri/src/lib.rs` の `run` の `DiagnosticLogConfig`）、入庫の伝票の画像 `images/receipts`（`src-tauri/src/io/image_manager.rs` の `RECEIPTS_DIR` と `save_receipt_image_with_date`）。folder ごと移すので、この一覧は移す物の条件ではなく、後から足される物（例: SD の読取りの写し）も一緒に移る。
 - folder の外でアプリが読む場所（今の現物で 2 つ。PC の外の控えの runtime〈D-114〉が (3) を足す）: (1) 起動の作業フォルダ（`std::env::current_dir()`、`src-tauri/src/lib.rs` の `prepare_database`）の旧 DB `inventory.db` と `-wal`・`-shm`。`{app_data}` に DB が無いと §12.2 の `migrate_legacy_db` が取り込む（`src-tauri/src/lib.rs` の `prepare_database_with_init` の `new_db_exists` の分岐、`src-tauri/src/db/mod.rs` の `migrate_legacy_db_with_ops`）。(2) 利用者が設定した backup の保存先（`app_settings` の `backup_path`。旧 DB の設定にあり、作り直した DB には無い）。(3) 用意した USB メモリの `InventoryBackup` の folder（目印と写し、[71](71-mnt-backup.md) §71.11）。どの媒体を用意したかは `{app_data}` の `offsite-backup.json` にあるので、folder ごと移すと用意の前に戻り、どの媒体にも写さない（71 §71.11.4 手順 1）が、媒体の上の写しは残る。folder の外の場所を足す変更は、この項に足す。
 - 作り直しの後に残す物は無い（案 1 を採った）。設定（`app_settings`）は DB の中で、作り直した DB では既定に戻る。診断ログ・伝票の画像・backup は旧 DB の記録に属し、作り直した DB では使わない（古い backup は vB の前の版で、新しい版では復元すると migrate が vB で止まり、71 が巻き戻すので利用者には失敗に見える）。WebView の保存は、画面の表示の倍率と、日報の取込みで最後に選んだ folder と、PLU の書出しの保存の待ち（旧 DB の memory No.）で、前の 2 つは既定に戻るだけ、最後の 1 つは旧 DB のもので残してはいけない。
 
 1. backup の保存先（`backup_path`）を控える（既定の `{app_data}/backups` なら控えは要らない。folder ごと移る）。控え方は 2 つに分かれる: (a) 新しい版を入れる前なら、旧版の設定の画面で控える。(b) 新しい版を入れた後（同じ起動で v8 などが COMMIT した後に vB で止まった DB は、新しい版も旧版も設定の画面に届かない）なら、アプリを止めて DB 一式（`{app_data}/inventory.db` と、あれば `-wal`・`-shm`）の写しを別の場所に作り、写しを読み取りだけで開いて `SELECT value FROM app_settings WHERE key='backup_path'` で取る（元の DB は開かない。行が無いか空なら既定）
 2. アプリを止める（窓を全部閉じ、プロセスが残っていないことを確かめる）
-3. 日付の付いた folder を 1 つ作り、次を消さずにそこへ移す（元の場所ごとに sub folder を分け、どこから来たかが分かるようにする）: アプリの data の folder（`com.kosei.inventory` の名前の folder の全部）を丸ごと、アプリを起動する方法（ショートカット、exe の直接の起動）ごとの作業フォルダにある旧 DB 一式、手順 1 で控えた backup の保存先の中の backup の file（残すと、後で同じ保存先を設定したときに復元の画面に出る）、用意した USB メモリそれぞれの `InventoryBackup` の folder を丸ごと（残すと、同じ媒体を用意し直したときに古い写しが媒体に残り、控えを選ぶ画面で選べる。持ち帰っていて手元に無い媒体は、用意し直す前に同じく移す）
+3. 日付の付いた folder を 1 つ作り、次を消さずにそこへ移す（元の場所ごとに sub folder を分け、どこから来たかが分かるようにする）: アプリの data の folder（`com.inventory-system.desktop` の名前の folder の全部）を丸ごと、アプリを起動する方法（ショートカット、exe の直接の起動）ごとの作業フォルダにある旧 DB 一式、手順 1 で控えた backup の保存先の中の backup の file（残すと、後で同じ保存先を設定したときに復元の画面に出る）、用意した USB メモリそれぞれの `InventoryBackup` の folder を丸ごと（残すと、同じ媒体を用意し直したときに古い写しが媒体に残り、控えを選ぶ画面で選べる。持ち帰っていて手元に無い媒体は、用意し直す前に同じく移す）
 4. 移した元の場所に、アプリの data の folder と作業フォルダの旧 DB が残っていないことを確かめる
 5. 新しい版のアプリを起動する。アプリの data の folder は無いので作られ（`src-tauri/src/lib.rs` の `run` の `StartupFailureKind::CreateAppDataDir`）、復元の遺物が無いので reconcile は何もせず、DB も作業フォルダの旧 DB も無いので取込みは起きず（`migrate_legacy_db` は `Ok(false)`）、`init_database` が空の DB を作り、v1 から vB までが当たる
 6. 初期投入をやり直す。表示の倍率など WebView の保存は既定に戻るので、要れば選び直す
 
-**確かめた前提**（上の「アプリの data の folder」の項が引く）: WebView の保存（localStorage）は、Windows で端末ごとの folder（`%LOCALAPPDATA%\com.kosei.inventory`）の下の `EBWebView` の名前の folder（WebView2 の既定）にあり、`%APPDATA%\com.kosei.inventory` の下には無い。2026-10-21 に、原価の lane の L3 の作り直しの手順 3 で移す前に、2 つの folder の中の一覧（folder の名前だけ）を取って確かめた（Windows、`npm run tauri dev` の起動）。作り直しの手順は識別子の名前の folder を `%APPDATA%` と `%LOCALAPPDATA%` の両方とも丸ごと移すので、置き場がどちらでも移る。
+**確かめた前提**（上の「アプリの data の folder」の項が引く）: WebView の保存（localStorage）は、Windows で端末ごとの folder（`%LOCALAPPDATA%\com.inventory-system.desktop`）の下の `EBWebView` の名前の folder（WebView2 の既定）にあり、`%APPDATA%\com.inventory-system.desktop` の下には無い。2026-10-21 に、原価の lane の L3 の作り直しの手順 3 で移す前に、2 つの folder の中の一覧（folder の名前だけ）を取って確かめた（Windows、`npm run tauri dev` の起動）。この観測は識別子を `com.inventory-system.desktop` へ変える前（D-132 (3)）の前の名の folder で取ったもので、置き場が識別子の名前の端末ごとの folder であることは名前に依らない（`tauri` の webview の用意は、`dataDirectory` の指定が無いとき識別子を端末ごとの data の folder で解く）。作り直しの手順は識別子の名前の folder を `%APPDATA%` と `%LOCALAPPDATA%` の両方とも丸ごと移すので、置き場がどちらでも移る。
 
 復元の遺物は、新しい版の起動で解かせずに folder ごと移す。確定済み（phase = committed）の manifest は reconcile が残し（`src-tauri/src/mnt/restore.rs` の `reconcile_restore_with_ops` の `CommittedPendingLog`）、`init_database` が成功した後の補完（`src-tauri/src/lib.rs` の `prepare_database_with_init`、`complete_reconciled_restore`）だけが操作ログを書いて消すので、vB が init の中で止まる DB では起動で解けない。移した folder の中で旧 DB と一緒に残り（補完は済まないまま）、新しい DB の操作ログに旧 DB の復元の記録は書かれない。
 
@@ -405,6 +418,21 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 更新の後に入れたデータは戻らない（手順 5 で保全した file にだけ残る）。逆変換の migration は作らない。vB は行の無い DB にだけ当たるので、この手順の対象にしない（上の vB の「止まった後の進め方」）。
 
 **テスト**（vB の分は `schema_v10.rs` の test と、作り直しの手順の起動の test〈`lib.rs` の `test_startup_req903_` の 4 本〉）: vU は、12 個の code がすべて入り一覧に無い値（`kg`）が CHECK で拒まれること、作り直しの前後で全列の値・index・FK が同じこと、手順 6 の失敗で表・版が戻り foreign_keys が元の値に戻ること。vU の上限の検査: 各列が端の値（数量 `9999999`・`-9999999`〈`sale_records.quantity`〉、在庫 `999999999`・`-999999999`、変動 `1999999998`、売価 `999999`、原価 `999999`・`-999999`・NULL〈`valuation_cost_price`〉、`stocktakes.total_cost` `9007199254740991`）の旧 DB は通って vU が成功し、どれか 1 列が 1 つ外（数量 `10000000`、在庫 `1000000000`、変動 `1999999999`、売価 `1000000`、原価 `1000000`、`total_cost` `9007199254740992`）の旧 DB は、表・値・版・foreign_keys が何も変わらず `MigrationFailed`（message に表名・列名）。上限の外が明細・履歴の列（`inventory_movements.stock_after`、`price_history.old_selling`、`price_history.old_cost`）だけにある DB も同じく止まる。記録ごとの和: 上限の明細（数量 `9999999`、原価 `999999`）900 行の入庫は通り（和 `8999990100000900`）、901 行（`9009990089000901`）は止まる。行 0 の表で成功。回復の手順（管理者の手順書を合成の DB で 1 度通す）: 手順 3 で遺物（`.restore_manifest` か `.restore_backup`）がある状態、手順 4 で版が新しすぎる backup・`integrity_check` が `ok` でない backup しか無い状態のどちらで止まっても、元の名前の `{db_path}`・`-wal`・`-shm` と遺物の file は中身も名前も変わらない（手順 5 の移動の前に止まる）。vB は、v1 から vB までを空の DB に当てた後に 6 列が `_centi` の名前で古い名前が無いこと、手順 4 の後の CHECK が巻・cm を外した後の一覧（個数の単位 9 個と `m`）を受け `roll`・`cm`・`kg` を拒むこと、手順 4 の後の `products` の定義（全列の名前・型・NOT NULL・既定値の並び、`products` 自身の外部キー、index）が、改名した `cost_price_centi` の名前だけを除いて手順 4 の前と同じで、§19 の写しの 3 列の CHECK と `tax_rate` の CHECK が効き、`products` を参照する表の外部キーが残ること、起点の検査で 5 つの表のどれか 1 つに 1 行だけある DB（表ごとに 1 case）と 2 つの表に行のある DB が `MigrationFailed`（message に手順 2 の文と、行のある表名の全部）で schema・版・foreign_keys が何も変わらないこと、再実行で重複適用しないこと。作り直しの手順（一時の `{app_data}` と作業フォルダを `prepare_database_with_init` に渡す起動の test）: (i) 作業フォルダに行のある旧 DB があり `{app_data}` にも行のある DB がある状態、(ii) `{app_data}` に確定済み（phase = committed）の manifest と行のある DB がある状態のそれぞれから、手順 3 のとおり `{app_data}` を丸ごとと作業フォルダの旧 DB を移して起動すると、取込みが起きず、空の DB で vB まで当たり、新しい DB の `operation_logs` に `backup_restore` の行が無いこと。対照として、作業フォルダの旧 DB を移し忘れた状態では取り込まれて vB が止まること。(iii) 同じ起動で v8 が COMMIT した後に vB で止まった DB（既定でない `backup_path` を持つ）では、手順 1 (b) の写しの読取りで保存先が取れ、元の DB の file が変わらないこと。vB を登録すると、行を入れてから最新の版まで `migrate()` する既存の test（原価の lane の Test Design Matrix の「既存の test の移し方」に一覧）が vB で止まるので、それらの test は版の上限を取る test 用の migrate（指定した版までだけ当てる）に替え、期待は変えない（回帰の検査を弱めない）。
+
+## 17. MNT-03 追加: 日報の束の精算回数の列の migration（D-111）
+
+**MNT-03-D15 / IO-07-D5 / BIZ-08-D4 / D-111**: `daily_report_imports` に NULL を許す列 `settlement_no INTEGER` を足す migration（以下 vS）。列の意味の正本は [db-design/pos-tables.md](../db-design/pos-tables.md) §12b、保存と照合は [37](37-biz-daily-report-import-service.md) §37.4 手順 4a・6 と [24](24-io-csv-import-repo.md) §14.14・§14.18a。版の番号は v12（`src-tauri/src/db/schema_v12.rs`。2026-10-24 に §20 の vZ〈PR #188〉が先に merge して v11 を取ったので、下の規則で v12 に取り直した。merge の時点で先に別の migration が入っていれば同じ規則で取り直す）。棚卸しの数の置き場と在庫の求め直しの runtime の (b) の最初の lane（b1）の migration（vZ）も次の版を取るので、先に merge した側が若い番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録を取り直す（`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。§18 の JAN の別名・PLU の書出しの見直しの runtime の migration も同じ）。test の版の期待は取り直さずに済む形にする: 全部の migration を当てて最新の版を期待する既存の test（`init_database`・`migration::migrate`・起動の `prepare_database_with` の後の `MAX(version)` と `schema_versions` の行数）は、版の数値・版の定数でなく `app_max_version()`（`src-tauri/src/db/migration.rs`）と比べ、ある版の後の schema・振舞いを見る test（vB の後の全 object の SQL 等）は §16 の「版の上限を取る test 用の migrate」（`migrate_up_to(&conn, <その版の定数>)`）で当てる。vS の lane がこの形に直す test の一覧と洗い直しの command は SD 直読みの runtime の packet の S2。先に merge した lane が最新の版を版の定数（例 vZ の定数）か数値で期待する test を残していれば、後から merge する lane がそれを `app_max_version()` に替える。
+
+**手順**（`MigrationKind::Sql`。実行器が BEGIN → SQL → schema_versions の INSERT → COMMIT を持つ）:
+
+1. `ALTER TABLE daily_report_imports ADD COLUMN settlement_no INTEGER`
+
+- 既存の行は NULL のまま（D-111 より前の取込みと layout B。値を推測して埋めない。BIZ-08-D4 は NULL の行を照合しない）。backfill・範囲の検査・表の作り直しは要らない（足すのは NULL を許す列だけで、既存の値を変えない）。CHECK・index は足さない（照合は `report_date` の既存の index で絞れる件数で、利用者は 1 人）。
+- 新しい DB も v4 で表を作ってから vS で列を足す（v4 の CREATE 文〈`schema_v4.rs`〉は書き換えない）。
+- 失敗は実行器の TX で戻り、版は記録されない（§3.2）。vS を適用した DB は vS を知らない旧版のアプリでは開けない（MNT-03-D11 の `SchemaNewerThanApp`）。旧版へ戻す手順は §16 の「回復」と同じ（更新の前の backup に戻す）。
+- DB の作り直しとの関係（§16 の「DB の作り直しと順」）: vS は行のある DB にもそのまま当たり、作り直しを要さない。vB（§16 の手順 2）・v9（§19 の手順 1）・vZ の止まる検査は `daily_report_imports` を見ないので、vS とそれらはどちらが先でも互いに止めない。作り直しで移すアプリの data の folder には、SD から読んだ原本の写し（`pos-sources/`、[29 §29.8](29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）も入る（§16 の「作り直しの手順」は folder ごと移す）。
+
+**MIGRATIONS 登録順**: `migration.rs` の migrations() は merge の時点の最後の版の後に vS を登録する。description は `日報の束の精算回数の列（daily_report_imports.settlement_no）`、kind は `MigrationKind::Sql`。実装は、日報の行がある直前の版の DB からの適用で既存の行の `settlement_no` が NULL になること、`pragma_table_info('daily_report_imports')` に列があり型が `INTEGER`・NULL を許すこと、再実行で vS を重複して適用しないこと、`settlement_no` の値つきの INSERT が読めることを検証する（test `migration::adds_daily_report_settlement_no_nullable`）。
 
 ## 18. MNT-03 追加: 前の JAN の別名の migration（proposed・未実装、D-122）
 
@@ -442,3 +470,26 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 **回復**: §16 の「回復」と同じ（vL が COMMIT した DB は vL を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vL の後に入れた記録は戻らない）。
 
 **テスト**（棚卸しの runtime (a) の lane の完了条件）: 空の DB と、入庫・返品交換・手動販売・廃棄・初期在庫の movement を持つ直前の版の DB の両方で vL が成功し、各 movement の `business_date` が参照先の日付（初期在庫は `created_at` の日付）、`phase = 0`、`settlement_no` が NULL で、ほかの列と id が同じこと。`sqlite_sequence` が作り直しの前の値のまま（末尾の行を消した fixture で、次の INSERT の id が前の最大 + 1 にならないこと）。手順 1 の条件（`stocktakes`・`csv_imports`・`reference_type` が `csv_import`・`movement_type` が `receiving` で `reference_type` が `stocktake`・`movement_type` が `stocktake`、1 つずつ）、手順 2 の参照先の無い行・形の違う日付（`2026/10/01`）・実在しない日付（`2026-02-30`・`2026-02-32`・`2026-13-01`）、手順 8 の上限の外で、schema・値・版が何も変わらず `MigrationFailed`（message に `作り直し` と表名、手順 8 は列名も）。写しと和の違う商品が 1 つある DB で、その商品の `stock_quantity` が和になり、`operation_logs` に `trigger` が `migration` の 1 行（old / new）があること、違いの無い DB では行が無いこと。最新の版まで当てた後に `products` の 3 列・`stock_counts`・新しい index があり、§18 の 3 つの trigger があればそれも残ること。行を入れてから最新の版まで `migrate()` する既存の test のうち、棚卸しか Z004 の取込みの行を入れるものは、版の上限を取る test 用の migrate（§16 の vB の test と同じ helper。先に入る lane が足す）に替え、期待は変えない。例外の 2 つ（棚卸しの行を持つ DB を `init_database` で開き直す test と、行の無い DB の `products` の列の定義を比べる test）は期待を変える。一覧と新しい期待は packet の Test Matrix の「既存の test の移し方」の T1。
+
+## 20. MNT-03 追加: Z004 の精算の鍵・売上の連動・棚卸しの完了の列の migration（D-118 の b1、実装済み）
+
+**MNT-03-D18 / D-118**: 棚卸しの数の置き場と在庫の求め直しの runtime の (b) の最初の lane（b1。[ADR](../adr/2026-10-16-stocktake-count-placement.md) SPEC-STK-CNT-D12 の「(b) を 2 つの lane に分けた」）の migration（以下 vZ）。列と CHECK の意味の正本は [tracking](../db-design/tracking-system-tables.md) と [POS](../db-design/pos-tables.md) の「計数の置き場と在庫の求め直しの契約」。版の番号は merge の時点の次（起票の 2026-10-22 の main の最大は v10〈`db/migration.rs` の `migrations()`〉。§17 の SD 直読みの runtime の migration も次の版を取るので、先に merge した側が若い番号を取り、後から merge する側が file 名・`migrations()` の登録・test の版の期待を取り直す。`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項）。description は `Z004の精算の鍵・売上の連動・棚卸しの完了の列（D-118 (b1)）`、kind は `MigrationKind::Custom`。v11 として実装した（`src-tauri/src/db/schema_v11.rs` の `apply_v11_z004_settlement_key`、版の定数 `VZ_VERSION`）。
+
+**手順**（1 つの transaction。`inventory_movements` を作り直すが、どの表も `inventory_movements` を外部キーで参照しないので `foreign_keys` は変えない。`csv_imports`・`sale_records`・`stocktakes`・`stocktake_items`・`stock_counts` は列の追加だけ）:
+
+1. BEGIN。止まる検査（読取りだけ）: (a) `stocktakes` か `csv_imports` に行が 1 つでもある、(b) `inventory_movements` に `reference_type` が `csv_import` の行か `phase = 1` の行がある。どれかに当たれば ROLLBACK し、何も変えず版も記録せず `DbError::MigrationFailed`（message に `作り直し` と当たった表名。§19 の手順 1 と同じ文: `棚卸しか商品別売上（Z004）の取込みの記録がある DB はこの版へ移せません。開発・試験 DB は作り直してください（22 §16 の作り直しの手順）: {表名}`）。v9（§19）が同じ条件で止まり、v9 の後は棚卸しと Z004 の確定が停止中で行が作られないので、通常は当たらない。当たる DB では手順 4 の CHECK・手順 5 の列の CHECK が原因の分からない失敗になるので、先に原因と直し方を名指す
+2. `sqlite_sequence` の `inventory_movements` の値（無ければ 0）を読む（§19 の手順 3 と同じ）
+3. `inventory_movements_new` を今の 13 列（同じ名前・順・制約と、§19 が足した CHECK）に table の CHECK `(reference_type IS 'csv_import') = (phase = 1)` を足して作り、全行を id ごと `INSERT INTO inventory_movements_new (…) SELECT …` で写す（値は変えない。`=` で比べると `reference_type` が NULL のとき NULL になって通るので `IS` で比べる。packet の Contract Probe）
+4. `DROP TABLE inventory_movements`、`ALTER TABLE inventory_movements_new RENAME TO inventory_movements`。`sqlite_sequence` の値を手順 2 の値に戻す（§19 の手順 5 と同じ理由。fresh な計数の `seen_movement_id` は id が保存の順に増えることに依る）。index `idx_inventory_movements_product_date`・`idx_inventory_movements_reference`・`idx_inventory_movements_ledger` を作り直す
+5. 列の追加（`ALTER TABLE … ADD COLUMN`。NOT NULL を列の制約で書くと既定値が要るので、新しい取込みで値を持つことは CHECK で書く。行の無い表なので既存の行の検査は通る〈`stock_counts` は下のとおり〉。packet の Contract Probe）: `csv_imports` に `machine_no TEXT CHECK(machine_no IS NOT NULL AND machine_no <> '')` と `settlement_no INTEGER CHECK(settlement_no IS NOT NULL AND settlement_no >= 0)`、`sale_records` に `stock_linked INTEGER NOT NULL DEFAULT 0 CHECK(stock_linked IN (0,1))`（既存の行は 0。要再確認の理由 1 と在庫連動を始める検査は `csv_import_id` のある行だけを見る）、`stocktake_items` に `valuation_quantity INTEGER`、`stocktakes` に `cutoff_import_id INTEGER`・`cutoff_count_id INTEGER`・`cutoff_movement_id INTEGER`（どれも NULL を許す。完了の TX が書く）、`stock_counts` に `seen_import_id INTEGER CHECK(seen_import_id IS NULL OR (count_kind = 'fresh' AND seen_import_id >= 1))`（fresh な計数の取込みのカーソル。b1 の Plan Review closure〈Codex〉の是正。`stock_counts` は行があっても既存の行は NULL で CHECK を通り、NULL は意味として正しい: v9〈§19〉と手順 1 が `csv_imports` に行のある DB を止めるので、vZ の前に保存された計数は保存の時点に取込みが無かった。値を埋めない）
+6. 同じ TX の中で確かめる: `inventory_movements` の行数と id の集合が作り直しの前と同じ、`PRAGMA foreign_key_check` が 0 行。違えば手順 1 と同じく ROLLBACK し、何も変えず版も記録せず `DbError::MigrationFailed`（§19 の手順 9 と同じ文: `在庫の記録を新しい形へ写せなかった DB はこの版へ移せません。開発・試験 DB は作り直してください（22 §16 の作り直しの手順）: inventory_movements（{行数と id の集合 / foreign_key_check: 違反の表名}）`）
+7. schema_versions に記録して COMMIT する（MNT-03-D1 の共有の helper〈`commit_transaction`・`rollback_after_error`〉だけを使う）
+
+- 写しは変えない: 手順 1 で精算と棚卸しの記録の無い DB に限るので、vZ の後の求め直しの値は vZ の前と同じ（計数の行も v9 の後に保存の経路が無いので無い）。`products` を作り直さないので §18 の trigger の規則は当たらない。
+- DB の作り直しとの関係: vZ は手順 1 の DB でだけ止まり、開発・試験 DB の通常の形（商品と入出庫の記録）にはそのまま当たる。作り直しの起点ではない（§16 の「DB の作り直しと順」の 2 つに足さない）。店の PC へ初めて入れる版は vZ を含む（D-123 (4) の「それまでの migration を全部含む版」）。
+
+**止まった後の進め方**: §19 と同じ（DB は何も変わっていない。vZ がその起動の最初の migration なら旧版のアプリでそのまま開ける。§16 の作り直しの手順で作り直す。起動の画面は今の `DatabaseInit` の文に手順 1 の message を添えて出す）。
+
+**回復**: §16 の「回復」と同じ（vZ が COMMIT した DB は vZ を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vZ の後に入れた記録は戻らない）。
+
+**テスト**（b1 の lane の完了条件。test の名前と期待は b1 の packet の Test Design Matrix の M の行）: 空の DB と、入庫・返品交換・手動販売・廃棄・初期在庫の movement と demo の seed の形の売上の movement（`sale_auto`、`reference_type` が NULL）を持つ直前の版の DB の両方で vZ が成功し、各 movement の全列と id が同じで、`sqlite_sequence` が作り直しの前の値のまま。手順 1 の条件（`stocktakes`・`csv_imports`・`reference_type` が `csv_import`・`phase = 1`、1 つずつ）で schema・値・版が何も変わらず `MigrationFailed`（message に `作り直し` と表名）。vZ の後に `reference_type` が `csv_import` で `phase = 0` の行と、`phase = 1` で `reference_type` が `csv_import` でない行の INSERT が CHECK で拒まれ、`csv_import`・`phase = 1`・`settlement_no` ありの行は入る。`csv_imports` の `machine_no` が NULL・空、`settlement_no` が NULL・負の INSERT が CHECK で拒まれる。`sale_records` の `stock_linked` の既定が 0 で 2 を拒む。`stock_counts` の `seen_import_id` は fresh の NULL と 1 以上を受け、default の行の値と 0 を拒み、行のある `stock_counts` にも足せる。最新の版まで当てた後に §18 の 3 つの trigger があればそれも残る。最新の版を期待する既存の test の書き換えは packet の Test Matrix の「既存の test の移し方」の T1。

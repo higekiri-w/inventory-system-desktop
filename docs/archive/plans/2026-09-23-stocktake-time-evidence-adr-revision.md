@@ -91,7 +91,7 @@ Goal Invariant: owner 決定 2026-09-23 のとおり、㉘ が実装する時点
 
 ### 非目的
 
-- 「数えた後」の判定（番号印字 + EJ による取引単位の前後判定）。次の design lane「実測と POS 系列の対応を取得・保存する」（[backlog](../../backlog.md#やると決めたもの順番未定)）の対象で、番号印字は実機未検証の候補。
+- 「数えた後」の判定（番号印字 + EJ による取引単位の前後判定）。次の design lane「実測と POS 系列の対応を取得・保存する」（[backlog](../2026-10-19-backlog-closed.md#やると決めたもの順番未定)）の対象で、番号印字は実機未検証の候補。
 - 精算同一性 guard の再設計（byte hash か正規化した内容か、preview 時点の受領で衝突させるか）とレジ入替・番号 reset の系列の扱い。次の design lane の (a) に含まれる。
 - 明示の「今から数える」を商品選択時の暗黙開始へ畳む案（Opus / Fable レビューの単純化の提案、owner 未判断）。
 - `project-memory.md` の :40 / :190 以外の編集、`decision-log.md` への新 D（本改訂の durable な決定の置き場は ADR。Spec Contract R8 参照）。

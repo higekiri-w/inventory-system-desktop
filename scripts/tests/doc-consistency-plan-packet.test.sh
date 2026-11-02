@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # scripts/doc-consistency-check.sh の PK3 (test_token_exists)、PK4
-# (check_plan_packet_workflow_state) と PK1 拡張
-# (Owner Effort Budget / Contract Probe 必須化) を synthetic fixture で検証する。
+# (check_plan_packet_workflow_state)、PK1（旧形式の必須の節と新形式の最小形、D-145 (10) H14）、
+# active な packet の定義（D-145 (5)）、新しい path:行 の検査（H13）を synthetic fixture で検証する。
 # fixture はすべて本 test 自身が tmpdir に生成し、tracked fixture file は増やさない。
+# D-145 (4)(5): run_check は fixture を lane の 1 commit にして起点（PKT_BASE）の後に置く。
+# 起点 BASE_OLD は scripts/plan-approve.sh の無い main（旧形式）、BASE_NEW は在る main（新形式）。
 set -euo pipefail
 
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -103,6 +105,13 @@ trap 'rm -rf "$tmp"' EXIT
 repo="$tmp/repo"
 mkdir -p "$repo/docs/plans" "$repo/docs/function-design"
 git init -q "$repo"
+git -C "$repo" config user.name test
+git -C "$repo" config user.email test@example.invalid
+BASE_OLD="$(git -C "$repo" commit-tree "$(git -C "$repo" mktree < /dev/null)" -m "main before plan-approve.sh")"
+approve_blob="$(printf '#!/bin/sh\n' | git -C "$repo" hash-object -w --stdin)"
+approve_tree="$(printf '100644 blob %s\tplan-approve.sh\n' "$approve_blob" | git -C "$repo" mktree)"
+BASE_NEW="$(printf '040000 tree %s\tscripts\n' "$approve_tree" | git -C "$repo" mktree |
+    xargs git -C "$repo" commit-tree -p "$BASE_OLD" -m "main with plan-approve.sh")"
 cp "$SOURCE_ROOT/scripts/doc-consistency-check.sh" "$repo/doc-consistency-check.sh"
 # PK4 の key の重複の検査は cwd 相対の scripts/pr-gate.py（helper の workflow_fields）を呼ぶ（D-102 D3）
 mkdir -p "$repo/scripts" && cp "$SOURCE_ROOT/scripts/pr-gate.py" "$repo/scripts/"
@@ -268,6 +277,7 @@ write_plans_md_inline_code_pointer() {
 }
 
 reset_packet_defaults() {
+    PKT_BASE="$BASE_OLD"
     PKT_INCLUDE_WS=1
     PKT_PHASE="implementing"
     PKT_WS_RISK="R3"
@@ -460,15 +470,23 @@ write_packet() {
     } > "$path"
 }
 
+# fixture を起点 PKT_BASE の上の lane の 1 commit にして（packet を足した commit の親 = 起点）検査する。
+lane_commit() {
+    git -C "$repo" reset -q --soft "${PKT_BASE:-$BASE_OLD}"
+    git -C "$repo" add -A
+    git -C "$repo" commit -q --allow-empty -m lane
+}
+
 run_check() {
     local target="${1:-}"
+    lane_commit
     (
         cd "$repo"
         if [ -n "$target" ]; then
-            PATH="$rg_shim_dir:$PATH" REAL_RG="$real_rg" RG_ARGV_LOG="$rg_argv_log" \
+            WORKFLOW_BASE_SHA="${PKT_BASE:-$BASE_OLD}" PATH="$rg_shim_dir:$PATH" REAL_RG="$real_rg" RG_ARGV_LOG="$rg_argv_log" \
                 bash doc-consistency-check.sh --target plan "$target"
         else
-            PATH="$rg_shim_dir:$PATH" REAL_RG="$real_rg" RG_ARGV_LOG="$rg_argv_log" \
+            WORKFLOW_BASE_SHA="${PKT_BASE:-$BASE_OLD}" PATH="$rg_shim_dir:$PATH" REAL_RG="$real_rg" RG_ARGV_LOG="$rg_argv_log" \
                 bash doc-consistency-check.sh --target plan
         fi
     ) > "$out" 2>&1
@@ -527,7 +545,7 @@ if run_check "docs/plans/2026-01-02-fixture.md"; then
 fi
 assert_contains "$out" "必須セクション '## Workflow State' を欠いています"
 
-# --- 3. T-P5 Phase が 8 値の enum 外（撤去済みの実装後 Phase を含む）は marker の有無に関わらず ERROR ---
+# --- 3. PH3（T-P5 の Phase enum の ERROR を書き換え、D-145 (3)）: 旧形式の Phase の値は評価しない ---
 for marker in "" github; do
     for phase in review local-verified independent-review human-confirm ready-hosted-final merge; do
         setup_repo_dirs
@@ -535,11 +553,11 @@ for marker in "" github; do
         PKT_EVIDENCE_MODE="$marker"
         PKT_PHASE="$phase"
         write_packet "$repo/docs/plans/2026-01-03-fixture.md"
-        write_plans_md_linking "2026-01-03-fixture.md"
-        if run_check "docs/plans/2026-01-03-fixture.md"; then
-            fail "Phase '$phase' outside the 8-value enum was not rejected (marker='$marker')"
+        if ! run_check "docs/plans/2026-01-03-fixture.md"; then
+            cat "$out" >&2
+            fail "PH3: Phase '$phase' was evaluated (marker='$marker')"
         fi
-        assert_contains "$out" "の Phase 値 '${phase}' が Phase enum"
+        assert_not_contains "$out" "Phase enum"
     done
 done
 
@@ -582,17 +600,17 @@ fi
 assert_contains "$out" "PK4: Workflow State machine 整合 OK"
 assert_not_contains "$out" "Findings Freeze"
 
-# --- 7. Phase が plan-approved 以降なのに Plan Commit が pending ---
+# --- 7. PH3（書き換え）: Phase と Plan Commit の組は照合しない。計画の前後は Plan Commit だけが決める ---
 setup_repo_dirs
 reset_packet_defaults
 PKT_PHASE="implementing"
 PKT_PLAN_COMMIT="pending"
 write_packet "$repo/docs/plans/2026-01-07-fixture.md"
-write_plans_md_linking "2026-01-07-fixture.md"
-if run_check "docs/plans/2026-01-07-fixture.md"; then
-    fail "Phase implementing with Plan Commit pending was not rejected"
+if ! run_check "docs/plans/2026-01-07-fixture.md"; then
+    cat "$out" >&2
+    fail "PH3: Phase implementing with Plan Commit pending was rejected"
 fi
-assert_contains "$out" "Plan Commit:' が pending のままです"
+assert_not_contains "$out" "pending のままです"
 
 # --- 8. Owner Effort Budget 欠落（PK1 拡張、R2+ 必須） ---
 setup_repo_dirs
@@ -634,53 +652,25 @@ if ! run_check "docs/plans/2026-01-10-fixture.md"; then
 fi
 assert_not_contains "$out" "Contract Probe"
 
-# --- 11. D-097: 複数 active packet でも packet ごとの link は求めず、docs/plans/ の pointer 行を求める ---
+# --- 11/12. AR3（D-097 の pointer の検査を書き換え、D-145 (12)）: docs/Plans.md の '## 次の行動' を見ない ---
 setup_repo_dirs
 reset_packet_defaults
 write_packet "$repo/docs/plans/2026-01-11-fixture-a.md"
 write_packet "$repo/docs/plans/2026-01-11-fixture-b.md"
-write_plans_md_linking "2026-01-11-fixture-a.md" "2026-01-11-fixture-b.md"
-if ! run_check ""; then
+for plans_writer in write_plans_md_linking write_plans_md_no_link write_plans_md_hidden_pointer; do
+    "$plans_writer"
+    if ! run_check ""; then
+        cat "$out" >&2
+        fail "AR3: Plans.md ($plans_writer) still gates the active packets"
+    fi
+    assert_contains "$out" "PK4: Workflow State machine 整合 OK"
+    assert_not_contains "$out" "次の行動"
+done
+rm -f "$repo/docs/Plans.md"
+if ! run_check "docs/plans/2026-01-11-fixture-a.md"; then
     cat "$out" >&2
-    fail "multiple active packets with a docs/plans/ pointer and no per-packet link were rejected"
+    fail "AR3: a missing docs/Plans.md gated the packet"
 fi
-assert_contains "$out" "PK4: Workflow State machine 整合 OK"
-
-write_plans_md_no_link
-if run_check ""; then
-    fail "Plans.md without a docs/plans/ pointer was not rejected"
-fi
-assert_contains "$out" "docs/Plans.md の '## 次の行動' に active packet の一覧（docs/plans/）を指す行がありません"
-
-# --- 11c. D-097: code fence / HTML comment 内の pointer は無効、inline code の pointer は有効 ---
-write_plans_md_hidden_pointer
-if run_check ""; then
-    fail "a pointer visible only inside a code fence or HTML comment was accepted"
-fi
-assert_contains "$out" "docs/Plans.md の '## 次の行動' に active packet の一覧（docs/plans/）を指す行がありません"
-
-write_plans_md_mixed_fence_pointer
-if run_check ""; then
-    fail "mixed fence delimiters exposed a pointer inside a code fence"
-fi
-assert_contains "$out" "docs/Plans.md の '## 次の行動' に active packet の一覧（docs/plans/）を指す行がありません"
-
-write_plans_md_inline_code_pointer
-if ! run_check ""; then
-    cat "$out" >&2
-    fail "a docs/plans/ pointer inside inline code was rejected"
-fi
-assert_contains "$out" "PK4: Workflow State machine 整合 OK"
-
-# --- 12. active packet があるのに docs/Plans.md「次の行動」に pointer が無い ---
-setup_repo_dirs
-reset_packet_defaults
-write_packet "$repo/docs/plans/2026-01-12-fixture.md"
-write_plans_md_no_link
-if run_check "docs/plans/2026-01-12-fixture.md"; then
-    fail "missing Plans.md pointer for the active packet was not rejected"
-fi
-assert_contains "$out" "docs/Plans.md の '## 次の行動' に active packet の一覧（docs/plans/）を指す行がありません"
 
 # --- 13. compatibility: docs/archive/ 配下へ明示パスで渡した場合は PK4 の新チェックを skip ---
 # 実在の archive packet と同じ状態（Workflow State / Owner Effort Budget / Contract Probe が
@@ -701,8 +691,7 @@ assert_not_contains "$out" "docs/archive/plans/2020-01-01-archived-fixture.md (R
 assert_not_contains "$out" "必須セクション '## Owner Effort Budget' を欠いています"
 assert_not_contains "$out" "必須セクション '## Contract Probe' を欠いています"
 
-# --- 14. T-P5 enum 全値の positive 網羅: 8 phase がすべて enum 判定を通る ---
-# （Double Audit pass1 P3-1 反映: enum 文字列からの token 欠落を検出できる網）
+# --- 14. 旧い 8 値の Phase もそのまま通る（PH3。値は評価しない） ---
 for phase in kickoff spec-check design plan-draft plan-gate plan-approved implementing archive; do
     setup_repo_dirs
     reset_packet_defaults
@@ -758,17 +747,11 @@ fi
 assert_not_contains "$out" "WER Retired"
 assert_not_contains "$out" "Retired / Consolidated Rules"
 
-# --- 17. D-046 T2/T6: template と source docs の規範 token drift ---
-assert_contains "$SOURCE_ROOT/docs/templates/plan-packet.md" "介入 N"
-assert_contains "$SOURCE_ROOT/docs/templates/plan-packet.md" "予算 M"
-draft_pr_section="$(awk '
-    /^## Draft PR Checkpoint$/ { in_section=1 }
-    in_section && /^## / && $0 != "## Draft PR Checkpoint" { exit }
-    in_section { print }
-' "$SOURCE_ROOT/docs/DEV_WORKFLOW.md")"
-printf '%s\n' "$draft_pr_section" | grep -Fq "Human Gate" || fail "Draft PR Checkpoint に Human Gate 欄がない"
-printf '%s\n' "$draft_pr_section" | grep -Fq "この change での介入 N 回目 / 予算 M 回" ||
-    fail "Draft PR Checkpoint に承認依頼カウンタがない"
+# --- 17. D-046 T2/T6 の後継（D-145 (11)）: template と source docs の規範 token drift ---
+# Owner Effort Budget と介入の数え方は消え、承認依頼の「何が完了するか 1 文」と goal-drift signal が残る。
+assert_not_contains "$SOURCE_ROOT/docs/templates/plan-packet.md" "介入 N"
+assert_not_contains "$SOURCE_ROOT/docs/templates/plan-packet.md" "Owner Effort Budget"
+assert_contains "$SOURCE_ROOT/docs/DEV_WORKFLOW.md" "承認すると利用者から見て何が完了するか"
 assert_contains "$SOURCE_ROOT/docs/DEV_WORKFLOW.md" "actual harm path"
 assert_contains "$SOURCE_ROOT/docs/DEV_WORKFLOW.md" "affected candidate or mutation"
 assert_contains "$SOURCE_ROOT/docs/DEV_WORKFLOW.md" "non-destructive revalidation"
@@ -779,12 +762,12 @@ assert_contains "$SOURCE_ROOT/docs/AGENT_OPERATING_MANUAL.md" "one-shot irrevers
 assert_contains "$SOURCE_ROOT/docs/AGENT_OPERATING_MANUAL.md" "task-shape"
 assert_contains "$SOURCE_ROOT/docs/decision-log.md" "## D-046"
 
-# --- 18. D-046 T8: 両 script の順序付き phase 配列 parity ---
-doc_phases="$(sed -n 's/^WORKFLOW_STATE_PHASES="\([^"]*\)"/\1/p' "$SOURCE_ROOT/scripts/doc-consistency-check.sh")"
-git_phases="$(sed -n 's/^WORKFLOW_STATE_PHASES="\([^"]*\)"/\1/p' "$SOURCE_ROOT/scripts/check-workflow-git.sh")"
-[[ -n "$doc_phases" ]] || fail "doc-consistency-check.sh の WORKFLOW_STATE_PHASES を抽出できない"
-[[ -n "$git_phases" ]] || fail "check-workflow-git.sh の WORKFLOW_STATE_PHASES を抽出できない"
-[[ "$doc_phases" = "$git_phases" ]] || fail "WORKFLOW_STATE_PHASES が両 script で不一致"
+# --- 18. D-046 T8 の後継（D-145 (3)）: Phase の enum はどの script にも残らない（parity の対象が無い） ---
+for phase_script in doc-consistency-check.sh check-workflow-git.sh pr-gate.py; do
+    if grep -q 'WORKFLOW_STATE_PHASES\|plan-approved' "$SOURCE_ROOT/scripts/$phase_script"; then
+        fail "$phase_script still evaluates the Phase enum"
+    fi
+done
 
 # --- 19. D-046 T7: 実 repository の checker self-pass ---
 if ! (cd "$SOURCE_ROOT" && bash scripts/doc-consistency-check.sh > "$tmp/self-pass.log" 2>&1); then
@@ -855,16 +838,12 @@ fi
 assert_not_contains "$out" "PK6: docs/plans/2026-01-20-pk6-no-section.md"
 assert_contains "$out" "PK6: 数値主張の実測 evidence 欠落 OK"
 
-# --- 21. T-P6 SPEC-PK4-F1 / M-P1: Workflow State 必須 10 field の行欠落を全数検出 ---
+# --- 21. T-P6 SPEC-PK4-F1 / M-P1: 旧形式の必須 6 field の行欠落を全数検出（担当 4 行は D-145 (3) で任意） ---
 required_workflow_fields=(
     "Phase"
     "Risk"
     "Plan Commit"
     "Amendments"
-    "Coordinator"
-    "Writer"
-    "Plan Reviewer"
-    "Final Reviewer"
     "Final Review Minimum"
     "Human Gate"
 )
@@ -883,13 +862,32 @@ done
 # 空値行は存在扱いにせず、欠落と同じ ERROR にする。
 setup_repo_dirs
 reset_packet_defaults
-PKT_COORDINATOR=""
+PKT_AMENDMENTS=""
 write_packet "$repo/docs/plans/2026-01-21-empty-field.md"
-write_plans_md_linking "2026-01-21-empty-field.md"
 if run_check "docs/plans/2026-01-21-empty-field.md"; then
-    fail "empty Workflow State Coordinator field was not rejected"
+    fail "empty Workflow State Amendments field was not rejected"
 fi
-assert_contains "$out" "Workflow State に '- Coordinator:' 行がありません"
+assert_contains "$out" "Workflow State に '- Amendments:' 行がありません"
+
+# PH3（書き換え: 担当 4 行の欠落・空値の ERROR）: 担当 4 行は在っても無くても空でも受ける
+for role in Coordinator Writer "Plan Reviewer" "Final Reviewer"; do
+    setup_repo_dirs
+    reset_packet_defaults
+    PKT_OMIT_FIELDS="$role"
+    write_packet "$repo/docs/plans/2026-01-21-role.md"
+    if ! run_check "docs/plans/2026-01-21-role.md"; then
+        cat "$out" >&2
+        fail "PH3: packet without the $role line was rejected"
+    fi
+done
+setup_repo_dirs
+reset_packet_defaults
+PKT_COORDINATOR=""
+write_packet "$repo/docs/plans/2026-01-21-role.md"
+if ! run_check "docs/plans/2026-01-21-role.md"; then
+    cat "$out" >&2
+    fail "PH3: empty Coordinator line was rejected"
+fi
 
 # --- 22. T-P4: legacy field 3 種は marker の有無に関わらず ERROR ---
 for marker in "" github; do
@@ -957,13 +955,12 @@ PKT_RISK_SECTION="R2"
 PKT_INCLUDE_R3_SECTIONS=0
 PKT_INCLUDE_CONTRACT_PROBE=0
 PKT_INCLUDE_FINDINGS_FREEZE=0
-PKT_OMIT_FIELDS="Writer"
+PKT_OMIT_FIELDS="Human Gate"
 write_packet "$repo/docs/plans/2026-01-26-r2-field.md"
-write_plans_md_linking "2026-01-26-r2-field.md"
 if run_check "docs/plans/2026-01-26-r2-field.md"; then
     fail "R2 packet missing a required Workflow State field was not rejected"
 fi
-assert_contains "$out" "Workflow State に '- Writer:' 行がありません"
+assert_contains "$out" "Workflow State に '- Human Gate:' 行がありません"
 
 setup_repo_dirs
 reset_packet_defaults
@@ -991,17 +988,6 @@ write_plans_md_linking "2026-01-27-complete-fields.md"
 if ! run_check "docs/plans/2026-01-27-complete-fields.md"; then
     cat "$out" >&2
     fail "complete 10-field Workflow State fixture was rejected"
-fi
-assert_contains "$out" "PK4: Workflow State machine 整合 OK"
-
-# --- 28. SPEC-HYG1-D1 SC5 の後継（D-097）: '### Wave Registry' 配下の pointer を検出する ---
-setup_repo_dirs
-reset_packet_defaults
-write_packet "$repo/docs/plans/2026-01-28-wave-registry-fixture.md"
-write_plans_md_linking_under_wave_registry "2026-01-28-wave-registry-fixture.md"
-if ! run_check "docs/plans/2026-01-28-wave-registry-fixture.md"; then
-    cat "$out" >&2
-    fail "docs/plans/ pointer placed under '### Wave Registry' was not detected"
 fi
 assert_contains "$out" "PK4: Workflow State machine 整合 OK"
 
@@ -1307,13 +1293,15 @@ pk4_helper_case() {
 pk4_full_a="1111111111111111111111111111111111111111"
 pk4_full_b="2222222222222222222222222222222222222222"
 # T4-1: 値の末尾の空白・タブ
-for pk4_case in PKT_PHASE="implementing " PKT_WS_RISK="R3 " PKT_AMENDMENTS="none " \
+for pk4_case in PKT_WS_RISK="R3 " PKT_AMENDMENTS="none " \
     PKT_FINAL_REVIEW_MINIMUM="2 " PKT_HUMAN_GATE="ready,merge " PKT_EVIDENCE_MODE="github " \
     PKT_HUMAN_GATE=$'ready,merge\t'; do
     pk4_helper_case "PK4-HELPER: trailing blank" reject "${pk4_case%%=*}" "${pk4_case#*=}"
 done
 # T4-2: enum の後ろの注記
-pk4_helper_case "PK4-HELPER: trailing note" reject PKT_PHASE "implementing（注記）"
+# PH3（書き換え）: 旧形式の Phase の値は評価しないので、末尾の空白・注記があっても拒まない
+pk4_helper_case "PK4-HELPER: Phase value not evaluated" accept PKT_PHASE "implementing（注記）"
+pk4_helper_case "PK4-HELPER: Phase value not evaluated" accept PKT_PHASE "implementing "
 pk4_helper_case "PK4-HELPER: trailing note" reject PKT_WS_RISK "R3（注記）"
 # T4-3: Amendments の書式・重複、Human Gate の重複
 pk4_helper_case "PK4-HELPER: amendments and gate duplicates" reject PKT_AMENDMENTS "abcdef01"
@@ -1469,3 +1457,144 @@ for hygiene_case in route missing_column; do
     fi
     echo "PASS: S1b $hygiene_case (exit 0, ERRORなし)"
 done
+
+# ============================================================================
+# D-145: 新形式の packet（PK1N・PH7・PH10）、active な packet の定義（AR2・AR6）、新しい path:行（FL1〜FL3）
+# ============================================================================
+write_new_packet() { # $1 path, $2 risk; NEW_EXTRA is appended
+    local path="$1" risk="${2:-R3}"
+    {
+        printf '# Plan Packet: fixture\n\n## Workflow State\n\n- Risk: %s\n- Plan Commit: pending\n- Amendments: none\n\n' "$risk"
+        printf '## Risk\n\nRisk: %s\n\nReason: synthetic fixture.\n\n' "$risk"
+        printf '## Goal\n\nGoal Invariant:\n\n### 最小完了条件\n\n- a\n\n### 失敗定義\n\n- b\n\n### 非目的\n\n- c\n\n'
+        printf '## Scope\n\n- scope\n\n## Acceptance Criteria\n\n- `bash scripts/doc-consistency-check.sh` exit 0\n\n'
+        printf '## Design Readiness\n\n- ready\n\n'
+        printf '## Contract Ledger\n\n| 契約 ID | 設計正本の節 | 実装（Scope） | 自動 test | L3 / 非対象 |\n|---|---|---|---|---|\n| C1 | x | Scope | `bash` fixture | 非対象 |\n\n'
+        printf '## Test Plan\n\n| Contract | Failure Mode | Test Type | Test Name | Would fail if... |\n|---|---|---|---|---|\n| C1 | f | unit | t | x |\n\n'
+        if [ "$risk" = R4 ]; then
+            printf '## Recovery\n\n- restore\n\n## Data Safety\n\n- data\n\n'
+        fi
+        printf '%s' "${NEW_EXTRA:-}"
+    } > "$path"
+}
+NEW_PKT="docs/plans/2026-03-10-new-form.md"
+new_case() { # $1 label, $2 expect ok|reject, $3 expected text (reject)
+    if [ "$2" = ok ]; then
+        if ! run_check "$NEW_PKT"; then cat "$out" >&2; fail "$1: rejected"; fi
+        assert_contains "$out" "PK1: Plan Packet presence OK"
+        assert_contains "$out" "PK4: Workflow State machine 整合 OK"
+    else
+        if run_check "$NEW_PKT"; then fail "$1: accepted"; fi
+        assert_contains "$out" "$3"
+    fi
+    echo "PASS: $1"
+}
+# PK1N: 新形式の最小形。R3 は Data Safety なしで通り、Contract Ledger・Test Plan は必須。R4 は Recovery・Data Safety。
+setup_repo_dirs; reset_packet_defaults; PKT_BASE="$BASE_NEW"; NEW_EXTRA=""
+write_new_packet "$repo/$NEW_PKT" R3
+new_case "PK1N R3 minimal (no Data Safety, no Owner Effort Budget, no Matrix link)" ok
+for section in "Contract Ledger" "Test Plan" "Design Readiness" "Acceptance Criteria"; do
+    write_new_packet "$repo/$NEW_PKT" R3
+    sed -i "s/^## ${section}\$/### ${section}/" "$repo/$NEW_PKT"
+    new_case "PK1N R3 without $section" reject "PK1: $NEW_PKT (R3, 新形式) は必須セクション '## ${section}' を欠いています"
+done
+write_new_packet "$repo/$NEW_PKT" R4
+new_case "PK1N R4 with Recovery and Data Safety" ok
+for section in Recovery "Data Safety"; do
+    write_new_packet "$repo/$NEW_PKT" R4
+    sed -i "s/^## ${section}\$/### ${section}/" "$repo/$NEW_PKT"
+    new_case "PK1N R4 without $section" reject "PK1: $NEW_PKT (R4, 新形式) は必須セクション '## ${section}' を欠いています"
+done
+NEW_EXTRA=$'## L3\n\n- 9 pt 以上で読める\n'; write_new_packet "$repo/$NEW_PKT" R3
+new_case "PK1N R3 with L3" ok
+NEW_EXTRA=$'## L3\n\n<!-- 書く -->\n'; write_new_packet "$repo/$NEW_PKT" R3
+new_case "PK1N empty L3" reject "の '## L3' が空です"
+NEW_EXTRA=""
+# PH7: 形式は packet を最初に足した commit の親で決まる。新形式の Phase の行・R2、旧形式の Phase 欠けは PK4 が拒む。
+write_new_packet "$repo/$NEW_PKT" R3
+sed -i 's/^- Risk: R3$/- Phase: implementing\n- Risk: R3/' "$repo/$NEW_PKT"
+new_case "PH7 new form with a Phase line" reject "must not have a Phase line"
+mv "$repo/$NEW_PKT" "$repo/docs/plans/2020-01-01-backdated.md"
+if run_check "docs/plans/2020-01-01-backdated.md"; then fail "PH7: a back-dated file name escaped the new form"; fi
+assert_contains "$out" "must not have a Phase line"
+rm -f "$repo/docs/plans/2020-01-01-backdated.md"
+write_new_packet "$repo/$NEW_PKT" R2
+new_case "PH7 new form R2" reject "R3 or R4"
+setup_repo_dirs; reset_packet_defaults
+write_new_packet "$repo/$NEW_PKT" R3
+new_case "PH7 old form without a Phase line" reject "needs its Phase line"
+# PH7 正例 / PH10: merge の前に足した旧形式の packet は main の取込みの後も旧形式。rename すると新形式で拒まれる。
+setup_repo_dirs; reset_packet_defaults
+write_packet "$repo/docs/plans/2026-03-11-old-lane.md"
+lane_commit
+git -C "$repo" merge -q --no-ff --no-edit "$BASE_NEW"
+run_after_merge() {
+    (cd "$repo" && WORKFLOW_BASE_SHA="$BASE_NEW" PATH="$rg_shim_dir:$PATH" REAL_RG="$real_rg" \
+        bash doc-consistency-check.sh --target plan "$1") > "$out" 2>&1
+}
+if ! run_after_merge docs/plans/2026-03-11-old-lane.md; then cat "$out" >&2; fail "PH7: old lane packet rejected after taking main"; fi
+assert_contains "$out" "PK4: Workflow State machine 整合 OK"
+git -C "$repo" mv docs/plans/2026-03-11-old-lane.md docs/plans/2026-03-12-renamed.md
+git -C "$repo" commit -qm "rename the packet"
+if run_after_merge docs/plans/2026-03-12-renamed.md; then fail "PH10: renamed old packet escaped the form check"; fi
+assert_contains "$out" "never renamed or re-cut"
+rm -rf "$repo/scripts/plan-approve.sh"
+echo "PASS: PH7 / PH10"
+
+# AR2: 引数なしの対象は active な packet だけ。起点の tree にある壊れた packet は見ない。起点が無ければ ERROR。
+setup_repo_dirs; reset_packet_defaults
+printf '# merged, broken\n\nno Risk line\n' > "$repo/docs/plans/2026-01-01-merged.md"
+printf '# Merged\n\n[gone](missing-file.md)\n' > "$repo/docs/plans/test-matrices-merged.md"
+lane_commit
+PKT_BASE="$(git -C "$repo" rev-parse HEAD)"
+write_packet "$repo/docs/plans/2026-03-13-active.md"
+if ! run_check ""; then cat "$out" >&2; fail "AR2: a merged packet outside the active set was checked"; fi
+assert_not_contains "$out" "2026-01-01-merged.md"
+# AR6: merge 済みの file の link 切れは WARN、active な packet の link 切れは ERROR。
+assert_contains "$out" "merge 済みの packet のリンク先 'missing-file.md' が存在しません"
+printf '\n[gone](also-missing.md)\n' >> "$repo/docs/plans/2026-03-13-active.md"
+if run_check ""; then fail "AR6: a broken link in the active packet passed"; fi
+assert_contains "$out" "リンク先 'also-missing.md' が存在しません"
+assert_not_contains "$out" "merge 済みの packet のリンク先 'also-missing.md'"
+# AR2 / PH6: 起点が取れなければ ERROR（全 packet の検査に落とさない）。
+lane_commit
+printf '\n' >> "$repo/docs/plans/2026-03-13-active.md"
+sed -i '/also-missing.md/d' "$repo/docs/plans/2026-03-13-active.md"
+lane_commit
+if (cd "$repo" && env -u WORKFLOW_BASE_SHA bash doc-consistency-check.sh --target plan docs/plans/2026-03-13-active.md) > "$out" 2>&1; then
+    fail "AR2: unresolved origin passed (the scope ERROR must reach the exit code)"
+fi
+assert_contains "$out" "[ERROR] PK: active な packet を決められない"
+echo "PASS: AR2 / AR6"
+
+# FL1〜FL3: 起点からの '+' 行に新しい path:行 を足すと ERROR。既存の行・適用除外は ERROR にしない。
+setup_repo_dirs; reset_packet_defaults
+mkdir -p "$repo/docs/archive" "$repo/docs/research"
+printf '# Live\n\nold reference foo.md:12\n' > "$repo/docs/live.md"
+printf '# Backlog\n' > "$repo/docs/backlog.md"
+lane_commit
+PKT_BASE="$(git -C "$repo" rev-parse HEAD)"
+write_packet "$repo/docs/plans/2026-03-14-fl.md"
+printf 'see `src-tauri/src/x.rs:3`\n' >> "$repo/docs/archive/old.md"
+printf 'see src/a.ts:9\n' > "$repo/docs/research/2026-01-01-study.md"
+printf 'see scripts/a.sh:9\n' > "$repo/docs/2026-03-01-l3-record.md"
+printf 'see AGENTS.md:4 in the packet\n' >> "$repo/docs/plans/2026-03-14-fl.md"
+printf -- '- decision cites x.py:1\n' > "$repo/docs/decision-log.md"
+printf -- '- 時点の記録 docs/a.md:3（abc1234 の時点）\n' >> "$repo/docs/backlog.md"
+if ! run_check "docs/plans/2026-03-14-fl.md"; then cat "$out" >&2; fail "FL3: an exempt or existing path:line was an ERROR"; fi
+assert_contains "$out" "FL: 新しい path:行 の引用なし"
+printf 'new reference bar.rs:3\n' >> "$repo/docs/live.md"
+printf -- '- 時点の無い docs/b.md:4\n' >> "$repo/docs/backlog.md"
+if run_check "docs/plans/2026-03-14-fl.md"; then fail "FL1: a new path:line in a live doc passed"; fi
+assert_contains "$out" "FL: 生きた docs に path:行 の引用を新しく足した"
+assert_contains "$out" "docs/live.md: bar.rs:3"
+assert_contains "$out" "docs/backlog.md: docs/b.md:4"
+assert_not_contains "$out" "foo.md:12"
+# FL2: 起点が取れなければ WARN（既存の引用を一斉に ERROR にしない）。dated packet が無ければ PK は止めない。
+setup_repo_dirs
+lane_commit
+if ! (cd "$repo" && env -u WORKFLOW_BASE_SHA bash doc-consistency-check.sh --target plan docs/live.md) > "$out" 2>&1; then
+    cat "$out" >&2; fail "FL2: missing origin was an ERROR"
+fi
+assert_contains "$out" "FL: 起点が取れないので新しい path:行 の検査をしない"
+echo "PASS: FL1 / FL2 / FL3"

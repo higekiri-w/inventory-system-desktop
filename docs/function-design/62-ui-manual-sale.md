@@ -1,6 +1,6 @@
 # 62. UI-04: 手動販売出庫
 
-> **計数の置き場と在庫の求め直し（D-118。(a) は実装済み、(b) は proposed・未実装）**: この画面の日付の欄の意味は「品が動いた日」（手動販売は品を渡した日）。在庫が計数に入っているかは、この日付で ADR D3 の窓（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）を決める（[31](31-biz-inventory-service.md)）。(a) で入ったのは、この日付を業務日として movement に書くこと（`biz/inventory_service/common.rs` の `validate_business_date`）と、計数と入出庫の窓の計算（`biz/stock_ledger.rs` の `judge` → `from_count` → `derive`）。計数を保存する公開の経路・精算の窓・この画面への反映は (b)。欄の見出し・説明の文言の細部は runtime の lane。
+> **計数の置き場と在庫の求め直し（D-118。(a) と b1 で実装済み）**: この画面の日付の欄の意味は「品が動いた日」（手動販売は品を渡した日）。在庫が計数に入っているかは、この日付で ADR D3 の窓（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）を決める（[31](31-biz-inventory-service.md)）。(a) で入ったのは、この日付を業務日として movement に書くこと（`biz/inventory_service/common.rs` の `validate_business_date`）と、計数と入出庫の窓の計算（`biz/stock_ledger.rs` の `judge` → `from_count` → `derive`）。計数を保存する公開の経路と精算の窓は D-118 の b1 で入った（入出庫の保存は要再確認の一覧を再取得する。UI_TECH_STACK の D-118 の段落）。この画面の欄の見出し・説明の文言は b1 で変えていない。
 
 > 対応仕様: REQ-203 / UI-04
 >
@@ -31,9 +31,9 @@
 | REQ-203 / confirmation edit | UI-04-D9 | PLU確認待ち中に販売日、理由、明細、備考を変更したら `confirmation_token` を破棄し、新しい保存試行として `idempotency_key` を再採番する。 | token は商品・PLU状態・数量・金額に結び付く。利用者が見直した内容は再度 BIZ の PLU警告判定を通す方が安全。 |
 | REQ-203 / idempotency | UI-04-D10 | `idempotency_key` は画面で1保存試行単位に生成し、保存失敗後の同内容再試行では同じ key を再利用する。保存成功、フォームリセット、別伝票開始、または保存失敗後に伝票内容を編集して再送する場合は新しい key にする。 | UI-02 と同じ二重登録防止方針。BIZ fingerprint は `note` を除外するため、同じ key のまま note だけ変えても保存済み伝票へ反映されない。 |
 | REQ-203 / submit | UI-04-D11 | 保存中はヘッダ、明細、商品追加、戻る/リセット導線を disabled にし、中断可能に見せない。 | backend は単一 TX。UI だけで cancel 可能に見せると売上・在庫反映状態を誤認させる。 |
-| REQ-203 / result | UI-04-D12 | 保存成功後は sale_id、登録明細数、PLU警告件数、stock_warnings、`idempotent_replay` の有無を表示し、「続けて手動販売」「詳細を見る」「日次売上へ」「在庫照会へ戻る」の導線を出す。 | 手動販売は売上帳票にも影響する。保存後に日次売上で「手動」バッジを確認でき、同時に業務記録詳細であとから追える導線を持たせる。 |
+| REQ-203 / result | UI-04-D12 | 保存成功後は sale_id、登録明細数、PLU警告件数、stock_warnings、`idempotent_replay` の有無と、保存した商品の一覧（商品コード・商品名と、行ごとの「在庫を見る」。[61](61-ui-receiving.md) UI-02-D10 と同じ形で、`/products?q=<商品コード>&selected=<商品コード>` を開く）を表示し、「続けて手動販売」「詳細を見る」「日次売上へ」の導線を出す（D-138、proposed・未実装。今の build は「在庫照会へ戻る」で `/stock` を引数なしで開く）。画面の上の戻る導線は「商品と在庫へ」（D-138）。 | 手動販売は売上帳票にも影響する。保存後に日次売上で「手動」バッジを確認でき、同時に業務記録詳細であとから追える導線を持たせる。 |
 | REQ-203 / cache | UI-04-D13 | 保存成功時の invalidation は [D-052](../decision-log.md) C6 と `src/lib/invalidation-contract.ts` を正本とする。 | 手動販売で変わる売上・在庫・履歴 consumer を一貫して stale 化し、画面側の key 列挙を廃止する。 |
-| REQ-203 / UI-04 | UI-04-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品数量加算、validation、PLU警告確認フロー、保存結果、日次売上への遷移、日次売上の「手動」Badge 可読性、在庫照会へ戻る導線。 | 新規 operator-facing screen であり、PLU警告文言、連続入力、フォーカス戻し、手動 Badge の可読性は CI だけでは判断しづらい。PR #99 で手動 Badge は UI-04 実装時 L3 へ持ち越している。 |
+| REQ-203 / UI-04 | UI-04-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品数量加算、validation、PLU警告確認フロー、保存結果、日次売上への遷移、日次売上の「手動」Badge 可読性、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、PLU警告文言、連続入力、フォーカス戻し、手動 Badge の可読性は CI だけでは判断しづらい。PR #99 で手動 Badge は UI-04 実装時 L3 へ持ち越している。 |
 | REQ-203 / REQ-206 / UI-04 | UI-04-D15 | 手動販売出庫にも保存直後確認用の recent list を置く。表示は直近数件の業務日付、記録ID、代表商品、明細数、状態、記録日時、詳細導線とし、`すべての履歴を見る` は `/inventory/records?recordType=manual_sale` へ遷移する。 | UI-02/03/05 と同じ「保存直後の確認」体験にそろえる。作成画面内で検索・取消・訂正まで扱う案は、入力作業を重くし、調査責務を `入出庫履歴` と重複させるため採用しない。 |
 | REQ-203 / product add suggest | UI-04-D16 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-04-D4）とフォーカス戻し（UI-04-D5）は不変。lock source は既存 `isFormLocked` 派生 state、候補確定は既存の複数件候補テーブル選択と同一 handler。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
 | REQ-203 / REQ-206 / return | UI-04-D17 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/manual-sale` URL を `returnTo` として手動販売詳細へ送る（DSR-18）。 | 詳細確認後に手動販売作業画面へ戻れるようにする。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では手動販売画面の producer だけを固定する。 |
@@ -65,7 +65,7 @@ src/
 | `searching_product` | 商品追加欄で検索中 | 商品追加欄 loading | `product_found` / `product_candidates` / `product_not_found` / `search_failed` |
 | `confirming_plu` | BIZ が PLU登録済み警告を返し、DB未変更 | warning panel、確認して保存 / 明細を見直す | `confirm_submit` / `edit_as_new_attempt` |
 | `submitting` | createManualSale 実行中 | form disabled、spinner + 「手動販売を記録しています」 | `submit_succeeded` / `submit_failed` / `needs_confirmation` |
-| `result` | 保存完了 | result panel、続けて手動販売、日次売上へ、在庫照会へ戻る | `reset_for_next` / navigation |
+| `result` | 保存完了 | result panel（保存した商品の一覧と行ごとの在庫を見る）、続けて手動販売、日次売上へ | `reset_for_next` / navigation |
 | `submit_error` | 保存失敗 | Alert + 入力保持 + 再実行 | `submit_same_request` / `edit_as_new_attempt` |
 
 フォーム state は `saleDate`, `reason`, `note`, `rows`, `idempotencyKey`, `confirmationToken` を持つ。`rows` は `productCode`, `productName`, `departmentName`, `stockUnit`, `currentStockQuantity`, `unitPrice`, `quantity`, `amount` を持つ UI 内部型とし、command payload には `product_code`, `quantity`, `amount` だけを送る。
@@ -117,7 +117,7 @@ UI-04 実装 PR では以下を generated binding に出す。
 
 - PageHeader title は `手動販売出庫`、subtitle はレジCSVに入らない販売を手入力し、在庫と売上へ反映する作業であることを短く示す。
 - ヘッダは `販売日`（既定は今日）、`理由`（既定「PLU未登録商品の販売」）、`備考`（任意）を置く。
-- 商品追加欄は `商品コード・JAN・商品名で追加` とし、Enter で検索する。候補が複数ある場合は商品名、商品コード、部門、現在庫、売価を見せる。
+- 商品追加欄は `商品コード・JAN・商品名で追加` とし、Enter で検索する。候補が複数ある場合は商品コード、商品名、部門、現在庫、売価を見せる。
 - 商品追加欄は入力中に live 候補プレビュー（商品コード・商品名・部門、最大 5 件 + 超過 footer）を表示する（UI-04-D16、挙動契約は catalog ⑮ SPEC-SUGGEST-D1〜D11）。候補は ↓/↑ または click で選択でき、候補未選択の Enter は従来どおり検索を実行する。入力値が変わると候補は即座に閉じる。
 - 商品が見つからない場合は `商品登録へ` 導線を出す。未登録商品は商品マスタに登録してから手動販売へ戻ることを日本語で示す。既存明細・入力がある状態での離脱（`商品登録へ` 導線を含む）は未保存編集の離脱ガード（UI_TECH_STACK §6.11 `useUnsavedChangesWarning`）が破棄確認を出す。
 - 明細表は商品コード、商品名、部門、現在庫、数量（単位を同じ cell に添える）、販売金額（同じ cell に「円」を添える）、行削除を表示する。数量と単位を一つの値として読めるよう独立した単位列は置かず、現在庫も単位付き（例: `4 個` / `3 m`、桁区切り付き）にする。長さの商品の現在庫は m で出し、`m` の商品の数量は m で入力する（[共通規則](10-common-rules.md) SPEC-UNIT-D3）。

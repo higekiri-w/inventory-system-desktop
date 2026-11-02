@@ -1,6 +1,6 @@
 # CI
 
-CIとmerge evidenceの正本。設計理由とwire契約は [merge-evidence.md](agent-guidance/merge-evidence.md)（MG-D1〜D12）。
+CIとmerge evidenceの正本。設計理由とwire契約は [merge-evidence.md](agent-guidance/merge-evidence.md)（MG-D1〜D14）。
 
 ## 現行契約
 
@@ -12,35 +12,33 @@ GitHubはmainへのPRとCIを強制し、helperはreview/manual/R4を確認す�
 |---|---|---|
 | L0 pre-push | push増分のfeedback、Ready push拒否 | `.local/quality-check.log` |
 | L1 local full（任意） | hosted と同じ gate 一式を手元で回す道具。merge の条件にしない | `.local/ci-evidence/` の log |
-| L2 hosted | Draft の run は push ごとの feedback（`Draft (no merge evidence)`）。Ready / dispatch の final run が必要 job の実成功を `Merge gate` へ集約 | GitHub の対象 workflow / check |
+| L2 hosted | push ごとの run（Draft を含む）が必要 job の実成功を `Merge gate` へ集約する。Ready で回し直さず、同じ head の run を merge の根拠にする（D-145 (9)） | GitHub の対象 workflow / check |
 
 hostedを最終CI根拠にし、一律のlocal fullやPR本文へのSHA転記をmergeの条件にしない。localで観測した失敗、Windows L3・manual/R4の保護は維持する。
 
 ## Hosted Trigger Model
 
-`pull_request`のopened/reopened/ready_for_review/synchronize（base=main）と`workflow_dispatch`だけを使う。pushやbody編集では起動しない。全docsをevent対象とし、path filterと本文skip tokenは廃止した。Draft でも changes と changed 分類の job と aggregate が走り、aggregate 名は `Draft (no merge evidence)`。Ready / dispatch だけ `Merge gate` を発行する。required 名で Draft の skipped を発行しない。
+`pull_request`のopened/reopened/synchronize（base=main）と`workflow_dispatch`だけを使う。Ready にしたときは回し直さない（同じ head の CI を 1 回にする。TD-481、D-145 (9)）。pushやbody編集では起動しない。全docsをevent対象とし、path filterと本文skip tokenは廃止した。Draft でも changes と changed 分類の job と aggregate が走り、aggregate は常に `Merge gate` を出す。`pull_request` の event では Draft と Ready で選ぶ job が同じ（`draft` を読むのは消した name 式だけだった）。
 
-aggregate の if は `always()` だけ。Draft の判定は name 式だけが持つ。changes成功条件をifへ追加すると分類失敗でaggregateがskipされるため禁止。`check-required-jobs.sh`が分類key/値と全jobを検査し、選択されたjobはsuccessだけ、非対象jobはsuccess/skippedを受理する。failure/cancelled/欠落/未知値は拒否する。CI tokenはcontents:read。
+aggregate の if は `always()` だけ。changes成功条件をifへ追加すると分類失敗でaggregateがskipされるため禁止。`check-required-jobs.sh`が分類key/値と全jobを検査し、選択されたjobはsuccessだけ、非対象jobはsuccess/skippedを受理する。failure/cancelled/欠落/未知値は拒否する。CI tokenはcontents:read。
 
 ### Final Trigger Selection
 
-CI-TRIGGER-D1: 同じHEADへ予防的なdispatchを重ねない。dispatchは常にfull。
+CI-TRIGGER-D1: 同じHEADへ予防的なdispatchを重ねない。dispatchは常にfull。同じ head の CI は 1 回（D-145 (9)）。
 
-final run = 同じ head の latest の run が completed / success で、その check suite に `Merge gate` が success でちょうど 1 つある run（`scripts/pr-gate.py:398-410`）。Draft の run（`Draft (no merge evidence)`）は final run でなく、条件に数えない。
+final run = 同じ head の最新の run（`pull_request`〈Draft を含む〉か `workflow_dispatch`）が completed / success で、その check suite に GitHub Actions の `Merge gate` が success でちょうど 1 つある run（`scripts/pr-gate.py` の `Gate.ci`）。
 
 | HEADの状態 | 選ぶtrigger | dispatch前の確認 |
 |---|---|---|
-| docsを含む全PR | owner Ready、Ready更新の例外はsynchronize、再開はreopened | dispatch しない |
-| required final の自動 run または explicit dispatch が作成されない、失敗、または cancel | 原因是正後のrecovery dispatch | 同一 HEAD に、helper が受理する final run も、進行中の final の run も無いこと。final の run = Ready 化の後に作られた run（`ready_for_review`、または Draft でない PR の `synchronize`・`reopened`）と dispatch の run。進行中の run が final かは PR の timeline の Ready 化の時刻と run の `created_at` で見分ける |
+| docsを含む全PR | push（opened・synchronize）、再開はreopened。Ready では回し直さない | dispatch しない |
+| required final の自動 run または explicit dispatch が作成されない、失敗、または cancel | 原因是正後のrecovery dispatch | 同一 HEAD に、helper が受理する final run も、進行中の run も無いこと |
 | 同一 HEAD に helper が受理する final run が既にある | 既存runを使う | Ready再操作もdispatchも不要 |
 
-Ready の後に同じ head の赤・cancel の `Draft (no merge evidence)` が残り merge が `unstable` なら、その Draft の run を `gh run rerun <run id>` で再実行する（元の event で走るので `Merge gate` は出ない）。再実行でも緑にならなければ Draft へ戻して直す。
-
-base付替え等でrunが無い場合も、同一 HEAD に final run が無いこと（Draft の run は数えない）、または final の run の失敗/cancel を確認してからrecoveryを選ぶ。
+base付替え等でrunが無い場合も、同一 HEAD に final run が無いこと、または run の失敗/cancel を確認してからrecoveryを選ぶ。
 
 ## Risk Routing
 
-一般docs/closeoutはdocs＋Merge gate。policy docsはdocs＋workflow回帰＋Merge gate。実行制御、tests、未知pathは全gate。Rust/frontend/env/generated/traceabilityの既存分類は保持する。RiskはCI範囲を縮めず、owner/modelが意味から判断する。R2+のPlan Gate、独立review、必要manual/R4はCI成功で代替しない。
+一般docsはdocs＋Merge gate。policy docsはdocs＋workflow回帰＋Merge gate。実行制御、tests、未知pathは全gate。Rust/frontend/env/generated/traceabilityの既存分類は保持する。RiskはCI範囲を縮めず、owner/modelが意味から判断する。R3/R4 の計画の固定、独立review、必要manual/R4はCI成功で代替しない。
 
 ## Public Standard-Runner Policy
 
@@ -60,7 +58,7 @@ bash scripts/tests/run-workflow-tests.sh
 
 changedはorigin/main（なければmain）とのmerge-baseからPR全差分を分類する。push増分とは異なる。fullはdocs、実履歴PK5、shell syntax、workflow YAML、workflow回帰、Rust fmt/clippy/tests、bindings、traceability、frontend install/routes/typecheck/lint/format/tests/build、envを保持する。npm auditは従来どおりwarn-only。fullは`node_modules`がsymlinkならgateの前に失敗する（`npm ci`がsymlink先を空にするため）。changedは検査しない。
 
-local fullとhosted workflow jobは同じ`run-workflow-tests.sh`を呼び、検証一覧を複製しない。hosted docs jobは全経路でfetch-depth: 0、実PR head/baseを用いてPK5を実行する。浅い履歴や解決不能baseは成功にしない。Node pinとRuby/ripgrep/Pythonを用意する。
+local fullとhosted workflow jobは同じ`run-workflow-tests.sh`を呼び、検証一覧を複製しない。hosted docs jobは全経路でfetch-depth: 0、実PR head/baseを用いてPK5・先走りの検査を実行し、doc check にも `WORKFLOW_BASE_SHA`（PR の base）を渡す（active な packet と新しい path:行 の起点、D-145 (5)(10)）。workflow job も fetch-depth: 0（suite の実 repo の self-pass が起点を要る）。浅い履歴や解決不能baseは成功にしない。Node pinとRuby/ripgrep/Pythonを用意する。
 
 local evidenceは開始/終了のHEADとtree状態を保存し、gate中のHEAD更新・CLEANからDIRTYへの変更を失敗にする。DIRTYは診断用。localでの失敗を無視しない。
 
@@ -70,7 +68,7 @@ local evidenceは開始/終了のHEADとtree状態を保存し、gate中のHEAD�
 
 ## Pre-push Contract
 
-pre-pushは実際のpush先remote_refのReady状態を確認し、Ready pushと照会失敗を拒否する。修正はDraftへ戻す。push先のbranchのPRがopenに無くmergedにあればpushを拒否し、mainから新しいbranchを案内する。pushするfileに未stageの変更があればWARNを出してpushを続ける。Rust、docs、env、traceability、frontend routes/typecheck/lintとPK5を維持する。修正後は対象検証・改版record・hosted finalを使う。
+pre-pushは実際のpush先remote_refのReady状態を確認し、Ready pushと照会失敗を拒否する。修正はDraftへ戻す。push先のbranchのPRがopenに無くmergedにあればpushを拒否し、mainから新しいbranchを案内する。pushするfileに未stageの変更があればWARNを出してpushを続ける。Rust、docs、env、traceability、frontend routes/typecheck/lintとPK5・先走りの検査を維持する。修正後は対象検証・改版record・hosted finalを使う。
 
 Rustまたはtraceability分類では`cargo run --bin generate_traceability -- --check`を1回実行し、T1/T2/T4のERRORをpush拒否、T3を従来どおりWARNとして扱う。全Rust関数名へ`_reqNNN`だけを要求する重複検査は使わない。REQ対象の名前規約と、技術/workflowテストの適用SPEC・設計IDはreviewで確認し、機械検査の成功を全テストの仕様対応の証明にしない。
 
@@ -78,9 +76,9 @@ Rustまたはtraceability分類では`cargo run --bin generate_traceability -- -
 
 ## Stale Green Prevention
 
-正規経路は`python3 scripts/pr-gate.py status|capture|record|ready|merge --pr NUMBER`。helperはPRのbaseと同じ版でだけ動く（違えば`helper differs from base`でbaseの版を使うcommandを示して止まる）。R2+は`--packet`、R0/R1は`--risk`と`--manual required|not-required`を明示する。capture/server/head/baseが変われば記録し直す。Ready/mergeはowner指示の後、helperがfreshなPR・record・rules・CIを確認する。mergeはmatch-headとstrictを使い、admin fallbackはない。
+正規経路は`python3 scripts/pr-gate.py status|capture|record|ready|merge --pr NUMBER`。helperはPRのbaseと同じ版でだけ動く（違えば`helper differs from base`でbaseの版を使うcommandを示して止まる）。R3/R4は`--packet`、packet なしの道（R0〜R2）は`--risk`と`--manual required|not-required`を明示し、PR body の Risk の行と照合する。capture/server/head/baseが変われば記録し直す。Ready/mergeはowner指示の後、helperがfreshなPR・record・rules・CIを確認する。mergeはmatch-headとstrictを使い、admin fallbackはない。
 
-Ready後の修正はDraftへ戻し、旧greenを流用しない。base同期時のclosureとmanual限定再利用はMG-D6/D7、Actions停止時の扱いは[merge-evidence](agent-guidance/merge-evidence.md)「closeoutとActions停止時」に従う。
+Ready後の修正はDraftへ戻し、旧greenを流用しない。base同期時のclosureとmanualの使い回しは[merge-evidence](agent-guidance/merge-evidence.md)のMG-D13、Actions停止時の扱いは[merge-evidence](agent-guidance/merge-evidence.md)「Actions停止時」に従う。
 
 ## Cache Policy
 

@@ -43,6 +43,20 @@ pub fn get_daily_sales(
     sales_service::get_daily_sales(&conn, &date).map_err(CmdError::from)
 }
 
+/// 指定日の日報の紙の内容を取得する（42 §22.4、34 §19.3a）
+#[tauri::command]
+#[specta::specta]
+pub fn get_daily_report_sheet(
+    state: State<AppState>,
+    date: String,
+) -> Result<sales_service::DailyReportSheet, CmdError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    sales_service::get_daily_report_sheet(&conn, &date).map_err(CmdError::from)
+}
+
 /// 指定月の売上レポートを取得する
 ///
 /// mode は generated enum を直接受け取る。
@@ -118,6 +132,7 @@ mod tests {
             db: Mutex::new(conn),
             preview_cache: Mutex::new(HashMap::new()),
             daily_report_preview_cache: Mutex::new(HashMap::new()),
+            register_sd_scan_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -252,6 +267,7 @@ mod tests {
             source_line_no: None,
             reason: None,
             note: None,
+            stock_linked: false,
         };
         sales_repo::insert_sale_record(&conn, &record).unwrap();
 
@@ -299,6 +315,7 @@ mod tests {
                 net_amount: Some(11000),
                 status: "completed".to_string(),
                 note: None,
+                settlement_no: None,
             },
         )
         .unwrap();
@@ -334,6 +351,7 @@ mod tests {
             db: Mutex::new(conn),
             preview_cache: Mutex::new(HashMap::new()),
             daily_report_preview_cache: Mutex::new(HashMap::new()),
+            register_sd_scan_cache: Mutex::new(HashMap::new()),
         };
 
         let conn = state.db.lock().unwrap();
@@ -345,6 +363,62 @@ mod tests {
     }
 
     #[test]
+    fn test_get_daily_report_sheet_cmd_passes_sheet_req401() {
+        // REQ-401 / CMD-09: 実 command を呼び、BIZ の紙の内容をそのまま返す（42 §22.4）
+        let (_dir, conn) = setup_test_db();
+        let import_id = sales_repo::insert_daily_report_import(
+            &conn,
+            &NewDailyReportImport {
+                report_date: "2026-03-21".to_string(),
+                source_adapter: "casio_sr_s4000".to_string(),
+                bundle_hash: "cmd-sheet".to_string(),
+                source_files_json: "[]".to_string(),
+                gross_amount: Some(12000),
+                net_amount: Some(11000),
+                status: "completed".to_string(),
+                note: None,
+                settlement_no: None,
+            },
+        )
+        .unwrap();
+        sales_repo::insert_daily_report_payment_lines(
+            &conn,
+            &[NewDailyReportPaymentLine {
+                daily_report_import_id: import_id,
+                source_file: "Z002".to_string(),
+                payment_key: "cash".to_string(),
+                label: "現金".to_string(),
+                amount: Some(11000),
+                count: Some(7),
+                sort_order: 1,
+            }],
+        )
+        .unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(AppState {
+                db: Mutex::new(conn),
+                preview_cache: Mutex::new(HashMap::new()),
+                daily_report_preview_cache: Mutex::new(HashMap::new()),
+                register_sd_scan_cache: Mutex::new(HashMap::new()),
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        let sheet =
+            get_daily_report_sheet(app.state::<AppState>(), "2026-03-21".to_string()).unwrap();
+        assert_eq!(sheet.date, "2026-03-21");
+        assert_eq!(sheet.import_count, 1);
+        assert_eq!(sheet.payment_rows.len(), 1);
+        assert_eq!(sheet.payment_rows[0].label, "現金");
+        assert_eq!(sheet.payment_rows[0].amount, Some(11000));
+
+        let invalid =
+            get_daily_report_sheet(app.state::<AppState>(), "2026-02-30".to_string()).unwrap_err();
+        assert_eq!(invalid.kind, CmdErrorKind::Validation);
+        assert_eq!(invalid.message, "存在しない日付です");
+    }
+
+    #[test]
     fn test_export_sales_csv_req501_db_lock_failure() {
         // REQ-501: 日次売上（日付別商品売上集計）
         // CMD-09: Mutex poison 時に CmdError::internal が返ること
@@ -353,6 +427,7 @@ mod tests {
             db: Mutex::new(conn),
             preview_cache: Mutex::new(HashMap::new()),
             daily_report_preview_cache: Mutex::new(HashMap::new()),
+            register_sd_scan_cache: Mutex::new(HashMap::new()),
         };
 
         // Mutex を poison させる

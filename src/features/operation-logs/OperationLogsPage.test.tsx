@@ -644,7 +644,13 @@ describe("UI-11c REQ-902", () => {
   it("keeps the log list and selected unknown type usable when the type registry fails", async () => {
     listTypes.mockResolvedValue({
       status: "error",
-      error: { kind: "internal", message: "registry unavailable", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "registry unavailable",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     listLogs.mockResolvedValue({
       status: "ok",
@@ -1425,7 +1431,13 @@ describe("UI-11c REQ-902", () => {
     listLogs
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "synthetic failure", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "synthetic failure",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -1450,6 +1462,7 @@ describe("UI-11c REQ-902", () => {
         message: "操作ログの取得に失敗しました",
         field: null,
         error_id: "E-20260710-090000-syn3",
+        stocktake_recovery: null,
       },
     });
     renderPage();

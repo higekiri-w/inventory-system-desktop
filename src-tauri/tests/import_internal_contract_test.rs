@@ -118,15 +118,19 @@ fn test_import_internal_contract_req401_is_minimal() {
     let csv_design = read_repo_file("docs/function-design/32-biz-csv-import-service.md");
     let daily_design = read_repo_file("docs/function-design/29-io-daily-report-parser.md");
 
+    // 32「preview の cache の契約」（D-118 b1。Matrix T10 の「期待を変える」）: MatchedRow は確定の TX の
+    // 照合に使う元の JAN と共有 JAN かどうかを持ち、pos_stock_sync を持たない（確定の TX で取り直す）。
+    // CommitRequest は同じ日の追加の確認の field を外し、CMD が渡す今日を持つ
     let matched_fields = [
         "line_no",
+        "normalized_jan",
         "product_code",
+        "shared_jan",
         "quantity",
         "amount",
-        "pos_stock_sync",
     ];
-    // I-W4 / SPEC-SDI-D3: 実装完了後は source design と Rust を単一 exact pin で固定する。
-    let commit_fields = ["additional_import_confirmed", "cached_data"];
+    // I-W4: source design と Rust を単一 exact pin で固定する。
+    let commit_fields = ["cached_data", "today"];
     assert_struct_fields(&csv_source, "MatchedRow", &matched_fields);
     assert_struct_fields(&csv_source, "CommitRequest", &commit_fields);
     assert_eq!(

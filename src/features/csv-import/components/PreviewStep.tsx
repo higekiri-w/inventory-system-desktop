@@ -1,31 +1,23 @@
 // src/features/csv-import/components/PreviewStep.tsx
 //
-// Step 2/3: プレビュー確認 + 取込み / 選び直し CTA + 同日追加確認。
+// Step 2/3: プレビュー確認 + 取込み / 選び直し CTA + 知らせ（欠けた精算・日付のずれ）。
 // 設計: docs/function-design/55-ui-csv-import.md §55.1 / §55.4 step 6-10 / §55.5
 
 import { TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
 import { FilePicker, type PickedFile } from "@/components/FilePicker";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatSettlementGap } from "@/features/stocktake/lib/stocktake-formatters";
 import type { PreviewData } from "@/lib/bindings";
 import { ErrorRowsTable } from "./ErrorRowsTable";
-import { AdditionalImportConfirmDialog } from "./AdditionalImportConfirmDialog";
-
-/// Z004 の取込みの確定と取消の一時停止（SPEC-STOP-D4、55 §55.0）。CsvImportPage の案内も
-/// この定数を import する。UI の定数は安全の根拠にしない（backend も BIZ-03 で停止する）。解除は ⑤ だけ。
-// `as boolean`: 定数の分岐を lint（no-unnecessary-condition）が常真と見なさないよう型を広げる。
-export const Z004_IMPORT_SUSPENDED = true as boolean;
 
 export interface PreviewStepProps {
   preview: PreviewData;
   filename: string;
-  onConfirm: (additionalImportConfirmed: boolean) => void;
+  onConfirm: () => void;
   onReselect: (file: PickedFile) => void;
   isImporting: boolean;
-  importSuspended?: boolean;
 }
 
 export function PreviewStep({
@@ -34,57 +26,35 @@ export function PreviewStep({
   onConfirm,
   onReselect,
   isImporting,
-  importSuspended = Z004_IMPORT_SUSPENDED,
 }: PreviewStepProps) {
-  const { file_info, matched_summary, error_summary, duplicate_check } = preview;
-  const [dialogOpen, setDialogOpen] = useState(false);
-
-  const requiresAdditionalConfirm =
-    duplicate_check.status === "AdditionalImportConfirmationRequired";
-
-  function handleImportClick() {
-    if (requiresAdditionalConfirm) {
-      setDialogOpen(true);
-      return;
-    }
-    onConfirm(false);
-  }
-
-  function handleAdditionalConfirm() {
-    setDialogOpen(false);
-    onConfirm(true);
-  }
+  const { file_info, matched_summary, error_summary } = preview;
+  const hasNotice = preview.settlement_gaps.length > 0 || preview.settlement_date_after_today;
 
   return (
     <div className="space-y-4">
-      {/* DSR-03: 同日追加確認はデータ安全系（進めると危ない状態）のため、画面上部の
-          Alert 帯専用スロットへ置く（紐付け結果・エラー詳細より前）。主情報はここが担い、
-          ファイル情報カードの Badge は補助的な状態表示に留める（gated Amendment 4、
-          owner L3-lite round 2 裁定）。warning tone は日報側 DailyReportImportPage.tsx
-          と対称に統一する（gated Amendment 5、owner L3-lite round 3 裁定②: 是正前は
-          neutral で日報側と非対称だった）。 */}
-      {requiresAdditionalConfirm && (
-        <Alert variant="warning">
+      {/* 55 の D-118 の節: 知らせは取込みを止めない。Z004 は同じ日の追加の確認を出さない（ADR D4） */}
+      {hasNotice ? (
+        <Alert variant="warning" aria-label="取込みの前の知らせ">
           <TriangleAlertIcon aria-hidden="true" />
-          <AlertTitle>同じ日の取込みがあります</AlertTitle>
+          <AlertTitle>確かめてから取り込んでください</AlertTitle>
           <AlertDescription className="text-warning-strong">
-            既存分を残したまま今回分を追加します。内容を確認してください。
+            <ul className="ml-4 list-disc">
+              {preview.settlement_gaps.map((gap) => (
+                <li key={`${String(gap.from)}-${String(gap.to)}`}>
+                  {formatSettlementGap(gap)} が取り込まれていません
+                </li>
+              ))}
+              {preview.settlement_date_after_today ? (
+                <li>レジと PC の日付がずれている可能性があります</li>
+              ) : null}
+            </ul>
           </AlertDescription>
         </Alert>
-      )}
+      ) : null}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <CardTitle>ファイル情報</CardTitle>
-          {requiresAdditionalConfirm && (
-            // gated Amendment 5（owner L3-lite round 3 裁定③）: 黒枠（既定 outline）は
-            // 補助状態を主警告（上部 Alert）より強く見せ、情報階層が逆転するため不採用。
-            // soft warning token（StockStatusBadge.tsx の低在庫バッジと同型）へ統一する。
-            <Badge variant="outline" tone="warning">
-              <TriangleAlertIcon aria-hidden="true" />
-              同日データあり
-            </Badge>
-          )}
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div>
@@ -133,7 +103,12 @@ export function PreviewStep({
       {error_summary.count > 0 && <ErrorRowsTable errorSummary={error_summary} />}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={handleImportClick} disabled={isImporting || importSuspended}>
+        <Button
+          onClick={() => {
+            onConfirm();
+          }}
+          disabled={isImporting}
+        >
           取り込む
         </Button>
         <FilePicker
@@ -146,25 +121,6 @@ export function PreviewStep({
           onSelect={onReselect}
         />
       </div>
-
-      <AdditionalImportConfirmDialog
-        open={dialogOpen}
-        existingImports={duplicate_check.same_date_imports.map((item) => ({
-          id: item.id,
-          filenames: [item.filename],
-          amount: `¥${item.total_amount.toLocaleString("ja-JP")} / ${item.total_items.toLocaleString("ja-JP")}件`,
-          importedAt: item.imported_at,
-        }))}
-        incomingImport={{
-          filenames: [file_info.filename],
-          amount: `¥${matched_summary.total_amount.toLocaleString("ja-JP")} / ${matched_summary.count.toLocaleString("ja-JP")}件`,
-          importedAt: preview.preview_created_at,
-        }}
-        onConfirm={handleAdditionalConfirm}
-        onCancel={() => {
-          setDialogOpen(false);
-        }}
-      />
     </div>
   );
 }

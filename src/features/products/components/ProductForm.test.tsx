@@ -731,6 +731,7 @@ describe("ProductForm price history and supplier picker (REQ-102 / REQ-106)", ()
           message: "synthetic history failure",
           field: null,
           error_id: null,
+          stocktake_recovery: null,
         },
       })
       .mockResolvedValueOnce({ status: "ok", data: [] });
@@ -803,6 +804,7 @@ describe("ProductForm price history and supplier picker (REQ-102 / REQ-106)", ()
         message: "synthetic supplier failure",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
     const user = userEvent.setup();

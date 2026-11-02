@@ -1,8 +1,8 @@
 # タスク仕様（IO層）
 
-## 計数の置き場と在庫の求め直しの契約（D-118。(a) は実装済み、(b) は proposed・未実装）
+## 計数の置き場と在庫の求め直しの契約（D-118。(a)・b1・b2 は実装済み）
 
-SPEC-STK-CNT-D1・D2・D4・D9（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは、並びの鍵付きの movement、写しの列の書込み、求め直しの読取り（[21](../function-design/21-io-inventory-repo.md)）。計数の保存と Z004 の分は (b)（proposed・未実装）。IO-01 は [20](../function-design/20-io-product-repo.md) / [21](../function-design/21-io-inventory-repo.md) / [24](../function-design/24-io-csv-import-repo.md) の新契約で、並びの鍵付きの movement と計数（`stock_counts`）を保存し、写しの列を書く（呼ぶのは BIZ の求め直しの関数だけ）。TX の開始と確定と業務の判断は BIZ が所有する。24 は Z004 の取込みに machine_no・settlement_no を保存し、active な精算の一覧を BIZ へ渡す。
+SPEC-STK-CNT-D1・D2・D4・D9（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは、並びの鍵付きの movement、写しの列の書込み、求め直しの読取り（[21](../function-design/21-io-inventory-repo.md)）。計数の保存と Z004 の分は b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入った。商品の読取りの写しの 3 列と、在庫変動の履歴の並べない 2 つの読取り（並びの鍵は履歴の行が持ち、`MovementRecord` の形は変えない）は b2（[Plan Packet](../plans/2026-10-23-stocktake-count-runtime-b2.md)）で入った。IO-01 は [20](../function-design/20-io-product-repo.md) / [21](../function-design/21-io-inventory-repo.md) / [24](../function-design/24-io-csv-import-repo.md) の新契約で、並びの鍵付きの movement と計数（`stock_counts`）を保存し、写しの列を書く（呼ぶのは BIZ の求め直しの関数だけ）。TX の開始と確定と業務の判断は BIZ が所有する。24 は Z004 の取込みに machine_no・settlement_no を保存し、active な精算の一覧を BIZ へ渡す。
 
 IO-02 は [23](../function-design/23-io-z004-parser.md) の精算の識別メタを純粋に抽出する（D-109 で実装済み）。時計・精算の系列の信用は判断しない。既存の CP932・改行・符号・売上の無い枠の読み飛ばし（[23 §13.4.2](../function-design/23-io-z004-parser.md)、D-103）と PLU の占有の mode は保つ。(a) の migration v9（movement の並びの鍵の列・`stock_counts`・写しの列、`db/schema_v9.rs`）は入った。Z004 の取込みの記録の識別の列の SQL / schema は (b) で未実装で、[DB 契約](../DB_DESIGN.md) を runtime へ渡す。旧 ADR（時点証拠）の受領・cursor・kind・flag・版の保存は置き換えた。
 
@@ -272,7 +272,7 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 **タスク要求**: レジ（CASIO SR-S4000）の SD を取外し可能な drive から探すか利用者が選んだ folder から解決し、`CASIO\SR500_550_4000\XZ` と `XZ_BKUP` の売上の file（Z・EJ）の名前を列挙し、指定された file の生バイトを読取り専用で読んで形（CP932 strict・BOM・CRLF だけ・最終改行）を測る。手で選んだ file の path が自動で見つけた SD の root の下にあるかを path だけで決め（`locate_in_register_sd_roots`）、下に無い file がその時点で在るかを metadata で確かめる（`check_selected_file_present`）。SD へは書かない。業務ロジックなし（function-design は [29 §29.7](../function-design/29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）
 
-**理由**: 毎日の売上データは CV17 の取込みに依らずにアプリが SD から直接読む（D-111 の採用済みの方針。runtime は未実装〈Draft PR #172〉で、今の日報の取込みは利用者が選ぶ file から入る）。SD の配置・名前・読み方はレジ依存なので IO adapter に閉じる（D-023）。どの file を候補にするか・取込み済みかは BIZ-08（§37.9）が決める
+**理由**: 毎日の売上データは CV17 の取込みに依らずにアプリが SD から直接読む（D-111）。SD の配置・名前・読み方はレジ依存なので IO adapter に閉じる（D-023）。どの file を候補にするか・取込み済みかは BIZ-08（§37.9）が決める
 
 **【データ構造】**
 
@@ -291,4 +291,4 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 **タスク要求**: 取り込む束の file の生バイトを、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/{SD の相対 path}` に書く。同じ bytes があれば書かず、違う bytes があれば上書きせずに hash を付けた名前にする。保存先の directory を作ってから一時 file に書いて rename する。SD には書かない。業務ロジックなし（function-design は [29 §29.8](../function-design/29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）
 
-**理由**（D-111。runtime は未実装〈Draft PR #172〉）: (a) の段階（SD 直読みの runtime の lane）では SD は動かさず、CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは BIZ-08-D5
+**理由**（D-111）: (a) の段階（SD 直読みの runtime の lane）では SD は動かさず、CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは BIZ-08-D5

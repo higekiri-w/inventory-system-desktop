@@ -305,11 +305,6 @@ const DB_IO_REEXPORT_ALLOWLIST: &[(&str, &str, &str)] = &[
     ), // :25
     (
         "biz/mod.rs",
-        "StocktakeItemDetail",
-        "crate::db::stocktake_repo::StocktakeItemDetail",
-    ), // :25
-    (
-        "biz/mod.rs",
         "StocktakeProgress",
         "crate::db::stocktake_repo::StocktakeProgress",
     ), // :25

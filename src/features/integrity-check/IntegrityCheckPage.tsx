@@ -356,6 +356,28 @@ export function IntegrityCheckPage() {
         </div>
       ) : null}
 
+      {phase === "completed" && result !== null && result.shared_jan_conflicts.length > 0 ? (
+        <Alert variant="warning" aria-label="共有 JAN の商品">
+          <AlertTriangle aria-hidden="true" />
+          <AlertTitle>在庫連動の商品と同じ JAN の商品があります</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>
+              在庫連動の商品と同じ JAN
+              の商品があります。レジの売上で在庫が減りません。どちらかの商品の JAN
+              を直すか、在庫連動を外してください。
+            </p>
+            <ul className="list-disc pl-5">
+              {result.shared_jan_conflicts.map((conflict) => (
+                <li key={conflict.jan_code}>
+                  JAN <span className="font-mono">{conflict.jan_code}</span>:{" "}
+                  <span className="font-mono">{conflict.product_codes.join("、")}</span>
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {phase === "completed" && result !== null ? (
         result.mismatch_count === 0 ? (
           <Alert role="status" className="border-success bg-success-soft text-success">

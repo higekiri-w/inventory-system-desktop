@@ -2,7 +2,7 @@
 
 ### 計数の置き場と在庫の求め直しの契約（D-118。(a) で実装済み）
 
-[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2）と D-051 の Superseded in part（D-118）。この節の全部が (a)（ADR SPEC-STK-CNT-D12）で入り、§21.2〜§21.7 を同じ契約に直した（(b) で変わるのは `derive_stock` が精算の窓を持つことだけで、この節の形は変わらない）。
+[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2）と D-051 の Superseded in part（D-118）。この節の全部が (a)（ADR SPEC-STK-CNT-D12）で入り、§21.2〜§21.7 を同じ契約に直した（b1 で、`derive_stock` が精算の窓を持つことと、最後の項目の共有 JAN の違反の一覧を足した。ほかの項目の形は変わらない）。
 
 - `run_integrity_check` は、各商品の写し（`stock_quantity`・`stock_recheck`・`stock_range_low`・`stock_range_high`）と、[31](31-biz-inventory-service.md) の `derive_stock`（`recompute_stock` と同じ規則で、写しを書かない読取りの関数）が求める値を比べ、違う商品を返す。写しは在庫を動かす全ての TX で求め直すので、違いは不具合か DB の外からの編集でだけ起きる。
 - 比べる項目は 4 つ（数 `stock_quantity`、印 `stock_recheck`、範囲 `stock_range_low`・`stock_range_high`）で、どれか 1 つでも違えば不一致とする。`IntegrityMismatch` は、写しの 4 項目（`copy`）と求めた 4 項目（`derived`）と、違う項目の一覧（`differing_fields`: `quantity` / `recheck` / `range` の generated enum）を持つ。数が同じで印や範囲だけ違う商品も一覧に出る（「差異なし」と出さない）。
@@ -11,6 +11,7 @@
 - 整合性の補正を計数の証拠にしない（計数を作らない）。
 - 型の形（D-118 の runtime の (a)）: 写しの 4 項目を 1 つの型 `StockCopy`（`stock_quantity: i64`、`stock_recheck: bool`、`stock_range_low: Option<i64>`、`stock_range_high: Option<i64>`）にまとめ、`IntegrityMismatch` は `product_code`・`name`・`stock_unit`・`copy: StockCopy`（写し）・`derived: StockCopy`（求めた値）・`differing_fields: Vec<IntegrityField>`（`quantity` / `recheck` / `range` の generated enum。重複なし、この順）を持つ。`StockAdjustment` は `product_code`・`stock_unit`・`before: StockCopy`・`after: StockCopy` を持つ（前の `old_stock`・`new_stock`・`adjustment` を置き換えた。差は持たず、画面は `before` → `after` を並べる。[75](75-ui-integrity-check.md) §75.6）。`integrity_check` と `integrity_fix` の操作ログの detail_json の各要素も同じ key と入れ子で書く。key の無い記録済みの log（`old_stock`・`new_stock`・`adjustment` の形）は読み手がそのまま読む（[74](74-ui-operation-logs.md)）。
 - 移行の知らせ（ADR SPEC-STK-CNT-D10）: (a) の migration（[22 §19](22-mnt-migration.md)）が写しを直したときは、`integrity_fix` の操作ログの detail_json に `"trigger": "migration"` を足す（`fix_integrity` が書く行には `trigger` を書かない）。整合性の画面がこの行を読んで知らせる（[75](75-ui-integrity-check.md)）。
+- 共有 JAN の違反の一覧（ADR SPEC-STK-CNT-D10 の最後の文・D4。b1 で実装済み）: `run_integrity_check` は、在庫連動（`pos_stock_sync=1`）の商品と同じ `jan_code` を持つ別の商品がある組を今の DB から求め、`IntegrityResult.shared_jan_conflicts`（要素は `jan_code` と、その JAN を持つ全ての商品の `product_code` の一覧〈商品コードの昇順〉。JAN の昇順）で返す。BIZ-01 の不変条件（[30](30-biz-product-service.md)）で新しい組は作られないので、移行の前からある組だけが出て、利用者が JAN か在庫連動を直すと消える。`fix_integrity` の対象にしない（自動では変えない）。写しの比較（`mismatches`）とは別の結果で、組があっても写しの比較の結果は変えない。`integrity_check` の操作ログは今の形のまま（組を記録しない）。
 
 ### 21.1 モジュール構成
 

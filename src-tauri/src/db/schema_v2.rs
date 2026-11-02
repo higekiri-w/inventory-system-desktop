@@ -375,7 +375,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(max_version, 10);
+        assert_eq!(max_version, crate::db::migration::app_max_version()); // 最新の版（b1 Matrix T1）
 
         // 4テーブルに idempotency_key カラムが存在する
         for table in &[
@@ -583,7 +583,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(v, 10);
+        assert_eq!(v, crate::db::migration::app_max_version()); // 最新の版（b1 Matrix T1）
         drop(conn);
 
         // 2回目
@@ -593,12 +593,20 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(v, 10, "バージョンは変わらない");
+        assert_eq!(
+            v,
+            crate::db::migration::app_max_version(),
+            "バージョンは変わらない"
+        );
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM schema_versions", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(count, 10, "v1+v2+v3+v4+v5+v6+v7+v8+v9+v10の10レコードのみ");
+        assert_eq!(
+            count,
+            crate::db::migration::app_max_version(),
+            "v1 から最新の版まで 1 レコードずつ"
+        );
     }
 
     /// foreign_keys=ON 復元テスト（成功経路）

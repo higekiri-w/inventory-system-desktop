@@ -107,4 +107,48 @@ describe("ProductImportPreview", () => {
       "destructive",
     );
   });
+
+  it("REQ-104 UI-01c-D18: エラー行は 50 行の制限に掛けず全件と取り込まない旨を出す", () => {
+    const lineNos = Array.from({ length: 60 }, (_, index) => index + 2);
+    render(
+      <ProductImportPreview
+        filename="synthetic.csv"
+        preview={{
+          valid_rows: lineNos.map((lineNo) => ({
+            ...row(`V-${String(lineNo)}`, null),
+            line_no: lineNo,
+          })),
+          duplicate_rows: [],
+          error_rows: lineNos.map((lineNo) => ({
+            line_no: lineNo,
+            raw_data: {},
+            errors: [`合成の誤り ${String(lineNo)} 行目`],
+          })),
+        }}
+        overwriteCodes={[]}
+        targetCount={60}
+        isCommitting={false}
+        onToggleOverwrite={vi.fn()}
+        onCommit={vi.fn()}
+        onReselect={vi.fn()}
+      />,
+    );
+
+    const errorCard = screen.getByText("エラー行").closest<HTMLElement>("[data-slot='card']");
+    if (errorCard === null) throw new Error("error card not found");
+    expect(
+      within(errorCard).getByText(
+        "エラー行は取り込みません。内容の文のとおりに CSV を直し、「ファイルを選び直す」で読み込み直してください",
+      ),
+    ).toBeInTheDocument();
+    expect(within(errorCard).getByText("合成の誤り 61 行目")).toBeInTheDocument();
+    expect(within(errorCard).getByText("合成の誤り 2 行目")).toBeInTheDocument();
+    expect(within(errorCard).queryByText(/^他 /)).not.toBeInTheDocument();
+
+    // UI-01c-D5: 新規登録候補の表は先頭 50 行のまま
+    const validCard = screen.getByText("新規登録候補").closest<HTMLElement>("[data-slot='card']");
+    if (validCard === null) throw new Error("valid card not found");
+    expect(within(validCard).getByText("V-51")).toBeInTheDocument();
+    expect(within(validCard).queryByText("V-52")).not.toBeInTheDocument();
+  });
 });

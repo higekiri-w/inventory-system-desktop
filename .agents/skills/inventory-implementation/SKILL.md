@@ -5,7 +5,7 @@ description: Implement inventory-system code or documentation changes against it
 
 # Inventory Implementation
 
-[AGENTS.md の Session Start](../../../AGENTS.md#session-start) で対象と現在地を確認する。R0/R1 は no-Plan route。R2+ は対象 packet の完全な Workflow State と Scope / AC / Matrix を読み、[Workflow State](../../../docs/DEV_WORKFLOW.md#workflow-state) が実装を許可することを確認する。不正・曖昧・未承認の状態を自分で承認済みにしない。
+[AGENTS.md の Session Start](../../../AGENTS.md#session-start) で対象と現在地を確認する。R0〜R2 は packet なしの道（PR body の 5 行）。R3/R4 は対象 packet の完全な Workflow State と Scope / AC / Contract Ledger / Test Plan を読み、`Plan Commit` が SHA（計画を固定済み）であることを確認する（[Workflow State](../../../docs/DEV_WORKFLOW.md#workflow-state)。`pending` のまま実装を push すると先走りの検査が止める）。不正・曖昧・未承認の状態を自分で承認済みにしない。
 
 ## Work
 
@@ -19,6 +19,6 @@ description: Implement inventory-system code or documentation changes against it
 
 検証の種類とタイミングは [Verification Gates](../../../docs/DEV_WORKFLOW.md#verification-gates) と [CI](../../../docs/ci.md) が所有する。実装中は対象テストと `local-ci.sh changed`。merge 前の feedback は push ごとの Draft の hosted の run で、手元で全 gate を回したいときだけ `local-ci.sh full`（任意）。
 
-Verify の後に [Draft PR Checkpoint](../../../docs/DEV_WORKFLOW.md#draft-pr-checkpoint) で Draft PR を開き、helper の capture の後に [Review Rules](../../../docs/DEV_WORKFLOW.md#review-rules) の Final Review（`Final Review Minimum` の本数。R4 / workflow gate change は Double Audit）を Draft で受ける。指摘は現物で確認し、成果物と検証、残る owner 確認を引き渡す。Ready / merge は明示承認に従う。
+Verify の後に [Draft・Ready・merge](../../../docs/DEV_WORKFLOW.md#draftreadymerge) で Draft PR を開き、helper の capture の後に [Review Rules](../../../docs/DEV_WORKFLOW.md#review-rules) の Final Review（本数は helper が導く。R4 / workflow gate change は Double Audit。R2 は差分の review 1 本）を Draft で受ける。指摘は現物で確認し、成果物と検証、残る owner 確認を引き渡す。Ready / merge は明示承認に従う。
 
 最終報告には結果、必要な検証根拠、未完了事項を含める。正本にない工程や、無関係な清掃を完了条件に増やさない。

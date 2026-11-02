@@ -274,6 +274,7 @@ pub fn create_manual_sale(
                 source_line_no: None,
                 reason: Some(req.reason.as_str().to_string()),
                 note: req.note.clone(),
+                stock_linked: false,
             },
         )?;
 
@@ -282,7 +283,6 @@ pub fn create_manual_sale(
             &tx,
             &item.product_code,
             &req.sale_date,
-            None,
             -item.quantity,
             MovementType::SaleManual,
             ReferenceType::ManualSale,

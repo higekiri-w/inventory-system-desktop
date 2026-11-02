@@ -4,47 +4,13 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { StocktakeItemDetail } from "@/lib/bindings";
-
 import {
-  computeListDifference,
   formatCountedAt,
   formatListDifference,
+  formatRecountReasons,
+  formatSettlementGap,
+  formatStockOrRange,
 } from "./stocktake-formatters";
-
-function baseItem(overrides: Partial<StocktakeItemDetail> = {}): StocktakeItemDetail {
-  return {
-    id: 1,
-    stocktake_id: 1,
-    product_code: "P-001",
-    name: "テスト商品",
-    department_name: "テスト部門",
-    system_stock: 10,
-    actual_count: null,
-    counted_at: null,
-    current_stock: 10,
-    is_discontinued: false,
-    ...overrides,
-  };
-}
-
-describe("computeListDifference", () => {
-  it("req205 未入力は null を返す", () => {
-    expect(computeListDifference(baseItem({ actual_count: null }))).toBeNull();
-  });
-
-  it("req205 current_stock - actual_count を計算する（正=過剰）", () => {
-    expect(computeListDifference(baseItem({ current_stock: 10, actual_count: 7 }))).toBe(3);
-  });
-
-  it("req205 current_stock - actual_count を計算する（負=不足）", () => {
-    expect(computeListDifference(baseItem({ current_stock: 5, actual_count: 8 }))).toBe(-3);
-  });
-
-  it("req205 一致していれば 0 を返す", () => {
-    expect(computeListDifference(baseItem({ current_stock: 10, actual_count: 10 }))).toBe(0);
-  });
-});
 
 describe("formatListDifference", () => {
   it("req205 null は「—」を返す", () => {
@@ -71,5 +37,45 @@ describe("formatCountedAt", () => {
 
   it("req205 T区切りをスペースに変換する", () => {
     expect(formatCountedAt("2026-10-01T09:05:00")).toBe("2026-10-01 09:05:00");
+  });
+});
+
+describe("formatStockOrRange (73・55 の範囲)", () => {
+  it("req205 範囲が無ければ写しの在庫を単位つきで出す", () => {
+    expect(
+      formatStockOrRange({
+        stock: 7,
+        stock_range_low: null,
+        stock_range_high: null,
+        stock_unit: "pcs",
+      }),
+    ).toBe("7 個");
+  });
+
+  it("req205 範囲は「9〜11 個」、長さは m の形「4.5〜5.2 m」", () => {
+    expect(
+      formatStockOrRange({ stock: 9, stock_range_low: 9, stock_range_high: 11, stock_unit: "pcs" }),
+    ).toBe("9〜11 個");
+    expect(
+      formatStockOrRange({
+        stock: 450,
+        stock_range_low: 450,
+        stock_range_high: 520,
+        stock_unit: "m",
+      }),
+    ).toBe("4.5〜5.2 m");
+  });
+});
+
+describe("formatRecountReasons / formatSettlementGap", () => {
+  it("req205 理由 1・2 は同じ文で 1 つにまとめ、理由 3 は別の文", () => {
+    expect(
+      formatRecountReasons(["undetermined_settlement", "same_date_movement", "conflicting_counts"]),
+    ).toEqual(["数えた日に売り買い（入出庫）がありました", "同じ日に違う数が保存されています"]);
+  });
+
+  it("req401 欠けの区間は 1 つなら「精算 n」、続けば「精算 n〜m」", () => {
+    expect(formatSettlementGap({ from: 103, to: 103 })).toBe("精算 103");
+    expect(formatSettlementGap({ from: 105, to: 199 })).toBe("精算 105〜199");
   });
 });

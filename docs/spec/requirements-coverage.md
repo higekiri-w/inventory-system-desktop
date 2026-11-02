@@ -63,7 +63,7 @@
 | QR-03 | 税率変更に追従できる | `function-design/30-biz-product-service.md`; `function-design/34-biz-sales-service.md` | partial | 現行は固定候補を扱う。任意の制度変更への追従設計は後続 |
 | QR-04 | 複数世代のバックアップを保持する | `function-design/71-mnt-backup.md`; `function-design/68-ui-backup-restore.md` | current | 現行 retention 契約が要求を包含する |
 | QR-05 | バックアップの自動実行、状態確認、復元を行える | `function-design/71-mnt-backup.md`; `function-design/68-ui-backup-restore.md` | current | — |
-| QR-06 | 主要操作を記録し、検索・閲覧・保持・外部出力できる | `function-design/72-mnt-log-manager.md`; `function-design/74-ui-operation-logs.md`; `function-design/65-inventory-record-traceability.md` | partial | 記録・閲覧と 365 日超の削除は現行。外部出力は後続、旧 archive 前提は owner decision により 365 日 cleanup へ supersede |
+| QR-06 | 主要操作を記録し、検索・閲覧・保持・外部出力できる | `function-design/72-mnt-log-manager.md`; `function-design/74-ui-operation-logs.md`; `function-design/65-inventory-record-traceability.md` | partial | 記録・閲覧と、保持日数（既定は 72 MNT-02-D1）を過ぎた記録の削除は現行。外部出力は後続、旧 archive 前提は owner decision により保持日数の cleanup へ supersede |
 
 ## 完全性契約
 

@@ -32,6 +32,7 @@ fn test_commit_req401_normal_flow() {
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
     create_test_product_with_jan(&conn, "TEST-002", "4912345678902", 5, true);
     let bytes = make_z004_bytes(
+        1,
         "2026-03-21",
         &[
             ("4912345678901", "商品A", 3, 900),
@@ -41,11 +42,11 @@ fn test_commit_req401_normal_flow() {
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let cached = build_cached(pv);
 
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -67,128 +68,11 @@ fn test_commit_req401_normal_flow() {
 }
 
 #[test]
-fn test_commit_req401_same_day_additional_import_is_insert_only() {
-    // REQ-401 / I-B3 / SPEC-SDI-D3: 同日別hashは既存分を残して追加する。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-
-    // 最初のインポート
-    let bytes1 = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 2, 600)]);
-    let pv1 = parse_and_build_cache(&conn, bytes1, "Z004_old");
-    let cached1 = build_cached(pv1);
-    let result1 = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: false,
-            cached_data: cached1,
-        },
-    )
-    .unwrap();
-    assert_eq!(result1.status, sales_repo::CsvImportStatus::Completed);
-    let p = product_repo::find_by_product_code(&conn, "TEST-001")
-        .unwrap()
-        .unwrap();
-    assert_eq!(p.product.stock_quantity, 8); // 10 - 2
-
-    // 同日の別ファイルを追加取込み
-    let bytes2 = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 5, 1500)]);
-    // settlement_date 同日チェックのため手動でPreviewDataを構築
-    let pv2 = parse_and_build_cache(&conn, bytes2, "Z004_new");
-    assert_eq!(
-        pv2.preview_data.duplicate_check.status,
-        DuplicateStatus::AdditionalImportConfirmationRequired
-    );
-    let cached2 = build_cached(pv2);
-    let result2 = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: true,
-            cached_data: cached2,
-        },
-    )
-    .unwrap();
-    assert_eq!(result2.status, sales_repo::CsvImportStatus::Completed);
-    assert_eq!(result2.total_items, 1);
-    assert_eq!(result2.total_amount, 1500);
-
-    // DB検証: 旧データ(-2) と追加データ(-5) がともに残る。
-    let p = product_repo::find_by_product_code(&conn, "TEST-001")
-        .unwrap()
-        .unwrap();
-    assert_eq!(p.product.stock_quantity, 3);
-    let imports = sales_repo::find_imports_by_settlement_date(&conn, "2026-03-21").unwrap();
-    assert_eq!(imports.len(), 2);
-    assert!(imports
-        .iter()
-        .all(|item| item.status != sales_repo::CsvImportStatus::RolledBack));
-    for import_id in [result1.csv_import_id, result2.csv_import_id] {
-        let active_sales: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sale_records WHERE csv_import_id = ?1 AND is_voided = 0",
-                [import_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let active_movements: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM inventory_movements
-                 WHERE reference_type = 'csv_import' AND reference_id = ?1 AND is_voided = 0",
-                [import_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(active_sales, 1);
-        assert_eq!(active_movements, 1);
-    }
-}
-
-#[test]
-fn test_commit_req401_additional_import_requires_confirmation() {
-    // REQ-401 / I-B5 / SPEC-SDI-D3: 追加確認 false は副作用なしで拒否する。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-
-    // 同日の既存インポートを作成
-    sales_repo::insert_csv_import(
-        &conn,
-        &sales_repo::NewCsvImport {
-            filename: "old".to_string(),
-            settlement_date: "2026-03-21".to_string(),
-            file_hash: "oldhash".to_string(),
-            total_items: 1,
-            total_amount: 100,
-            skipped_count: 0,
-            status: "completed".to_string(),
-        },
-    )
-    .unwrap();
-
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
-    let pv = parse_and_build_cache(&conn, bytes, "Z004_new");
-    let cached = build_cached(pv);
-    let before = write_surface(&conn);
-
-    let result = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: false,
-            cached_data: cached,
-        },
-    );
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        BizError::ValidationFailed(msg) => assert!(msg.contains("追加確認")),
-        e => panic!("Expected ValidationFailed, got {:?}", e),
-    }
-    assert_eq!(write_surface(&conn), before);
-}
-
-#[test]
 fn test_commit_req401_toctou_check() {
     // REQ-401 / I-B2 / SPEC-SDI-D4: hash recheck はsnapshot mismatchより先にhard blockする。
     let (_dir, mut conn) = setup_test_db();
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
+    let bytes = make_z004_bytes(1, "2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
     let pv = parse_and_build_cache(&conn, bytes.clone(), "Z004_260321");
     let file_hash = pv.preview_data.file_info.file_hash.clone();
 
@@ -203,17 +87,19 @@ fn test_commit_req401_toctou_check() {
             total_amount: 900,
             skipped_count: 0,
             status: "completed".to_string(),
+            machine_no: "0001".to_string(),
+            settlement_no: 1,
         },
     )
     .unwrap();
 
     let cached = build_cached(pv);
     let before = write_surface(&conn);
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     );
     assert!(result.is_err());
@@ -229,15 +115,15 @@ fn test_commit_req401_pos_stock_sync_false() {
     // REQ-401: CSV取込み
     let (_dir, mut conn) = setup_test_db();
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, false); // pos_stock_sync=false
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "生地A", 3, 900)]);
+    let bytes = make_z004_bytes(1, "2026-03-21", &[("4912345678901", "生地A", 3, 900)]);
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let cached = build_cached(pv);
 
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -257,6 +143,7 @@ fn test_commit_req401_negative_stock_warning() {
     let (_dir, mut conn) = setup_test_db();
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 2, true); // 在庫2
     let bytes = make_z004_bytes(
+        1,
         "2026-03-21",
         &[
             ("4912345678901", "商品A", 5, 1500), // 5個販売 → 在庫-3
@@ -265,11 +152,11 @@ fn test_commit_req401_negative_stock_warning() {
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let cached = build_cached(pv);
 
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -290,6 +177,7 @@ fn test_commit_req401_partial_with_errors() {
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
     // 1件マッチ + 1件アンマッチ
     let bytes = make_z004_bytes(
+        1,
         "2026-03-21",
         &[
             ("4912345678901", "商品A", 3, 900),
@@ -299,11 +187,11 @@ fn test_commit_req401_partial_with_errors() {
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let cached = build_cached(pv);
 
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -318,15 +206,15 @@ fn test_commit_req401_sign_flip_inv1() {
     // INV-1: quantity=3（売上帳票視点）→ inventory_quantity=-3（在庫視点）
     let (_dir, mut conn) = setup_test_db();
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 100, true);
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
+    let bytes = make_z004_bytes(1, "2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let cached = build_cached(pv);
 
-    commit::legacy_commit_csv_import(
+    commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: cached,
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -336,229 +224,6 @@ fn test_commit_req401_sign_flip_inv1() {
         .unwrap()
         .unwrap();
     assert_eq!(p.product.stock_quantity, 97);
-}
-
-#[test]
-fn test_commit_req401_settlement_date_toctou() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: snapshot追加差分は副作用なし再preview。
-    // Preview時はNoDuplicateだったが、commit前に同日データが別経路で取り込まれた場合
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
-    let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
-    // Preview時点ではNoDuplicate
-    assert_eq!(
-        pv.preview_data.duplicate_check.status,
-        DuplicateStatus::NoDuplicate
-    );
-
-    // Preview後に別経路で同日データを挿入
-    sales_repo::insert_csv_import(
-        &conn,
-        &sales_repo::NewCsvImport {
-            filename: "Z004_sneaky".to_string(),
-            settlement_date: "2026-03-21".to_string(),
-            file_hash: "sneaky_different_hash".to_string(),
-            total_items: 1,
-            total_amount: 500,
-            skipped_count: 0,
-            status: "completed".to_string(),
-        },
-    )
-    .unwrap();
-
-    let cached = build_cached(pv);
-    let before = write_surface(&conn);
-    let result = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: false,
-            cached_data: cached,
-        },
-    );
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        BizError::ImportError(msg) => assert_eq!(
-            msg,
-            "同日の取込み状況が変わりました。再度プレビューしてください"
-        ),
-        e => panic!("Expected ImportError, got {:?}", e),
-    }
-    let sales: i64 = conn
-        .query_row("SELECT COUNT(*) FROM sale_records", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(sales, 0);
-    let product = product_repo::find_by_product_code(&conn, "TEST-001")
-        .unwrap()
-        .unwrap();
-    assert_eq!(product.product.stock_quantity, 10);
-    assert_eq!(write_surface(&conn), before);
-}
-
-#[test]
-fn test_commit_req401_same_date_snapshot_removal_requires_repreview() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: snapshot削除差分も完全一致比較で検出する。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    let existing_id = sales_repo::insert_csv_import(
-        &conn,
-        &sales_repo::NewCsvImport {
-            filename: "existing".to_string(),
-            settlement_date: "2026-03-21".to_string(),
-            file_hash: "existing-hash".to_string(),
-            total_items: 1,
-            total_amount: 100,
-            skipped_count: 0,
-            status: "completed".to_string(),
-        },
-    )
-    .unwrap();
-    let preview = parse_and_build_cache(
-        &conn,
-        make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 1, 300)]),
-        "Z004_new",
-    );
-    sales_repo::update_csv_import_status(&conn, existing_id, "rolled_back").unwrap();
-    let before = write_surface(&conn);
-
-    let error = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: true,
-            cached_data: build_cached(preview),
-        },
-    )
-    .unwrap_err();
-    assert!(
-        matches!(error, BizError::ImportError(ref message) if message == "同日の取込み状況が変わりました。再度プレビューしてください")
-    );
-    assert_eq!(write_surface(&conn), before);
-}
-
-#[test]
-fn test_commit_req401_same_date_snapshot_replace_requires_repreview() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: 件数が同じでもactive ID置換を検出し副作用を出さない。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    let existing_id = sales_repo::insert_csv_import(
-        &conn,
-        &sales_repo::NewCsvImport {
-            filename: "existing-a".to_string(),
-            settlement_date: "2026-03-21".to_string(),
-            file_hash: "existing-a-hash".to_string(),
-            total_items: 1,
-            total_amount: 100,
-            skipped_count: 0,
-            status: "completed".to_string(),
-        },
-    )
-    .unwrap();
-    let preview = parse_and_build_cache(
-        &conn,
-        make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 1, 300)]),
-        "Z004_new",
-    );
-    sales_repo::update_csv_import_status(&conn, existing_id, "rolled_back").unwrap();
-    sales_repo::insert_csv_import(
-        &conn,
-        &sales_repo::NewCsvImport {
-            filename: "existing-b".to_string(),
-            settlement_date: "2026-03-21".to_string(),
-            file_hash: "existing-b-hash".to_string(),
-            total_items: 1,
-            total_amount: 200,
-            skipped_count: 0,
-            status: "completed".to_string(),
-        },
-    )
-    .unwrap();
-    let before = write_surface(&conn);
-
-    let error = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: true,
-            cached_data: build_cached(preview),
-        },
-    )
-    .unwrap_err();
-
-    assert!(
-        matches!(error, BizError::ImportError(ref message) if message == "同日の取込み状況が変わりました。再度プレビューしてください")
-    );
-    assert_eq!(write_surface(&conn), before);
-}
-
-#[test]
-fn test_commit_req401_same_date_snapshot_order_requires_exact_match() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: set一致でもordered ID snapshotの順序差を拒否する。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    for (filename, hash) in [("old-a", "hash-a"), ("old-b", "hash-b")] {
-        sales_repo::insert_csv_import(
-            &conn,
-            &sales_repo::NewCsvImport {
-                filename: filename.to_string(),
-                settlement_date: "2026-03-21".to_string(),
-                file_hash: hash.to_string(),
-                total_items: 1,
-                total_amount: 1,
-                skipped_count: 0,
-                status: "completed".to_string(),
-            },
-        )
-        .unwrap();
-    }
-    let preview = parse_and_build_cache(
-        &conn,
-        make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 1, 300)]),
-        "new",
-    );
-    let mut cached = build_cached(preview);
-    cached.active_same_date_import_ids.reverse();
-    let before = write_surface(&conn);
-
-    let error = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: true,
-            cached_data: cached,
-        },
-    )
-    .unwrap_err();
-    assert!(
-        matches!(error, BizError::ImportError(ref message) if message == "同日の取込み状況が変わりました。再度プレビューしてください")
-    );
-    assert_eq!(write_surface(&conn), before);
-}
-
-#[test]
-fn test_commit_req401_additional_confirmation_without_duplicate() {
-    // REQ-401 / I-B5 / SPEC-SDI-D3: NoDuplicate + true は ValidationFailed。
-    let (_dir, mut conn) = setup_test_db();
-    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
-    let bytes = make_z004_bytes("2026-03-21", &[("4912345678901", "商品A", 3, 900)]);
-    let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
-    assert_eq!(
-        pv.preview_data.duplicate_check.status,
-        DuplicateStatus::NoDuplicate
-    );
-    let cached = build_cached(pv);
-    let before = write_surface(&conn);
-
-    let result = commit::legacy_commit_csv_import(
-        &mut conn,
-        CommitRequest {
-            additional_import_confirmed: true,
-            cached_data: cached,
-        },
-    );
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        BizError::ValidationFailed(msg) => assert!(msg.contains("追加確認")),
-        e => panic!("Expected ValidationFailed, got {:?}", e),
-    }
-    assert_eq!(write_surface(&conn), before);
 }
 
 // --- 入力の上限（共通規則 SPEC-UNIT-D11 の続き、X2・X3） ---
@@ -573,6 +238,7 @@ fn test_preview_req401_pos_quantity_limit_is_row_error() {
     create_test_product_with_jan(&conn, "X2-EDGE", "4912345678903", 10, false);
     create_test_product_with_jan(&conn, "X2-RETURN", "4912345678904", 10, false);
     let bytes = make_z004_bytes(
+        1,
         "2026-03-21",
         &[
             ("4912345678901", "連動しない商品", 10_000_000, 100),
@@ -594,11 +260,11 @@ fn test_preview_req401_pos_quantity_limit_is_row_error() {
     }
     assert_eq!(pv.matched_rows.len(), 2);
 
-    commit::legacy_commit_csv_import(
+    commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: build_cached(pv),
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -633,6 +299,7 @@ fn test_commit_req401_stock_limit_rolls_back_whole_tx() {
     create_test_product_with_jan(&conn, "X3-FULL", "4912345678901", -999_999_999, true);
     create_test_product_with_jan(&conn, "X3-OTHER", "4912345678902", 10, true);
     let bytes = make_z004_bytes(
+        1,
         "2026-03-21",
         &[
             ("4912345678902", "ほかの商品", 2, 200),
@@ -641,11 +308,11 @@ fn test_commit_req401_stock_limit_rolls_back_whole_tx() {
     );
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260321");
     let before = write_surface(&conn);
-    let result = commit::legacy_commit_csv_import(
+    let result = commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: build_cached(pv),
+            today: TEST_TODAY.to_string(),
         },
     );
     assert!(
@@ -661,13 +328,13 @@ fn test_commit_req401_stock_limit_rolls_back_whole_tx() {
         [],
     )
     .unwrap();
-    let bytes = make_z004_bytes("2026-03-22", &[("4912345678901", "下限の商品", 1, 100)]);
+    let bytes = make_z004_bytes(1, "2026-03-22", &[("4912345678901", "下限の商品", 1, 100)]);
     let pv = parse_and_build_cache(&conn, bytes, "Z004_260322");
-    commit::legacy_commit_csv_import(
+    commit_csv_import(
         &mut conn,
         CommitRequest {
-            additional_import_confirmed: false,
             cached_data: build_cached(pv),
+            today: TEST_TODAY.to_string(),
         },
     )
     .unwrap();
@@ -675,4 +342,492 @@ fn test_commit_req401_stock_limit_rolls_back_whole_tx() {
         .unwrap()
         .unwrap();
     assert_eq!(product.product.stock_quantity, -999_999_999);
+}
+
+// --- 確定と取消の新しい経路（ADR SPEC-STK-CNT-D1・D2・D4・D7、32「計数の置き場と在庫の求め直しの契約」） ---
+
+use crate::biz::stocktake_service::{
+    save_stock_count, CountRecoveryAction, RecountReason, SaveStockCountRequest,
+};
+use crate::db::product_repo::ProductStockUnit;
+
+const REGISTRATION_CHANGED: &str =
+    "商品の登録が読み込みの後に変わりました。ファイルを選び直してください";
+
+fn save_count(
+    conn: &mut crate::db::DbConnection,
+    code: &str,
+    value: i64,
+    date: &str,
+    fresh: bool,
+    today: &str,
+) {
+    save_stock_count(
+        conn,
+        &SaveStockCountRequest {
+            product_code: code.to_string(),
+            count_value: value,
+            fresh,
+            business_date: date.to_string(),
+            stocktake_item_id: None,
+        },
+        today,
+    )
+    .unwrap();
+}
+
+fn commit_cached(
+    conn: &mut crate::db::DbConnection,
+    cached: CachedPreview,
+    today: &str,
+) -> Result<ImportResult, BizError> {
+    commit_csv_import(
+        conn,
+        CommitRequest {
+            cached_data: cached,
+            today: today.to_string(),
+        },
+    )
+}
+
+fn preview_cached(conn: &crate::db::DbConnection, bytes: Vec<u8>) -> CachedPreview {
+    build_cached(parse_and_build_cache(conn, bytes, "Z004.CSV"))
+}
+
+#[test]
+fn test_commit_req401_same_date_other_settlement_needs_no_confirmation() {
+    // REQ-401 / ADR D4（Matrix Z7）: 同じ精算日の別の精算は確認なしに別の取込みとして確定する
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
+    let one = [("4912345678901", "商品A", 1, 100)];
+    commit_bytes(&mut conn, make_z004_bytes(1, "2026-03-21", &one), "a").unwrap();
+    let pv = parse_and_build_cache(
+        &conn,
+        make_z004_bytes(2, "2026-03-21", &[("4912345678901", "商品A", 2, 200)]),
+        "b",
+    );
+    assert!(pv.preview_data.settlement_gaps.is_empty());
+    commit_cached(&mut conn, build_cached(pv), TEST_TODAY).unwrap();
+    let imports = sales_repo::find_imports_by_settlement_date(&conn, "2026-03-21").unwrap();
+    assert_eq!(imports.len(), 2);
+    assert_eq!(stock_copy(&conn, "TEST-001"), (7, false, None));
+}
+
+#[test]
+fn test_commit_req401_writes_settlement_key_and_recomputes() {
+    // REQ-401 / REQ-205 / ADR D1・D2・D3（Matrix Z8）: 精算の鍵・stock_linked・phase 1 の movement、
+    // 求め直し、結果の recheck_targets（単位・写しの在庫・範囲つき）。同じ商品の複数の行の stock_after は同じ写しの値
+    let today = "2026-04-10";
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
+    create_test_product_with_jan(&conn, "TEST-002", "4912345678902", 10, false);
+    save_count(&mut conn, "TEST-001", 10, today, false, today);
+    let pv = parse_and_build_cache(
+        &conn,
+        make_z004_bytes(
+            1,
+            today,
+            &[
+                ("4912345678901", "商品A", 1, 100),
+                ("4912345678901", "商品A", 2, 200),
+                ("4912345678902", "商品B", 1, 100),
+            ],
+        ),
+        "Z004.CSV",
+    );
+    let result = commit_cached(&mut conn, build_cached(pv), today).unwrap();
+
+    let key: (String, i64) = conn
+        .query_row(
+            "SELECT machine_no, settlement_no FROM csv_imports WHERE id = ?1",
+            [result.csv_import_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(key, ("0001".to_string(), 1));
+    let linked: Vec<(String, bool)> = conn
+        .prepare("SELECT product_code, stock_linked FROM sale_records ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        linked,
+        vec![
+            ("TEST-001".to_string(), true),
+            ("TEST-001".to_string(), true),
+            ("TEST-002".to_string(), false),
+        ]
+    );
+    let movements: Vec<(i64, String, i64, Option<i64>, i64)> = conn
+        .prepare(
+            "SELECT quantity, business_date, phase, settlement_no, stock_after FROM inventory_movements
+             WHERE reference_type = 'csv_import' ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    // 計数の日付 = 精算日なので決まらない（範囲 7〜10、写しは 7）
+    assert_eq!(
+        movements,
+        vec![
+            (-1, today.to_string(), 1, Some(1), 7),
+            (-2, today.to_string(), 1, Some(1), 7),
+        ]
+    );
+    assert_eq!(stock_copy(&conn, "TEST-001"), (7, true, Some((7, 10))));
+    let derived = crate::biz::stock_ledger::derive_stock(&conn, "TEST-001").unwrap();
+    assert_eq!((derived.stock, derived.range), (7, Some((7, 10))));
+    assert_eq!(result.recheck_targets.len(), 1);
+    let target = &result.recheck_targets[0];
+    assert_eq!(target.product_code, "TEST-001");
+    assert_eq!(target.stock_unit, ProductStockUnit::Pcs);
+    assert_eq!(
+        (
+            target.stock,
+            target.stock_range_low,
+            target.stock_range_high
+        ),
+        (7, Some(7), Some(10))
+    );
+    assert_eq!(target.action, CountRecoveryAction::CountNow);
+    assert_eq!(
+        target.recount_reasons,
+        vec![RecountReason::UndeterminedSettlement]
+    );
+    assert!(result.settlement_gaps.is_empty());
+    assert!(!result.settlement_date_after_today);
+    // 連動しない商品は売上だけ
+    assert_eq!(stock_copy(&conn, "TEST-002"), (10, false, None));
+}
+
+#[test]
+fn test_commit_req401_zero_rows_file_is_imported_as_settlement() {
+    // REQ-401 / ADR D4（Matrix Z9。legacy F4 の入力）: 正常な行が全て 0 の file は売上も movement も作らずに
+    // 取込みとして確定し、精算の並びと欠けに入る
+    let (_dir, mut conn) = setup_test_db();
+    let before = write_surface(&conn);
+    let result = commit_bytes(
+        &mut conn,
+        make_z004_bytes(1, "2026-03-21", &[("4912345678901", "空", 0, 0)]),
+        "zero",
+    )
+    .unwrap();
+    assert_eq!(result.total_items, 0);
+    let after = write_surface(&conn);
+    assert_eq!(after, [before[0] + 1, before[1], before[2], before[3]]);
+    let next = parse_and_build_cache(
+        &conn,
+        make_z004_bytes(3, "2026-03-23", &[("4912345678901", "空", 0, 0)]),
+        "next",
+    );
+    assert_eq!(
+        next.preview_data
+            .settlement_gaps
+            .iter()
+            .map(|g| (g.from, g.to))
+            .collect::<Vec<_>>(),
+        vec![(2, 2)]
+    );
+}
+
+#[test]
+fn test_commit_req401_shared_jan_row_records_sale_only() {
+    // REQ-401 / ADR D4（Matrix Z10。legacy F5 の入力）: 共有 JAN の行は先頭の商品の売上だけ、
+    // どの候補の movement も作らず stock_linked = 0、行の error にしない
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "FS-0001", "4912345678901", 10, true);
+    create_test_product_with_jan(&conn, "FS-0002", "4912345678901", 10, true);
+    let result = commit_bytes(
+        &mut conn,
+        make_z004_bytes(1, "2026-03-21", &[("4912345678901", "グループ", 2, 600)]),
+        "shared",
+    )
+    .unwrap();
+    assert_eq!(result.skipped_count, 0);
+    let sale: (String, bool) = conn
+        .query_row(
+            "SELECT product_code, stock_linked FROM sale_records",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sale, ("FS-0001".to_string(), false));
+    let movements: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM inventory_movements WHERE reference_type = 'csv_import'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(movements, 0);
+    assert_eq!(stock_copy(&conn, "FS-0001"), (10, false, None));
+    assert_eq!(stock_copy(&conn, "FS-0002"), (10, false, None));
+}
+
+#[test]
+fn test_commit_req401_rejects_when_original_jan_now_matches_other_product() {
+    // REQ-401 / 32 の preview と確定の引き当ての食い違い（Matrix Z13）: preview の JAN J → A の後に、
+    // A の JAN を K、B の JAN を J にした（元の JAN の引当先が B に変わる）→ 何も書かずに拒否
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "A-001", "4912345678901", 10, true);
+    create_test_product_with_jan(&conn, "B-001", "4912345678902", 10, true);
+    let cached = preview_cached(
+        &conn,
+        make_z004_bytes(1, "2026-03-21", &[("4912345678901", "商品", 1, 100)]),
+    );
+    conn.execute_batch(
+        "UPDATE products SET jan_code = '4912345678903' WHERE product_code = 'A-001';
+         UPDATE products SET jan_code = '4912345678901' WHERE product_code = 'B-001';",
+    )
+    .unwrap();
+    let before = write_surface(&conn);
+    let result = commit_cached(&mut conn, cached, TEST_TODAY);
+    assert!(matches!(result, Err(BizError::ImportError(ref m)) if m == REGISTRATION_CHANGED));
+    assert_eq!(write_surface(&conn), before);
+
+    // 引き当てた商品が無くなった（JAN の候補が無い）行も拒否
+    let cached = preview_cached(
+        &conn,
+        make_z004_bytes(1, "2026-03-21", &[("4912345678901", "商品", 1, 100)]),
+    );
+    conn.execute(
+        "UPDATE products SET jan_code = '4912345678904' WHERE product_code = 'B-001'",
+        [],
+    )
+    .unwrap();
+    let result = commit_cached(&mut conn, cached, TEST_TODAY);
+    assert!(matches!(result, Err(BizError::ImportError(ref m)) if m == REGISTRATION_CHANGED));
+    assert_eq!(write_surface(&conn), before);
+}
+
+#[test]
+fn test_commit_req401_rechecks_rules_in_tx() {
+    // REQ-401 / 32 の確定の TX（Matrix Z15）: preview の後に別の取込みが確定したら、確定の TX で順 1〜5 を取り直す
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
+    let one = [("4912345678901", "商品A", 1, 100)];
+    // 順 5: preview の後に、小さい番号で後の精算日の取込みが確定した
+    let five = preview_cached(&conn, make_z004_bytes(5, "2026-03-05", &one));
+    commit_bytes(&mut conn, make_z004_bytes(4, "2026-03-06", &one), "four").unwrap();
+    let before = write_surface(&conn);
+    let result = commit_cached(&mut conn, five, TEST_TODAY);
+    assert!(matches!(result, Err(BizError::ImportError(ref m))
+        if m == "レジの日付か番号が前の精算と合いません。レジの時計か、レジの入替・初期化を確かめてください"));
+    assert_eq!(write_surface(&conn), before);
+    // 順 2: preview の後に別のレジの取込みが入った
+    let six = preview_cached(&conn, make_z004_bytes(6, "2026-03-07", &one));
+    sales_repo::insert_csv_import(
+        &conn,
+        &sales_repo::NewCsvImport {
+            filename: "other".to_string(),
+            settlement_date: "2026-03-07".to_string(),
+            file_hash: "other-register".to_string(),
+            total_items: 0,
+            total_amount: 0,
+            skipped_count: 0,
+            status: "completed".to_string(),
+            machine_no: "0002".to_string(),
+            settlement_no: 1,
+        },
+    )
+    .unwrap();
+    let before = write_surface(&conn);
+    let result = commit_cached(&mut conn, six, TEST_TODAY);
+    assert!(matches!(result, Err(BizError::ImportError(ref m))
+        if m == "レジの番号が前の精算と合いません。レジの入替・初期化を確かめてください"));
+    assert_eq!(write_surface(&conn), before);
+}
+
+#[test]
+fn test_commit_req401_rejects_shared_or_newly_matched_jan_and_rechecks_settlement_from_cache() {
+    // REQ-401 / 32「preview の cache の契約」の (4)（Matrix Z21）
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "A-001", "4912345678901", 10, true);
+    let rows = [
+        ("4912345678901", "商品A", 1, 100),
+        ("4912345678909", "未登録", 1, 100),
+    ];
+    // (a) 単独だった JAN が確定の前に共有 JAN になった
+    let cached = preview_cached(&conn, make_z004_bytes(1, "2026-03-21", &rows[..1]));
+    create_test_product_with_jan(&conn, "A-002", "4912345678901", 0, false);
+    let before = write_surface(&conn);
+    assert!(matches!(commit_cached(&mut conn, cached, TEST_TODAY),
+        Err(BizError::ImportError(ref m)) if m == REGISTRATION_CHANGED));
+    assert_eq!(write_surface(&conn), before);
+    conn.execute("DELETE FROM products WHERE product_code = 'A-002'", [])
+        .unwrap();
+    // (b) preview で未登録だった行の JAN に確定の前に商品ができた
+    let cached = preview_cached(&conn, make_z004_bytes(1, "2026-03-21", &rows));
+    assert_eq!(cached.error_rows.len(), 1);
+    create_test_product_with_jan(&conn, "N-001", "4912345678909", 0, false);
+    let before = write_surface(&conn);
+    assert!(matches!(commit_cached(&mut conn, cached, TEST_TODAY),
+        Err(BizError::ImportError(ref m)) if m == REGISTRATION_CHANGED));
+    assert_eq!(write_surface(&conn), before);
+    // (c) 順 1〜5 は cache の settlement で取り直す（preview の後に同じ精算の別の版が確定していれば順 4）。
+    // 名指す取込みの ID を 1 以外にする（Matrix RB7。取消済みの取込みは比べる先にならない）
+    super::parse_tests::insert_rolled_back_import(&conn, 6);
+    let cached = preview_cached(&conn, make_z004_bytes(7, "2026-03-22", &rows[..1]));
+    let v2 = commit_bytes(
+        &mut conn,
+        make_z004_bytes(7, "2026-03-22", &[("4912345678901", "商品A", 2, 200)]),
+        "v2",
+    )
+    .unwrap();
+    assert_ne!(v2.csv_import_id, 1);
+    match commit_cached(&mut conn, cached, TEST_TODAY) {
+        Err(BizError::SettlementConflict {
+            message,
+            csv_import_id,
+        }) => {
+            assert_eq!(
+                message,
+                format!(
+                    "同じ精算と思われる別の資料が既に取り込まれています（精算 7、取込みID: {}）",
+                    v2.csv_import_id
+                )
+            );
+            assert_eq!(csv_import_id, v2.csv_import_id);
+        }
+        other => panic!("SettlementConflict を期待しました: {other:?}"),
+    }
+    // 対照: preview の後に変わったのが在庫連動の設定だけなら拒否せず、stock_linked は確定の時点の値
+    let cached = preview_cached(&conn, make_z004_bytes(8, "2026-03-23", &rows[..1]));
+    conn.execute(
+        "UPDATE products SET pos_stock_sync = 0 WHERE product_code = 'A-001'",
+        [],
+    )
+    .unwrap();
+    let stock_before = stock_copy(&conn, "A-001").0;
+    let result = commit_cached(&mut conn, cached, TEST_TODAY).unwrap();
+    let linked: bool = conn
+        .query_row(
+            "SELECT stock_linked FROM sale_records WHERE csv_import_id = ?1",
+            [result.csv_import_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!linked);
+    assert_eq!(stock_copy(&conn, "A-001").0, stock_before);
+}
+
+#[test]
+fn test_commit_req401_settlement_no_reset_after_rollback_falls_back_to_dates() {
+    // REQ-401 / REQ-205 / ADR D3・D7（Matrix Z23。round 3 の是正）: 取消で判定の n の取込みが無くなった後に
+    // 番号の戻った精算 1 を確定すると、判定の n は NULL（取込みのカーソル以下の active な取込みが無い。
+    // Codex の closure の Gated Amendment）で、日付で判定して要再確認にする
+    let today = "2026-05-10";
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
+    let one = [("4912345678901", "商品A", 1, 100)];
+    let hundred = commit_bytes(&mut conn, make_z004_bytes(100, "2026-05-09", &one), "a").unwrap();
+    save_count(&mut conn, "TEST-001", 5, today, true, today);
+    // 対照: 取消の前（精算 100 が active）なら同じ file は順 5 で拒否
+    let reset = make_z004_bytes(1, "2026-05-11", &one);
+    assert!(matches!(
+        parse::parse_and_validate(
+            &conn,
+            CsvParseAndValidateRequest {
+                file_bytes: reset.clone(),
+                filename: "reset".to_string(),
+                today: today.to_string(),
+            },
+        ),
+        Err(BizError::ImportError(_))
+    ));
+    crate::biz::csv_import_service::rollback_csv_import(&mut conn, hundred.csv_import_id).unwrap();
+    assert_eq!(stock_copy(&conn, "TEST-001"), (5, false, None));
+    let cached = preview_cached(&conn, reset);
+    let result = commit_cached(&mut conn, cached, today).unwrap();
+    assert_eq!(stock_copy(&conn, "TEST-001"), (4, true, Some((4, 5))));
+    assert_eq!(result.recheck_targets.len(), 1);
+    assert_eq!(result.recheck_targets[0].product_code, "TEST-001");
+    assert_eq!(
+        result.recheck_targets[0].recount_reasons,
+        vec![RecountReason::UndeterminedSettlement]
+    );
+}
+
+#[test]
+fn test_commit_req401_reused_settlement_no_after_rollback_falls_back_to_dates() {
+    // REQ-401 / REQ-205 / ADR D3・D6・D7（Matrix Z24。Codex の closure の P1 の反例、Gated Amendment）:
+    // 精算 1 の後に入れ直し、精算 1 を取り消して同じ番号の新しい精算 1 を確定すると、番号の active な取込みが
+    // あっても判定の n は取込みのカーソルから NULL になり、日付で判定して要再確認にする。完了も拒む
+    use crate::biz::stocktake_service::{
+        complete_stocktake, start_stocktake, CompleteStocktakeRequest, CompletionBlockReason,
+    };
+    let today = "2026-05-10";
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
+    let one = [("4912345678901", "商品A", 1, 100)];
+    let first = commit_bytes(&mut conn, make_z004_bytes(1, "2026-05-09", &one), "a").unwrap();
+    let stocktake_id = start_stocktake(&mut conn).unwrap().stocktake_id;
+    let item: i64 = conn
+        .query_row(
+            "SELECT id FROM stocktake_items WHERE stocktake_id = ?1 AND product_code = 'TEST-001'",
+            [stocktake_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    save_stock_count(
+        &mut conn,
+        &SaveStockCountRequest {
+            product_code: "TEST-001".to_string(),
+            count_value: 5,
+            fresh: true,
+            business_date: today.to_string(),
+            stocktake_item_id: Some(item),
+        },
+        today,
+    )
+    .unwrap();
+    crate::biz::csv_import_service::rollback_csv_import(&mut conn, first.csv_import_id).unwrap();
+    assert_eq!(stock_copy(&conn, "TEST-001"), (5, false, None));
+    // 同じレジの同じ番号の精算 1（精算日 T+1）は順 1〜5 を通る（順 4 は取り消した取込みを比べず、
+    // 順 5 は比べる active な取込みが無い）
+    let cached = preview_cached(&conn, make_z004_bytes(1, "2026-05-11", &one));
+    let result = commit_cached(&mut conn, cached, today).unwrap();
+    assert_eq!(stock_copy(&conn, "TEST-001"), (4, true, Some((4, 5))));
+    assert_eq!(result.recheck_targets.len(), 1);
+    let target = &result.recheck_targets[0];
+    assert_eq!(target.product_code, "TEST-001");
+    assert_eq!(
+        (
+            target.stock,
+            target.stock_range_low,
+            target.stock_range_high
+        ),
+        (4, Some(4), Some(5))
+    );
+    assert_eq!(
+        target.recount_reasons,
+        vec![RecountReason::UndeterminedSettlement]
+    );
+    // 完了は要再確認と (iii)（計数の日より前の精算が無い）で拒む
+    match complete_stocktake(
+        &mut conn,
+        &CompleteStocktakeRequest {
+            stocktake_id,
+            today: today.to_string(),
+        },
+    ) {
+        Err(BizError::StocktakeGuard { recovery, .. }) => assert_eq!(
+            recovery
+                .targets
+                .iter()
+                .map(|t| t.block_reason)
+                .collect::<Vec<_>>(),
+            vec![
+                Some(CompletionBlockReason::Recheck),
+                Some(CompletionBlockReason::SettlementPending)
+            ]
+        ),
+        other => panic!("StocktakeGuard を期待: {other:?}"),
+    }
 }

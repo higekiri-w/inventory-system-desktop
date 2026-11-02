@@ -168,8 +168,8 @@ mod tests {
     fn test_pub_use_req201_leak_detection() {
         // REQ-201: 入庫記録 — pub use リーク検出: 公開APIに漏れがないこと
         // 型のインポートが通ればOK（実行時チェックは不要）
+        use crate::biz::inventory_service::common::apply_stock_change;
         use crate::biz::inventory_service::{
-            apply_stock_change,
             create_disposal,
             create_manual_sale,
             create_receiving,
@@ -211,7 +211,7 @@ mod tests {
 
         // 関数シンボルの存在確認
         // 31 §12.2: 第 1 引数は借りた transaction に限る（通常の接続に戻すとここでコンパイルが止まる）
-        let _ = apply_stock_change as fn(&rusqlite::Transaction<'_>, _, _, _, _, _, _, _, _) -> _;
+        let _ = apply_stock_change as fn(&rusqlite::Transaction<'_>, _, _, _, _, _, _, _) -> _;
         let _ = create_receiving as fn(_, _) -> _;
         let _ = create_return as fn(_, _) -> _;
         let _ = create_manual_sale as fn(_, _) -> _;

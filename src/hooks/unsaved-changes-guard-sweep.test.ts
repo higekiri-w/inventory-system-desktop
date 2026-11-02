@@ -89,7 +89,7 @@ function readRepoFile(path: string): string {
 }
 
 describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
-  it("T16: useBlocker の直接使用は既存2 hookと共通警告 hookだけに限定する", () => {
+  it("T16: useBlocker の直接使用は 55 §55.7 の進行中の処理のガードの hook と共通警告 hookだけに限定する", () => {
     const directUsers = collectSourceFiles(SOURCE_ROOT)
       .filter((path) => /\.(ts|tsx)$/.test(path) && !/\.test\.(ts|tsx)$/.test(path))
       .filter((path) => /\buseBlocker\s*\(/.test(readFileSync(path, "utf8")))
@@ -98,6 +98,7 @@ describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
 
     expect(directUsers).toEqual([
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
+      "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
       "src/hooks/useUnsavedChangesWarning.ts",
     ]);

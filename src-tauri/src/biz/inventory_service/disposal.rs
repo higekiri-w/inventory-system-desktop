@@ -218,7 +218,6 @@ pub fn create_disposal(
             &tx,
             &item.product_code,
             &req.disposal_date,
-            None,
             -item.quantity,
             MovementType::Disposal,
             ReferenceType::DisposalRecord,

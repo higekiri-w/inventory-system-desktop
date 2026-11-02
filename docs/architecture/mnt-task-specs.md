@@ -1,8 +1,8 @@
 # タスク仕様（MNT層）
 
-## 計数の置き場と在庫の求め直しの契約（D-118。(a) の migration は実装済み）
+## 計数の置き場と在庫の求め直しの契約（D-118。(a) と b1 の migration は実装済み）
 
-SPEC-STK-CNT-D9・D10（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。新しい業務判断を MNT へ移さない。(a)（ADR SPEC-STK-CNT-D12）の migration は v9 で実装済み（`src-tauri/src/db/schema_v9.rs`）。(b) の列（`csv_imports`・`sale_records`・棚卸しの完了）を足す migration は proposed・未実装。
+SPEC-STK-CNT-D9・D10（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。新しい業務判断を MNT へ移さない。(a)（ADR SPEC-STK-CNT-D12）の migration は v9 で実装済み（`src-tauri/src/db/schema_v9.rs`）。b1 の列（`csv_imports`・`sale_records`・`stock_counts.seen_import_id`・棚卸しの完了）を足す migration は v11 で実装済み（`src-tauri/src/db/schema_v11.rs`、[22 §20](../function-design/22-mnt-migration.md)）。
 
 - MNT-03 は [DB の新契約](../DB_DESIGN.md) の列と表を 1 TX で足し、既存の movement の並びの鍵を埋めて写しを求め直す。棚卸しか Z004 の取込みを持つ DB では何も変えずに失敗する（開発・試験 DB はリリースの前まで作り直してよい。D-123。手順は [22 §19](../function-design/22-mnt-migration.md)）。旧行を推定の位置で新しい軸へ移さない。
 - MNT-01 の backup / 復旧の規則は変えない。計数の context を持たないので、DB 接続の交換で失効させるものは無い（[43](../function-design/43-cmd-settings-log.md)）。
@@ -185,7 +185,7 @@ SPEC-STK-CNT-D9・D10（[棚卸しの数の置き場と在庫の求め直しの 
 **【制御構造】**
 - 全初期化処理はTauri 2.0のsetup hook内で実行する。setup hookはウィンドウ作成前に実行されるため、ログ初期化→DB初期化の順序が保証される
 - 起動シーケンスの順序（setup hook内）: app_data_dir取得 → MNT-04（ログ初期化）→ IO-01（DB初期化、app_data_dir配下）→ MNT-03（マイグレーション）→ State管理
-- app_data_dirは `app.path().app_data_dir()` で取得。tauri.conf.jsonのidentifierから自動解決（Linux: `~/.local/share/com.kosei.inventory/`）
+- app_data_dirは `app.path().app_data_dir()` で取得。tauri.conf.jsonのidentifierから自動解決（Linux: `~/.local/share/com.inventory-system.desktop/`）
 - ログ初期化自体が失敗した場合はstderrに出力してアプリ起動を続行する（ログが書けなくてもアプリは動く）
 - DB初期化失敗はsetup hookからエラーを返し、アプリ起動を中断する（データなしでは業務不可のため）
 - operation_logs（MNT-02）とは独立して共存する。診断ログはファイル、操作ログはSQLite。両者は異なる目的・読者・保持期間を持つ

@@ -139,11 +139,11 @@ export const commands = {
 	 */
 	listLowStock: (includeDiscontinued: boolean) => typedError<ProductWithRelations[], CmdError>(__TAURI_INVOKE("list_low_stock", { includeDiscontinued })),
 	/**
-	 *  商品別の在庫変動履歴をフィルタ付きでページング取得する
+	 *  商品別の在庫変動の履歴（movement と計数）をフィルタ付きでページング取得する
 	 *
 	 *  44-cmd-inventory.md §23.8 list_movements
 	 */
-	listMovements: (query: MovementQuery) => typedError<PaginatedResult<MovementRecord>, CmdError>(__TAURI_INVOKE("list_movements", { query })),
+	listMovements: (query: MovementQuery) => typedError<PaginatedResult<StockHistoryItem>, CmdError>(__TAURI_INVOKE("list_movements", { query })),
 	/**
 	 *  Z004ファイルを受け取り、プレビューデータを返す
 	 *
@@ -155,13 +155,19 @@ export const commands = {
 	 *
 	 *  docs/function-design/41-cmd-pos.md §17.5 commit_csv_import
 	 */
-	commitCsvImport: (previewToken: string, additionalImportConfirmed: boolean) => typedError<ImportResult, CmdError>(__TAURI_INVOKE("commit_csv_import", { previewToken, additionalImportConfirmed })),
+	commitCsvImport: (previewToken: string) => typedError<ImportResult, CmdError>(__TAURI_INVOKE("commit_csv_import", { previewToken })),
 	/**
 	 *  CSV取込みをロールバック（論理無効化）する
 	 *
 	 *  docs/function-design/41-cmd-pos.md §17.5 rollback_csv_import
 	 */
 	rollbackCsvImport: (csvImportId: number) => typedError<RollbackResult, CmdError>(__TAURI_INVOKE("rollback_csv_import", { csvImportId })),
+	/**
+	 *  取消の前の読取り（取り消した後の要再確認・取り込み直す精算・名指す完了した棚卸し。何も書かない）
+	 *
+	 *  docs/function-design/41-cmd-pos.md §17.5 preview_rollback_csv_import
+	 */
+	previewRollbackCsvImport: (csvImportId: number) => typedError<RollbackPreview, CmdError>(__TAURI_INVOKE("preview_rollback_csv_import", { csvImportId })),
 	/**
 	 *  CSV取込み履歴の一覧を返す
 	 *
@@ -178,6 +184,10 @@ export const commands = {
 	commitDailyReportImport: (previewToken: string, additionalImportConfirmed: boolean) => typedError<DailyReportImportResult, CmdError>(__TAURI_INVOKE("commit_daily_report_import", { previewToken, additionalImportConfirmed })),
 	rollbackDailyReportImport: (dailyReportImportId: number) => typedError<DailyReportRollbackResult, CmdError>(__TAURI_INVOKE("rollback_daily_report_import", { dailyReportImportId })),
 	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImport>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
+	// §45.6a（CMD-12-D1）: レジの SD を BIZ-08 §37.9 で読み、候補と scan_token を返す
+	scanRegisterSd: (selectedPath: string | null) => typedError<RegisterSdScanResponse, CmdError>(__TAURI_INVOKE("scan_register_sd", { selectedPath })),
+	// §45.6b（CMD-12-D1）: scan の snapshot の 1 候補から preview を作る。snapshot は消さない
+	parseAndValidateDailyReportFromSd: (scanToken: string, candidateKey: string) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report_from_sd", { scanToken, candidateKey })),
 	/**
 	 *  PLUファイルを生成して返す。DB状態は更新しない。
 	 *
@@ -200,6 +210,8 @@ export const commands = {
 	listPluDirty: () => typedError<ProductResponse[], CmdError>(__TAURI_INVOKE("list_plu_dirty")),
 	// 指定日の売上レポートを取得する
 	getDailySales: (date: string) => typedError<DailySalesReport, CmdError>(__TAURI_INVOKE("get_daily_sales", { date })),
+	// 指定日の日報の紙の内容を取得する（42 §22.4、34 §19.3a）
+	getDailyReportSheet: (date: string) => typedError<DailyReportSheet, CmdError>(__TAURI_INVOKE("get_daily_report_sheet", { date })),
 	/**
 	 *  指定月の売上レポートを取得する
 	 *
@@ -255,8 +267,19 @@ export const commands = {
 	system_stock: number,
 	actual_count: number | null,
 	counted_at: string | null,
+	// 写しの在庫
 	current_stock: number,
 	is_discontinued: boolean,
+	stock_unit: ProductStockUnit,
+	// 効く計数（衝突のときは写しの土台の計数）
+	count_value: number | null,
+	count_kind: StockCountKind | null,
+	count_business_date: string | null,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
+	recount_reasons: RecountReason[],
+	// 効く計数の値 − その計数に入っている記録だけから求めた帳簿。計数が無ければ null
+	difference: number | null,
 } | null, CmdError>(__TAURI_INVOKE("find_stocktake_item", { stocktakeId, code })),
 	/**
 	 *  最後に完了した棚卸しを取得する
@@ -274,19 +297,20 @@ export const commands = {
 	 *  docs/function-design/42-cmd-sales-stocktake.md §22.5 / REQ-206 / REQ-207
 	 */
 	getStocktakeRecord: (stocktakeId: number) => typedError<StocktakeRecordDetail, CmdError>(__TAURI_INVOKE("get_stocktake_record", { stocktakeId })),
+	// 計数を保存する（既定の計数・fresh な計数。42、35「計数の保存」）。CMD は PC の今日を BIZ へ渡す
+	saveStockCount: (request: SaveStockCountRequest) => typedError<StockCountSaveResult, CmdError>(__TAURI_INVOKE("save_stock_count", { request })),
+	// 後入力の確認と計数の欄の商品の文脈（読取りだけ。42）
+	previewStockCountPlacement: (productCode: string, businessDate: string) => typedError<CountPlacementPreview, CmdError>(__TAURI_INVOKE("preview_stock_count_placement", { productCode, businessDate })),
+	// 未計数の明細を値 0 の既定の計数でまとめて片付ける（42、35「完了」）
+	zeroUncountedItems: (stocktakeId: number, productCodes: string[], businessDate: string) => typedError<StockCountSaveResult[], CmdError>(__TAURI_INVOKE("zero_uncounted_items", { stocktakeId, productCodes, businessDate })),
+	// 要再確認の一覧（棚卸しが無いときも読める。42）
+	listRecheckProducts: () => typedError<CountRecoveryTarget[], CmdError>(__TAURI_INVOKE("list_recheck_products")),
 	/**
-	 *  棚卸しアイテムのカウントを更新する
+	 *  棚卸しを完了する（拒否は `stocktake_guard` の `completion_blocked`。42）
 	 *
-	 *  actual_count < 0 は防御的チェックでブロック（BIZ層にも同じチェックあり）。
+	 *  完了後に整合性チェック（D-2統合）を自動実行し、結果を含めて返す。CMD は PC の今日を BIZ へ渡す。
 	 */
-	updateCount: (stocktakeItemId: number, actualCount: number) => typedError<UpdateCountResult, CmdError>(__TAURI_INVOKE("update_count", { stocktakeItemId, actualCount })),
-	/**
-	 *  棚卸しを確定する
-	 *
-	 *  force_fill=true で未入力をシステム在庫と同じとみなす。
-	 *  確定後に整合性チェック（D-2統合）を自動実行し、結果を含めて返す。
-	 */
-	completeStocktake: (stocktakeId: number, forceFill: boolean) => typedError<StocktakeResult, CmdError>(__TAURI_INVOKE("complete_stocktake", { stocktakeId, forceFill })),
+	completeStocktake: (stocktakeId: number) => typedError<StocktakeResult, CmdError>(__TAURI_INVOKE("complete_stocktake", { stocktakeId })),
 	/**
 	 *  在庫整合性チェックを実行する
 	 *
@@ -325,6 +349,12 @@ export const commands = {
 	 */
 	getEffectiveBackupDir: () => typedError<string, CmdError>(__TAURI_INVOKE("get_effective_backup_dir")),
 	/**
+	 *  控えを変えずに確かめる（§43.8.5、71 §71.12）
+	 *
+	 *  DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
+	 */
+	inspectBackup: (request: InspectBackupRequest) => typedError<BackupInspection, CmdError>(__TAURI_INVOKE("inspect_backup", { request })),
+	/**
 	 *  バックアップから復元する（§43.9）
 	 *
 	 *  DB接続の所有権を移転するため、Mutex内の接続をstd::mem::replaceで取り出す。
@@ -336,14 +366,32 @@ export const commands = {
 };
 
 /* Types */
-// 差異補正アイテム
-export type AdjustedItem = {
+// 取消で記録の詳細の差異・ロス原価・参考の差が変わることがある完了した棚卸し（32 §15.6b）
+export type AffectedStocktake = {
+	stocktake_id: number,
+	completed_at: string,
+};
+
+// 完了の後の差（確定の差と要再確認の差を分け、確定の差だけを合計する）
+export type AfterCompletionDiff = {
+	confirmed: AfterCompletionDiffItem[],
+	recheck: AfterCompletionDiffItem[],
+	confirmed_total_yen: string,
+};
+
+// 完了の後に入った記録による差の明細（参考。35「完了」）
+export type AfterCompletionDiffItem = {
 	product_code: string,
 	product_name: string,
-	system_stock: number,
-	actual_count: number,
-	difference: number,
-	stock_after: number,
+	stock_unit: ProductStockUnit,
+	valuation_quantity: number,
+	stock_at_completion: number,
+	stock_at_completion_low: number | null,
+	stock_at_completion_high: number | null,
+	// 円の十進の文字列（範囲の決まらない読取りの金額）
+	valuation_diff_yen: string,
+	valuation_diff_low_yen: string | null,
+	valuation_diff_high_yen: string | null,
 };
 
 /**
@@ -367,6 +415,23 @@ export type BackupInfo = {
 	file_path: string,
 	size_bytes: number,
 	created_at: string,
+};
+
+// 控えの確かめの結果（71 §71.12、MNT-01-D9）
+export type BackupInspection = {
+	file_name: string,
+	// §71.3 の規約に合えば `YYYY-MM-DD HH:MM:SS`
+	created_at: string | null,
+	size_bytes: number,
+	schema_version: number,
+	app_max_version: number,
+	// `schema_version > app_max_version`
+	newer_than_app: boolean,
+	quick_check_ok: boolean,
+	// 版がアプリ以下で quick_check が ok のときだけ
+	product_count: number | null,
+	// 同上。`operation_logs.created_at` の最大
+	last_operation_at: string | null,
 };
 
 /**
@@ -394,7 +459,7 @@ export type BulkPluTargetResult = {
  *  docs/function-design/40-cmd-product.md §5.3 + 41-cmd-pos.md §17.4
  */
 export type CmdError = {
-	// エラー分類（`CmdErrorKind` の12値）
+	// エラー分類（`CmdErrorKind` の13値）
 	kind: CmdErrorKind,
 	// 利用者向け日本語メッセージ
 	message: string,
@@ -402,6 +467,13 @@ export type CmdError = {
 	field: string | null,
 	// 診断ログとの相関 ID（internal / restore_* 系のみ）
 	error_id: string | null,
+	// 棚卸しの守りの拒否の回復先（`stocktake_guard` だけ Some。40）
+	stocktake_recovery: StocktakeRecovery | null,
+	/**
+	 *  拒否の文が名指す取込みID（BIZ-03 の順 4 の拒否〈kind `import_error`〉だけ Some、ほかは null。
+	 *  TS では任意の field。40・41 §17.4）
+	 */
+	related_csv_import_id?: number | null,
 };
 
 /**
@@ -409,7 +481,10 @@ export type CmdError = {
  *
  *  docs/function-design/40-cmd-product.md §5.3 + 41-cmd-pos.md §17.4
  */
-export type CmdErrorKind = "validation" | "duplicate" | "not_found" | "internal" | "import_error" | "export_error" | "idempotency_conflict" | "stocktake_in_progress" | "stocktake_not_in_progress" | "restore_failed_recovered" | "restore_failed_unrecoverable" | "restore_durability_unknown";
+export type CmdErrorKind = "validation" | "duplicate" | "not_found" | "internal" | "import_error" | "export_error" | "idempotency_conflict" | "stocktake_in_progress" | "stocktake_not_in_progress" | "stocktake_guard" | "restore_failed_recovered" | "restore_failed_unrecoverable" | "restore_durability_unknown";
+
+// 完了を拒む理由（35 の表）
+export type CompletionBlockReason = "recheck" | "uncounted" | "settlement_pending";
 
 // 入庫実原価と商品マスタ原価の差分（SPEC-PRV-D8 / REQ-209）
 export type CostDiff = {
@@ -417,6 +492,40 @@ export type CostDiff = {
 	product_name: string,
 	master_cost_price_centi: number,
 	received_cost_price_centi: number,
+};
+
+// 後入力の確認と計数の欄の商品の文脈（42・35）
+export type CountPlacementPreview = {
+	later_count_exists: boolean,
+	product_name: string,
+	stock_unit: ProductStockUnit,
+	stock: number,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
+	recount_reasons: RecountReason[],
+	count_value: number | null,
+	count_kind: StockCountKind | null,
+	count_business_date: string | null,
+};
+
+// 回復先（40）。進行中の棚卸しの明細で数える / 棚卸しの外で今の数を入れる
+export type CountRecoveryAction = "active_count" | "count_now";
+
+// 要再確認・完了の拒否・在庫連動の拒否の対象（40）。参照なしは null（架空の ID を使わない）
+export type CountRecoveryTarget = {
+	product_code: string,
+	product_name: string,
+	stock_unit: ProductStockUnit,
+	// 写しの在庫（target を作った TX の求め直しの後）
+	stock: number,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
+	stocktake_item_id: number | null,
+	stocktake_id: number | null,
+	action: CountRecoveryAction,
+	block_reason: CompletionBlockReason | null,
+	// 要再確認の対象のときだけ。重複なし、ADR D3 の順
+	recount_reasons: RecountReason[],
 };
 
 /**
@@ -555,6 +664,60 @@ export type DailyReportRollbackResult = {
 	rolled_back_at: string | null,
 };
 
+export type DailyReportSdCandidate = {
+	candidate_key: string,
+	path_date: string,
+	report_date: string | null,
+	source_filenames: string[],
+	status: DailyReportSdCandidateStatus,
+};
+
+export type DailyReportSdCandidateStatus = "NotImported" | "Imported" | "SameSettlementImported" | "Incomplete" | "Unreadable";
+
+export type DailyReportSdScan = {
+	volume_label: string,
+	// YYYY-MM-DD（窓の始まり）
+	scanned_from: string,
+	candidates: DailyReportSdCandidate[],
+	// 名前の規則に合わず読まなかった file の数（IO-09-D2）
+	skipped_unknown_count: number,
+};
+
+// 日報の紙の内容（34 §19.3a、SALES-SHEET-D1〜D6）
+export type DailyReportSheet = {
+	date: string,
+	// その日の完了した日報の取込みの数。0 なら行は空
+	import_count: number,
+	summary_rows: DailyReportSheetRow[],
+	payment_rows: DailyReportSheetRow[],
+	department_rows: DailyReportSheetRow[],
+	// SALES-SHEET-D2 の 2・3 の帳票（Z001 → Z002 → Z005 の順）
+	label_changed_sources: DailyReportSourceKind[],
+	// SALES-SHEET-D2 の 3 の帳票（足さずに取込みごとに載せた）
+	unsummed_sources: DailyReportSourceKind[],
+	// SALES-SHEET-D4: その日に売れた Z004 由来の行
+	plu_rows: DailySaleItem[],
+	plu_import: DailyReportSheetPluImport,
+};
+
+// 日報の紙の PLU の部分の取込みの数（SALES-SHEET-D4）
+export type DailyReportSheetPluImport = {
+	import_count: number,
+	skipped_count: number,
+};
+
+// 日報の紙の 1 行
+export type DailyReportSheetRow = {
+	position: number,
+	// 前後の空白を除いた名称（Z005 はレジの名称）。空のこともある
+	label: string,
+	quantity: number | null,
+	count: number | null,
+	amount: number | null,
+	// SALES-SHEET-D2 の 3 の帳票の行だけ、取込みの並びの中の位置（1 から）
+	import_seq: number | null,
+};
+
 export type DailyReportSourceFileInfo = {
 	source: DailyReportSourceKind,
 	filename: string,
@@ -565,6 +728,8 @@ export type DailyReportSourceFileInfo = {
 export type DailyReportSourceFileRequest = {
 	filename: string,
 	file_bytes: number[],
+	// native dialog で選んだ file の path（UI-07-D16、§45.3）。省略と空文字は None
+	source_path?: string | null,
 };
 
 export type DailyReportSourceKind = "Z001" | "Z002" | "Z005";
@@ -689,19 +854,6 @@ export type DisposalRecordSummary = {
 
 export type DisposalType = "disposal" | "damage" | "other";
 
-// 重複チェック結果
-export type DuplicateCheck = {
-	status: DuplicateStatus,
-	same_date_imports: SameDateCsvImportSummary[],
-};
-
-// 重複チェックのステータス
-export type DuplicateStatus =
-// 問題なし
-"NoDuplicate" |
-// 同settlement_date、別ファイル → 追加確認
-"AdditionalImportConfirmationRequired";
-
 // エラー行（フロント送信 + キャッシュ兼用）
 export type ErrorRow = {
 	line_no: number,
@@ -778,6 +930,10 @@ export type ImportResult = {
 	total_items: number,
 	total_amount: number,
 	skipped_count: number,
+	settlement_gaps: SettlementGap[],
+	settlement_date_after_today: boolean,
+	// 求め直しの後に要再確認になった商品（40）
+	recheck_targets: CountRecoveryTarget[],
 };
 
 /**
@@ -801,6 +957,10 @@ export type ImportRow = {
 	pos_stock_sync: boolean | null,
 	plu_target?: boolean | null,
 	warnings?: string[],
+};
+
+export type InspectBackupRequest = {
+	backup_path: string,
 };
 
 // 写しと求めた値で違う項目（重複なし、この順。36）
@@ -831,6 +991,8 @@ export type IntegrityResult = {
 	mismatches: IntegrityMismatch[],
 	mismatch_count: number,
 	checked_count: number,
+	// 在庫連動の商品と同じ JAN を別の商品が持つ組（移行の前からの違反。補正の対象にしない。36、ADR D10）
+	shared_jan_conflicts: SharedJanConflict[],
 };
 
 /**
@@ -1163,7 +1325,10 @@ export type PreviewData = {
 	file_info: FileInfo,
 	matched_summary: MatchedSummary,
 	error_summary: ErrorSummary,
-	duplicate_check: DuplicateCheck,
+	// 知らせ (a): 取り込まれていない精算回数の区間（昇順。取込みを止めない）
+	settlement_gaps: SettlementGap[],
+	// 知らせ (b): 精算日が PC の今日より後
+	settlement_date_after_today: boolean,
 	preview_created_at: string,
 };
 
@@ -1241,6 +1406,12 @@ export type ProductCreateRequest = {
 	supplier_id: number | null,
 	pos_stock_sync: boolean,
 	plu_target: boolean,
+	/**
+	 *  BIZ-01-D11: JAN を持ったまま独自コードで登録し、同じ JAN の商品の群に加える。
+	 *  商品フォームは `JanInUse` を受けた確認のダイアログからだけ true を送る（51 UI-01b-D26）。
+	 *  jan_code が None なら意味を持たない
+	 */
+	shared_jan_custom_code: boolean,
 };
 
 // 商品登録結果（FUNC-4.2）
@@ -1344,6 +1515,10 @@ export type ProductWithRelations = {
 	department_name: string,
 	supplier_name: string | null,
 	plu_memory_no: number | null,
+	// 写しの要再確認と範囲（ADR SPEC-STK-CNT-D2・D9。範囲は要再確認のときだけ両端が値。40）
+	stock_recheck: boolean,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
 } & (Product);
 
 // 入庫記録リクエスト（31-biz-inventory-service.md §12.3）
@@ -1408,8 +1583,17 @@ export type ReceivingRecordWithSupplier = {
 	created_at: string,
 };
 
+// 要再確認の理由（40。ADR D3 の理由 1〜3、この順）
+export type RecountReason = "undetermined_settlement" | "same_date_movement" | "conflicting_counts";
+
 // 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
 export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake";
+
+// §45.6a の応答
+export type RegisterSdScanResponse = {
+	scan: DailyReportSdScan,
+	scan_token: string,
+};
 
 export type RestoreBackupRequest = {
 	backup_path: string,
@@ -1479,12 +1663,24 @@ export type ReturnRecordSummary = {
 	created_at: string,
 };
 
-// rollback_csv_import の結果
+// preview_rollback_csv_import の結果（取消の前の読取り。何も書かない。32 §15.6b）
+export type RollbackPreview = {
+	csv_import_id: number,
+	// 取り込み直す精算の番号（この取込みの精算回数）
+	settlement_no: number,
+	// 取り消した後に要再確認である商品（取消の結果と同じ作り方。取り消す前から要再確認の商品を含む。40）
+	recheck_targets: CountRecoveryTarget[],
+	// この取込みの精算が完了の後の比較の範囲に入る完了した棚卸し（範囲による候補。完了の日時の昇順。35）
+	affected_stocktakes: AffectedStocktake[],
+};
+
+// rollback_csv_import の結果（補償の movement は作らない。ADR D7）
 export type RollbackResult = {
 	success: boolean,
 	voided_sale_count: number,
 	voided_movement_count: number,
-	stock_corrections: StockCorrection[],
+	// 求め直しの後に要再確認になった商品（40）
+	recheck_targets: CountRecoveryTarget[],
 };
 
 /**
@@ -1529,14 +1725,6 @@ export type SalesReportType =
 // 月次・部門別（target: YYYY-MM）
 "monthly_by_department";
 
-export type SameDateCsvImportSummary = {
-	id: number,
-	filename: string,
-	total_items: number,
-	total_amount: number,
-	imported_at: string,
-};
-
 export type SameDateDailyReportImportSummary = {
 	id: number,
 	source_filenames: string[],
@@ -1554,6 +1742,37 @@ export type SaveImageResponse = {
 	relative_path: string,
 };
 
+// 計数の保存の要求（42）
+export type SaveStockCountRequest = {
+	product_code: string,
+	count_value: number,
+	fresh: boolean,
+	business_date: string,
+	stocktake_item_id: number | null,
+};
+
+// 欠けた精算回数の区間（32 の知らせ、40 の `SettlementPendingHint.missing`。1 つの番号なら from = to）
+export type SettlementGap = {
+	from: number,
+	to: number,
+};
+
+// 「取り込んでいない精算がある」の直し方（40）
+export type SettlementPendingHint = {
+	// (ii) に当たった取り込まれていない精算回数の区間（昇順）
+	missing: SettlementGap[],
+	// (i) に当たった明細の効く計数の日付の最大
+	on_or_after: string | null,
+	// (iii) に当たった明細の効く計数の日付の最小
+	before: string | null,
+};
+
+// 共有 JAN の違反の組（JAN と、その JAN を持つ全ての商品コード〈昇順〉。36）
+export type SharedJanConflict = {
+	jan_code: string,
+	product_codes: string[],
+};
+
 // 検索ソートキー
 export type SortKey = "Name" | "ProductCode" | "StockQuantity" | "SellingPrice";
 
@@ -1564,7 +1783,6 @@ export type SortOrder = "Asc" | "Desc";
 export type StartStocktakeResult = {
 	stocktake_id: number,
 	item_count: number,
-	auto_filled_count: number,
 };
 
 // 在庫補正詳細（差は持たず、画面は before → after を並べる。75 §75.6）
@@ -1584,11 +1802,30 @@ export type StockCopy = {
 	stock_range_high: number | null,
 };
 
-// 在庫補正の詳細（rollback結果に含まれる）
-export type StockCorrection = {
-	product_code: string,
-	old_stock: number,
-	new_stock: number,
+// 在庫変動の履歴の計数（44 の D-118 の節）
+export type StockCountHistory = {
+	id: number,
+	count_value: number,
+	// 計数の商品の今の単位（画面は計数の値をこの単位で描く。66 の UI-06c-D3 の部分障害）
+	stock_unit: ProductStockUnit,
+	count_kind: StockCountKind,
+	stocktake_id: number | null,
+	// `stocktake_id` があるときだけ棚卸しの記録への link
+	source: MovementSourceLink | null,
+};
+
+// 計数の種類（「数を保存」「0 にする」= default、「入れ直す」= fresh）
+export type StockCountKind = "default" | "fresh";
+
+// 計数の保存の結果（42）
+export type StockCountSaveResult = {
+	id: number,
+	count_kind: StockCountKind,
+	stock: number,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
+	recount_reasons: RecountReason[],
+	later_count_exists: boolean,
 };
 
 /**
@@ -1601,6 +1838,22 @@ export type StockDetail = {
 	last_receiving_date: string | null,
 	last_sale_date: string | null,
 };
+
+// 在庫変動の履歴の 1 行（44 の D-118 の節）。`kind` が `movement` なら `movement` だけ、`count` なら `count` だけが値
+export type StockHistoryItem = {
+	kind: StockHistoryKind,
+	// movement の業務日（Z004 は精算日）か計数の日付
+	business_date: string,
+	// Z004 の movement の精算回数と、fresh な計数の保存の時点の精算回数（並びの鍵）。ほかは None
+	settlement_no: number | null,
+	// movement の `created_at` か計数の `counted_at`
+	saved_at: string,
+	movement: MovementRecord | null,
+	count: StockCountHistory | null,
+};
+
+// 在庫変動の履歴の行の種類（44 の D-118 の節。D-061 の生成の literal union）
+export type StockHistoryKind = "movement" | "count";
 
 /**
  *  棚卸しヘッダの行マッピング
@@ -1615,11 +1868,7 @@ export type Stocktake = {
 	total_cost: number | null,
 };
 
-/**
- *  棚卸し明細（商品名・部門名付き、一覧表示用）
- *
- *  20-io-product-repo.md §2.11
- */
+// 棚卸し明細（一覧と検索。35「読取り」）
 export type StocktakeItemDetail = {
 	id: number,
 	stocktake_id: number,
@@ -1629,8 +1878,19 @@ export type StocktakeItemDetail = {
 	system_stock: number,
 	actual_count: number | null,
 	counted_at: string | null,
+	// 写しの在庫
 	current_stock: number,
 	is_discontinued: boolean,
+	stock_unit: ProductStockUnit,
+	// 効く計数（衝突のときは写しの土台の計数）
+	count_value: number | null,
+	count_kind: StockCountKind | null,
+	count_business_date: string | null,
+	stock_range_low: number | null,
+	stock_range_high: number | null,
+	recount_reasons: RecountReason[],
+	// 効く計数の値 − その計数に入っている記録だけから求めた帳簿。計数が無ければ null
+	difference: number | null,
 };
 
 /**
@@ -1661,31 +1921,41 @@ export type StocktakeRecordDetail = {
 	status: StocktakeStatus,
 	total_cost: number | null,
 	item_count: number,
-	corrected_count: number,
 	items: StocktakeRecordDetailItem[],
-	movements: MovementRecord[],
+	after_completion: AfterCompletionDiff | null,
 };
 
-// 棚卸し記録詳細の補正明細（補正 movement 起点）。
+// 棚卸し記録詳細の明細（65。完了した棚卸しは完了の時点のカーソルの効く計数）
 export type StocktakeRecordDetailItem = {
 	product_code: string,
 	product_name: string,
 	department_name: string,
 	stock_unit: ProductStockUnit,
-	system_stock: number,
-	actual_count: number | null,
-	counted_at: string | null,
+	count_value: number | null,
+	count_kind: StockCountKind | null,
+	count_business_date: string | null,
+	difference: number | null,
+	valuation_quantity: number | null,
 	valuation_cost_price_centi: number | null,
-	adjustment_quantity: number,
-	stock_after: number,
+	// 差異が負で評価原価があるときの行のロス原価（1/100 円の十進の文字列。SPEC-UNIT-D6）
+	loss_cost_centi: string | null,
 };
 
-// 棚卸し確定結果
+// 拒否の回復型（40。`BizError::StocktakeGuard` が運ぶ）
+export type StocktakeRecovery = {
+	code: StocktakeRecoveryCode,
+	targets: CountRecoveryTarget[],
+	settlement_pending: SettlementPendingHint | null,
+};
+
+// 回復型の code（40）
+export type StocktakeRecoveryCode = "recount_required" | "completion_blocked";
+
+// 棚卸し完了結果（在庫を動かさないので補正の一覧は持たない）
 export type StocktakeResult = {
 	total_cost: number,
-	adjusted_items: AdjustedItem[],
 	total_items: number,
-	// D-2統合: 確定後の整合性チェック結果。失敗時はNone
+	// D-2統合: 完了後の整合性チェック結果。失敗時はNone
 	integrity_result: IntegrityResult | null,
 };
 
@@ -1715,12 +1985,6 @@ export type SupplierWithUsage = {
 	name: string,
 	product_count: number,
 	receiving_record_count: number,
-};
-
-// カウント更新結果
-export type UpdateCountResult = {
-	success: boolean,
-	current_difference: number,
 };
 
 export type UpdateSettingRequest = {

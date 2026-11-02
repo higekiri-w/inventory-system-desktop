@@ -31,6 +31,9 @@ export function makeMockProductWithRelations(
     department_name: "毛糸",
     supplier_name: null,
     plu_memory_no: null,
+    stock_recheck: false,
+    stock_range_low: null,
+    stock_range_high: null,
     ...overrides,
   };
 }

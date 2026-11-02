@@ -22,6 +22,15 @@ pub struct IntegrityResult {
     pub mismatches: Vec<IntegrityMismatch>,
     pub mismatch_count: usize,
     pub checked_count: usize,
+    /// 在庫連動の商品と同じ JAN を別の商品が持つ組（移行の前からの違反。補正の対象にしない。36、ADR D10）
+    pub shared_jan_conflicts: Vec<SharedJanConflict>,
+}
+
+/// 共有 JAN の違反の組（JAN と、その JAN を持つ全ての商品コード〈昇順〉。36）
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct SharedJanConflict {
+    pub jan_code: String,
+    pub product_codes: Vec<String>,
 }
 
 /// 写しの 4 項目（保存している値、または記録から求め直した値。36）
@@ -174,10 +183,20 @@ pub fn run_integrity_check(conn: &DbConnection) -> Result<IntegrityResult, BizEr
         tracing::warn!(error = %e, "操作ログ記録に失敗");
     }
 
+    // 共有 JAN の違反の一覧（写しの比較の結果とは別。操作ログには記録しない。36）
+    let shared_jan_conflicts = product_repo::list_shared_jan_conflicts(conn)?
+        .into_iter()
+        .map(|(jan_code, product_codes)| SharedJanConflict {
+            jan_code,
+            product_codes,
+        })
+        .collect();
+
     Ok(IntegrityResult {
         mismatches,
         mismatch_count,
         checked_count,
+        shared_jan_conflicts,
     })
 }
 
@@ -1208,5 +1227,101 @@ mod tests {
                 }],
             })
         );
+    }
+
+    #[test]
+    fn test_run_integrity_check_req904_lists_shared_jan_conflicts() {
+        // REQ-904 / ADR SPEC-STK-CNT-D10・D4 / 36（b1 Matrix I1）: 在庫連動の商品と同じ JAN の別の商品の組を
+        // JAN の昇順・商品コードの昇順で返す。補正の対象にせず、写しの比較の結果を変えない
+        let (_dir, conn) = setup_test_db();
+        let seed = |code: &str, jan: &str, linked: bool| {
+            seed_product(&conn, code, 0);
+            conn.execute(
+                "UPDATE products SET jan_code = ?2, pos_stock_sync = ?3 WHERE product_code = ?1",
+                rusqlite::params![code, jan, linked],
+            )
+            .unwrap();
+        };
+        seed("SJ-B", "4900000000002", false);
+        seed("SJ-A", "4900000000002", true);
+        seed("SJ-C", "4900000000003", false);
+        seed("SJ-D", "4900000000003", false);
+        seed("SJ-E", "4900000000004", true);
+        seed("SJ-H", "4900000000001", false);
+        seed("SJ-G", "4900000000001", true);
+        seed("SJ-F", "4900000000001", true);
+        let result = run_integrity_check(&conn).unwrap();
+        assert_eq!(
+            result.shared_jan_conflicts,
+            vec![
+                SharedJanConflict {
+                    jan_code: "4900000000001".to_string(),
+                    product_codes: vec!["SJ-F".into(), "SJ-G".into(), "SJ-H".into()],
+                },
+                SharedJanConflict {
+                    jan_code: "4900000000002".to_string(),
+                    product_codes: vec!["SJ-A".into(), "SJ-B".into()],
+                },
+            ]
+        );
+        assert_eq!(result.mismatch_count, 0);
+        let pos_stock_sync: Vec<bool> = conn
+            .prepare("SELECT pos_stock_sync FROM products ORDER BY product_code")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            pos_stock_sync,
+            vec![true, false, false, false, true, true, true, false]
+        );
+    }
+
+    #[test]
+    fn test_run_integrity_check_req904_no_mismatch_after_settlements_and_counts() {
+        // REQ-904 / REQ-401 / REQ-205 / 36（b1 Matrix I2）: 精算の窓を持つ derive_stock と写しの比較は、
+        // Z004 の確定・取消・計数の後に差異なし
+        use crate::biz::csv_import_service::test_support::{
+            commit_bytes, create_test_product_with_jan, make_z004_bytes,
+        };
+        use crate::biz::stocktake_service::{save_stock_count, SaveStockCountRequest};
+        let day = "2026-04-10";
+        let (_dir, mut conn) = setup_test_db();
+        create_test_product_with_jan(&conn, "I2-LINK", "4912345678901", 10, true);
+        create_test_product_with_jan(&conn, "I2-OFF", "4912345678902", 10, false);
+        let rows = [
+            ("4912345678901", "連動", 1, 100),
+            ("4912345678902", "連動しない", 1, 100),
+        ];
+        let assert_no_mismatch = |conn: &DbConnection, step: &str| {
+            let result = run_integrity_check(conn).unwrap();
+            assert_eq!(result.mismatch_count, 0, "{step}: {:?}", result.mismatches);
+        };
+        let first = commit_bytes(&mut conn, make_z004_bytes(1, day, &rows), "1").unwrap();
+        assert_no_mismatch(&conn, "確定");
+        let count = |conn: &mut DbConnection, fresh: bool| {
+            save_stock_count(
+                conn,
+                &SaveStockCountRequest {
+                    product_code: "I2-LINK".to_string(),
+                    count_value: 8,
+                    fresh,
+                    business_date: day.to_string(),
+                    stocktake_item_id: None,
+                },
+                day,
+            )
+            .unwrap();
+        };
+        count(&mut conn, false);
+        assert_no_mismatch(&conn, "既定の計数");
+        commit_bytes(&mut conn, make_z004_bytes(2, "2026-04-11", &rows), "2").unwrap();
+        assert_no_mismatch(&conn, "計数の後の確定");
+        crate::biz::csv_import_service::rollback_csv_import(&mut conn, first.csv_import_id)
+            .unwrap();
+        assert_no_mismatch(&conn, "取消");
+        count(&mut conn, true);
+        assert_no_mismatch(&conn, "fresh な計数");
     }
 }

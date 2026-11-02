@@ -387,7 +387,13 @@ mod tests {
     fn test_migration_req903_vb_fresh_database_renames_cost_columns() {
         // REQ-903 / MNT-03-D14 手順 3 / Matrix B1: 新規の DB は vB まで当たり、6 列が _centi の名前になる
         let (_dir, conn) = setup_latest();
-        assert_eq!(version(&conn), (VB_VERSION, VB_VERSION));
+        assert_eq!(
+            version(&conn),
+            (
+                crate::db::migration::app_max_version(),
+                crate::db::migration::app_max_version()
+            )
+        );
         assert_cost_columns(&conn, NEW_COLUMNS, OLD_COLUMNS);
     }
 
@@ -436,7 +442,7 @@ mod tests {
             "CHECK(stock_unitIN('pcs','sheet','hon','bag','box','kumi','set','ball','cho','m'))",
         );
 
-        migration::migrate(&conn).unwrap();
+        migrate_up_to(&conn, VB_VERSION).unwrap(); // vB だけを当てる（Matrix T1。22 §19 の先例）
 
         assert_eq!(version(&conn), (VB_VERSION, VB_VERSION));
         assert_eq!(products_definition(&conn), expected);
@@ -565,7 +571,7 @@ mod tests {
         assert_eq!(version(&conn), (VB_VERSION - 1, VB_VERSION - 1));
         assert_eq!(foreign_keys(&conn), 1);
         // 失敗を外せば同じ DB で当たる
-        migration::migrate(&conn).unwrap();
+        migrate_up_to(&conn, VB_VERSION).unwrap(); // vB だけを当てる（Matrix T1）
         assert_eq!(version(&conn), (VB_VERSION, VB_VERSION));
     }
 

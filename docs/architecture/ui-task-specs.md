@@ -1,10 +1,10 @@
 # タスク仕様（UI層）
 
-## 計数の置き場と在庫の求め直しの契約（D-118。(a) は実装済み、(b) は proposed・未実装）
+## 計数の置き場と在庫の求め直しの契約（D-118。(a)・b1・b2 は実装済み）
 
-SPEC-STK-CNT-D3〜D6（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは、整合性検証（[75](../function-design/75-ui-integrity-check.md)）と操作ログ（[74](../function-design/74-ui-operation-logs.md) UI-11c-D14）の表示だけで、以下の棚卸しの操作は (b)（proposed・未実装）。新方式の操作の契約は [73](../function-design/73-ui-stocktake.md)（検索 → 数を入れて即保存、日付の表示と前の日の分、要再確認の一覧と入れ直し、完了の拒否の一覧と「0 にする」）、[55](../function-design/55-ui-csv-import.md)（Z004 の preview の拒否と知らせ、取込みの結果の要再確認の一覧）、[65](../function-design/65-inventory-record-traceability.md) / [66](../function-design/66-ui-stock-movements.md)（計数の行を履歴に混ぜる、今の数を入れ直す）を正とする。[51](../function-design/51-ui-product-form.md) / [58](../function-design/58-ui-stock-inquiry.md) は要再確認の在庫を範囲で出し、51 / [60](../function-design/60-ui-product-import.md) は共有 JAN と在庫連動を始めるときの拒否を示す。
+SPEC-STK-CNT-D3〜D6（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。(a)（ADR SPEC-STK-CNT-D12）で入ったのは、整合性検証（[75](../function-design/75-ui-integrity-check.md)）と操作ログ（[74](../function-design/74-ui-operation-logs.md) UI-11c-D14）の表示。b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で 73・55・51 の在庫連動の拒否・60・65 の棚卸しの記録の詳細・75 の共有 JAN の一覧が入った。50・51・58・66 の範囲の表示と要再確認の案内、65・66 の計数の行は b2（[Plan Packet](../plans/2026-10-23-stocktake-count-runtime-b2.md)）で入った。新方式の操作の契約は [73](../function-design/73-ui-stocktake.md)（検索 → 数を入れて即保存、日付の表示と前の日の分、要再確認の一覧と入れ直し、完了の拒否の一覧と「0 にする」）、[55](../function-design/55-ui-csv-import.md)（Z004 の preview の拒否と知らせ、取込みの結果の要再確認の一覧）、[65](../function-design/65-inventory-record-traceability.md) / [66](../function-design/66-ui-stock-movements.md)（計数の行を履歴に混ぜる、今の数を入れ直す）を正とする。[51](../function-design/51-ui-product-form.md) / [58](../function-design/58-ui-stock-inquiry.md) は要再確認の在庫を範囲で出し、51 / [60](../function-design/60-ui-product-import.md) は共有 JAN と在庫連動を始めるときの拒否を示す。
 
-未保存の入力だけを画面の状態に置き、保存済みの計数と写しは DB / query から取り直す。要再確認の理由を UI で推測せず、BIZ が返す型付きの理由と次の操作を示す。日本語と非色シグナルで表示する。既存の route / returnTo、IME、focus とページの器を保つ。実装・Windows L3 は未実施。旧 ADR（時点証拠）の begin・保留・準備照会・非連動化の未調整の案内は置き換えた。
+未保存の入力だけを画面の状態に置き、保存済みの計数と写しは DB / query から取り直す。要再確認の理由を UI で推測せず、BIZ が返す型付きの理由と次の操作を示す。日本語と非色シグナルで表示する。既存の route / returnTo、IME、focus とページの器を保つ。b1 の Windows L3 は b1 の packet の台本で行う（b2 の分は未実施）。旧 ADR（時点証拠）の begin・保留・準備照会・非連動化の未調整の案内は置き換えた。
 
 > **親文書**: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
@@ -26,6 +26,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
   - 毎日の業務: ホーム / 売上データ取込み / 日次売上 / 在庫照会 / 月次売上
   - 商品管理: 商品検索・一覧 / 商品登録 / 一括インポート / PLU書出し / 一括価格改定
   - 入出庫: 入庫記録 / 返品・交換 / 手動販売出庫 / 廃棄・破損 / 入出庫履歴 / 在庫少一覧 / 棚卸し
+  - D-138（proposed・未実装）の後: 毎日の業務の「在庫照会」を「商品と在庫」（`/products`）にし、商品管理から「商品検索・一覧」を外し、入出庫の「在庫少一覧」を「在庫切れ・在庫少」にする（[50](../function-design/50-ui-product-list.md) UI-01a-D14）
   - システム管理: バックアップ・復元 / 操作ログ / 在庫少の基準 / 整合性検証 / 取引先管理
 - 項目の実装上の正本は `src/config/navigation.ts`。表示数を別の固定値として管理しない。
 - エリア識別はアイコン + 区切り線で行う（色分けは廃止、[../design-system/00-foundations.md](../design-system/00-foundations.md)「4色エリアモデルの扱い」準拠）
@@ -81,7 +82,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 **【利用者操作フロー】**
 1. 起動/ホーム復帰時にサマリ表示
 2. PLU未反映件数が1以上なら黄色の通知バーを最上部に表示
-3. 大ボタンで毎日機能（CSV取込み/売上レポート/在庫照会/商品管理）へ遷移（モックアップ準拠、月次売上はサイドバー経由、商品管理は Phase 3 UI-01a まで pending disabled）
+3. 大ボタンで毎日機能（CSV取込み/売上レポート/在庫照会/商品管理）へ遷移（モックアップ準拠、月次売上はサイドバー経由、商品管理は Phase 3 UI-01a まで pending disabled）。D-138 の後は在庫照会・商品管理の 2 枚を「商品と在庫」「在庫切れ・在庫少」にする（[53](../function-design/53-ui-home.md) UI-00-D13）
 4. 中段に入出庫4機能、下段にたまに使う機能（棚卸し/バックアップ/設定）
 
 **【制御構造】**
@@ -90,7 +91,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 
 ### UI-01a: 商品検索・一覧
 
-**タスク要求**: 商品の検索・絞込み・並替え・一覧表示（PLU の移行状態の列・絞り込み・一括更新は D-117 で撤去）
+**タスク要求**: 商品の検索・絞込み・並替え・一覧表示（PLU の移行状態の列・絞り込み・一括更新は D-117 で撤去）。D-138 で UI-06a と 1 つの画面「商品と在庫」（`/products`）にする（[50](../function-design/50-ui-product-list.md) UI-01a-D14〜D19、proposed・未実装）
 
 **【状態管理】**
 - 検索条件（keyword, department_id, is_discontinued, sort_key, sort_order）
@@ -107,6 +108,8 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 3. 一覧表示（商品コード/商品名/売価/原価/在庫数/部門/廃番状態）。原価は売価の右隣（UI-01a-D13）
 4. 行クリックで商品編集画面へ遷移
 5. 「新規登録」ボタンでUI-01bへ遷移（新規モード）
+
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、一覧に「PLU」の列（`src/features/products/components/ProductTable.tsx` の `ProductTable`。対象外 / 未反映 / 反映済み の Badge）を持ち、`src/features/products/ProductListPage.tsx` に PLU の絞り込み（URL の `plu`）と、絞り込みに一致する全件の一括更新（`commands.bulkSetPluTarget`、CMD-01 の `bulk_set_plu_target`）がある。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### UI-01b: 商品登録・修正
 
@@ -135,6 +138,8 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 5. 保存 → バリデーション → 成功トースト → 一覧に戻る
 6. edit は memory No. を表示しない（D-117）。廃番解除で plu_target を自動復帰しない
 7. edit は第 5 セクション「価格履歴」で直近 10 件を表示し、「すべて表示」で 100 件を取得する。create では表示しない
+
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、edit で「レジメモリNo.」（`plu_memory_no`）を表示する（`src/features/products/ProductFormPage.tsx`）。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### UI-14: 一括価格改定
 
@@ -175,7 +180,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 
 **【利用者操作フロー】**
 1. CSVファイルを選択
-2. プレビュー表示（先頭数行＋エラー行＋重複行）。任意列 `PLU対象` と不正 JAN の warning / 対象外補正を text で示し、色だけに依存しない
+2. プレビュー表示（先頭数行＋エラー行＋重複行）。任意列 `PLU対象` と 13 桁でない JAN（空か 8 桁）の warning / 対象外補正を text で示し、色だけに依存しない
 3. 重複行ごとに「上書き」「スキップ」を選択
 4. 「取り込む」で確定 → 結果サマリ表示
 
@@ -204,12 +209,13 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 ### UI-06a/06b/06c: 在庫照会系画面群
 
 **UI-06a 商品別在庫照会:**
+- D-138 で UI-01a と 1 つの画面「商品と在庫」（`/products`）にし、`/stock` は寄せる（proposed・未実装。在庫の状態・在庫切れ・在庫少の一覧・行の詳細の契約は [58](../function-design/58-ui-stock-inquiry.md)）
 - CMD-06 get_stock_detail で商品詳細取得
 - 商品検索→選択→在庫数・売価・原価・最終入庫日・最終販売日を表示
 
 **UI-06b 在庫少一覧:**
-- 独立画面ではなく、UI-06a `/stock` への `status=low_stock` deep-link（D-047、2026-07-16、詳細は [52-ui-shared-layout.md](../function-design/52-ui-shared-layout.md) UI-12-D1）
-- CMD-06 list_low_stock で閾値以下の商品を一覧取得（UI-06a 内の既存フィルタ contract を再利用、廃番除外は固定 false）
+- 独立画面ではなく、UI-06a `/stock` への `status=low_stock` deep-link（D-047、2026-07-16、詳細は [52-ui-shared-layout.md](../function-design/52-ui-shared-layout.md) UI-12-D1）。D-138 の後は「在庫切れ・在庫少」として `/products?status=low_stock` を開き、在庫切れと在庫少を 1 つの一覧に出す
+- CMD-06 list_low_stock で閾値以下の商品を一覧取得し、廃番を除いて出す（D-138 の後は「すべて」の状態の欄にも同じ集合を廃番を含めて使う、58 契約 H・廃番除外。今の build は UI-06a 内のフィルタ contract で `list_low_stock(false)` 固定）
 
 **UI-06c 在庫変動履歴:**
 - CMD-06 list_movements で商品別の変動一覧取得
@@ -231,7 +237,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - 日報完了取消し → CMD-12 rollback_daily_report_import
 - Z004商品別CSV選択後 → CMD-07 parse_and_validate_csv（既存トラック）
 - Z004商品別CSV「取り込む」ボタン → CMD-07 commit_csv_import（既存トラック）
-- Z004商品別CSV完了取消し → CMD-07 rollback_csv_import（既存トラック）
+- Z004商品別CSV完了取消し（取込みの結果の画面の「取り消す」と CSV取込みの詳細の「この取込みを取り消す」の 2 つの入口）→ 共通の確認が CMD-07 preview_rollback_csv_import で取り消した後のようすを読み、確定で CMD-07 rollback_csv_import（55 UI-07-D18）
 
 **【利用者操作フロー】**
 1. 既定タブ「日報取込み」で「SD から読む」を押し（CMD-12 scan_register_sd）、読み終えたら SD をレジへ戻す案内と精算の一覧を見て、「取り込めます」の精算を選ぶ（CMD-12 parse_and_validate_daily_report_from_sd、D-111、UI-07-D15）。SD が読めない・過去の分は予備の「ファイルを選んで取り込む」で Z001/Z002/Z005 を 1 つずつ選ぶ（UI-07-D16。dialog の path を `source_path` で送り、SD の上の file なら BIZ-08 が SD の入力として扱う）
@@ -283,6 +289,8 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - prepare は slot 予約を永続化し、再 prepare でも同じ memory No. を使う。confirm は reserved→active を exact memory No. で確定する
 - Diff / Full とも CV17 へ投入できる。失敗時はどちらかを書き出し直す（前に保存した file は取り込まない。保存の後の照合で枠が変わりうる）
 
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build の `src/features/plu-export/PluExportPage.tsx` は、利用者が `FilePicker`（`@/components/FilePicker`）で選んだ Z004 を `commands.importPluRegisterSnapshot`（CMD-08 の `import_plu_register_snapshot`）へ渡して占有を照合し、`get_plu_slot_summary` の件数の要約（`free_count`・`release_pending_count` ほか）を出し、`prepare_plu_export` の `over_limit_warning` を `overLimitWarning` に持つ。売上データ取込みの SD の読取りでの自動の照合はまだ無い（CMD-12 の `scan_register_sd` が無い）。操作フロー 1 の最終照合日時と操作フロー 2 の UI-08-D5 の SD の設定書込みの案内もまだ無い（今の画面は Z004 の「最終読込み日時」を出す）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
+
 ### UI-09a/09b: 売上レポート画面群
 
 **UI-09a 日次売上:**
@@ -293,7 +301,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - URL state: `?date=YYYY-MM-DD&dept=N&sortBy=...&sortDir=...`（TanStack Router validateSearch + zod 4 直接渡し、不正値は `.optional().catch(undefined)` で undefined fallback）
 - 部門フィルタ Select（単一選択、`items` から派生）+ 列ヘッダ click でソート（5 列: product_code / name / quantity / unit_price / amount、部門列は BIZ-05 順固定）
 - CSV出力ボタン → CMD-09 export_sales_csv（base64 → Blob ダウンロード + `setTimeout(100)` で `revokeObjectURL` + Sonner 成功/失敗トースト id-based dedup）
-- 印刷ボタン: 仕様未定のため Phase 2 では disabled（aria-disabled + Tooltip + cursor-not-allowed）。日次は 2026-10-17 に日報の紙として設計した（proposed・未実装、[56](../function-design/56-ui-daily-sales.md) の UI-09a-D17〜D19、D-120）
+- 印刷ボタン: `日報を印刷`。その日のレジの日報を 1 日 1 枚の紙に印刷する（押したときに読み直す。押せない日はボタンの下に理由とリンク・再試行。[56](../function-design/56-ui-daily-sales.md) の UI-09a-D17〜D19、D-120）
 - TabsHeader: UI-09b PR #66 で `src/components/sales/TabsHeader.tsx` に共通化、router-driven `<Link>` で日次 (`/reports/daily`) / 月次 (`/reports/monthly`) 切替（disabled 状態廃止）
 - 主動線: UI-07 ResultStep「売上レポートを見る」CTA → `navigate({ to: "/reports/daily", search: { date: settlementDate } })`（settlementDate を URL state で渡し、当日 fallback されず取込み済日付のデータを直接表示）、UI-07 commitMutation / rollbackMutation success で `["daily-sales"]` prefix invalidate（UI-09a + UI-00 ホーム両方 refetch）
 

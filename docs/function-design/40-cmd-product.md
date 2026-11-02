@@ -1,17 +1,17 @@
 ## 5. CMD-01: 商品コマンド群
 
-### 計数の置き場と在庫の求め直しの契約（proposed・未実装、D-118）
+### 計数の置き場と在庫の求め直しの契約（D-118。回復型は b1、商品の結果の写しの 3 列は b2 で実装済み）
 
-[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md) の拒否と回復先を、message の解析なしで伝える追加案。現行の §5.3 の kind の集合と構造体は実装済みの契約で、本節の追加は runtime の generated enum / bindings の切替と同時に行う。旧 ADR（時点証拠）の計数 context の失効・保存先の変更・取込みの保留・取消の保留・準備照会の issue・非連動化の未調整（`sync_disabled_recovery`）の code と型は持たない（置き換えた）。
+[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md) の拒否と回復先を、message の解析なしで伝える。下の 1〜4 つ目の項目（`stocktake_guard` と回復型）は b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で generated enum / bindings と同時に入った（§5.3 の kind は 13 値）。最後の段落（商品の結果の写しの 3 列）は b2（[Plan Packet](../plans/2026-10-23-stocktake-count-runtime-b2.md)）で bindings と同時に入った。旧 ADR（時点証拠）の計数 context の失効・保存先の変更・取込みの保留・取消の保留・準備照会の issue・非連動化の未調整（`sync_disabled_recovery`）の code と型は持たない（置き換えた）。
 
 - CmdErrorKind へ `stocktake_guard` を加え、CmdError へ `stocktake_recovery: Option<StocktakeRecovery>` を加える。既存の kind では None、`stocktake_guard` では Some を必須とする。既存の field / error_id・internal の sanitize・restore の分類は変えない。`BizError::StocktakeGuard { message, recovery }` を CMD が変換するだけで、対象の選別や回復の可否を CMD で判定しない。
-- StocktakeRecovery は `code` と `targets` を持つ。code は generated enum: `recount_required`（在庫連動を始める拒否。[30](30-biz-product-service.md)）/ `completion_blocked`（棚卸しの完了の拒否。[35](35-biz-stocktake-service.md)）。共有 JAN の在庫連動の拒否は商品フォーム・一括 import の入力の検査なので、回復型に載せず既存の `validation` kind（field `pos_stock_sync` か `jan_code`、[30](30-biz-product-service.md)）で返す。Z004 の取込みの拒否（同じ精算の別版・精算回数の無い file・精算の順の食い違い）は対象の商品を持たないので回復型に載せず、既存の `import_error` kind と BIZ の message で返す（[32](32-biz-csv-import-service.md)）。
-- targets の要素 CountRecoveryTarget は `product_code` / `product_name` / `stocktake_item_id`（Option）/ `stocktake_id`（Option）/ `action` / `block_reason`（Option）/ `recount_reasons` を持つ。action は `active_count`（進行中の棚卸しの明細で数える）/ `count_now`（棚卸しの外で今の数を入れる。明細が無い商品、進行中の棚卸しが無いとき）。`block_reason` は `completion_blocked` のときだけ Some で、`recheck`（要再確認）/ `uncounted`（未計数）/ `settlement_pending`（決まらない精算が未取込み）の generated enum。`recount_reasons` は要再確認の対象のとき、その商品の理由（`undetermined_settlement` / `same_date_movement` / `conflicting_counts` の generated enum。重複なし、この順）を入れ、他では空にする。参照なしは null で表し、架空の ID を使わない。
+- StocktakeRecovery は `code` と `targets` を持つ。code は generated enum: `recount_required`（在庫連動を始める拒否。[30](30-biz-product-service.md)）/ `completion_blocked`（棚卸しの完了の拒否。[35](35-biz-stocktake-service.md)）。共有 JAN の在庫連動の拒否は商品フォーム・一括 import の入力の検査なので、回復型に載せず既存の `validation` kind（field `pos_stock_sync`、[30](30-biz-product-service.md)）で返す。Z004 の取込みの拒否（同じ精算の別版・精算回数の無い file・精算の順の食い違い）は対象の商品を持たないので回復型に載せず、既存の `import_error` kind と BIZ の message で返す（[32](32-biz-csv-import-service.md)）。StocktakeRecovery は `settlement_pending: Option<SettlementPendingHint>` も持つ（b1 の Plan Review round 1 の是正、2026-10-22。D-127 の「直し方を名指す」: 画面が「精算 103 を取り込んでください」「精算日が 10-04 以降の精算を取り込んでください」と出せるように）。`completion_blocked` で `block_reason` が `settlement_pending` の target が 1 つでもあるときだけ Some、ほかは None。SettlementPendingHint は `missing`（35 の `settlement_pending` の (ii) に当たった、取り込まれていない精算回数を連続した区間にまとめた一覧。要素は [32](32-biz-csv-import-service.md) の欠けの知らせと同じ `SettlementGap { from, to }`、昇順）、`on_or_after`（(i) に当たった明細の効く計数の日付 X の最大。精算日がこの日以降の精算を取り込めば (i) は全て解ける。当たらなければ null）、`before`（(iii) に当たった明細の X の最小。精算日がこの日より前の精算を取り込めば (iii) は全て解ける。当たらなければ null）を持つ。日付は `YYYY-MM-DD` の文字列、区間の端は 32 の順 1 の範囲の整数。
+- targets の要素 CountRecoveryTarget は `product_code` / `product_name` / `stock_unit`（ProductStockUnit）/ `stock`（写しの在庫。i64）/ `stock_range_low`・`stock_range_high`（写しが要再確認のときの範囲の両端。Option、両方 Some か両方 None）/ `stocktake_item_id`（Option）/ `stocktake_id`（Option）/ `action` / `block_reason`（Option）/ `recount_reasons` を持つ（`stock_unit`・`stock`・範囲は b1 の Plan Review round 1 の是正、2026-10-22。取込みの結果・取消の結果・棚卸しの画面の要再確認の一覧〈[55](55-ui-csv-import.md)・[73](73-ui-stocktake.md)〉が「範囲」を単位どおりに出すのに要り、商品の読取りに写しの範囲が入るのは b2 なので、ここで運ぶ。値は target を作った TX の求め直しの後の写し）。action は `active_count`（進行中の棚卸しの明細で数える）/ `count_now`（棚卸しの外で今の数を入れる。明細が無い商品、進行中の棚卸しが無いとき）。`block_reason` は `completion_blocked` のときだけ Some で、`recheck`（要再確認）/ `uncounted`（未計数）/ `settlement_pending`（決まらない精算が未取込み）の generated enum。`recount_reasons` は要再確認の対象のとき、その商品の理由（`undetermined_settlement` / `same_date_movement` / `conflicting_counts` の generated enum。重複なし、この順）を入れ、他では空にする。参照なしは null で表し、架空の ID を使わない。
 - 負数・非整数・範囲外は既存の validation を使う。UI は kind / code / action / block_reason を生成型で網羅し、未知の code を「そのまま続行」にしない。
 
-商品の get / search の結果（`ProductWithRelations` と一覧の行）へ、写しの `stock_recheck: bool`・`stock_range_low: Option<i64>`・`stock_range_high: Option<i64>` を足す（在庫数の欄の範囲の表示に使う。[51](51-ui-product-form.md)・[58](58-ui-stock-inquiry.md)）。
+商品の get / search の結果（`ProductWithRelations`。`get_product`・`search_products` の要素・`list_low_stock` の要素・`get_stock_detail` の `product`）は、写しの `stock_recheck: bool`・`stock_range_low: Option<i64>`・`stock_range_high: Option<i64>` を flatten した商品の field と同じ階層に持つ（在庫数の欄の範囲の表示に使う。[50](50-ui-product-list.md)・[51](51-ui-product-form.md)・[58](58-ui-stock-inquiry.md)・[66](66-ui-stock-movements.md)）。範囲は要再確認のときだけ両端が値（DB の CHECK）。`Product`（PLU の書出しと JAN の照合が読む行の写像）には足さない（wire に出ないため）。
 
-runtime では共通 enum、全 CmdError constructor、BizError の変換、bindings、CMD_ERROR_KIND、describeError と feature の回復の分岐・mock / test を同じ変更で同期する。追加 payload に raw SQL・診断ログ・file 本体を載せない。
+b1 で共通 enum、全 CmdError constructor、BizError の変換、bindings、CMD_ERROR_KIND、describeError と feature の回復の分岐・mock / test を同じ変更で同期した。追加 payload に raw SQL・診断ログ・file 本体を載せない。
 
 ### 5.1 モジュール構成
 
@@ -46,10 +46,12 @@ struct CmdError {
     message: String,  // 利用者向け日本語メッセージ（rawな技術詳細を含めない。CMD-ERR-D2）
     field: Option<String>,  // バリデーションエラー時のフィールド名
     error_id: Option<String>,  // 診断ログ相関ID（CMD-ERR-D1）。internal / restore_*系でのみSome
+    stocktake_recovery: Option<StocktakeRecovery>,  // 棚卸しの守りの拒否の回復先（`stocktake_guard` だけ Some。冒頭の D-118 の節、b1）
+    related_csv_import_id: Option<i64>,  // 拒否の文が名指す取込みID（Z004 の順 4 の拒否〈kind import_error〉だけ Some、ほかは null。TS では任意の field。41-cmd-pos.md 17.4）
 }
 ```
 
-**kind の enum 契約（D-061）**: `CmdErrorKind` は response 専用のため `#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]` + `#[serde(rename_all = "snake_case")]` の generated enum とし、`Deserialize` は付与しない。wire 表現は従来の snake_case 文字列と 1:1 完全一致（値・分岐・error_id 相関は不変）。値は 12 個で現状凍結: `validation` / `duplicate` / `not_found` / `internal` / `import_error` / `export_error` / `idempotency_conflict` / `stocktake_in_progress` / `stocktake_not_in_progress` / `restore_failed_recovered` / `restore_failed_unrecoverable` / `restore_durability_unknown`。frontend は bindings 由来の literal union で分岐し、`CMD_ERROR_KIND` は生成 union に対する exhaustive 検査付きの定数 map とする。独自の手動 union は持たない。
+**kind の enum 契約（D-061）**: `CmdErrorKind` は response 専用のため `#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]` + `#[serde(rename_all = "snake_case")]` の generated enum とし、`Deserialize` は付与しない。wire 表現は従来の snake_case 文字列と 1:1 完全一致（値・分岐・error_id 相関は不変）。値は 13 個（D-118 の b1 で `stocktake_guard` を足した）: `validation` / `duplicate` / `not_found` / `internal` / `import_error` / `export_error` / `idempotency_conflict` / `stocktake_in_progress` / `stocktake_not_in_progress` / `stocktake_guard` / `restore_failed_recovered` / `restore_failed_unrecoverable` / `restore_durability_unknown`。frontend は bindings 由来の literal union で分岐し、`CMD_ERROR_KIND` は生成 union に対する exhaustive 検査付きの定数 map とする。独自の手動 union は持たない。
 
 **エラーID契約（CMD-ERR-D1）**: raw な失敗詳細を wire に載せず診断ログ側にのみ記録する kind（`internal` と `restore_failed_recovered` / `restore_failed_unrecoverable` / `restore_durability_unknown`）は、生成時に `error_id`（形式 `E-<YYYYMMDD-HHMMSS>-<4hex>`。chrono ローカル時刻 + uuid v4 短縮、新規依存なし）を発行し、response と `tracing::error!` の両方に同一値を載せる。利用者は画面に表示された error_id と診断ログ（[70-mnt-diagnostic-log.md](70-mnt-diagnostic-log.md)）の同一 error_id で事象を突合できる。日次ローテーションのログファイル特定を助けるため時刻併記形式とする。他の kind は None。
 
@@ -62,9 +64,11 @@ BizError → CmdError の変換ルール:
 - BizError::ValidationFailed(msg) → CmdError { kind: CmdErrorKind::Validation, message: msg, field: None }
 - BizError::ValidationFailedAt { message, field } → CmdError { kind: CmdErrorKind::Validation, message, field: Some(field) }
 - BizError::DuplicateProductCode(code) → CmdError { kind: CmdErrorKind::Duplicate, message: "この商品コードは既に使用されています: {code}" }
+- BizError::JanInUse(message) → CmdError { kind: CmdErrorKind::Duplicate, message, field: Some("jan_code") }（[30](30-biz-product-service.md) BIZ-01-D11。商品フォームは kind と field で分け、message を解析しない。`DuplicateProductCode` は field を持たないので、UI は field `jan_code` の有無で 2 つを分ける）
 - BizError::NotFound(msg) → CmdError { kind: CmdErrorKind::NotFound, message: msg }
 - BizError::DatabaseError(_) → CmdError { kind: CmdErrorKind::Internal, message: "データベースエラーが発生しました。もう一度お試しください", error_id: Some(発行) }
-- POS連携追加分（ImportError / IdempotencyConflict / ExportError）は 41-cmd-pos.md 17.4 を参照
+- BizError::StocktakeGuard { message, recovery } → CmdError { kind: CmdErrorKind::StocktakeGuard, message, stocktake_recovery: Some(recovery) }（冒頭の D-118 の節、b1）
+- POS連携追加分（ImportError / SettlementConflict / IdempotencyConflict / ExportError）は 41-cmd-pos.md 17.4 を参照
 
 ### 5.4 各コマンドの関数仕様
 

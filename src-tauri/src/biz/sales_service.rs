@@ -10,7 +10,7 @@ use crate::biz::BizError;
 use crate::db::product_repo::ProductStockUnit;
 use crate::db::sales_repo;
 use crate::db::DbConnection;
-use crate::io::daily_report_parser::quantity_hundredths_to_units;
+use crate::io::daily_report_parser::{quantity_hundredths_to_units, DailyReportSourceKind};
 use crate::io::report_csv_exporter;
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
@@ -172,6 +172,45 @@ pub struct OfficialMonthlyDepartmentTotal {
     pub count: Option<i64>,
 }
 
+/// 日報の紙の内容（34 §19.3a、SALES-SHEET-D1〜D6）
+#[derive(Debug, serde::Serialize, specta::Type)]
+pub struct DailyReportSheet {
+    pub date: String,
+    /// その日の完了した日報の取込みの数。0 なら行は空
+    pub import_count: i64,
+    pub summary_rows: Vec<DailyReportSheetRow>,
+    pub payment_rows: Vec<DailyReportSheetRow>,
+    pub department_rows: Vec<DailyReportSheetRow>,
+    /// SALES-SHEET-D2 の 2・3 の帳票（Z001 → Z002 → Z005 の順）
+    pub label_changed_sources: Vec<DailyReportSourceKind>,
+    /// SALES-SHEET-D2 の 3 の帳票（足さずに取込みごとに載せた）
+    pub unsummed_sources: Vec<DailyReportSourceKind>,
+    /// SALES-SHEET-D4: その日に売れた Z004 由来の行
+    pub plu_rows: Vec<DailySaleItem>,
+    pub plu_import: DailyReportSheetPluImport,
+}
+
+/// 日報の紙の 1 行
+#[derive(Debug, PartialEq, serde::Serialize, specta::Type)]
+pub struct DailyReportSheetRow {
+    pub position: i64,
+    /// 前後の空白を除いた名称（Z005 はレジの名称）。空のこともある
+    pub label: String,
+    // 単位の数（小数 2 桁まで）
+    pub quantity: Option<f64>,
+    pub count: Option<i64>,
+    pub amount: Option<i64>,
+    /// SALES-SHEET-D2 の 3 の帳票の行だけ、取込みの並びの中の位置（1 から）
+    pub import_seq: Option<i64>,
+}
+
+/// 日報の紙の PLU の部分の取込みの数（SALES-SHEET-D4）
+#[derive(Debug, PartialEq, serde::Serialize, specta::Type)]
+pub struct DailyReportSheetPluImport {
+    pub import_count: i64,
+    pub skipped_count: i64,
+}
+
 /// レポート種別（CSVエクスポート用）
 ///
 /// `serde::Deserialize` + `specta::Type` + `#[serde(rename_all = "snake_case")]` で
@@ -211,30 +250,7 @@ pub fn get_daily_sales(conn: &DbConnection, date: &str) -> Result<DailySalesRepo
     crate::biz::inventory_service::validate_business_date(date)?;
 
     // Step 2: 商品別売上取得 + DB型 -> BIZ型マッピング
-    let db_rows = sales_repo::get_daily_sales_records(conn, date)?;
-    let items: Vec<DailySaleItem> = db_rows
-        .into_iter()
-        .map(|r| {
-            Ok(DailySaleItem {
-                product_code: r.product_code,
-                name: r.name,
-                department_name: r.department_name,
-                department_id: r.department_id,
-                stock_unit: r.stock_unit,
-                quantity: r.quantity,
-                amount: r.amount,
-                source: match r.source.as_str() {
-                    "auto" => DailySaleSource::Auto,
-                    "manual" => DailySaleSource::Manual,
-                    other => {
-                        return Err(BizError::DatabaseError(crate::db::DbError::QueryFailed(
-                            format!("unknown daily sale source: {other}"),
-                        )))
-                    }
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, BizError>>()?;
+    let items = map_daily_sale_rows(sales_repo::get_daily_sales_records(conn, date)?)?;
 
     // Step 3: 部門小計の計算（BTreeMap で部門ID昇順を保証）
     // 数量は種類ごとの 2 本に分け、和は checked（SPEC-UNIT-D3 の集計の規則、X9）
@@ -266,7 +282,8 @@ pub fn get_daily_sales(conn: &DbConnection, date: &str) -> Result<DailySalesRepo
     };
 
     let official_daily_report = sales_repo::get_completed_daily_report_aggregate(conn, date)?
-        .map(map_official_daily_report);
+        .map(map_official_daily_report)
+        .transpose()?;
 
     Ok(DailySalesReport {
         date: date.to_string(),
@@ -274,6 +291,92 @@ pub fn get_daily_sales(conn: &DbConnection, date: &str) -> Result<DailySalesRepo
         department_subtotals,
         grand_total,
         official_daily_report,
+    })
+}
+
+/// 指定日のレジの日報を、印刷する 1 日 1 枚の紙の内容にして返す。読み取りだけで保存しない
+///
+/// 34-biz-sales-service.md セクション19.3a（SALES-SHEET-D1〜D6）
+pub fn get_daily_report_sheet(
+    conn: &DbConnection,
+    date: &str,
+) -> Result<DailyReportSheet, BizError> {
+    // SALES-SHEET-D5: 日付 → 読取り（3 つ）→ 足し算の順で、どれかで止まれば紙を返さない
+    crate::biz::inventory_service::validate_business_date(date)?;
+    let lines = sales_repo::get_daily_report_sheet_lines(conn, date)?;
+    let records = sales_repo::get_daily_sales_records(conn, date)?;
+    let (z004_import_count, skipped_count) = sales_repo::get_active_z004_import_totals(conn, date)?;
+
+    let mut label_changed_sources = Vec::new();
+    let mut unsummed_sources = Vec::new();
+    let mut sheet_rows = |source: DailyReportSourceKind,
+                          rows: Vec<sales_repo::DailyReportSheetLineRow>|
+     -> Result<Vec<DailyReportSheetRow>, BizError> {
+        let input: Vec<SheetRuleLine> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| SheetRuleLine {
+                import_id: row.daily_report_import_id,
+                // 紙の名称は前後の空白を除いた値なので、同値の決め手は読取りの並びで足りる
+                tie: index as i64,
+                position: row.sort_order,
+                label: row.label,
+                quantity_hundredths: row.quantity_hundredths,
+                count: row.count,
+                amount: row.amount,
+            })
+            .collect();
+        let (case, rows) = apply_sheet_rule(&input, &lines.import_ids)?;
+        if case != SheetRuleCase::Summed {
+            label_changed_sources.push(source);
+        }
+        if case == SheetRuleCase::Unsummed {
+            unsummed_sources.push(source);
+        }
+        Ok(rows
+            .into_iter()
+            // SALES-SHEET-D3: 名称が空で値が全部 0 か NULL の行は載せない
+            .filter(|row| {
+                !(row.label.is_empty()
+                    && [row.quantity_hundredths, row.count, row.amount]
+                        .iter()
+                        .all(|value| value.unwrap_or(0) == 0))
+            })
+            .map(|row| DailyReportSheetRow {
+                position: row.position,
+                label: row.label,
+                quantity: row.quantity_hundredths.map(quantity_hundredths_to_units),
+                count: row.count,
+                amount: row.amount,
+                import_seq: row.import_seq,
+            })
+            .collect())
+    };
+    let summary_rows = sheet_rows(DailyReportSourceKind::Z001, lines.summary_lines)?;
+    let payment_rows = sheet_rows(DailyReportSourceKind::Z002, lines.payment_lines)?;
+    let department_rows = sheet_rows(DailyReportSourceKind::Z005, lines.department_lines)?;
+
+    // SALES-SHEET-D4: Z004 由来（auto）で数量か金額が 0 でない行だけ。手動販売は載せない
+    let plu_rows = map_daily_sale_rows(records)?
+        .into_iter()
+        .filter(|item| {
+            item.source == DailySaleSource::Auto && (item.quantity != 0 || item.amount != 0)
+        })
+        .collect();
+
+    Ok(DailyReportSheet {
+        date: date.to_string(),
+        import_count: lines.import_ids.len() as i64,
+        summary_rows,
+        payment_rows,
+        department_rows,
+        label_changed_sources,
+        unsummed_sources,
+        plu_rows,
+        plu_import: DailyReportSheetPluImport {
+            import_count: z004_import_count,
+            skipped_count,
+        },
     })
 }
 
@@ -542,15 +645,47 @@ fn month_date_range(year: i32, month: u32) -> (String, String) {
     )
 }
 
+/// 商品別売上の DB 行を BIZ 型へ写す（§19.3 手順 2。日報の紙の PLU の部分も同じ写像）
+fn map_daily_sale_rows(
+    rows: Vec<sales_repo::DailySaleRow>,
+) -> Result<Vec<DailySaleItem>, BizError> {
+    rows.into_iter()
+        .map(|r| {
+            Ok(DailySaleItem {
+                product_code: r.product_code,
+                name: r.name,
+                department_name: r.department_name,
+                department_id: r.department_id,
+                stock_unit: r.stock_unit,
+                quantity: r.quantity,
+                amount: r.amount,
+                source: match r.source.as_str() {
+                    "auto" => DailySaleSource::Auto,
+                    "manual" => DailySaleSource::Manual,
+                    other => {
+                        return Err(BizError::DatabaseError(crate::db::DbError::QueryFailed(
+                            format!("unknown daily sale source: {other}"),
+                        )))
+                    }
+                },
+            })
+        })
+        .collect()
+}
+
+/// 34 §19.3 手順 3 の支払集計の warning（D2 の 2 と 3。3 の日は 3 の文だけ）
+const PAYMENT_LABEL_CHANGED_WARNING: &str = "支払集計（Z002）は、この日の精算の間で行の名称か並びが変わっています。同じ名称の行が 2 行あれば、別々に足しています";
+const PAYMENT_UNSUMMED_WARNING: &str = "支払集計（Z002）は、この日の精算の間で行の名称か並びが変わり、1 回の精算の中に同じ名称の行が 2 行以上あるため、足さずに取込みの古い順に並べています。紙（日報を印刷）で取込みごとに見られます";
+
 fn map_official_daily_report(
     row: sales_repo::OfficialDailyReportRow,
-) -> OfficialDailyReportSummary {
+) -> Result<OfficialDailyReportSummary, BizError> {
     let unmatched_count = row
         .department_lines
         .iter()
         .filter(|line| line.department_id.is_none())
         .count();
-    let warnings = if unmatched_count == 0 {
+    let mut warnings = if unmatched_count == 0 {
         Vec::new()
     } else {
         vec![format!(
@@ -559,21 +694,50 @@ fn map_official_daily_report(
         )]
     };
 
-    OfficialDailyReportSummary {
+    // 34 §19.3 手順 3: 支払は紙と同じ SALES-SHEET-D2 の関数で足す。代表は最小 sort_order・最小の行 id
+    let import_ids: Vec<i64> = row
+        .summary_imports
+        .iter()
+        .map(|import| import.daily_report_import_id)
+        .collect();
+    let payment_input: Vec<SheetRuleLine> = row
+        .payment_lines
+        .iter()
+        .map(|line| SheetRuleLine {
+            import_id: line.daily_report_import_id,
+            tie: line.id,
+            position: line.sort_order,
+            label: line.label.clone(),
+            quantity_hundredths: None,
+            count: line.count,
+            amount: line.amount,
+        })
+        .collect();
+    let (payment_case, payment_rows) = apply_sheet_rule(&payment_input, &import_ids)?;
+    match payment_case {
+        SheetRuleCase::Summed => {}
+        SheetRuleCase::LabelChanged => warnings.push(PAYMENT_LABEL_CHANGED_WARNING.to_string()),
+        SheetRuleCase::Unsummed => warnings.push(PAYMENT_UNSUMMED_WARNING.to_string()),
+    }
+    let payment_lines = payment_rows
+        .into_iter()
+        .map(|summed| {
+            let representative = &row.payment_lines[summed.representative];
+            OfficialDailyPaymentLine {
+                payment_key: representative.payment_key.clone(),
+                label: representative.label.clone(),
+                amount: summed.amount,
+                count: summed.count,
+            }
+        })
+        .collect();
+
+    Ok(OfficialDailyReportSummary {
         source_import_count: row.source_import_count,
         report_date: row.report_date,
         gross_amount: row.gross_amount,
         net_amount: row.net_amount,
-        payment_lines: row
-            .payment_lines
-            .into_iter()
-            .map(|line| OfficialDailyPaymentLine {
-                payment_key: line.payment_key,
-                label: line.label,
-                amount: line.amount,
-                count: line.count,
-            })
-            .collect(),
+        payment_lines,
         department_lines: row
             .department_lines
             .into_iter()
@@ -605,7 +769,172 @@ fn map_official_daily_report(
                     .collect(),
             })
             .collect(),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// SALES-SHEET-D2（位置と名称の組で足す。紙と画面の支払集計で 1 つ、D-142 の (4)）
+// ---------------------------------------------------------------------------
+
+/// SALES-SHEET-D2 の 1〜3 の場合
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SheetRuleCase {
+    /// 1: 取込みの間で組の集合が一致する
+    Summed,
+    /// 2: 一致せず、どの取込みにも同じ名称（空でない）の行が 2 行以上無い
+    LabelChanged,
+    /// 3: 一致せず、どれかの取込みに同じ名称（空でない）の行が 2 行以上ある。足さない
+    Unsummed,
+}
+
+/// D2 の入力の 1 行（1 つの帳票の行）
+struct SheetRuleLine {
+    import_id: i64,
+    /// 同じ位置の代表を決める同値の決め手（画面の支払は行の id）
+    tie: i64,
+    position: i64,
+    /// 保存された名称（前後の空白は D2 の関数が除いて見分ける）
+    label: String,
+    quantity_hundredths: Option<i64>,
+    count: Option<i64>,
+    amount: Option<i64>,
+}
+
+/// D2 の出力の 1 行
+#[derive(Debug)]
+struct SheetRuleRow {
+    /// 代表の入力の行の位置（入力の slice の index。最小の位置・最小の `tie`）
+    representative: usize,
+    position: i64,
+    /// 前後の空白を除いた名称
+    label: String,
+    quantity_hundredths: Option<i64>,
+    count: Option<i64>,
+    amount: Option<i64>,
+    /// 3 の行だけ、取込みの `import_ids` の中の位置（1 から）
+    import_seq: Option<i64>,
+}
+
+/// SALES-SHEET-D2 を 1 つの帳票の行に当てる。`import_ids` はその日の完了した取込みの古い順
+/// （`imported_at ASC, id ASC`）。`import_ids` に無い取込みの行は読まない（24 §14.21a 手順 2）
+fn apply_sheet_rule(
+    lines: &[SheetRuleLine],
+    import_ids: &[i64],
+) -> Result<(SheetRuleCase, Vec<SheetRuleRow>), BizError> {
+    let import_index = |import_id: i64| import_ids.iter().position(|id| *id == import_id);
+    let lines: Vec<(usize, usize, &SheetRuleLine)> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| import_index(line.import_id).map(|seq| (index, seq, line)))
+        .collect();
+
+    // 取込みごとの組の集合と、同じ名称（空でない）の行の有無
+    let mut pair_sets: Vec<std::collections::BTreeSet<(i64, &str)>> =
+        vec![std::collections::BTreeSet::new(); import_ids.len()];
+    let mut duplicate_label = false;
+    let mut labels_seen: Vec<std::collections::BTreeSet<&str>> =
+        vec![std::collections::BTreeSet::new(); import_ids.len()];
+    for (_, seq, line) in &lines {
+        let label = line.label.trim();
+        pair_sets[*seq].insert((line.position, label));
+        if !label.is_empty() && !labels_seen[*seq].insert(label) {
+            duplicate_label = true;
+        }
     }
+    let sets_match = pair_sets.windows(2).all(|pair| pair[0] == pair[1]);
+    let case = match (sets_match, duplicate_label) {
+        (true, _) => SheetRuleCase::Summed,
+        (false, false) => SheetRuleCase::LabelChanged,
+        (false, true) => SheetRuleCase::Unsummed,
+    };
+
+    if case == SheetRuleCase::Unsummed {
+        // 3: 取込みの古い順、各取込みの中は位置の順。値は変えない
+        let mut rows: Vec<(usize, i64, i64, SheetRuleRow)> = lines
+            .iter()
+            .map(|(index, seq, line)| {
+                (
+                    *seq,
+                    line.position,
+                    line.tie,
+                    SheetRuleRow {
+                        representative: *index,
+                        position: line.position,
+                        label: line.label.trim().to_string(),
+                        quantity_hundredths: line.quantity_hundredths,
+                        count: line.count,
+                        amount: line.amount,
+                        import_seq: Some(*seq as i64 + 1),
+                    },
+                )
+            })
+            .collect();
+        rows.sort_by_key(|row| (row.0, row.1, row.2));
+        return Ok((case, rows.into_iter().map(|row| row.3).collect()));
+    }
+
+    // 1・2: 位置と名称の組で足す
+    struct Group<'a> {
+        first_seen: usize,
+        members: Vec<(usize, &'a SheetRuleLine)>,
+    }
+    let mut groups: BTreeMap<(i64, &str), Group> = BTreeMap::new();
+    for (index, seq, line) in &lines {
+        let group = groups
+            .entry((line.position, line.label.trim()))
+            .or_insert(Group {
+                first_seen: *seq,
+                members: Vec::new(),
+            });
+        group.first_seen = group.first_seen.min(*seq);
+        group.members.push((*index, line));
+    }
+    let mut rows = Vec::with_capacity(groups.len());
+    for ((position, label), mut group) in groups {
+        let representative = group
+            .members
+            .iter()
+            .min_by_key(|(_, line)| (line.position, line.tie))
+            .map(|(index, _)| *index)
+            .unwrap_or_default();
+        // 足す順は取込みの id の昇順（34 SALES-SHEET-D2 の「足す値」の (b)）
+        group.members.sort_by_key(|(_, line)| line.import_id);
+        let sum = |value: fn(&SheetRuleLine) -> Option<i64>| {
+            sum_sheet_values(group.members.iter().map(|(_, line)| value(line)))
+        };
+        rows.push((
+            (position, group.first_seen),
+            SheetRuleRow {
+                representative,
+                position,
+                label: label.to_string(),
+                quantity_hundredths: sum(|line| line.quantity_hundredths)?,
+                count: sum(|line| line.count)?,
+                amount: sum(|line| line.amount)?,
+                import_seq: None,
+            },
+        ));
+    }
+    // 位置の昇順、同じ位置は名称が最初に現れた取込みの古い順
+    rows.sort_by_key(|row| row.0);
+    Ok((case, rows.into_iter().map(|row| row.1).collect()))
+}
+
+/// D2 の足す値: NULL が 1 つでもあれば NULL（溢れより先）、無ければ左から checked_add し溢れは
+/// `ValidationFailed`（34 SALES-SHEET-D2 の (a)・(b)）
+fn sum_sheet_values(
+    values: impl Iterator<Item = Option<i64>> + Clone,
+) -> Result<Option<i64>, BizError> {
+    if values.clone().any(|value| value.is_none()) {
+        return Ok(None);
+    }
+    values
+        .flatten()
+        .try_fold(0_i64, |sum, value| sum.checked_add(value))
+        .map(Some)
+        .ok_or_else(|| {
+            BizError::ValidationFailed("売上集計の計算でオーバーフローが発生しました".to_string())
+        })
 }
 
 /// モード別集計を取得し、ランキングを付与する
@@ -726,6 +1055,7 @@ mod tests {
             source_line_no: None,
             reason: None,
             note: None,
+            stock_linked: false,
         };
         sales_repo::insert_sale_record(conn, &record).unwrap();
     }
@@ -742,6 +1072,7 @@ mod tests {
                 net_amount: Some(11000),
                 status: "completed".to_string(),
                 note: None,
+                settlement_no: None,
             },
         )
         .unwrap()
@@ -1273,6 +1604,8 @@ mod tests {
             DailyReportInputFile {
                 filename: name.to_string(),
                 bytes: encoded.to_vec(),
+                sd_relative_path: None,
+                source_path: None,
             }
         }
         let (_dir, mut conn) = setup_test_db();
@@ -1294,7 +1627,8 @@ mod tests {
                 ],
             )
             .unwrap();
-            commit_daily_report_import(&mut conn, parsed.cached_preview, false).unwrap();
+            commit_daily_report_import(&mut conn, parsed.cached_preview, false, _dir.path())
+                .unwrap();
         };
 
         import_day("2026-03-20", "1.3");
@@ -1458,11 +1792,14 @@ mod tests {
                     DailyReportInputFile {
                         bytes: std::fs::read(dir.join(&filename)).unwrap(),
                         filename,
+                        sd_relative_path: None,
+                        source_path: None,
                     }
                 })
                 .collect();
             let parsed = parse_and_validate_daily_report(&conn, files).unwrap();
-            commit_daily_report_import(&mut conn, parsed.cached_preview, additional).unwrap();
+            commit_daily_report_import(&mut conn, parsed.cached_preview, additional, _dir.path())
+                .unwrap();
         }
         let labels = [
             "総売",
@@ -1846,5 +2183,1027 @@ mod tests {
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].contains(",\"1,234 点・1.8 m\","), "{lines:?}");
         assert!(lines[1].contains(",1234,"), "{lines:?}");
+    }
+
+    // -------------------------------------------------------------------
+    // SALES-SHEET-D2 の関数（34 §19.3a。期待は 34 の例と Matrix から転記）
+    // -------------------------------------------------------------------
+
+    const OVERFLOW_MESSAGE: &str = "売上集計の計算でオーバーフローが発生しました";
+    const LABEL_CHANGED_WARNING: &str = "支払集計（Z002）は、この日の精算の間で行の名称か並びが変わっています。同じ名称の行が 2 行あれば、別々に足しています";
+    const UNSUMMED_WARNING: &str = "支払集計（Z002）は、この日の精算の間で行の名称か並びが変わり、1 回の精算の中に同じ名称の行が 2 行以上あるため、足さずに取込みの古い順に並べています。紙（日報を印刷）で取込みごとに見られます";
+
+    fn rule_line(import_id: i64, position: i64, label: &str, amount: Option<i64>) -> SheetRuleLine {
+        SheetRuleLine {
+            import_id,
+            tie: import_id * 1000 + position,
+            position,
+            label: label.to_string(),
+            quantity_hundredths: None,
+            count: Some(1),
+            amount,
+        }
+    }
+
+    /// (位置, 名称, 金額, import_seq) の並びで見る
+    fn rule_view(rows: &[SheetRuleRow]) -> Vec<(i64, &str, Option<i64>, Option<i64>)> {
+        rows.iter()
+            .map(|row| (row.position, row.label.as_str(), row.amount, row.import_seq))
+            .collect()
+    }
+
+    #[test]
+    fn test_sheet_rows_keep_same_position_different_label_separate() {
+        // REQ-501 / SALES-SHEET-D2 の 2: 同じ位置で名称が違う行は別の行
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 4, "項目A", Some(10)),
+                rule_line(2, 4, "項目B", Some(20)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::LabelChanged);
+        assert_eq!(
+            rule_view(&rows),
+            [(4, "項目A", Some(10), None), (4, "項目B", Some(20), None)]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_split_by_position_when_rows_shift() {
+        // REQ-501 / SALES-SHEET-D2 の 2: 行が 1 つずれた日は同じ名称が位置ごとの行
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 15, "項目A", Some(10)),
+                rule_line(1, 16, "項目B", Some(20)),
+                rule_line(2, 15, "項目X", Some(5)),
+                rule_line(2, 16, "項目A", Some(30)),
+                rule_line(2, 17, "項目B", Some(40)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::LabelChanged);
+        assert_eq!(
+            rule_view(&rows),
+            [
+                (15, "項目A", Some(10), None),
+                (15, "項目X", Some(5), None),
+                (16, "項目B", Some(20), None),
+                (16, "項目A", Some(30), None),
+                (17, "項目B", Some(40), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_unsummed_when_rows_shift_with_duplicate_label() {
+        // REQ-501 / SALES-SHEET-D2 の 3: 行がずれ 1 本の中に同じ名称があれば足さない（34 の例）
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "項目A", Some(10)),
+                rule_line(1, 2, "項目A", Some(20)),
+                rule_line(2, 1, "項目X", Some(5)),
+                rule_line(2, 2, "項目A", Some(30)),
+                rule_line(2, 3, "項目A", Some(40)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::Unsummed);
+        assert_eq!(
+            rule_view(&rows),
+            [
+                (1, "項目A", Some(10), Some(1)),
+                (2, "項目A", Some(20), Some(1)),
+                (1, "項目X", Some(5), Some(2)),
+                (2, "項目A", Some(30), Some(2)),
+                (3, "項目A", Some(40), Some(2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_import_seq_follows_import_ids() {
+        // REQ-501 / SALES-SHEET-D2 の 3: import_seq は import_ids の位置（行の無い取込みも番号を使う）
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(11, 1, "項目A", Some(10)),
+                rule_line(11, 2, "項目A", Some(20)),
+                rule_line(13, 1, "項目X", Some(5)),
+                rule_line(13, 2, "項目A", Some(30)),
+                rule_line(13, 3, "項目A", Some(40)),
+            ],
+            &[11, 12, 13],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::Unsummed);
+        let seqs: Vec<Option<i64>> = rows.iter().map(|row| row.import_seq).collect();
+        assert_eq!(seqs, [Some(1), Some(1), Some(3), Some(3), Some(3)]);
+    }
+
+    #[test]
+    fn test_sheet_rows_blank_labels_do_not_trigger_unsummed() {
+        // REQ-501 / SALES-SHEET-D2: 名称が空の同じ行は 3 の判定に数えない
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "項目A", Some(10)),
+                rule_line(1, 2, "", Some(0)),
+                rule_line(1, 3, "", Some(0)),
+                rule_line(2, 1, "項目X", Some(5)),
+                rule_line(2, 2, "項目A", Some(30)),
+                rule_line(2, 3, "", Some(0)),
+                rule_line(2, 4, "", Some(0)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::LabelChanged);
+        let view = rule_view(&rows);
+        for expected in [
+            (1, "項目A", Some(10), None),
+            (1, "項目X", Some(5), None),
+            (2, "項目A", Some(30), None),
+        ] {
+            assert!(view.contains(&expected), "{expected:?} in {view:?}");
+        }
+    }
+
+    #[test]
+    fn test_sheet_rows_no_notice_when_label_sets_match() {
+        // REQ-501 / SALES-SHEET-D2 の 1: 組の集合が同じなら組で足す
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "現金", Some(100)),
+                rule_line(1, 2, "項目B", Some(30)),
+                rule_line(2, 1, "現金", Some(50)),
+                rule_line(2, 2, "項目B", Some(7)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::Summed);
+        assert_eq!(
+            rule_view(&rows),
+            [(1, "現金", Some(150), None), (2, "項目B", Some(37), None)]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_do_not_merge_same_label_at_different_positions() {
+        // REQ-501 / SALES-SHEET-D2: 名称だけでは足さない（位置 7 と 33 の同じ名称）
+        let (case, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 7, "名称", Some(10)),
+                rule_line(1, 33, "名称", Some(20)),
+                rule_line(2, 7, "名称", Some(10)),
+                rule_line(2, 33, "名称", Some(20)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(case, SheetRuleCase::Summed);
+        assert_eq!(
+            rule_view(&rows),
+            [(7, "名称", Some(20), None), (33, "名称", Some(40), None)]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_propagate_null() {
+        // REQ-501 / SALES-SHEET-D2 の足す値 (a): NULL のある組は NULL
+        let (_, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "現金", None),
+                rule_line(2, 1, "現金", Some(20)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(rule_view(&rows), [(1, "現金", None, None)]);
+    }
+
+    #[test]
+    fn test_sheet_rows_sum_quantity_in_hundredths() {
+        // REQ-501 / SALES-SHEET-D2・IO-07-D2: 個数は 100 倍の整数で足す（1.3 + 2 → 3.3）
+        let line = |import_id, quantity| SheetRuleLine {
+            quantity_hundredths: Some(quantity),
+            ..rule_line(import_id, 1, "総売", Some(1))
+        };
+        let (_, rows) = apply_sheet_rule(&[line(1, 130), line(2, 200)], &[1, 2]).unwrap();
+        assert_eq!(rows[0].quantity_hundredths, Some(330));
+        assert_eq!(quantity_hundredths_to_units(330), 3.3);
+    }
+
+    #[test]
+    fn test_sheet_rows_order_by_position_then_first_seen_import() {
+        // REQ-501 / SALES-SHEET-D2 の並び: 位置の昇順、同じ位置は最初に現れた取込みの古い順
+        let (_, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 2, "項目B", Some(1)),
+                rule_line(2, 2, "項目A", Some(2)),
+                rule_line(2, 1, "項目C", Some(3)),
+            ],
+            &[1, 2],
+        )
+        .unwrap();
+        assert_eq!(
+            rule_view(&rows),
+            [
+                (1, "項目C", Some(3), None),
+                (2, "項目B", Some(1), None),
+                (2, "項目A", Some(2), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_overflow_is_validation_failed() {
+        // REQ-501 / SALES-SHEET-D2・D5: 足す値の溢れは ValidationFailed
+        let result = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "現金", Some(i64::MAX)),
+                rule_line(2, 1, "現金", Some(1)),
+            ],
+            &[1, 2],
+        );
+        assert!(
+            matches!(result, Err(BizError::ValidationFailed(message)) if message == OVERFLOW_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_add_in_import_id_order() {
+        // REQ-501 / SALES-SHEET-D2 の (b): 足す順は取込みの id の昇順（import_ids の並びでない）
+        let result = apply_sheet_rule(
+            &[
+                rule_line(13, 1, "現金", Some(-i64::MAX)),
+                rule_line(12, 1, "現金", Some(1)),
+                rule_line(11, 1, "現金", Some(i64::MAX)),
+            ],
+            &[13, 12, 11],
+        );
+        assert!(
+            matches!(result, Err(BizError::ValidationFailed(message)) if message == OVERFLOW_MESSAGE)
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_null_wins_over_overflow() {
+        // REQ-501 / SALES-SHEET-D2 の (a): NULL が溢れより先。件数は足す
+        let (_, rows) = apply_sheet_rule(
+            &[
+                rule_line(1, 1, "現金", Some(i64::MAX)),
+                rule_line(2, 1, "現金", Some(1)),
+                rule_line(3, 1, "現金", None),
+            ],
+            &[1, 2, 3],
+        )
+        .unwrap();
+        assert_eq!(rows[0].amount, None);
+        assert_eq!(rows[0].count, Some(3));
+    }
+
+    // -------------------------------------------------------------------
+    // get_daily_report_sheet と画面の支払集計（実 DB）
+    // -------------------------------------------------------------------
+
+    type SheetLine<'a> = (i64, &'a str, Option<i64>, Option<i64>, Option<i64>);
+
+    /// 日報の取込みを 1 つ入れる。行は (位置, 名称, 個数の 100 倍, 件数, 金額)
+    fn seed_sheet_import(
+        conn: &DbConnection,
+        date: &str,
+        hash: &str,
+        z001: &[SheetLine],
+        z002: &[SheetLine],
+        z005: &[SheetLine],
+    ) -> i64 {
+        let import_id = seed_daily_report(conn, date, hash);
+        sales_repo::insert_daily_report_summary_lines(
+            conn,
+            &z001
+                .iter()
+                .map(
+                    |(position, label, quantity, count, amount)| NewDailyReportSummaryLine {
+                        daily_report_import_id: import_id,
+                        source_file: "Z001".to_string(),
+                        line_key: format!("summary_{position}"),
+                        label: label.to_string(),
+                        amount: *amount,
+                        quantity_hundredths: *quantity,
+                        count: *count,
+                        sort_order: *position,
+                    },
+                )
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        sales_repo::insert_daily_report_payment_lines(
+            conn,
+            &z002
+                .iter()
+                .map(
+                    |(position, label, _, count, amount)| NewDailyReportPaymentLine {
+                        daily_report_import_id: import_id,
+                        source_file: "Z002".to_string(),
+                        payment_key: if label.trim() == "現金" {
+                            "cash".to_string()
+                        } else {
+                            format!("payment_{position}")
+                        },
+                        label: label.to_string(),
+                        amount: *amount,
+                        count: *count,
+                        sort_order: *position,
+                    },
+                )
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        sales_repo::insert_daily_report_department_lines(
+            conn,
+            &z005
+                .iter()
+                .map(
+                    |(position, label, quantity, count, amount)| NewDailyReportDepartmentLine {
+                        daily_report_import_id: import_id,
+                        source_file: "Z005".to_string(),
+                        department_id: Some(1),
+                        raw_department_name: label.to_string(),
+                        normalized_department_name: Some(label.to_string()),
+                        amount: amount.unwrap_or(0),
+                        quantity_hundredths: *quantity,
+                        count: *count,
+                        sort_order: *position,
+                    },
+                )
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        import_id
+    }
+
+    fn set_imported_at(conn: &DbConnection, import_id: i64, imported_at: &str) {
+        conn.execute(
+            "UPDATE daily_report_imports SET imported_at = ?1 WHERE id = ?2",
+            rusqlite::params![imported_at, import_id],
+        )
+        .unwrap();
+    }
+
+    fn sheet_view(rows: &[DailyReportSheetRow]) -> Vec<(i64, &str, Option<i64>, Option<i64>)> {
+        rows.iter()
+            .map(|row| (row.position, row.label.as_str(), row.amount, row.import_seq))
+            .collect()
+    }
+
+    fn payment_view(
+        official: &OfficialDailyReportSummary,
+    ) -> Vec<(&str, &str, Option<i64>, Option<i64>)> {
+        official
+            .payment_lines
+            .iter()
+            .map(|line| {
+                (
+                    line.payment_key.as_str(),
+                    line.label.as_str(),
+                    line.amount,
+                    line.count,
+                )
+            })
+            .collect()
+    }
+
+    fn table_counts(conn: &DbConnection) -> Vec<i64> {
+        [
+            "daily_report_imports",
+            "daily_report_summary_lines",
+            "daily_report_payment_lines",
+            "daily_report_department_lines",
+            "sale_records",
+            "csv_imports",
+            "operation_logs",
+        ]
+        .iter()
+        .map(|table| {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        })
+        .collect()
+    }
+
+    /// 34 SALES-SHEET-D2 の 3 の例の Z002 の 2 取込み
+    const SHIFTED_Z002_FIRST: [SheetLine<'static>; 2] = [
+        (1, "項目A", None, Some(1), Some(10)),
+        (2, "項目A", None, Some(1), Some(20)),
+    ];
+    const SHIFTED_Z002_SECOND: [SheetLine<'static>; 3] = [
+        (1, "項目X", None, Some(1), Some(5)),
+        (2, "項目A", None, Some(1), Some(30)),
+        (3, "項目A", None, Some(1), Some(40)),
+    ];
+
+    #[test]
+    fn test_daily_report_sheet_sums_all_completed_imports_of_the_day() {
+        // REQ-501 / SALES-SHEET-D1・D6: 同じ日の 2 取込みを 1 枚に足す。読むだけで何も書かない
+        let (_dir, conn) = setup_test_db();
+        let total = |amount| [(1, "総売", Some(100), None, Some(amount))];
+        seed_sheet_import(&conn, "2026-03-21", "sheet-a", &total(1000), &[], &[]);
+        seed_sheet_import(&conn, "2026-03-21", "sheet-b", &total(500), &[], &[]);
+        let before = table_counts(&conn);
+
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.import_count, 2);
+        assert_eq!(
+            sheet_view(&sheet.summary_rows),
+            [(1, "総売", Some(1500), None)]
+        );
+        assert_eq!(table_counts(&conn), before);
+    }
+
+    #[test]
+    fn test_daily_report_sheet_excludes_rolled_back_import() {
+        // REQ-501 / SALES-SHEET-D1・D6: 取り消した取込みの値は入らない
+        let (_dir, conn) = setup_test_db();
+        let total = |amount| [(1, "総売", Some(100), None, Some(amount))];
+        seed_sheet_import(&conn, "2026-03-21", "rb-a", &total(1000), &[], &[]);
+        let rolled = seed_sheet_import(&conn, "2026-03-21", "rb-b", &total(500), &[], &[]);
+        sales_repo::rollback_daily_report_import(&conn, rolled, "2026-03-22T10:00:00").unwrap();
+
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.import_count, 1);
+        assert_eq!(
+            sheet_view(&sheet.summary_rows),
+            [(1, "総売", Some(1000), None)]
+        );
+    }
+
+    #[test]
+    fn test_daily_report_sheet_unsummed_only_for_shifted_source() {
+        // REQ-501 / SALES-SHEET-D2: 帳票ごとに場合を決める（Z002 だけ 3、Z001 は足す）
+        let (_dir, conn) = setup_test_db();
+        let z001 = [(1, "総売", Some(100), None, Some(100))];
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "shift-a",
+            &z001,
+            &SHIFTED_Z002_FIRST,
+            &[],
+        );
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "shift-b",
+            &z001,
+            &SHIFTED_Z002_SECOND,
+            &[],
+        );
+
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.unsummed_sources, [DailyReportSourceKind::Z002]);
+        assert_eq!(sheet.label_changed_sources, [DailyReportSourceKind::Z002]);
+        assert_eq!(
+            sheet_view(&sheet.summary_rows),
+            [(1, "総売", Some(200), None)]
+        );
+        assert_eq!(
+            sheet_view(&sheet.payment_rows),
+            [
+                (1, "項目A", Some(10), Some(1)),
+                (2, "項目A", Some(20), Some(1)),
+                (1, "項目X", Some(5), Some(2)),
+                (2, "項目A", Some(30), Some(2)),
+                (3, "項目A", Some(40), Some(2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_sheet_rows_drop_blank_label_zero_rows_only() {
+        // REQ-501 / SALES-SHEET-D3: 名称が空で値が 0 の行は載せず、名称が空で値のある行は載せる
+        let (_dir, conn) = setup_test_db();
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "blank",
+            &[],
+            &[
+                (1, "現金", None, Some(1), Some(10)),
+                (2, "", None, Some(0), Some(0)),
+                (3, "", None, Some(1), Some(5)),
+            ],
+            &[],
+        );
+
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(
+            sheet_view(&sheet.payment_rows),
+            [(1, "現金", Some(10), None), (3, "", Some(5), None)]
+        );
+    }
+
+    #[test]
+    fn test_daily_report_sheet_plu_rows_are_auto_nonzero_only() {
+        // REQ-501 / SALES-SHEET-D4: PLU は auto で数量か金額が 0 でない行だけ（手動販売・0 の行を除く）
+        let (_dir, conn) = setup_test_db();
+        seed_product(&conn, "P001", 1);
+        seed_product(&conn, "P002", 1);
+        seed_product(&conn, "P003", 1);
+        seed_sale(&conn, "P001", "2026-03-21", 2, 1000, "auto");
+        seed_sale(&conn, "P002", "2026-03-21", 1, 500, "manual");
+        seed_sale(&conn, "P003", "2026-03-21", 1, 300, "auto");
+        seed_sale(&conn, "P003", "2026-03-21", -1, -300, "auto");
+
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        let codes: Vec<(&str, DailySaleSource)> = sheet
+            .plu_rows
+            .iter()
+            .map(|item| (item.product_code.as_str(), item.source))
+            .collect();
+        assert_eq!(codes, [("P001", DailySaleSource::Auto)]);
+    }
+
+    #[test]
+    fn test_daily_report_sheet_plu_import_counts() {
+        // REQ-501 / SALES-SHEET-D4・24 §14.21b: Z004 の active な取込みの数と skipped_count の和
+        let (_dir, conn) = setup_test_db();
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(
+            sheet.plu_import,
+            DailyReportSheetPluImport {
+                import_count: 0,
+                skipped_count: 0
+            }
+        );
+        for (settlement_no, status, skipped) in [
+            (1, "completed_partial", 2),
+            (2, "rolled_back", 7),
+            (3, "completed", 0),
+        ] {
+            sales_repo::insert_csv_import(
+                &conn,
+                &sales_repo::NewCsvImport {
+                    filename: "Z004.CSV".to_string(),
+                    settlement_date: "2026-03-21".to_string(),
+                    file_hash: format!("z004-{settlement_no}"),
+                    total_items: 1,
+                    total_amount: 1,
+                    skipped_count: skipped,
+                    status: status.to_string(),
+                    machine_no: "0001".to_string(),
+                    settlement_no,
+                },
+            )
+            .unwrap();
+        }
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(
+            sheet.plu_import,
+            DailyReportSheetPluImport {
+                import_count: 2,
+                skipped_count: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_daily_report_sheet_empty_day_returns_zero_imports() {
+        // REQ-501 / SALES-SHEET-D5: 取込みの無い日は error にせず import_count 0 と空の行
+        let (_dir, conn) = setup_test_db();
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.import_count, 0);
+        assert!(sheet.summary_rows.is_empty());
+        assert!(sheet.payment_rows.is_empty());
+        assert!(sheet.department_rows.is_empty());
+        assert!(sheet.label_changed_sources.is_empty());
+        assert!(sheet.plu_rows.is_empty());
+    }
+
+    #[test]
+    fn test_daily_report_sheet_rejects_invalid_date() {
+        // REQ-501 / SALES-SHEET-D5: §19.3 と同じ文言
+        let (_dir, conn) = setup_test_db();
+        assert!(matches!(
+            get_daily_report_sheet(&conn, "2026-02-30"),
+            Err(BizError::ValidationFailed(message)) if message == "存在しない日付です"
+        ));
+        assert!(matches!(
+            get_daily_report_sheet(&conn, "2026/03/21"),
+            Err(BizError::ValidationFailed(message)) if message == "日付の形式が不正です（YYYY-MM-DD）"
+        ));
+    }
+
+    #[test]
+    fn test_daily_sales_payment_unchanged_when_labels_stable() {
+        // REQ-501 / 34 §19.3 手順 3: 互換の範囲の日は今と同じ行と値、warning なし
+        let (_dir, conn) = setup_test_db();
+        let z002 = [
+            (1, "現金", None, Some(2), Some(100)),
+            (2, "項目B", None, Some(1), Some(30)),
+        ];
+        seed_sheet_import(&conn, "2026-03-21", "stable-a", &[], &z002, &[]);
+        seed_sheet_import(&conn, "2026-03-21", "stable-b", &[], &z002, &[]);
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("cash", "現金", Some(200), Some(4)),
+                ("payment_2", "項目B", Some(60), Some(2)),
+            ]
+        );
+        assert!(official.warnings.is_empty(), "{:?}", official.warnings);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_representative_in_range_is_first_row() {
+        // REQ-501 / 34 §19.3 手順 3: 代表は最小 sort_order・最小の行 id（名称は保存値のまま）
+        let (_dir, conn) = setup_test_db();
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "rep-a",
+            &[],
+            &[(1, "現金 ", None, Some(1), Some(10))],
+            &[],
+        );
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "rep-b",
+            &[],
+            &[(1, "現金", None, Some(1), Some(20))],
+            &[],
+        );
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [("cash", "現金 ", Some(30), Some(2))]
+        );
+        assert!(official.warnings.is_empty(), "{:?}", official.warnings);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_splits_duplicate_payment_key_by_position() {
+        // REQ-501 / 34 §19.3 手順 3: 1 取込みの中の同じ payment_key の 2 行は位置ごとに分かれる
+        let (_dir, conn) = setup_test_db();
+        let z002 = [
+            (1, "現金", None, Some(1), Some(10)),
+            (2, "現金", None, Some(1), Some(20)),
+        ];
+        seed_sheet_import(&conn, "2026-03-21", "dup-a", &[], &z002, &[]);
+        seed_sheet_import(&conn, "2026-03-21", "dup-b", &[], &z002, &[]);
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("cash", "現金", Some(20), Some(2)),
+                ("cash", "現金", Some(40), Some(2))
+            ]
+        );
+    }
+
+    #[test]
+    fn test_daily_sales_payment_merges_pair_with_mixed_stored_payment_key() {
+        // REQ-501 / 34 §19.3 手順 3: 同じ組で保存済みの payment_key が違っても組で足す（代表は取込み 1）
+        let (_dir, conn) = setup_test_db();
+        let first = seed_daily_report(&conn, "2026-03-21", "mixed-a");
+        let second = seed_daily_report(&conn, "2026-03-21", "mixed-b");
+        for (import_id, key, amount) in [(first, "credit", 10), (second, "payment_1", 20)] {
+            sales_repo::insert_daily_report_payment_lines(
+                &conn,
+                &[NewDailyReportPaymentLine {
+                    daily_report_import_id: import_id,
+                    source_file: "Z002".to_string(),
+                    payment_key: key.to_string(),
+                    label: "項目C".to_string(),
+                    amount: Some(amount),
+                    count: Some(1),
+                    sort_order: 1,
+                }],
+            )
+            .unwrap();
+        }
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [("credit", "項目C", Some(30), Some(2))]
+        );
+    }
+
+    #[test]
+    fn test_daily_sales_payment_unsummed_matches_sheet_rule() {
+        // REQ-501 / 34 §19.3 手順 3・SALES-SHEET-D2: 紙と同じ規則で 3、取込みの古い順の 5 行と 3 の文だけ
+        let (_dir, conn) = setup_test_db();
+        let z001 = [(1, "総売", Some(100), None, Some(100))];
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "shift-a",
+            &z001,
+            &SHIFTED_Z002_FIRST,
+            &[],
+        );
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "shift-b",
+            &z001,
+            &SHIFTED_Z002_SECOND,
+            &[],
+        );
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        let amounts: Vec<(&str, Option<i64>)> = official
+            .payment_lines
+            .iter()
+            .map(|line| (line.label.as_str(), line.amount))
+            .collect();
+        assert_eq!(
+            amounts,
+            [
+                ("項目A", Some(10)),
+                ("項目A", Some(20)),
+                ("項目X", Some(5)),
+                ("項目A", Some(30)),
+                ("項目A", Some(40)),
+            ]
+        );
+        assert_eq!(official.warnings, [UNSUMMED_WARNING]);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_label_changed_warns() {
+        // REQ-501 / 34 §19.3 手順 3: 2 の日は 2 行と 2 の文だけ
+        let (_dir, conn) = setup_test_db();
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "lc-a",
+            &[],
+            &[(1, "項目A", None, Some(1), Some(10))],
+            &[],
+        );
+        seed_sheet_import(
+            &conn,
+            "2026-03-21",
+            "lc-b",
+            &[],
+            &[(1, "項目B", None, Some(1), Some(20))],
+            &[],
+        );
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("payment_1", "項目A", Some(10), Some(1)),
+                ("payment_1", "項目B", Some(20), Some(1)),
+            ]
+        );
+        assert_eq!(official.warnings, [LABEL_CHANGED_WARNING]);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_overflow_and_null_order() {
+        // REQ-501 / 34 §19.3 手順 3: 足す順は取込みの id の昇順（imported_at の逆でも）、NULL が溢れより先
+        let (_dir, conn) = setup_test_db();
+        let seed_three = |date: &str, amounts: [Option<i64>; 3]| {
+            let ids: Vec<i64> = amounts
+                .iter()
+                .enumerate()
+                .map(|(index, amount)| {
+                    seed_sheet_import(
+                        &conn,
+                        date,
+                        &format!("{date}-{index}"),
+                        &[],
+                        &[(1, "現金", None, Some(1), *amount)],
+                        &[],
+                    )
+                })
+                .collect();
+            // 取込みの時刻を id の逆にする
+            for (index, id) in ids.iter().enumerate() {
+                set_imported_at(&conn, *id, &format!("{date}T2{}:00:00", 2 - index));
+            }
+        };
+        seed_three("2026-03-21", [Some(i64::MAX), Some(1), Some(-i64::MAX)]);
+        assert!(matches!(
+            get_daily_sales(&conn, "2026-03-21"),
+            Err(BizError::ValidationFailed(message)) if message == OVERFLOW_MESSAGE
+        ));
+
+        seed_three("2026-03-22", [Some(i64::MAX), Some(1), None]);
+        let official = get_daily_sales(&conn, "2026-03-22")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(payment_view(&official), [("cash", "現金", None, Some(3))]);
+    }
+
+    #[test]
+    fn test_payment_and_sheet_share_one_d2_function() {
+        // REQ-501 / 34 §19.3 手順 3・D-142 の (4): D2 の実装は 1 つ（画面の支払と紙が同じ関数を呼ぶ）
+        let service = include_str!("sales_service.rs");
+        let production = service.split("#[cfg(test)]").next().unwrap();
+        assert_eq!(production.matches("fn apply_sheet_rule(").count(), 1);
+        assert!(production.matches("apply_sheet_rule(").count() >= 3);
+        let map_fn = &production[production.find("fn map_official_daily_report(").unwrap()..];
+        assert!(map_fn[..map_fn.find("\n}\n").unwrap()].contains("apply_sheet_rule("));
+        let sheet_fn = &production[production.find("fn get_daily_report_sheet(").unwrap()..];
+        assert!(sheet_fn[..sheet_fn.find("\n}\n").unwrap()].contains("apply_sheet_rule("));
+        let repo = include_str!("../db/sales_repo.rs");
+        assert!(!repo.contains("PaymentGroup"));
+    }
+
+    #[test]
+    fn test_daily_sales_and_sheet_return_same_large_values() {
+        // REQ-501 / 10 (e)・D-142: 上限の中の大きな値は画面も紙も範囲の検査をせずに同じ値を返す
+        let (_dir, conn) = setup_test_db();
+        for hash in ["large-a", "large-b"] {
+            let id = seed_sheet_import(
+                &conn,
+                "2026-03-21",
+                hash,
+                &[(1, "総売", Some(100), None, Some(9999999999))],
+                &[],
+                &[],
+            );
+            conn.execute(
+                "UPDATE daily_report_imports SET gross_amount = 9999999999 WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .unwrap();
+        }
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(official.gross_amount, Some(19999999998));
+        let sheet = get_daily_report_sheet(&conn, "2026-03-21").unwrap();
+        assert_eq!(sheet.summary_rows[0].amount, Some(19999999998));
+    }
+
+    // 既存の IO の test（sales_repo の支払の集約）から移した期待（Matrix の「既存の test の移し方」）。
+    // fixture は IO の test と同じ。範囲の外の 2 本は **正本の変更で期待が変わる**（34 §19.3 手順 3
+    // 「範囲の外の入力は新しい規則の値」）。
+
+    fn insert_payment(
+        conn: &DbConnection,
+        import_id: i64,
+        sort_order: i64,
+        label: &str,
+        key: &str,
+        amount: Option<i64>,
+        count: i64,
+    ) {
+        sales_repo::insert_daily_report_payment_lines(
+            conn,
+            &[NewDailyReportPaymentLine {
+                daily_report_import_id: import_id,
+                source_file: "Z002".to_string(),
+                payment_key: key.to_string(),
+                label: label.to_string(),
+                amount,
+                count: Some(count),
+                sort_order,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_daily_sales_payment_out_of_range_all_active_parents_req501() {
+        // REQ-501 / 34 §19.3 手順 3: 旧 test_completed_daily_report_aggregate_req501_all_active_parents の支払。
+        // 並びと値は今と同じ、2 の warning が 1 件増える（正本の変更で期待が変わる）
+        let (_dir, conn) = setup_test_db();
+        let old_id = seed_daily_report(&conn, "2026-03-21", "latest-old");
+        insert_payment(&conn, old_id, 1, "旧現金", "old", Some(1), 1);
+        let latest_id = seed_daily_report(&conn, "2026-03-21", "latest-new");
+        insert_payment(&conn, latest_id, 2, "クレジット", "credit", Some(2000), 2);
+        insert_payment(&conn, latest_id, 1, "現金", "cash", Some(9000), 5);
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("old", "旧現金", Some(1), Some(1)),
+                ("cash", "現金", Some(9000), Some(5)),
+                ("credit", "クレジット", Some(2000), Some(2)),
+            ]
+        );
+        assert_eq!(official.warnings, [LABEL_CHANGED_WARNING]);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_out_of_range_null_fixture_req501() {
+        // REQ-501 / 34 §19.3 手順 3: 旧 ..._propagates_parent_and_line_nulls の支払。
+        // 旧い期待の 1 行 (現金新, NULL, 3) は成り立たず、D2 の 2 の 2 行と 2 の warning（正本の変更で期待が変わる）
+        let (_dir, conn) = setup_test_db();
+        let first = seed_daily_report(&conn, "2026-03-21", "null-a");
+        let second = seed_daily_report(&conn, "2026-03-21", "null-b");
+        insert_payment(&conn, first, 2, "現金旧", "cash", None, 1);
+        insert_payment(&conn, second, 1, "現金新", "cash", Some(200), 2);
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("cash", "現金新", Some(200), Some(2)),
+                ("cash", "現金旧", None, Some(1)),
+            ]
+        );
+        assert_eq!(official.warnings, [LABEL_CHANGED_WARNING]);
+    }
+
+    #[test]
+    fn test_daily_sales_payment_out_of_range_identities_req501() {
+        // REQ-501 / 34 §19.3 手順 3: 旧 ..._groups_identities_deterministically の支払。
+        // 旧い期待の 1 行 (cash, 現金 新, 300, 3) は成り立たず、2 行と、部門の warning の後に 2 の文（正本の変更で期待が変わる）
+        let (_dir, conn) = setup_test_db();
+        let first = seed_daily_report(&conn, "2026-03-21", "groups-a");
+        let second = seed_daily_report(&conn, "2026-03-21", "groups-b");
+        insert_payment(&conn, first, 4, "現金 旧", "cash", Some(100), 1);
+        insert_payment(&conn, second, 1, "現金 新", "cash", Some(200), 2);
+        sales_repo::insert_daily_report_department_lines(
+            &conn,
+            &[
+                NewDailyReportDepartmentLine {
+                    daily_report_import_id: first,
+                    source_file: "Z005".into(),
+                    department_id: None,
+                    raw_department_name: "生地 旧".into(),
+                    normalized_department_name: Some("生地".into()),
+                    amount: 100,
+                    quantity_hundredths: Some(100),
+                    count: Some(1),
+                    sort_order: 4,
+                },
+                NewDailyReportDepartmentLine {
+                    daily_report_import_id: second,
+                    source_file: "Z005".into(),
+                    department_id: None,
+                    raw_department_name: "毛糸".into(),
+                    normalized_department_name: None,
+                    amount: 300,
+                    quantity_hundredths: Some(300),
+                    count: Some(3),
+                    sort_order: 2,
+                },
+            ],
+        )
+        .unwrap();
+
+        let official = get_daily_sales(&conn, "2026-03-21")
+            .unwrap()
+            .official_daily_report
+            .unwrap();
+        assert_eq!(
+            payment_view(&official),
+            [
+                ("cash", "現金 新", Some(200), Some(2)),
+                ("cash", "現金 旧", Some(100), Some(1)),
+            ]
+        );
+        assert_eq!(
+            official.warnings,
+            [
+                "部門マスタと対応していない部門が 2 件あります（部門名のまま表示しています）",
+                LABEL_CHANGED_WARNING,
+            ]
+        );
     }
 }

@@ -2,7 +2,9 @@
 
 ## Status
 
-accepted — 2026-09-24、㉘ runtime ①（packet `docs/archive/plans/2026-09-23-legacy-stocktake-z004-write-stop.md`）。owner 決定 2026-09-22（㉘ runtime の最初の lane = 既存の危険な操作の停止と再現 fixture）。
+superseded — 2026-10-23、D-118 の runtime の b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で 5 つの入口を一度に外し（SPEC-STOP-D6）、旧本体と停止の文言・定数・画面の案内を撤去した。置き換えた先は [棚卸しの数の置き場と在庫の求め直しの ADR](2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D12 の b1）。以下は accepted の時点の記録。
+
+accepted（当時） — 2026-09-24、㉘ runtime ①（packet `docs/archive/plans/2026-09-23-legacy-stocktake-z004-write-stop.md`）。owner 決定 2026-09-22（㉘ runtime の最初の lane = 既存の危険な操作の停止と再現 fixture）。
 
 対象は REQ-205 / REQ-401。停止は現行 build に固定し、⑤（一括切替）で本 ADR を superseded にして解除する。
 

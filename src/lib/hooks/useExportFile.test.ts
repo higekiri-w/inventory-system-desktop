@@ -51,6 +51,7 @@ describe("useExportFile (UI-09a/b §57.5, B4 describeError adoption)", () => {
         message: "CSV出力に失敗しました",
         field: null,
         error_id: "E-20260501-090000-syn4",
+        stocktake_recovery: null,
       },
     });
 
@@ -76,6 +77,7 @@ describe("useExportFile (UI-09a/b §57.5, B4 describeError adoption)", () => {
         message: "対象期間のデータがありません",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
 

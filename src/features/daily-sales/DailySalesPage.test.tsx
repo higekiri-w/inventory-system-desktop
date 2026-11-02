@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/lib/bindings";
 import type {
+  DailyReportSheet,
   DailySalesReport,
   OfficialDailyReportSummary,
   OfficialDailySummaryImport,
@@ -25,10 +26,27 @@ vi.mock("./hooks/useExportDailySalesCsv", () => ({
 vi.mock("@/lib/bindings", () => ({
   commands: {
     getDailySales: vi.fn(),
+    getDailyReportSheet: vi.fn(),
   },
 }));
 
 const mockGetDailySales = vi.mocked(commands.getDailySales);
+const mockGetDailyReportSheet = vi.mocked(commands.getDailyReportSheet);
+
+function buildSheet(overrides: Partial<DailyReportSheet> = {}): DailyReportSheet {
+  return {
+    date: "2026-03-21",
+    import_count: 1,
+    summary_rows: [],
+    payment_rows: [],
+    department_rows: [],
+    label_changed_sources: [],
+    unsummed_sources: [],
+    plu_rows: [],
+    plu_import: { import_count: 0, skipped_count: 0 },
+    ...overrides,
+  };
+}
 
 function buildReport(overrides: Partial<DailySalesReport> = {}): DailySalesReport {
   return {
@@ -55,6 +73,7 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetDailySales.mockResolvedValue({ status: "ok", data: buildReport() });
+  mockGetDailyReportSheet.mockResolvedValue({ status: "ok", data: buildSheet() });
 });
 
 it("SPEC-FILTER-LABEL-RT-1 D-RT8: 日付と部門フィルタの下辺を揃える", () => {
@@ -129,7 +148,7 @@ describe("DailySalesPage REQ-501 official daily report", () => {
     expect(await screen.findByRole("heading", { name: "レジ日報（公式）" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "総売上・純売上・支払集計・部門別集計は2回の取込みを合算しています。日計（Z001）は取込みごとに表示します。",
+        "総売上・純売上・支払集計・部門別集計は2回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。",
       ),
     ).toBeInTheDocument();
     expect(await screen.findByText("総売上")).toBeInTheDocument();
@@ -199,14 +218,16 @@ describe("DailySalesPage REQ-501 official daily report", () => {
 
     renderPage();
 
-    expect(await screen.findByText("日報の部門確認が必要です")).toBeInTheDocument();
+    expect(await screen.findByText("日報の確認が必要です")).toBeInTheDocument();
     // SC20 / DSR-08: 既存文言・roleを保ってwarning variantへ移行する。
-    expect(
-      screen.getByText("日報の部門確認が必要です").closest('[data-slot="alert"]'),
-    ).toHaveAttribute("data-variant", "warning");
-    expect(
-      screen.getByText("日報の部門確認が必要です").closest('[data-slot="alert"]'),
-    ).toHaveAttribute("role", "alert");
+    expect(screen.getByText("日報の確認が必要です").closest('[data-slot="alert"]')).toHaveAttribute(
+      "data-variant",
+      "warning",
+    );
+    expect(screen.getByText("日報の確認が必要です").closest('[data-slot="alert"]')).toHaveAttribute(
+      "role",
+      "alert",
+    );
     expect(
       screen.getByText(
         "部門マスタと対応していない部門が 1 件あります（部門名のまま表示しています）",
@@ -260,7 +281,7 @@ function isBefore(first: Element, second: Element) {
 }
 
 const multiImportSentence = (n: number) =>
-  `総売上・純売上・支払集計・部門別集計は${String(n)}回の取込みを合算しています。日計（Z001）は取込みごとに表示します。`;
+  `総売上・純売上・支払集計・部門別集計は${String(n)}回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。`;
 
 describe("DailySalesPage REQ-501 UI-09a-D16 z001", () => {
   it("test_daily_sales_page_req501_z001_table_single_import", async () => {
@@ -423,6 +444,7 @@ describe("DailySalesPage describeError adoption (B1, UI-ERR-D2)", () => {
         message: "日次売上の取得に失敗しました",
         field: null,
         error_id: "E-20260321-090000-syn1",
+        stocktake_recovery: null,
       },
     });
 
@@ -444,5 +466,85 @@ describe("DailySalesPage native input tokens（Lane 5 SC4k）", () => {
     const dateInput = await screen.findByLabelText("日付を選択");
     expect(dateInput).toHaveClass("bg-control-surface");
     expect(dateInput).not.toHaveClass("bg-background");
+  });
+});
+
+// UI-09a-D16（D-120）: 支払集計の行の key と、足さない日の文。期待は 56 UI-09a-D16・34 §19.3 手順 3 から転記。
+describe("DailySalesPage UI-09a-D16 payment lines (D-120)", () => {
+  function paymentRows() {
+    const heading = screen.getByRole("heading", { level: 3, name: "支払集計（Z002）" });
+    const table = heading.parentElement?.querySelector("table");
+    if (!table) throw new Error("支払集計の表が無い");
+    return tableCells(table);
+  }
+
+  it("DailySalesPage shows both payment rows with same payment_key (UI-09a)", async () => {
+    const official = (lines: OfficialDailyReportSummary["payment_lines"]) =>
+      buildReport({
+        official_daily_report: { ...buildOfficial([]), payment_lines: lines },
+      });
+    mockGetDailySales.mockResolvedValue({
+      status: "ok",
+      data: official([
+        { payment_key: "cash", label: "現金", amount: 20, count: 1 },
+        { payment_key: "cash", label: "現金", amount: 40, count: 1 },
+      ]),
+    });
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY } },
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <DailySalesPage search={{ date: "2026-03-21" }} onSearchChange={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("heading", { level: 3, name: "支払集計（Z002）" });
+    expect(paymentRows()).toEqual([
+      ["現金", "1 件", "¥20"],
+      ["現金", "1 件", "¥40"],
+    ]);
+
+    mockGetDailySales.mockResolvedValue({
+      status: "ok",
+      data: official([
+        { payment_key: "payment_1", label: "項目X", amount: 5, count: 1 },
+        { payment_key: "cash", label: "項目B", amount: 40, count: 1 },
+      ]),
+    });
+    await qc.invalidateQueries();
+    await screen.findByText("項目X");
+    expect(paymentRows()).toEqual([
+      ["項目X", "1 件", "¥5"],
+      ["項目B", "1 件", "¥40"],
+    ]);
+  });
+
+  it("DailySalesPage texts stay true on unsummed payment day (UI-09a)", async () => {
+    const unsummed =
+      "支払集計（Z002）は、この日の精算の間で行の名称か並びが変わり、1 回の精算の中に同じ名称の行が 2 行以上あるため、足さずに取込みの古い順に並べています。紙（日報を印刷）で取込みごとに見られます";
+    mockGetDailySales.mockResolvedValue({
+      status: "ok",
+      data: buildReport({
+        official_daily_report: {
+          ...buildOfficial([
+            z001Import(51, "2026-03-21T12:00:00", []),
+            z001Import(52, "2026-03-21T20:00:00", []),
+          ]),
+          warnings: [unsummed],
+        },
+      }),
+    });
+
+    renderPage();
+
+    expect(
+      await screen.findByText(
+        "総売上・純売上・支払集計・部門別集計は2回の取込みを合算しています（注記で足していないと示した表を除く）。日計（Z001）は取込みごとに表示します。",
+      ),
+    ).toBeInTheDocument();
+    const note = screen.getByText("日報の確認が必要です").closest('[data-slot="alert"]');
+    expect(note).not.toBeNull();
+    expect(within(note as HTMLElement).getByText(unsummed)).toBeInTheDocument();
   });
 });

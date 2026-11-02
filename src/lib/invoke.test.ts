@@ -18,6 +18,7 @@ describe("unwrapResult", () => {
         message: "invalid enum payload",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     } satisfies Partial<InvokeError>);
   });

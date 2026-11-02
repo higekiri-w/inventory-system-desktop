@@ -1,13 +1,13 @@
 ---
 name: test-design
-description: "Design effective tests before implementation. Use for R2+ behavior changes, and especially R3/R4 changes that affect schema, config, runtime behavior, output, policy, metrics, or data safety."
+description: "Design effective tests before implementation. Use for behavior changes, and especially R3/R4 changes that affect schema, config, runtime behavior, output, policy, metrics, or data safety."
 ---
 
 # Test Design Skill
 
 ## Purpose
 
-Create a Test Design Matrix before implementation so tests are tied to contracts and failure modes.
+Create the packet `## Test Plan` table (old packets: a Test Design Matrix) before implementation so tests are tied to contracts and failure modes.
 
 ## Required Reading
 
@@ -33,7 +33,7 @@ Create a Test Design Matrix before implementation so tests are tied to contracts
    - main wiring/integration
    - data safety
    - regression
-6. Create Test Design Matrix.
+6. Fill the packet `## Test Plan` table (Contract / Failure Mode / Test Type / Test Name / Would fail if...).
 7. Propose Red tests.
 8. Add mutation-style adequacy questions.
 9. List residual test gaps.

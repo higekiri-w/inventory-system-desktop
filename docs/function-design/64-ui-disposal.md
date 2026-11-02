@@ -1,6 +1,6 @@
 # 64. UI-05: 廃棄・破損
 
-> **計数の置き場と在庫の求め直し（D-118。(a) は実装済み、(b) は proposed・未実装）**: この画面の日付の欄の意味は「品が動いた日」（廃棄は品を棚から外した日）。在庫が計数に入っているかは、この日付で ADR D3 の窓（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）を決める（[31](31-biz-inventory-service.md)）。(a) で入ったのは、この日付を業務日として movement に書くこと（`biz/inventory_service/common.rs` の `validate_business_date`）と、計数と入出庫の窓の計算（`biz/stock_ledger.rs` の `judge` → `from_count` → `derive`）。計数を保存する公開の経路・精算の窓・この画面への反映は (b)。欄の見出し・説明の文言の細部は runtime の lane。
+> **計数の置き場と在庫の求め直し（D-118。(a) と b1 で実装済み）**: この画面の日付の欄の意味は「品が動いた日」（廃棄は品を棚から外した日）。在庫が計数に入っているかは、この日付で ADR D3 の窓（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）を決める（[31](31-biz-inventory-service.md)）。(a) で入ったのは、この日付を業務日として movement に書くこと（`biz/inventory_service/common.rs` の `validate_business_date`）と、計数と入出庫の窓の計算（`biz/stock_ledger.rs` の `judge` → `from_count` → `derive`）。計数を保存する公開の経路と精算の窓は D-118 の b1 で入った（入出庫の保存は要再確認の一覧を再取得する。UI_TECH_STACK の D-118 の段落）。この画面の欄の見出し・説明の文言は b1 で変えていない。
 
 > 対応仕様: REQ-204 / UI-05
 >
@@ -30,10 +30,10 @@
 | REQ-204 / validation | UI-05-D8 | 数量は `> 0`（個数の商品は整数、`m` の商品は m で小数 2 桁まで受けて cm に直す。上限は `9999999`）、原価は小数 2 桁までの円 `>= 0`（上限は `999999.99`。送る値は 1/100 円の `cost_price_centi`。`決定（owner、D-113 J2）`、SPEC-UNIT-D5。error の文は `原価は0以上で、小数は2桁までで入力してください`、欄は `inputMode="decimal"`・`step="0.01"`）、廃棄日は必須、種別は `"disposal"` / `"damage"` / `"other"`、理由は空白不可として command 前に frontend で止める。BIZ-02 は同じ validation を最終防御として持つ。保存の後の結果の欄のロス原価合計は TS の twin で TD-023 の丸め（原価は 1/100 円のまま `BigInt` で掛け、原価の形式の誤りと上限越えの行は 0 として数える。共通規則 (c)）、保存した記録は BIZ が返す値（[共通規則](10-common-rules.md) SPEC-UNIT-D3・D5・D6・D9）。候補の一覧の原価は SPEC-UNIT-D5 の formatter（`¥83.33`）。 | operator-facing form では保存前に日本語 field error を出す。generated command は UI 以外からも呼べるため、業務不変条件は BIZ に置く。 |
 | REQ-204 / idempotency | UI-05-D9 | `idempotency_key` は画面で1保存試行単位に生成し、保存失敗後の同内容再試行では同じ key を再利用する。保存成功、フォームリセット、別伝票開始、または保存失敗後に fingerprint 対象項目を編集して再送する場合は新しい key にする。 | UI-02/03/04 と同じ二重登録防止方針。同じ key のまま異なる fingerprint を送ると BIZ が conflict にするため、編集再送は新規保存試行として扱う。 |
 | REQ-204 / submit | UI-05-D10 | 保存中はヘッダ、明細、商品追加、戻る/リセット導線を disabled にし、中断可能に見せない。 | backend は単一 TX。UI だけで cancel 可能に見せると在庫反映状態を誤認させる。 |
-| REQ-204 / result | UI-05-D11 | 保存成功後は record_id、登録明細数、ロス原価合計、stock_warnings、`idempotent_replay` の有無を表示し、「続けて廃棄・破損」「詳細を見る」「在庫照会へ戻る」の導線を出す。 | 廃棄・破損は売上帳票ではなく在庫とロス把握が主目的。保存後にロス原価合計を読めるようにする。 |
+| REQ-204 / result | UI-05-D11 | 保存成功後は record_id、登録明細数、ロス原価合計、stock_warnings、`idempotent_replay` の有無と、保存した商品の一覧（商品コード・商品名と、行ごとの「在庫を見る」。[61](61-ui-receiving.md) UI-02-D10 と同じ形で、`/products?q=<商品コード>&selected=<商品コード>` を開く）を表示し、「続けて廃棄・破損」「詳細を見る」の導線を出す（D-138、proposed・未実装。今の build は「在庫照会へ戻る」で `/stock` を引数なしで開く）。画面の上の戻る導線は「商品と在庫へ」（D-138）。 | 廃棄・破損は売上帳票ではなく在庫とロス把握が主目的。保存後にロス原価合計を読めるようにする。 |
 | REQ-204 / list | UI-05-D12 | 画面下部に最近の廃棄・破損記録を `listDisposals(1, 10, null, null)` で表示する。詳細表示・編集・取消は初回実装では扱わない。 | CMD-05 の一覧契約を UI から疎通確認でき、直近記録の保存結果も確認しやすい。詳細/取消は在庫復元が絡むため別設計にする。 |
 | REQ-204 / cache | UI-05-D13 | 保存成功時の invalidation は [D-052](../decision-log.md) C7 と `src/lib/invalidation-contract.ts` を正本とする。 | 廃棄で変わる在庫・履歴 consumer を一貫して stale 化し、画面側の key 列挙を廃止する。 |
-| REQ-204 / UI-05 | UI-05-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品+種別+理由の数量加算、種別/理由/原価 validation、保存中 disable、保存結果、recent list、在庫照会へ戻る導線。 | 新規 operator-facing screen であり、ロス理由の入力、連続入力、フォーカス戻し、保存結果の可読性は CI だけでは判断しづらい。 |
+| REQ-204 / UI-05 | UI-05-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品+種別+理由の数量加算、種別/理由/原価 validation、保存中 disable、保存結果、recent list、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、ロス理由の入力、連続入力、フォーカス戻し、保存結果の可読性は CI だけでは判断しづらい。 |
 | REQ-204 / async result gate | UI-05-D15 | 非同期商品検索結果の採否に使う form lock ref は render 中に同期せず、保存eventの先頭でlock、validation / command失敗eventとreset eventでunlock、保存成功後はlock維持とする。商品候補の選択eventと検索完了callbackはこのrefを読む。 | render-phase ref更新は未commit renderのlockを残し得る。effect同期だけでは保存eventからcommit/effectまでに検索結果が解決するraceを閉じないためevent境界を採用する。保存clickからpending renderまでの極小窓で従来は結果が反映され得たのに対し、本方式は保存開始時点から破棄する。この可視差はUI-05-D10の「保存中は商品追加をlock」に合わせる是正だが、Plan Gateのowner裁定対象とする。 |
 | REQ-204 / product add suggest | UI-05-D16 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-05-D5）とフォーカス戻し（UI-05-D6）は不変。lock source は UI-05-D15 の lock ref（suggest 層は同 ref を `isLocked()` として読み、保存 event 内で `invalidateAndClose()` を同期呼出しする。新規 lock は作らない）。候補確定は既存の複数件候補テーブル選択と同一 handler。 | UI-02-D14 と同一の variant B 判断 + 本画面固有の async lock 整合（catalog ⑮ D4/D10）。契約正本は catalog ⑮。 |
 | REQ-204 / REQ-206 / return | UI-05-D17 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/disposal` URL を `returnTo` として廃棄・破損詳細へ送る（DSR-18）。 | 詳細確認後に廃棄・破損作業画面へ戻れるようにする。保存直後の確認導線を入庫・返品・交換と対称にする（owner L3 所感 2026-08-31 / 2026-09-11）。廃棄だけ保存結果に link を出さない業務理由は source docs に無い。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では廃棄・破損画面の producer だけを固定する。 |
@@ -63,7 +63,7 @@ src/
 | `editing` | 廃棄ヘッダ/明細を編集中 | header form、商品追加欄、明細表、最近の廃棄・破損一覧 | `add_product` / `update_row` / `submit` |
 | `searching_product` | 商品追加欄で検索中 | 商品追加欄 loading | `product_found` / `product_candidates` / `product_not_found` / `search_failed` |
 | `submitting` | `createDisposal` 実行中 | form disabled、spinner + 「廃棄・破損を記録しています」 | `submit_succeeded` / `submit_failed` |
-| `result` | 保存完了 | result panel、続けて廃棄・破損、詳細を見る、在庫照会へ戻る | `reset_for_next` / navigation |
+| `result` | 保存完了 | result panel（保存した商品の一覧と行ごとの在庫を見る）、続けて廃棄・破損、詳細を見る | `reset_for_next` / navigation |
 | `submit_error` | 保存失敗 | Alert + 入力保持 + 再実行 | `submit_same_request` / `edit_as_new_attempt` |
 
 フォーム state は `disposalDate`, `rows`, `idempotencyKey` を持つ。`rows` は `productCode`, `productName`, `departmentName`, `stockUnit`, `currentStockQuantity`, `disposalType`, `quantity`, `costPrice`, `reason` を持つ UI 内部型とし、command payload には `product_code`, `disposal_type`, `quantity`, `cost_price_centi`, `reason` を送る。
@@ -111,7 +111,7 @@ UI-05 実装 PR では以下を generated binding に出す。
 
 - PageHeader title は `廃棄・破損`、subtitle は販売ではない理由で在庫を減らし、ロス理由と原価を残す作業であることを短く示す。
 - ヘッダは `廃棄日`（既定は今日）のみを置く。理由は明細単位に置く。
-- 商品追加欄は `商品コード・JAN・商品名で追加` とし、Enter で検索する。候補が複数ある場合は商品名、商品コード、部門、現在庫、原価を見せる。
+- 商品追加欄は `商品コード・JAN・商品名で追加` とし、Enter で検索する。候補が複数ある場合は商品コード、商品名、部門、現在庫、原価を見せる。
 - 商品追加欄は入力中に live 候補プレビュー（商品コード・商品名・部門、最大 5 件 + 超過 footer）を表示する（UI-05-D16、挙動契約は catalog ⑮ SPEC-SUGGEST-D1〜D11）。候補は ↓/↑ または click で選択でき、候補未選択の Enter は従来どおり検索を実行する。入力値が変わると候補は即座に閉じる。
 - 商品が見つからない場合は `商品登録へ` 導線を出す。未登録商品は商品マスタに登録してから廃棄・破損へ戻ることを日本語で示す。既存明細・入力がある状態での離脱（`商品登録へ` 導線を含む）は未保存編集の離脱ガード（UI_TECH_STACK §6.11 `useUnsavedChangesWarning`）が破棄確認を出す。
 - 明細表は商品コード、商品名、部門、現在庫、種別、数量（単位を同じ cell に添える）、原価（同じ cell に「円」を添える）、理由、行削除を表示する。数量と単位を一つの値として読めるよう独立した単位列は置かず、現在庫も単位付き（例: `4 個` / `3 m`、桁区切り付き）にする。長さの商品の現在庫は m で出し、`m` の商品の数量は m で入力する（[共通規則](10-common-rules.md) SPEC-UNIT-D3）。
@@ -136,7 +136,7 @@ UI-05 実装 PR では以下を generated binding に出す。
 
 - 保存成功時は D-052-C7 の SSOT helper を適用する。具体的な query key 集合は `src/lib/invalidation-contract.ts` だけに置く。
 - `navigation.ts` の UI-05 は `to: "/inventory/disposal"`, `status: "active"` に切り替える。
-- 在庫照会の詳細カードから廃棄・破損へ遷移する場合、将来 `?productCode=...` で初期商品追加する余地を残す。ただし初回実装では query 初期追加は非 scope とし、route だけ active にする。
+- 商品と在庫の画面（D-138。旧 在庫照会）の行の詳細から廃棄・破損へ遷移する場合、将来 `?productCode=...` で初期商品追加する余地を残す。ただし初回実装では query 初期追加は非 scope とし、route だけ active にする。
 - 明細または廃棄日の初期値との差分がある間だけ共通 `useUnsavedChangesWarning` を有効にし、保存中 / result panel 表示中は `!isFormLocked` により解除する（画像条件は持たない）。
 
 ## 64.8 Non-scope / Follow-up

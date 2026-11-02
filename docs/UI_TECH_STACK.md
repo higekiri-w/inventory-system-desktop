@@ -1,10 +1,10 @@
 # UI技術スタック選定書
 
-## 計数の置き場と在庫の求め直しの契約（proposed・未実装、D-118）
+## 計数の置き場と在庫の求め直しの契約（D-118。b1 で実装済み、b2 の商品の画面の範囲の表示は proposed・未実装）
 
 [棚卸しの数の置き場と在庫の求め直しの ADR](adr/2026-10-16-stocktake-count-placement.md) の UI の側。既存のスタックを変えず、[42 の生成 wire](function-design/42-cmd-sales-stocktake.md) と [73 の計数の状態](function-design/73-ui-stocktake.md) へ接続する。未保存の数量は feature-local state、保存済みの計数・写し・履歴は DB と Query を正とし、永続化した画面の draft から古い数量を復活させない。旧 ADR（時点証拠）の token・begin の focus 制御・準備照会の consumer は置き換えた。
 
-計数の保存・0 にする・完了・Z004 の取込みと取消・入出庫の保存は、写し（在庫・要再確認・範囲）を読む consumer（在庫照会・商品一覧と詳細・棚卸しの一覧と要再確認の一覧・在庫変動）を D-052 の SSOT で再取得する（runtime で列挙する）。数量の入力は IME 確定の Enter で送信せず、同じスキャンの Enter で二重に保存しない。保存中は商品の切替と離脱を抑止する。日本語の状態・非色表示・Windows の受入の条件は既存の design-system を保つ。
+写し（在庫・要再確認・範囲）を書く経路は、写しを読む consumer（在庫照会・商品一覧と詳細・棚卸しの明細の一覧・在庫変動）と要再確認の一覧（新しい key `queryKeys.stocktake.recheckList()`）を D-052 の SSOT（`src/lib/invalidation-contract.ts`）で再取得する。経路と entry: 計数の保存と「0 にする」（`stocktakeCountUpdate`。今の entry は明細の一覧だけなので写しの consumer を足す）、Z004 の取込みと取消（`csvImportCommit`・`csvImportRollback`）、入庫・返品交換（レジ未処理）・手動販売・廃棄（`receiving`・`returnExchange(false)`・`manualSale`・`disposal`。同じ日付の movement で要再確認になる）、商品の修正と商品一括 import（`productUpdate`・`productImport`。在庫連動の切替で求め直す）、整合性の補正（`integrityFix`。写しの印と範囲を直す）。棚卸しの開始と完了（`stocktakeStart`・`stocktakeComplete`）は写しを変えないが、要再確認の一覧の回復先（進行中の棚卸しにその商品の明細があれば `active_count` と `stocktake_item_id`、無ければ `count_now`）が変わるので要再確認の一覧を足す（完了の今の entry の写しの consumer はそのまま）。商品の登録・返品交換（レジ処理済み）・日報の取込みほかの entry は要再確認の一覧に効かないので足さない。ただし商品の登録で同じ JAN の群に加える経路（D-141、[51](function-design/51-ui-product-form.md) UI-01b-D26 の「独自コードで登録する」の成功。D-141 は proposed・実装済み〈PR #212、L3 待ち〉）は、同じ JAN の在庫連動の商品を外して求め直すので、商品の登録の entry に要再確認の一覧と商品フォーム（`productForm.root()`。外した商品の商品コードを画面は持たない）を足した別の entry `productCreateSharedJan` にする（商品の登録の entry は変えない）。独立の test oracle（`src/test/invalidation-oracle.ts`）はこの段落から写す（b1 の Plan Review round 2 の是正）。数量の入力は IME 確定の Enter で送信せず、同じスキャンの Enter で二重に保存しない。保存中は商品の切替と離脱を抑止する。日本語の状態・非色表示・Windows の受入の条件は既存の design-system を保つ。
 
 > **親文書**: [ARCHITECTURE.md](ARCHITECTURE.md)
 > **入力ドキュメント**: ARCHITECTURE.md（タスク仕様）、SCREEN_DESIGN.md（画面設計）、FUNCTION_DESIGN.md（関数設計）
@@ -232,7 +232,7 @@ spike branch: `spike/invoke-specta`。
 | 商品一覧 / 検索（UI-01a） | 30s | 5min | CRUD 頻度中、数秒のキャッシュで十分 |
 | 商品詳細（UI-01b） | 0 | 5min | 編集画面から戻った時は即時再取得 |
 | 在庫照会（UI-00 ホーム / UI-06a） | 10s | 5min | CSV 取込み直後に即時反映したい |
-| 在庫少一覧（UI-06b） | 在庫照会（UI-06a）行と同一 | 同左 | 独立画面ではなく UI-06a `/stock` の `status=low_stock` フィルタへの deep-link（D-047）。`useStockInquiry` の同一クエリを使うため専用の staleTime/gcTime は持たない |
+| 在庫少一覧（UI-06b） | 在庫照会（UI-06a）行と同一 | 同左 | 独立画面ではなく UI-06a `/stock` の `status=low_stock` フィルタへの deep-link（D-047）。`useStockInquiry` の同一クエリを使うため専用の staleTime/gcTime は持たない。D-138（商品と在庫の統合、proposed・未実装）の後は `/products` の一覧（UI-01a 行）と在庫少の集合（本行と在庫照会の行）を同じ画面で読む |
 | 変動履歴（UI-06c） | 1min | 10min | 過去データ中心、鮮度低優先 |
 | 日次売上（UI-09a） | 5min | 30min | 集計結果、頻繁には変わらない |
 | 月次売上（UI-09b） | 5min | 30min | 同上 |
@@ -245,7 +245,7 @@ spike branch: `spike/invoke-specta`。
 - mutation 成功時の invalidation 集合は `src/lib/invalidation-contract.ts` を実装 SSOT とし、各 success handler はその適用 helper を経由する。page / hook への key 列挙の分散を禁止する。
 - 集合は table.column 粒度で導出する。mutation が確定した列を query result が読む場合は invalidate し、除外は次表 E1〜E6 に明示したものだけとする。逆に、invalidate 対象の key / prefix 配下に書込み列を読む正当な consumer が一つもなければ過剰 invalidation として契約違反になる。正当な consumer を一つでも含む prefix invalidate は正当であり、同 prefix 配下の他 child query が巻き込まれる collateral は許容する。`staleTime` の値は除外根拠にしない。
 - `src/lib/query-keys.ts` の root/prefix helper を使い、literal key を success handler に書かない。D-052-S1 の静的回帰テストは、SSOT helper 本体、backup/restore domain、棚卸し conflict/error 防御 helper 以外の直接 `invalidateQueries` を fail-closed で拒否する。
-- D-052 は 22 mutation entry / 25 success handler 呼出し（2026-08-25 実測）。test oracle は D-052-C1〜C22 から test 側へ独立転記し、production SSOT を import しない。実呼出し集合とは順序非依存・重複検出付きで完全一致比較する。PLU slot summary は C2 商品 update/廃番 toggle、C14 confirm、C17 snapshot 取込み、C18 prepare 成功、C19 PLU 対象一括更新で invalidation する。C19 は `productList.root / pluDirty / productForm.root / pluSlotSummary`、C20 商品価格改定は `productList.root / productForm.product(productCode) / pluDirty / priceRevision.root` を stale 化する。C21 取引先改名と C22 取引先統合は同一の 8 key 集合を stale 化する。
+- D-052 は 23 mutation entry / 27 success handler 呼出し（2026-10-29 実測。entry は `src/lib/invalidation-contract.meta.test.ts` の件数、handler は `rg -c "invalidateByContract\(" src/features --glob '!**/*.test.*'` の合計）。C23 は商品の登録で同じ JAN の群に加える経路の成功（`productCreateSharedJan`。D-141、本書の冒頭の段落）。test oracle は D-052-C1〜C23 から test 側へ独立転記し、production SSOT を import しない。実呼出し集合とは順序非依存・重複検出付きで完全一致比較する。PLU slot summary は C2 商品 update/廃番 toggle、C14 confirm、C17 snapshot 取込み、C18 prepare 成功、C19 PLU 対象一括更新で invalidation する。C19 は `productList.root / pluDirty / productForm.root / pluSlotSummary`、C20 商品価格改定は `productList.root / productForm.product(productCode) / pluDirty / priceRevision.root` を stale 化する。C21 取引先改名と C22 取引先統合は同一の 8 key 集合を stale 化する。
 
 | 除外 | 契約 |
 |---|---|
@@ -453,7 +453,7 @@ Tauri 初期ウィンドウは `src-tauri/tauri.conf.json` で 1280x800、最小
 **設計**:
 - **入庫記録画面（UI-02）**: 商品コード / JAN / 商品名を受ける商品追加欄にフォーカスを当てる。Enter 確定で検索し、1件なら行追加、追加後は同じ入力欄へフォーカスを戻して連続入力できるようにする。初回実装では global scan detection は置かない
 - **返品・交換画面（UI-03）**: UI-02 と同じく商品追加欄にフォーカスを当てる。Enter 確定で検索し、1件なら現在の種別 / 方向ルールに従って行追加、追加後は同じ入力欄へフォーカスを戻す。初回実装では global scan detection は置かない
-- **在庫照会画面（UI-06a）**: 検索ボックスに常にフォーカス。Enter で検索実行 + 結果1件なら自動展開
+- **在庫照会画面（UI-06a）**: 検索ボックスに常にフォーカス。Enter で検索実行 + 結果1件なら自動展開。D-138 の後は商品と在庫の画面（`/products`）で同じにする
 - **商品登録画面（UI-01b）**: JAN欄にフォーカスを当て、スキャン後に「既存商品あり」ダイアログ自動表示
 
 **実装要件**:
@@ -592,10 +592,10 @@ CMD層の `CmdError` は `kind: string` / `message: string` / `field?` / `error_
 
 **cross-language validation 定数（D-054）**: file サイズ上限等、frontend と backend が同値を要する validation 定数は `src-tauri/src/constants.rs` を SSOT とし、bindings 生成で `bindings.ts` に export された値を frontend が import する。frontend 側の local 複製は禁止（静的 sweep test で検出）。L1 の bindings clean diff 検査が cross-language 同期の機械検査を兼ねる。
 
-#### 6.5.5 印刷（proposed・未実装、D-120）
+#### 6.5.5 印刷（D-120）
 
-- **手段**: WebView の印刷（`window.print()`）と CSS の `@page { size: A4 portrait; margin: 10mm }`・`@media print` で、紙に出す部分だけを印刷する。印刷先・枚数・用紙は OS の印刷の dialog で選び、アプリにプリンタの設定の画面を作らない。最初の利用は日次売上の日報の紙（[56](function-design/56-ui-daily-sales.md) の UI-09a-D17・D18）
-- **未確認の前提**: Windows の WebView2（§6.5.1）で `window.print()` が OS の印刷の dialog を出し、`@page` の用紙の向きと余白の指定が効くこと。日報の紙の runtime の lane が実装の前に、開発の build を Windows で動かして確かめる
+- **手段**: WebView の印刷（`window.print()`）と CSS の `@page { size: A4 portrait; margin: 10mm }`・`@media print` で、紙に出す部分だけを印刷する（`src/styles/globals.css`。印刷のときは `#root` を隠し、画面用の `html`・`body` の高さの固定と `overflow: hidden` を外して 2 枚目以降を切らない）。印刷先・枚数・用紙は OS の印刷の dialog で選び、アプリにプリンタの設定の画面を作らない。最初の利用は日次売上の日報の紙（[56](function-design/56-ui-daily-sales.md) の UI-09a-D17・D18）
+- **未確認の前提**: Windows の WebView2（§6.5.1）で `window.print()` が OS の印刷の dialog を出し、`@page` の用紙の向きと余白の指定が効くこと。日報の紙の runtime の lane が、実装の後の L3（packet の Matrix の L3-1）で、開発の build を Windows で動かして確かめる（`window.print()` の道は code が小さく〈CSS と 1 つの呼出し〉、確かめるには Windows の build と owner の操作が要るので、L3 の 1 回にまとめる。2026-10-29、日報の紙の runtime の Plan Review round 1）
 - **効かないときの代わり**: Rust 側の CMD が同じ紙の内容を 1 つの HTML の file にしてアプリの data の folder の固定の file（毎回上書き。どの印刷かは紙の中の印刷の時刻で見分ける）に書き、導入済みの `tauri-plugin-opener`（`Cargo.lock` で 2.5.3）の Rust の API `OpenerExt::opener().open_path`（`with` を渡さない）で、その PC で `.html` に関連付けられた既定のアプリで開き、そこで印刷する。`open_path` はブラウザを指定せず file の関連付けの先のアプリで開く（2.5.3 の source の doc: 「Open a path with a default or specific program」。関連付けがエディタなら HTML のソースが開く）ので、採る条件は店の PC の `.html` の関連付けが印刷できるブラウザであることを Contract Probe で確かめること。Rust の API は IPC の capability を通らないので、capability を足さない（frontend の `opener:default` は URL と file の場所の表示だけで、local の file を開く許可を持たない）。HTML に入れる値は全部 HTML escape する。採るときは command を 42 に足す Gated Amendment を出す（56 UI-09a-D18）。書込みか `open_path` が失敗したら CMD は error を返し、UI は成功と扱わない（`open_path` の成功は OS に開くよう渡せたことだけで、印刷できたかは確かめない）。新しい依存は足さない
 - **採らない**: PDF を作る依存の追加、Excel の file の出力（店が開いて印刷する手順が残る）、OS の印刷の API を Rust から呼ぶこと（OS ごとの code が要る）
 - **文字と色**: 紙の上の文字は 9 pt 以上、色は使わない（意味のある色が無い）。紙ごとの並びは各画面の設計書が持つ
@@ -705,10 +705,10 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 
 7-8c の消化。手入力した未保存の編集内容を、確認なしの画面遷移で失わせないための共通 hook 契約。
 
-- **UI-USW-D1（hook API）**: `useUnsavedChangesWarning(isDirty: boolean)` を共通 hook として提供する。form library 非依存（§2.7 の feature-local controlled state + Zod 方針に従い、dirty 判定は各画面が明示計算して boolean を渡す）。内部は TanStack Router `useBlocker`（`shouldBlockFn` + `withResolver`）+ `enableBeforeUnload` 連動（§55.7 importing ガードと同基盤）。画面側での `useBlocker` 直接使用は禁止し、sweep test で機械強制する（既存例外 = CSV 取込み / 日報取込みの importing ガード 2 hook のみ）。**保存成功時の誤発火防止（MUST）**: 派生比較で isDirty を導出する画面は、保存成功 mutation の `onSuccess` 内で navigate / 遷移導線の提示より前に、比較 baseline を提出値へ同期更新して isDirty を false 化する（69 `ThresholdSettingsPage` の `setSavedValues(submittedValues)` が正例）。保存後に result panel へ移りフォームを lock する画面は `isDirty = (入力差分) && !isFormLocked` の形で lock 状態を明示的に含め、result panel 内の遷移導線を block しない。
+- **UI-USW-D1（hook API）**: `useUnsavedChangesWarning(isDirty: boolean)` を共通 hook として提供する。form library 非依存（§2.7 の feature-local controlled state + Zod 方針に従い、dirty 判定は各画面が明示計算して boolean を渡す）。内部は TanStack Router `useBlocker`（`shouldBlockFn` + `withResolver`）+ `enableBeforeUnload` 連動（§55.7 importing ガードと同基盤）。画面側での `useBlocker` 直接使用は禁止し、sweep test で機械強制する（例外は [55](function-design/55-ui-csv-import.md) §55.7 が持つ進行中の処理〈取込みの応答と、取消の応答を待つ間〉のガードの hook だけで、どの hook かは 55 §55.7 が名指す）。**保存成功時の誤発火防止（MUST）**: 派生比較で isDirty を導出する画面は、保存成功 mutation の `onSuccess` 内で navigate / 遷移導線の提示より前に、比較 baseline を提出値へ同期更新して isDirty を false 化する（69 `ThresholdSettingsPage` の `setSavedValues(submittedValues)` が正例）。保存後に result panel へ移りフォームを lock する画面は `isDirty = (入力差分) && !isFormLocked` の形で lock 状態を明示的に含め、result panel 内の遷移導線を block しない。
 - **UI-USW-D2（破棄確認ダイアログ）**: block 時は共通 AlertDialog を表示する — 見出し「編集内容が保存されていません」、説明「このまま移動すると、入力した内容は破棄されます。」、操作 = 「編集を続ける」（既定 focus）/「破棄して移動」（destructive）。DSR-07（不可逆操作のみ確認）に適合 — 未保存内容の破棄は復元不能。判断を曖昧な dismiss で終わらせない意図的 friction として Esc / 外側クリックを無効にし、DSR-20 の硬化条件に適合させる。実装は `onEscapeKeyDown` / `onPointerDownOutside` の明示 prop で `preventDefault()` する方式へ統一し、`onOpenChange` の非配線による暗黙硬化は禁止する。beforeunload 側は platform 既定ダイアログのみ（カスタム文言不可）。runtime の方式統一は後続 R3 で行う。
 - **UI-USW-D3（適用範囲の分類軸）**: 適用対象 = 「利用者の手入力で構築され、保存前に画面遷移で失われると再入力が必要な蓄積編集 state を持つ画面」。除外 = (a) 進行中処理ガード既設（§55.7 所有、相互排他で併用しない）、(b) file・DB 等からの再実行で再導出可能な導出 state — 値の記入を伴わない選択 state を含む（取込み preview 系、整合性チェックの結果と補正対象選択）、(c) 行単位の即時 DB 保存で蓄積未保存が生じない画面（棚卸し）、(d) 外部ツールまたぎの専用復帰設計が所有（§6.5 PLU 書出し）、(e) 編集 state を持たない画面。適用画面は各 function-design の該当節に明記する。
-- **UI-USW-D4（native close は非保証）**: `enableBeforeUnload` は webview の beforeunload に連動するが、Tauri native window close（×ボタン）で確実に発火する保証はしない。native close の破棄防止（`onCloseRequested`）は別 backlog。
+- **UI-USW-D4（native close は非保証）**: `enableBeforeUnload` は webview の beforeunload に連動するが、Tauri native window close（×ボタン）で確実に発火する保証はしない。native close の破棄防止（`onCloseRequested`）は [backlog](backlog.md) の「native の window の close で取込み・取消・未保存の 3 つの止めを横断して扱う」（owner の決定、repo 外の回答台帳 TD-458）。
 
 <!-- reviewed: 2026-08-30 -->
 
@@ -847,6 +847,9 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 
 | 日付 | 内容 | 担当 |
 |------|------|------|
+| 2026-10-31 | §6.5.5 の proposed の注記を外し、印刷の CSS の置き場（`globals.css` の `@page` と `@media print`）を書いた（日報の紙の runtime の実装、D-120） | Claude（Opus 5.5） |
+| 2026-10-29 | §6.5.5 の未確認の前提（WebView2 の印刷）を確かめる時を、日報の紙の runtime の lane の「実装の前」から「実装の後の L3（L3-1）」に直した（同 lane の Plan Review round 1） | Claude |
+| 2026-10-27 | UI-USW-D1 の `useBlocker` の直接使用の例外を、hook の列挙から 55 §55.7 の進行中の処理のガードの hook という持ち主で決める言い方に置き換え（z004-rollback-entry、PR #197 の Gated Amendment 3。取消の応答を待つ間のガードの hook を足しても列挙を継ぎ足さない。D-127） | Claude |
 | 2026-09-24 | デザインの決まりの組み直し（decision-log D-091）に合わせ、§1 デザインシステム表のカラーパレット行とアイコンサイズ行、哲学のスタック節（原則と根拠の出典へ改題）、§4 の索引表を design-system の README・00 の色の役割表・04 の原則・03 の出典へ向けた | Claude（Opus 5.5） |
 | 2026-09-10 | ⑱ 取引先ピッカー統合 dialog design（PR #49）反映。DSR-01〜24 の範囲更新を記録 | Codex |
 | 2026-08-03 | UI-EB-D1〜D3 / UI-USW-D1〜D4 の実装を反映。route error fallback 2 層、共通離脱警告 hook / AlertDialog、対象 6 画面配線と全 Page 分類 sweep を追加 | Codex |

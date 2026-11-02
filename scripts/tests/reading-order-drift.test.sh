@@ -59,16 +59,16 @@ if ! rg -U --multiline-dotall -q "$DRIFT_PATTERN" "$SOURCE_ROOT/docs/decision-lo
 fi
 
 # HC-D2/HC-D9: structural contract lint, not proof of model behavior.
-# Keep the R2+ route, complete state input, and fail-closed marker discoverable;
+# Keep the R3/R4 route, complete state input, and fail-closed marker discoverable (D-145: R2 left the packet route);
 # the routing fixture that exercised them was retired with D-101 (PR #132).
 check_entry_contract() {
     local entry
     entry="$(awk '/^## Session Start[[:space:]]*$/ { active=1; next }
         active && /^## / { exit } active { print }' "$1")"
-    if ! printf '%s\n' "$entry" | rg '^\|' | rg 'R2\+' |
+    if ! printf '%s\n' "$entry" | rg '^\|' | rg 'R3' |
         rg -i '(実装|再開|implement|resume)' | rg 'Workflow State' |
         rg -qi '(完全|complete|full)'; then
-        echo "missing R2+ complete Workflow State route: $1" >&2
+        echo "missing R3/R4 complete Workflow State route: $1" >&2
         return 1
     fi
     if ! printf '%s\n' "$entry" | rg -q 'fail-closed'; then
@@ -83,9 +83,9 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # Real policy mutations: a missing route and a missing stop boundary must fail.
-awk '!/^\| R2\+ /' "$SOURCE_ROOT/AGENTS.md" > "$tmp/no-r2.md"
-if check_entry_contract "$tmp/no-r2.md" >/dev/null 2>&1; then
-    fail "missing R2+ route was accepted"
+awk '!/^\| R3〜R4 /' "$SOURCE_ROOT/AGENTS.md" > "$tmp/no-r3.md"
+if check_entry_contract "$tmp/no-r3.md" >/dev/null 2>&1; then
+    fail "missing R3/R4 route was accepted"
 fi
 sed '/fail-closed/d' "$SOURCE_ROOT/AGENTS.md" > "$tmp/no-stop.md"
 if check_entry_contract "$tmp/no-stop.md" >/dev/null 2>&1; then

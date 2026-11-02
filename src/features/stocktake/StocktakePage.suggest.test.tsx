@@ -17,9 +17,10 @@ vi.mock("@/lib/bindings", () => ({
     startStocktake: vi.fn(),
     getStocktakeItems: vi.fn(),
     findStocktakeItem: vi.fn(),
-    updateCount: vi.fn(),
+    saveStockCount: vi.fn(),
     completeStocktake: vi.fn(),
     searchProducts: vi.fn(),
+    listRecheckProducts: vi.fn(),
   },
 }));
 
@@ -61,6 +62,14 @@ function item(overrides: Partial<StocktakeItemDetail> = {}): StocktakeItemDetail
     counted_at: null,
     current_stock: 10,
     is_discontinued: false,
+    stock_unit: "pcs",
+    count_value: null,
+    count_kind: null,
+    count_business_date: null,
+    stock_range_low: null,
+    stock_range_high: null,
+    recount_reasons: [],
+    difference: null,
     ...overrides,
   };
 }
@@ -68,7 +77,7 @@ function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <StocktakePage search={{}} onSearchChange={vi.fn()} writesSuspended={false} />
+      <StocktakePage search={{}} onSearchChange={vi.fn()} />
     </QueryClientProvider>,
   );
 }
@@ -94,7 +103,18 @@ beforeEach(() => {
       per_page: 200,
     }),
   );
-  vi.mocked(commands.updateCount).mockResolvedValue(ok({ success: true, current_difference: 0 }));
+  vi.mocked(commands.listRecheckProducts).mockResolvedValue(ok([]));
+  vi.mocked(commands.saveStockCount).mockResolvedValue(
+    ok({
+      id: 1,
+      count_kind: "default",
+      stock: 10,
+      stock_range_low: null,
+      stock_range_high: null,
+      recount_reasons: [],
+      later_count_exists: false,
+    }),
+  );
   mockSearchProducts.mockReset();
   mockFindItem.mockReset();
   mockComplete.mockReset();

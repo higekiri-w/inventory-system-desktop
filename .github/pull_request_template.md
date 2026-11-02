@@ -1,45 +1,24 @@
-## Summary
+## 要約
 
 -
 
-## Scope
+## 範囲
 
-In scope:
+<!-- R0〜R2（packet なしの道）は次の 5 行を埋める。R3/R4 は Plan Packet を指す 1 行でよく、Risk の行を消す。
+Risk の行は固定の書式で 1 行だけ。例: Risk: R1（目視: 不要）。目視は operator 向けの画面に触れるとき「要」。
+helper が --risk・--manual と照合し、埋めていない・2 行ある・書式が違うと止まる。 -->
 
--
+- 目的:
+- 範囲:
+- 非目的:
+- AC:
 
-Non-scope:
+Risk: R<0|1|2>（目視: 要|不要）
 
--
+## 検証の結果
 
-## Design / Contract
+- <対象の検証と結果（報告や run を指す）>
 
-- Risk: Rn
-- R0/R1: explicit Risk / manual required or not-required
-- Plan Packet:
-- Source docs:
-- Design readiness:
-- Contract impact:
+## 残り
 
-## Validation
-
-- 対象検証と結果:
-- helper status / 専用record link:
-- 必要review/manual/R4と残るHuman Gate:
-- このchangeでの介入 N 回目 / 予算 M 回:
-
-Known warnings:
-
--
-
-## Review Focus
-
--
-
-## Follow-up
-
--
-
-Dashboard / archive follow-up:
-
--
+- <残る L3・承認・follow-up>

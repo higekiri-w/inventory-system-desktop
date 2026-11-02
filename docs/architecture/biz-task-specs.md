@@ -1,8 +1,8 @@
 # タスク仕様（BIZ層）
 
-## 計数の置き場と在庫の求め直しの契約（D-118。(a) は実装済み、(b) は proposed・未実装）
+## 計数の置き場と在庫の求め直しの契約（D-118。(a) と b1 で実装済み）
 
-SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。詳細な契約は下記の source の同名の節を正とする。(a)（ADR SPEC-STK-CNT-D12）で入ったのは BIZ-01 の初期在庫の movement と求め直し、BIZ-02 / BIZ-07 の全部（精算の窓を除く）と、停止中の旧本体の BIZ-03 の取消・BIZ-06 の確定が、補正した商品・無効にした商品だけを求め直す形。ほかの項目は (b)（proposed・未実装）で、既存の処理を (b) の実装済みとは扱わない。旧 ADR（時点証拠）の契約は置き換えた。
+SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)）。詳細な契約は下記の source の同名の節を正とする。(a)（ADR SPEC-STK-CNT-D12）で入ったのは BIZ-01 の初期在庫の movement と求め直し、BIZ-02 / BIZ-07 の全部（精算の窓を除く）。b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で、精算の窓、BIZ-01 の共有 JAN と在庫連動を始める検査、BIZ-03 の Z004 の識別・確定・取消、BIZ-06 の計数の保存と完了、BIZ-07 の共有 JAN の一覧が入った（旧本体は撤去した）。旧 ADR（時点証拠）の契約は置き換えた。
 
 - BIZ-01: [30](../function-design/30-biz-product-service.md)。共有 JAN の在庫連動の拒否、在庫連動を始めるときの連動しない間の売上の検査、初期在庫の movement と求め直し。
 - BIZ-02 / BIZ-07: [31](../function-design/31-biz-inventory-service.md) / [36](../function-design/36-biz-integrity-check.md)。並びの鍵付きの movement、求め直しの関数（写しを書く唯一の経路）、要再確認の判定。整合性は写しと求め直しの比較で、補正は求め直しを写しへ書く（操作ログの必須は変えない）。
@@ -101,7 +101,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 8. operation_logsに記録
 
 **CSV 任意列 `PLU対象`（SPEC-PLS-D6。filter 一致全件の一括更新〈BIZ-01-D4〉は D-117 で外す。今の build には `bulk_set_plu_target` が残る）:**
-- `PLU対象` は `1` / `0` / 空欄。新規行の列なし / 空欄は既存導出、更新行は明示値がある場合だけ適用する。不正 JAN の `1` は warning + `0`
+- `PLU対象` は `1` / `0` / 空欄。新規行の列なし / 空欄は既存導出、更新行は明示値がある場合だけ適用する。JAN が空か正しい 8 桁（13 桁の数字でない）のときの `1` は warning + `0`。形の誤った JAN（8 桁・13 桁の数字でないか、チェックディジットが合わない）は [30](../function-design/30-biz-product-service.md) BIZ-01-D10 の行の error で、warning に届かない
 - 1→0 / JAN 変更 / 廃番化で PLU の枠を変えない（解放しない。D-117。今の build は解放する、BIZ-04 の「runtime の状態」）
 
 **前の JAN の別名（D-122、proposed・未実装）:**
@@ -296,7 +296,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **【データ構造】**
 
 入力データ:
-- DailyReportSourceFile[]（filename, bytes）。標準はレジの SD から読んだ候補の束（IO-09 経由、§37.9 `scan_register_sd_daily_reports`、D-111。runtime は未実装〈Draft PR #172〉で、今の build は下の予備の 3 ファイルだけ）、予備は利用者が選んだ 3 ファイル（dialog の path を持ち、自動で見つけた SD の root の下の file は SD の入力として扱う。37 §37.3 手順 1a）。SD の探し方の選択は BIZ-08 の `DailyReportSdSelection`（CMD-12 が作る。IO-09 の型にしない）
+- DailyReportSourceFile[]（filename, bytes）。標準はレジの SD から読んだ候補の束（IO-09 経由、§37.9 `scan_register_sd_daily_reports`、D-111）、予備は利用者が選んだ 3 ファイル（dialog の path を持ち、自動で見つけた SD の root の下の file は SD の入力として扱う。37 §37.3 手順 1a）。SD の探し方の選択は BIZ-08 の `DailyReportSdSelection`（CMD-12 が作る。IO-09 の型にしない）
 
 段階間受け渡しデータ:
 - DailyReportSdScan（SD の候補の一覧と状態〈取り込める / 取込み済み / 同じ精算を取込み済み / そろわない / 読めない〉、BIZ-08-D3）
@@ -321,7 +321,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. IO-07（POS日報bundleパーサー）を呼び出す
 2. parse_errors がある場合は commit 不可として中断し、`daily_report_imports` は作らない
 3. parse失敗は operation_logs に `daily_report_parse_failed` として汎用文言で記録する
-4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`）だけは、選び直しを案内する固定の文にする（BIZ-08-D2）
+4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`、BIZ-08-D2）と数の上限の越え（`number_too_large`、BIZ-08-D2a。帳票と列を名指し、値を出さない）は固定の形の文にする
 
 **Stage 2: Validate**
 1. Z001/Z002/Z005 の report_date が一致することを確認する
@@ -450,7 +450,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 
 **タスク要求**: 棚卸しの開始・カウント入力・確定を管理し、仕入原価総額を算出する
 
-**理由**: 年末棚卸し（10月〜大晦日の長期作業）で、全商品の実在庫をカウントしてシステム在庫との差異を補正する。税理士報告用の仕入原価総額の算出も行う
+**理由**: 年末棚卸し（10 月からの準備と、大晦日に終える正式カウントに分かれる。[73](../function-design/73-ui-stocktake.md) §73.1）で、全商品の実在庫をカウントしてシステム在庫との差異を補正する。税理士報告用の仕入原価総額の算出も行う
 
 **【データ構造】**
 

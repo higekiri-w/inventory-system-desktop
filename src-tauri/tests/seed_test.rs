@@ -328,3 +328,43 @@ fn seed_stockout_low_distributed_across_departments() {
         "在庫少商品が 2 部門以上に分散すべき (1 部門集中でない)"
     );
 }
+
+#[test]
+fn seed_reset_req205_clears_stock_counts() {
+    // REQ-205 / b1 Matrix E1: --reset（delete_all）が stock_counts を先に消し、棚卸しの明細を参照する
+    // 計数のある DB でも reset が通る（stock_counts は products と stocktake_items を外部キーで参照する）
+    let (_dir, mut conn) = setup_temp_db();
+    run_seed(&mut conn, false).expect("run_seed 失敗");
+    let product_code: String = conn
+        .query_row(
+            "SELECT product_code FROM products ORDER BY product_code LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    conn.execute(
+        "INSERT INTO stocktakes (started_at, status) VALUES ('2026-10-01T09:00:00', 'in_progress')",
+        [],
+    )
+    .unwrap();
+    let stocktake_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO stocktake_items (stocktake_id, product_code, system_stock) VALUES (?1, ?2, 0)",
+        rusqlite::params![stocktake_id, product_code],
+    )
+    .unwrap();
+    let item_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO stock_counts (product_code, count_value, count_kind, business_date,
+             stocktake_item_id, counted_at)
+         VALUES (?1, 3, 'default', '2026-10-01', ?2, '2026-10-01T10:00:00')",
+        rusqlite::params![product_code, item_id],
+    )
+    .unwrap();
+
+    run_seed(&mut conn, true).expect("--reset の run_seed 失敗");
+    let counts: i64 = conn
+        .query_row("SELECT COUNT(*) FROM stock_counts", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(counts, 0);
+}

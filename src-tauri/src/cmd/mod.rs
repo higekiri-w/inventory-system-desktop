@@ -18,7 +18,9 @@ pub mod settings_cmd;
 pub mod stocktake_cmd;
 
 use crate::biz::csv_import_service::CachedPreview;
-use crate::biz::daily_report_import_service::CachedDailyReportPreview;
+use crate::biz::daily_report_import_service::{
+    CachedDailyReportPreview, DailyReportSdScanSnapshot,
+};
 use crate::biz::{BizError, DbConnection};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -38,6 +40,8 @@ pub struct AppState {
     pub preview_cache: Mutex<HashMap<String, CachedPreview>>,
     /// 日報取込みPreviewキャッシュ（token → CachedDailyReportPreview）
     pub daily_report_preview_cache: Mutex<HashMap<String, CachedDailyReportPreview>>,
+    /// レジの SD の scan の snapshot（scan_token → snapshot。最新の 1 つだけ、CMD-12-D1）
+    pub register_sd_scan_cache: Mutex<HashMap<String, DailyReportSdScanSnapshot>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -59,6 +63,7 @@ pub enum CmdErrorKind {
     IdempotencyConflict,
     StocktakeInProgress,
     StocktakeNotInProgress,
+    StocktakeGuard,
     RestoreFailedRecovered,
     RestoreFailedUnrecoverable,
     RestoreDurabilityUnknown,
@@ -69,7 +74,7 @@ pub enum CmdErrorKind {
 /// docs/function-design/40-cmd-product.md §5.3 + 41-cmd-pos.md §17.4
 #[derive(Debug, serde::Serialize, specta::Type)]
 pub struct CmdError {
-    /// エラー分類（`CmdErrorKind` の12値）
+    /// エラー分類（`CmdErrorKind` の13値）
     pub kind: CmdErrorKind,
     /// 利用者向け日本語メッセージ
     pub message: String,
@@ -77,6 +82,13 @@ pub struct CmdError {
     pub field: Option<String>,
     /// 診断ログとの相関 ID（internal / restore_* 系のみ）
     pub error_id: Option<String>,
+    /// 棚卸しの守りの拒否の回復先（`stocktake_guard` だけ Some。40）
+    // 大きいので Box（serde と specta は中身の型として書くので wire は変わらない）
+    pub stocktake_recovery: Option<Box<crate::biz::stocktake_service::StocktakeRecovery>>,
+    /// 拒否の文が名指す取込みID（BIZ-03 の順 4 の拒否〈kind `import_error`〉だけ Some、ほかは null。
+    /// TS では任意の field。40・41 §17.4）
+    #[serde(default)]
+    pub related_csv_import_id: Option<i64>,
 }
 
 impl CmdError {
@@ -119,6 +131,8 @@ impl CmdError {
             message: message.to_string(),
             field: None,
             error_id: Some(error_id),
+            stocktake_recovery: None,
+            related_csv_import_id: None,
         }
     }
 }
@@ -135,6 +149,13 @@ impl From<BizError> for CmdError {
                 detail,
             );
         }
+        // 45 §45.7: 写しの失敗は internal（UI が preview に戻り、同じ token で再試行できる）
+        if let BizError::SourceCopyFailed(kind) = &err {
+            return CmdError::internal(
+                "SD から読んだファイルの写しを PC に保存できなかったため、取り込みませんでした。PC の空き容量を確かめて、もう一度取り込んでください。",
+                format!("{kind:?}"),
+            );
+        }
         tracing::error!(error = %err, "CMD層エラー");
         match err {
             BizError::ValidationFailed(msg) => CmdError {
@@ -142,55 +163,103 @@ impl From<BizError> for CmdError {
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::ValidationFailedAt { message, field } => CmdError {
                 kind: CmdErrorKind::Validation,
                 message,
                 field: Some(field),
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::NotFound(msg) => CmdError {
                 kind: CmdErrorKind::NotFound,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::DuplicateProductCode(code) => CmdError {
                 kind: CmdErrorKind::Duplicate,
                 message: format!("この商品コードは既に使用されています: {}", code),
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
-            BizError::DatabaseError(_) => unreachable!("handled before generic logging"),
+            // BIZ-01-D11: 商品フォームは kind と field で分け、message を解析しない（40）
+            BizError::JanInUse(message) => CmdError {
+                kind: CmdErrorKind::Duplicate,
+                message,
+                field: Some("jan_code".to_string()),
+                error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
+            },
+            BizError::DatabaseError(_) | BizError::SourceCopyFailed(_) => {
+                unreachable!("handled before generic logging")
+            }
             BizError::ImportError(msg) => CmdError {
                 kind: CmdErrorKind::ImportError,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
+            },
+            BizError::SettlementConflict {
+                message,
+                csv_import_id,
+            } => CmdError {
+                kind: CmdErrorKind::ImportError,
+                message,
+                field: None,
+                error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: Some(csv_import_id),
             },
             BizError::ExportError(msg) => CmdError {
                 kind: CmdErrorKind::ExportError,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::IdempotencyConflict(msg) => CmdError {
                 kind: CmdErrorKind::IdempotencyConflict,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::StocktakeInProgress(msg) => CmdError {
                 kind: CmdErrorKind::StocktakeInProgress,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
             },
             BizError::StocktakeNotInProgress(msg) => CmdError {
                 kind: CmdErrorKind::StocktakeNotInProgress,
                 message: msg,
                 field: None,
                 error_id: None,
+                stocktake_recovery: None,
+                related_csv_import_id: None,
+            },
+            BizError::StocktakeGuard { message, recovery } => CmdError {
+                kind: CmdErrorKind::StocktakeGuard,
+                message,
+                field: None,
+                error_id: None,
+                stocktake_recovery: Some(recovery),
+                related_csv_import_id: None,
             },
         }
     }
@@ -265,6 +334,18 @@ mod tests {
         let cmd_err: CmdError = biz_err.into();
         assert_eq!(cmd_err.kind, CmdErrorKind::Duplicate);
         assert!(cmd_err.message.contains("TEST-001"));
+        // 商品フォームは field jan_code の有無で JanInUse と分ける（40、UI-01b-D26）
+        assert!(cmd_err.field.is_none());
+    }
+
+    #[test]
+    fn test_cmd_error_req905_from_jan_in_use() {
+        // REQ-905 / BIZ-01-D11（40）: JanInUse は kind duplicate・field jan_code、message は BIZ の文のまま
+        let message = "この JAN（4901234567887）はほかの商品が使っています: P-901「赤」";
+        let cmd_err: CmdError = BizError::JanInUse(message.to_string()).into();
+        assert_eq!(cmd_err.kind, CmdErrorKind::Duplicate);
+        assert_eq!(cmd_err.field.as_deref(), Some("jan_code"));
+        assert_eq!(cmd_err.message, message);
     }
 
     #[test]
@@ -352,5 +433,102 @@ mod tests {
         let biz_err = BizError::IdempotencyConflict("競合".to_string());
         let cmd_err: CmdError = biz_err.into();
         assert_eq!(cmd_err.kind, CmdErrorKind::IdempotencyConflict);
+    }
+
+    #[test]
+    fn test_cmd_error_req401_settlement_conflict_carries_related_csv_import_id() {
+        // REQ-401 / 40 §5.3・41 §17.4（Matrix W3）: 順 4 の拒否は kind import_error のまま、名指す取込みID を
+        // related_csv_import_id に Some で運び、ほかの全ての variant では None
+        let message =
+            "同じ精算と思われる別の資料が既に取り込まれています（精算 101、取込みID: 42）";
+        let cmd_err: CmdError = BizError::SettlementConflict {
+            message: message.to_string(),
+            csv_import_id: 42,
+        }
+        .into();
+        assert_eq!(cmd_err.kind, CmdErrorKind::ImportError);
+        assert_eq!(cmd_err.message, message);
+        assert_eq!(cmd_err.related_csv_import_id, Some(42));
+        assert!(cmd_err.stocktake_recovery.is_none());
+        let wire = serde_json::to_value(&cmd_err).unwrap();
+        assert_eq!(wire["kind"], serde_json::json!("import_error"));
+        assert_eq!(wire["related_csv_import_id"], serde_json::json!(42));
+        for other in [
+            BizError::ValidationFailed("v".to_string()),
+            BizError::ValidationFailedAt {
+                message: "v".to_string(),
+                field: "page".to_string(),
+            },
+            BizError::NotFound("n".to_string()),
+            BizError::DuplicateProductCode("d".to_string()),
+            BizError::JanInUse("j".to_string()),
+            BizError::DatabaseError(DbError::NotFound),
+            BizError::ImportError("i".to_string()),
+            BizError::ExportError("e".to_string()),
+            BizError::IdempotencyConflict("c".to_string()),
+            BizError::StocktakeInProgress("p".to_string()),
+            BizError::StocktakeNotInProgress("p".to_string()),
+            BizError::StocktakeGuard {
+                message: "g".to_string(),
+                recovery: Box::new(crate::biz::stocktake_service::StocktakeRecovery {
+                    code: crate::biz::stocktake_service::StocktakeRecoveryCode::RecountRequired,
+                    targets: Vec::new(),
+                    settlement_pending: None,
+                }),
+            },
+        ] {
+            let cmd_err: CmdError = other.into();
+            assert!(
+                cmd_err.related_csv_import_id.is_none(),
+                "{:?}",
+                cmd_err.kind
+            );
+            let wire = serde_json::to_value(&cmd_err).unwrap();
+            assert_eq!(
+                wire.get("related_csv_import_id"),
+                Some(&serde_json::Value::Null),
+                "{wire}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cmd_error_req205_stocktake_guard_carries_recovery() {
+        // REQ-205 / 40 の回復型（b1 Matrix W1）: StocktakeGuard は kind stocktake_guard と stocktake_recovery を Some で、
+        // 既存の kind では None で運ぶ
+        use crate::biz::stocktake_service::{StocktakeRecovery, StocktakeRecoveryCode};
+        let recovery = StocktakeRecovery {
+            code: StocktakeRecoveryCode::RecountRequired,
+            targets: Vec::new(),
+            settlement_pending: None,
+        };
+        let cmd_err: CmdError = BizError::StocktakeGuard {
+            message: "守りの拒否".to_string(),
+            recovery: Box::new(recovery.clone()),
+        }
+        .into();
+        assert_eq!(cmd_err.kind, CmdErrorKind::StocktakeGuard);
+        assert_eq!(cmd_err.message, "守りの拒否");
+        assert_eq!(cmd_err.stocktake_recovery, Some(Box::new(recovery)));
+        assert_eq!(
+            serde_json::to_value(&cmd_err).unwrap()["kind"],
+            serde_json::json!("stocktake_guard")
+        );
+        for other in [
+            BizError::ValidationFailed("v".to_string()),
+            BizError::ValidationFailedAt {
+                message: "v".to_string(),
+                field: "pos_stock_sync".to_string(),
+            },
+            BizError::NotFound("n".to_string()),
+            BizError::ImportError("i".to_string()),
+            BizError::StocktakeInProgress("p".to_string()),
+            BizError::StocktakeNotInProgress("p".to_string()),
+            BizError::DatabaseError(DbError::NotFound),
+        ] {
+            let cmd_err: CmdError = other.into();
+            assert_ne!(cmd_err.kind, CmdErrorKind::StocktakeGuard);
+            assert!(cmd_err.stocktake_recovery.is_none(), "{:?}", cmd_err.kind);
+        }
     }
 }

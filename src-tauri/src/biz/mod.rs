@@ -26,9 +26,7 @@ pub use crate::db::product_repo::{
 #[allow(unused_imports)]
 pub use crate::db::sales_repo::CsvImport;
 #[allow(unused_imports)]
-pub use crate::db::stocktake_repo::{
-    LastStocktakeSummary, Stocktake, StocktakeItemDetail, StocktakeProgress,
-};
+pub use crate::db::stocktake_repo::{LastStocktakeSummary, Stocktake, StocktakeProgress};
 #[allow(unused_imports)]
 pub use crate::db::system_repo::{AppSetting, OperationLog};
 #[allow(unused_imports)]
@@ -37,6 +35,8 @@ pub use crate::db::DbConnection;
 pub use crate::db::DbError;
 #[allow(unused_imports)]
 pub use crate::db::PaginatedResult;
+#[allow(unused_imports)]
+pub use stocktake_service::StocktakeItemDetail;
 // CMD-02〜05 用 re-export
 pub use crate::db::disposal_repo::{
     DisposalRecordDetail, DisposalRecordSummary, InventoryRecordQuery, InventoryRecordSummary,
@@ -46,8 +46,12 @@ pub use crate::db::manual_sale_repo::ManualSaleRecordDetail;
 pub use crate::db::receiving_repo::{ReceivingRecordDetail, ReceivingRecordWithSupplier};
 pub use crate::db::return_repo::{ReturnRecordDetail, ReturnRecordSummary};
 // CMD-06 用 re-export
-pub use crate::db::inventory_repo::{MovementQuery, MovementRecord};
+pub use crate::db::inventory_repo::MovementQuery;
+// 業務記録の詳細の wire 型（D-083 の re-export の許可表に載る。在庫変動の画面は StockHistoryItem）
+#[allow(unused_imports)]
+pub use crate::db::inventory_repo::MovementRecord;
 pub use crate::db::product_repo::StockDetail;
+pub use inventory_service::StockHistoryItem;
 
 use std::fmt;
 
@@ -64,10 +68,14 @@ pub enum BizError {
     NotFound(String),
     /// 商品コード重複
     DuplicateProductCode(String),
+    /// 新規登録で入れた JAN を他の商品が使っている（BIZ-01-D11。message は BIZ が作る）
+    JanInUse(String),
     /// IO層エラーのラップ
     DatabaseError(DbError),
     /// インポートエラー（BIZ-03 CSV取込みパイプライン）
     ImportError(String),
+    /// 同じ精算の別の版が active（BIZ-03 の順 4 の拒否。文が名指す取込みID を構造でも持つ。32）
+    SettlementConflict { message: String, csv_import_id: i64 },
     /// エクスポートエラー（BIZ-04 PLU書出し）
     ExportError(String),
     /// 同じ冪等キーで異なる内容のリクエスト
@@ -76,6 +84,14 @@ pub enum BizError {
     StocktakeInProgress(String),
     /// 棚卸し未進行（BIZ-06）
     StocktakeNotInProgress(String),
+    /// SD から読んだ原本の写しを保存できなかった（BIZ-08-D5）。io error の種類は診断にだけ使う
+    SourceCopyFailed(std::io::ErrorKind),
+    /// 棚卸しの守りの拒否と回復先（40。完了の拒否・在庫連動を始める拒否）
+    StocktakeGuard {
+        message: String,
+        /// 大きいので Box（`Result<_, BizError>` の Err を小さく保つ。wire の形は変わらない）
+        recovery: Box<stocktake_service::StocktakeRecovery>,
+    },
 }
 
 impl fmt::Display for BizError {
@@ -89,12 +105,18 @@ impl fmt::Display for BizError {
             BizError::DuplicateProductCode(code) => {
                 write!(f, "商品コード重複: {}", code)
             }
+            BizError::JanInUse(msg) => write!(f, "JAN 使用中: {}", msg),
             BizError::DatabaseError(e) => write!(f, "データベースエラー: {}", e),
             BizError::ImportError(msg) => write!(f, "インポートエラー: {}", msg),
+            BizError::SettlementConflict { message, .. } => {
+                write!(f, "インポートエラー: {}", message)
+            }
             BizError::ExportError(msg) => write!(f, "エクスポートエラー: {}", msg),
             BizError::IdempotencyConflict(msg) => write!(f, "冪等性キー競合: {}", msg),
             BizError::StocktakeInProgress(msg) => write!(f, "棚卸し進行中: {}", msg),
             BizError::StocktakeNotInProgress(msg) => write!(f, "棚卸し未進行: {}", msg),
+            BizError::SourceCopyFailed(kind) => write!(f, "SD の写しの保存に失敗: {:?}", kind),
+            BizError::StocktakeGuard { message, .. } => write!(f, "棚卸しの確認: {}", message),
         }
     }
 }

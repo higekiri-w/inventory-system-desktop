@@ -371,3 +371,32 @@ describe("ProductListTable (REQ-301 詳細を開いた行の進行中の見た�
     expect(stockCell).not.toHaveClass("text-warning-strong");
   });
 });
+
+describe("ProductListTable の在庫の欄（D-118 b2、58）", () => {
+  it("U2 recheck range does not change stock status derived from copy", async () => {
+    // REQ-302 / SPEC-STK-CNT-D3（Matrix U2）: 範囲と badge は出すが、状態は写しの 1 で「在庫少」（範囲の下端 0 で在庫切れにしない）
+    renderWithRouter(
+      <ProductListTable
+        items={[
+          makeMockProductWithRelations({
+            product_code: "U2-REC",
+            stock_quantity: 1,
+            stock_recheck: true,
+            stock_range_low: 0,
+            stock_range_high: 1,
+          }),
+          makeMockProductWithRelations({ product_code: "U2-PLN", stock_quantity: 3 }),
+        ]}
+        source="low_stock"
+        selected={null}
+        detailQuery={makeDetailQuery()}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(await screen.findByText("0〜1 個")).toBeInTheDocument();
+    expect(screen.getAllByText("要再確認")).toHaveLength(1);
+    expect(screen.getAllByText("在庫少")).toHaveLength(2);
+    expect(screen.queryByText("在庫切れ")).not.toBeInTheDocument();
+    expect(screen.getByText("3 個")).toBeInTheDocument();
+  });
+});

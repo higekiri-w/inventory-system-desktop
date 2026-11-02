@@ -85,17 +85,16 @@ pub(crate) fn validate_business_date(date: &str) -> Result<(), BizError> {
 /// 商品の在庫を変動させる: movement を並びの鍵付きで INSERT し、その商品を記録から求め直す
 ///
 /// 引数の型（借りた transaction）で TX の内側に限る。TX は呼び出し元の create_* が管理する。
-/// BIZ-03（CSV取込み）からも直接呼び出し可（pub(crate) は意図的）。`stock_after` は、この呼出しが
+/// 入出庫 4 業務だけが呼ぶ（Z004 の確定は movement を書いてから商品ごとに求め直す。31）。`stock_after` は、この呼出しが
 /// INSERT した movement だけに、直後の求め直しの写しの値を書く（同じ要求の同じ商品の明細は途中の値）。
 ///
 /// 31-biz-inventory-service.md §12.2 と「計数の置き場と在庫の求め直しの契約」
-// 並びの鍵（業務日・精算回数）を足して 9 引数。(b) で Z004 の確定が settlement_no を渡す（31）
+// 並びの鍵の業務日を持つ 8 引数（b1 で settlement_no を外した。31）
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_stock_change(
     conn: &rusqlite::Transaction<'_>,
     product_code: &str,
     business_date: &str,
-    settlement_no: Option<i64>,
     quantity: i64,
     movement_type: MovementType,
     reference_type: ReferenceType,
@@ -118,7 +117,7 @@ pub(crate) fn apply_stock_change(
             reference_id: Some(reference_id),
             note: note.map(|s| s.to_string()),
             business_date: business_date.to_string(),
-            settlement_no,
+            settlement_no: None,
         },
     )?;
 
@@ -192,7 +191,6 @@ mod tests {
             &tx,
             "ASC-001",
             "2026-04-01",
-            None,
             5,
             MovementType::Receiving,
             ReferenceType::ReceivingRecord,
@@ -224,7 +222,6 @@ mod tests {
             &tx,
             "ASC-002",
             "2026-04-01",
-            None,
             -3,
             MovementType::SaleManual,
             ReferenceType::ManualSale,
@@ -250,7 +247,6 @@ mod tests {
             &tx,
             "ASC-003",
             "2026-04-01",
-            None,
             -5,
             MovementType::Disposal,
             ReferenceType::DisposalRecord,
@@ -281,7 +277,6 @@ mod tests {
             &tx,
             "NONEXISTENT",
             "2026-04-01",
-            None,
             5,
             MovementType::Receiving,
             ReferenceType::ReceivingRecord,
@@ -305,7 +300,6 @@ mod tests {
             &tx,
             "ASC-005",
             "2026-04-01",
-            None,
             5,
             MovementType::Receiving,
             ReferenceType::ReceivingRecord,
@@ -355,7 +349,6 @@ mod tests {
             &tx,
             "NO-SUCH-PRODUCT",
             "2026-04-01",
-            None,
             1,
             MovementType::Receiving,
             ReferenceType::ReceivingRecord,

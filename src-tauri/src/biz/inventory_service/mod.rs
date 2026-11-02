@@ -24,7 +24,7 @@ mod test_support;
 pub(crate) use common::StockChangeOutcome;
 
 // apply_stock_change は pub(crate) を維持（BIZ-03 CSV取込みから呼び出し可）
-pub(crate) use common::{apply_stock_change, check_stock_range, validate_business_date};
+pub(crate) use common::{check_stock_range, validate_business_date};
 pub(crate) use list::resolve_movement_source;
 
 // 入庫
@@ -42,7 +42,11 @@ pub use manual_sale::{create_manual_sale, ManualSaleCreateRequest, ManualSaleCre
 pub use disposal::{create_disposal, DisposalCreateRequest, DisposalCreateResult};
 
 // 一覧取得
+#[allow(unused_imports)]
+// generated wire 型として公開する（finite_enum_contract_tests が読む）
+pub use list::StockHistoryKind;
 pub use list::{
     get_disposal_record, get_manual_sale_record, get_receiving_record, get_return_record,
     list_disposals, list_inventory_records, list_movements, list_receivings, list_returns,
+    StockHistoryItem,
 };

@@ -22,13 +22,15 @@ import { EmptyState } from "@/components/patterns/EmptyState";
 import { PageHeader } from "@/components/patterns/PageHeader";
 import { PageShell } from "@/components/patterns/PageShell";
 import { Pagination, PaginationSummary } from "@/components/patterns/Pagination";
-import { formatStockDisplay } from "@/features/stock-inquiry/lib/format-stock-display";
+import { StockWithRecheck } from "@/features/stock-inquiry/components/StockRecheckBadge";
+import { StockRecheckNotice } from "@/features/stock-inquiry/components/StockRecheckNotice";
 import { scrollPageToTop } from "@/lib/page-scroll";
 import { returnToLinkProps } from "@/lib/return-to";
 import type { StockMovementsSearch } from "./types";
 import { MOVEMENT_TYPE_OPTIONS, normalizeStockMovementsSearch } from "./types";
 import { useStockMovements } from "./hooks/useStockMovements";
-import { MovementTable, stockUnitMap } from "./components/MovementTable";
+import { stockUnitMap } from "./components/MovementTable";
+import { StockHistoryTable } from "./components/StockHistoryTable";
 
 export interface StockMovementsPageProps {
   productCode: string;
@@ -132,12 +134,15 @@ export function StockMovementsPage({
             </div>
             <div>
               <p className="text-sm text-muted-foreground">現在庫</p>
-              <p className="font-mono font-medium tabular-nums">
-                {formatStockDisplay(
-                  productQuery.data.product.stock_quantity,
-                  productQuery.data.product.stock_unit,
-                )}
-              </p>
+              <div className="font-medium tabular-nums">
+                <StockWithRecheck product={productQuery.data.product} />
+              </div>
+            </div>
+            <div className="sm:col-span-4">
+              <StockRecheckNotice
+                productCode={productQuery.data.product.product_code}
+                stockRecheck={productQuery.data.product.stock_recheck}
+              />
             </div>
           </div>
         ) : null}
@@ -258,8 +263,8 @@ export function StockMovementsPage({
               totalCount={movementsQuery.data.total_count}
             />
           )}
-          <MovementTable
-            movements={movementsQuery.data.items}
+          <StockHistoryTable
+            items={movementsQuery.data.items}
             stockUnitByProductCode={stockUnitMap(
               productQuery.data ? [productQuery.data.product] : [],
             )}

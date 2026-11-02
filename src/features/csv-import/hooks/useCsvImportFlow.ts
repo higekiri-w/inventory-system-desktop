@@ -5,14 +5,15 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useReducer } from "react";
+import { useCallback, useReducer, useState } from "react";
 import { toast } from "sonner";
 import type { PickedFile } from "@/components/FilePicker";
-import { commands, CSV_IMPORT_FILE_SIZE_LIMIT } from "@/lib/bindings";
+import { commands, CSV_IMPORT_FILE_SIZE_LIMIT, type RollbackResult } from "@/lib/bindings";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/invoke";
 import { csvImportReducer } from "../reducer";
 import type { CsvImportState, ErrorRecoverTo } from "../types";
+import { useRollbackCsvImport } from "./useRollbackCsvImport";
 
 const INITIAL_STATE: CsvImportState = { status: "idle" };
 
@@ -36,6 +37,7 @@ function ensureInvokeError(error: unknown, cmd: string): InvokeError {
       message: error instanceof Error ? error.message : String(error),
       field: null,
       error_id: null,
+      stocktake_recovery: null,
     },
     { source: "commands", cmd },
   );
@@ -45,10 +47,12 @@ export interface UseCsvImportFlowResult {
   state: CsvImportState;
   /// ファイル選択 / drag&drop からの取込み開始。20MB 超過時は Sonner トーストで reject。
   selectFile: (file: PickedFile) => void;
-  /// プレビュー確認後の commit 実行。state.status === "preview" 前提。
-  confirmImport: (additionalImportConfirmed: boolean) => void;
+  /// プレビュー確認後の commit 実行。state.status === "preview" 前提（Z004 は同じ日の追加の確認を持たない。ADR D4）。
+  confirmImport: () => void;
   /// 完了後の rollback 実行。state.status === "result" 前提。
   rollback: (csvImportId: number) => void;
+  /// 直前の取消の結果（要再確認の一覧を出す。55 の「取消の結果」）。次のファイル選択で消える
+  rollbackResult: RollbackResult | null;
   /// error variant からの復帰 (recoverTo に従い idle or preview に遷移)。
   dismissError: () => void;
   /// 任意 state からの強制初期化 (navigation 抜け道、ResultStep の「ホームに戻る」CTA 等)。
@@ -60,6 +64,7 @@ export interface UseCsvImportFlowResult {
 
 export function useCsvImportFlow(): UseCsvImportFlowResult {
   const [state, dispatch] = useReducer(csvImportReducer, INITIAL_STATE);
+  const [rollbackResult, setRollbackResult] = useState<RollbackResult | null>(null);
   const queryClient = useQueryClient();
 
   // §55.7 importing 中の常時 block + Tauri webview beforeunload 連動
@@ -93,11 +98,10 @@ export function useCsvImportFlow(): UseCsvImportFlowResult {
   const commitImport = useMutation({
     mutationFn: (args: {
       previewToken: string;
-      additionalImportConfirmed: boolean;
       // settlementDate は preview から拾って onSuccess の invalidation に渡す (§55.3)
       settlementDate: string;
     }) =>
-      unwrapResult(commands.commitCsvImport(args.previewToken, args.additionalImportConfirmed), {
+      unwrapResult(commands.commitCsvImport(args.previewToken), {
         source: "commands",
         cmd: "commit_csv_import",
       }),
@@ -116,24 +120,11 @@ export function useCsvImportFlow(): UseCsvImportFlowResult {
     },
   });
 
-  const rollbackMutation = useMutation({
-    mutationFn: (args: { csvImportId: number; settlementDate: string }) =>
-      unwrapResult(commands.rollbackCsvImport(args.csvImportId), {
-        source: "commands",
-        cmd: "rollback_csv_import",
-      }),
-    retry: 0,
-    onSuccess: async () => {
+  // 取消の Toast・再取得・失敗の Toast は共有の hook（55 UI-07-D18）。ここは成功の後の dispatch と結果の保持だけ
+  const rollbackMutation = useRollbackCsvImport({
+    onSuccess: (result) => {
+      setRollbackResult(result);
       dispatch({ type: "rollback_succeeded" });
-      // Scope 7(a) UI 表示磨き batch: 取消は破壊的操作の完了通知であり、既定 3 秒
-      // (RootLayout.tsx の Toaster duration) では非IT高齢operatorが読み切れない
-      // おそれがあるため、この通知だけ個別に長く表示する（Toaster 全体設定は不変）。
-      toast.success("取込みを取り消しました", { duration: 8000 });
-      await invalidateByContract(queryClient, invalidationContract.csvImportRollback());
-    },
-    onError: () => {
-      // §55.9 rollback 失敗の UX: トーストのみ + state 据え置き (result variant 維持して再試行可能)
-      toast.error("取り消しに失敗しました。もう一度お試しください");
     },
   });
 
@@ -144,35 +135,26 @@ export function useCsvImportFlow(): UseCsvImportFlowResult {
         return;
       }
       const fileBytes = Array.from(file.bytes);
+      setRollbackResult(null);
       dispatch({ type: "select_file", filename: file.filename });
       parseAndValidate.mutate({ fileBytes, filename: file.filename });
     },
     [parseAndValidate],
   );
 
-  const confirmImport = useCallback(
-    (additionalImportConfirmed: boolean) => {
-      // §55.2 設計: confirm_import は preview state からのみ valid
-      if (state.status !== "preview") return;
-      const settlementDate = state.preview.file_info.settlement_date;
-      dispatch({ type: "confirm_import", additionalImportConfirmed });
-      commitImport.mutate({
-        previewToken: state.previewToken,
-        additionalImportConfirmed,
-        settlementDate,
-      });
-    },
-    [state, commitImport],
-  );
+  const confirmImport = useCallback(() => {
+    // §55.2 設計: confirm_import は preview state からのみ valid
+    if (state.status !== "preview") return;
+    const settlementDate = state.preview.file_info.settlement_date;
+    dispatch({ type: "confirm_import" });
+    commitImport.mutate({ previewToken: state.previewToken, settlementDate });
+  }, [state, commitImport]);
 
   const rollback = useCallback(
     (csvImportId: number) => {
-      // §55.2 設計: rollback は result state からのみ valid (settlementDate を pre-capture)
+      // §55.2 設計: rollback は result state からのみ valid
       if (state.status !== "result") return;
-      rollbackMutation.mutate({
-        csvImportId,
-        settlementDate: state.settlementDate,
-      });
+      rollbackMutation.mutate(csvImportId);
     },
     [state, rollbackMutation],
   );
@@ -190,6 +172,7 @@ export function useCsvImportFlow(): UseCsvImportFlowResult {
     selectFile,
     confirmImport,
     rollback,
+    rollbackResult,
     dismissError,
     reset,
     isParsing: parseAndValidate.isPending,

@@ -56,6 +56,7 @@ const syntheticError: CmdError = {
   message: "synthetic query failure",
   field: null,
   error_id: "E-SYNTHETIC",
+  stocktake_recovery: null,
 };
 
 function makeDailySales(): DailySalesReport {
@@ -91,6 +92,9 @@ function makeProduct(productCode: string, stockQuantity: number): ProductWithRel
     department_name: "synthetic-department",
     supplier_name: null,
     plu_memory_no: null,
+    stock_recheck: false,
+    stock_range_low: null,
+    stock_range_high: null,
   };
 }
 

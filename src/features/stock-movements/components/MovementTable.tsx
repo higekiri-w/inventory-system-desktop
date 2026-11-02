@@ -1,6 +1,6 @@
 // src/features/stock-movements/components/MovementTable.tsx
 //
-// REQ-303 / REQ-207: 商品別 movement table。
+// REQ-303 / REQ-207: 業務記録詳細の「関連する在庫変動」の movement table（在庫変動の画面は StockHistoryTable。増減と元記録の欄を共有する）。
 // 設計: docs/function-design/66-ui-stock-movements.md §66.5
 
 import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
@@ -16,7 +16,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatLengthOrPlain } from "@/features/stock-inquiry/lib/format-stock-display";
-import type { MovementRecord, ProductStockUnit } from "@/lib/bindings";
+import type {
+  MovementRecord,
+  MovementSourceLink as MovementSourceLinkData,
+  ProductStockUnit,
+} from "@/lib/bindings";
 import {
   formatMovementDateTime,
   formatMovementQuantity,
@@ -43,6 +47,24 @@ function QuantityDirectionIcon({ quantity }: { quantity: number }) {
   return <ArrowRight aria-hidden="true" className="text-muted-foreground" />;
 }
 
+/// 増減の欄（在庫変動の画面の履歴の表と共有する。66）
+export function MovementQuantity({
+  quantity,
+  unit,
+}: {
+  quantity: number;
+  unit?: ProductStockUnit;
+}) {
+  const formatted = formatMovementQuantity(quantity, unit);
+  return (
+    <div className="flex items-center gap-2">
+      <QuantityDirectionIcon quantity={quantity} />
+      <span className="font-mono font-medium tabular-nums">{formatted.value}</span>
+      <span className="text-xs text-muted-foreground">{formatted.label}</span>
+    </div>
+  );
+}
+
 // movement.source.route は DTO 由来の runtime 文字列 (compile-time に既知の route union
 // ではない)。batch A packet P2-2 の採用案どおり <Link to={string}> で SPA 遷移のみ保証し、
 // to は pathname のみ・returnTo は search object 経由で付与する。
@@ -52,6 +74,26 @@ function sourceLinkProps(
 ): { to: string; search?: { returnTo: string } } {
   if (returnTo === undefined) return { to: route };
   return { to: route, search: { returnTo } };
+}
+
+/// 元記録の欄（在庫変動の画面の履歴の表と共有する。66）
+export function MovementSourceLink({
+  source,
+  returnTo,
+}: {
+  source: MovementSourceLinkData | null;
+  returnTo?: string;
+}) {
+  return source ? (
+    <Link
+      className="font-medium text-primary underline-offset-4 hover:underline"
+      {...sourceLinkProps(source.route, returnTo)}
+    >
+      {source.label}
+    </Link>
+  ) : (
+    <span className="text-muted-foreground">元記録なし</span>
+  );
 }
 
 export function MovementTable({ movements, stockUnitByProductCode, returnTo }: MovementTableProps) {
@@ -70,7 +112,6 @@ export function MovementTable({ movements, stockUnitByProductCode, returnTo }: M
       <TableBody>
         {movements.map((movement) => {
           const unit = stockUnitByProductCode.get(movement.product_code);
-          const quantity = formatMovementQuantity(movement.quantity, unit);
           return (
             <TableRow key={movement.id}>
               <TableCell className="font-mono tabular-nums">
@@ -80,26 +121,13 @@ export function MovementTable({ movements, stockUnitByProductCode, returnTo }: M
                 <Badge variant="outline">{formatMovementType(movement.movement_type)}</Badge>
               </TableCell>
               <TableCell>
-                <div className="flex items-center gap-2">
-                  <QuantityDirectionIcon quantity={movement.quantity} />
-                  <span className="font-mono font-medium tabular-nums">{quantity.value}</span>
-                  <span className="text-xs text-muted-foreground">{quantity.label}</span>
-                </div>
+                <MovementQuantity quantity={movement.quantity} unit={unit} />
               </TableCell>
               <TableCell className="text-right font-mono tabular-nums">
                 {formatLengthOrPlain(movement.stock_after, unit)}
               </TableCell>
               <TableCell>
-                {movement.source ? (
-                  <Link
-                    className="font-medium text-primary underline-offset-4 hover:underline"
-                    {...sourceLinkProps(movement.source.route, returnTo)}
-                  >
-                    {movement.source.label}
-                  </Link>
-                ) : (
-                  <span className="text-muted-foreground">元記録なし</span>
-                )}
+                <MovementSourceLink source={movement.source} returnTo={returnTo} />
               </TableCell>
               <TableCell
                 className="max-w-80 break-words whitespace-normal"

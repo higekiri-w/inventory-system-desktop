@@ -795,14 +795,89 @@ is_archived_plan_path() {
     esac
 }
 
+# D-145 (5): active な packet は scripts/pr-gate.py の plan_origin・active_packets の 1 つの定義だけで決める
+# （docs/plans/ 直下の dated packet のうち起点の tree に無いもの。起点は WORKFLOW_BASE_SHA か origin/main と
+# HEAD の merge-base）。形式（D-145 (4)）は packet を最初に足した commit の親に scripts/plan-approve.sh が在るか。
+PLAN_SCOPE_LOADED=0
+PLAN_SCOPE_ERROR=""
+PLAN_SCOPE_REPORTED=0
+PLAN_ORIGIN=""
+declare -a ACTIVE_PLANS=()
+declare -A PLAN_FORM=()
+declare -A PLAN_FORM_ERROR=()
+
+load_plan_scope() {
+    [ "$PLAN_SCOPE_LOADED" = "1" ] && return 0
+    PLAN_SCOPE_LOADED=1
+    local scope kind path value
+    scope=$(PYTHONDONTWRITEBYTECODE=1 python3 - "${WORKFLOW_BASE_SHA:-}" <<'PY' 2>/dev/null
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location('pr_gate', 'scripts/pr-gate.py')
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+names = [f'docs/plans/{n}' for n in sorted(os.listdir('docs/plans'))] if os.path.isdir('docs/plans') else []
+try:
+    origin = m.plan_origin(sys.argv[1] or None)
+    print('origin\x1f' + (origin or '') + '\x1f')
+    for path in m.active_packets(origin, names):
+        try:
+            print(f'active\x1f{path}\x1f{m.packet_form(path, origin)}')
+        except m.GateError as error:
+            print(f'formerror\x1f{path}\x1f{error}')
+except m.GateError as error:
+    print(f'error\x1f\x1f{error}')
+PY
+) || scope=$'error\x1f\x1fpython3 と scripts/pr-gate.py が必要'
+    while IFS=$'\x1f' read -r kind path value; do
+        case "$kind" in
+            origin) PLAN_ORIGIN="$path" ;;
+            active) ACTIVE_PLANS+=("$path"); PLAN_FORM["$path"]="$value" ;;
+            formerror) ACTIVE_PLANS+=("$path"); PLAN_FORM_ERROR["$path"]="$value" ;;
+            error) PLAN_SCOPE_ERROR="$value" ;;
+        esac
+    done <<< "$scope"
+}
+
+# 起点を決められなければ ERROR（全 packet の検査に落とさない。fail-closed）。報告は 1 回。
+# docs/plans/ に dated packet が 1 本も無ければ active になりうる packet が無いので止めない。
+report_plan_scope_error() {
+    load_plan_scope
+    [ -n "$(find "$PLAN_DIR" -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md' -type f 2>/dev/null)" ] || return 0
+    if [ -n "$PLAN_SCOPE_ERROR" ] && [ "$PLAN_SCOPE_REPORTED" = "0" ]; then
+        PLAN_SCOPE_REPORTED=1
+        error "PK: active な packet を決められない: $PLAN_SCOPE_ERROR"
+    fi
+}
+
 iter_active_dated_plans() {
     local file
-    while IFS= read -r file; do
-        [ -n "$file" ] || continue
-        if is_active_dated_plan "$file"; then
-            printf '%s\n' "$file"
-        fi
-    done < <(find "$PLAN_DIR" -maxdepth 1 -name "*.md" -type f 2>/dev/null | sort)
+    for file in "${ACTIVE_PLANS[@]}"; do
+        printf '%s\n' "$file"
+    done
+}
+
+is_active_plan() {
+    load_plan_scope
+    local file
+    for file in "${ACTIVE_PLANS[@]}"; do
+        [ "$file" = "$1" ] && return 0
+    done
+    return 1
+}
+
+# 形式: active なら git の履歴（PLAN_FORM）、名指しの merge 済み・archive の packet は Phase の行の有無。
+plan_form_of() {
+    load_plan_scope
+    local ws
+    if [ -n "${PLAN_FORM[$1]:-}" ]; then
+        printf '%s\n' "${PLAN_FORM[$1]}"
+        return 0
+    fi
+    ws=$(extract_markdown_section "$1" "Workflow State")
+    if [ -n "$ws" ] && ! printf '%s\n' "$ws" | grep -qE '^- Phase:'; then
+        echo new
+    else
+        echo old
+    fi
 }
 
 iter_plan_packet_targets() {
@@ -1014,6 +1089,7 @@ has_test_design_matrix_reference() {
 
 check_plan_packet_sections() {
     header "PK1: Plan Packet presence"
+    report_plan_scope_error
 
     local before=$ERRORS
     local file valid_risk any_risk level section
@@ -1036,6 +1112,26 @@ check_plan_packet_sections() {
 
         level="${valid_risk#R}"
         [ "$level" -le 1 ] && continue
+
+        # D-145 (10) H14: 新形式は最小形の節、旧形式は今の必須の節のまま（非遡及）。
+        if [ "$(plan_form_of "$file")" = "new" ]; then
+            local new_sections=("Risk" "Goal" "Scope" "Acceptance Criteria")
+            [ "$level" -ge 3 ] && new_sections+=("Design Readiness" "Contract Ledger" "Test Plan")
+            [ "$level" -ge 4 ] && new_sections+=("Recovery" "Data Safety")
+            for section in "${new_sections[@]}"; do
+                if ! has_h2_section "$file" "$section"; then
+                    error "PK1: $file (R${level}, 新形式) は必須セクション '## ${section}' を欠いています"
+                fi
+            done
+            if has_h2_section "$file" "Contract Ledger" && [ -z "$(trace_matrix_data_rows "$file" "Contract Ledger")" ]; then
+                error "PK1: $file (R${level}) の Contract Ledger にデータ行がありません"
+            fi
+            if has_h2_section "$file" "L3" &&
+                [ -z "$(extract_markdown_h2_section "$file" "L3" | strip_fenced_code_and_html_comments | grep -vE '^[[:space:]]*$' || true)" ]; then
+                error "PK1: $file の '## L3' が空です（節があること = manual。基準を書くか節を消す）"
+            fi
+            continue
+        fi
 
         local required_sections=("${base_sections[@]}")
         [ "$level" -ge 3 ] && required_sections+=("${r3_sections[@]}")
@@ -1213,9 +1309,6 @@ check_plan_packet_numeric_evidence_warnings() {
 
 # --- PK4: Workflow State machine 整合（DEV_WORKFLOW.md Workflow State 節の機械強制） ---
 
-WORKFLOW_STATE_PHASES="kickoff spec-check design plan-draft plan-gate plan-approved implementing archive"
-WORKFLOW_STATE_PLAN_APPROVED_PHASES="plan-approved implementing"
-
 check_plan_packet_workflow_state() {
     header "PK4: Workflow State machine 整合"
 
@@ -1243,18 +1336,17 @@ check_plan_packet_workflow_state() {
             [ "$(extract_workflow_field "$ws_section" "Evidence Mode" full)" != "github" ]; then
             error "PK4: $file の Evidence Mode は廃止。書くなら github"
         fi
-        local -a required_fields=(
-            "Phase"
-            "Risk"
-            "Plan Commit"
-            "Amendments"
-            "Coordinator"
-            "Writer"
-            "Plan Reviewer"
-            "Final Reviewer"
-            "Final Review Minimum"
-            "Human Gate"
-        )
+        # D-145 (3)(4): 旧形式は Phase の行（値は評価しない）と書いた Minimum・Human Gate、新形式は 3 行。
+        # 担当 4 行・Branch は在っても無くても受ける。形式と Phase の行の食い違いは helper の parse_packet が拒む。
+        local form form_arg=""
+        form=$(plan_form_of "$file")
+        [ -n "${PLAN_FORM[$file]:-}" ] && form_arg="$form"
+        if [ -n "${PLAN_FORM_ERROR[$file]:-}" ]; then
+            error "PK4: $file の形式を判定できない: ${PLAN_FORM_ERROR[$file]}"
+            continue
+        fi
+        local -a required_fields=("Risk" "Plan Commit" "Amendments")
+        [ "$form" = "old" ] && required_fields=("Phase" "Risk" "Plan Commit" "Amendments" "Final Review Minimum" "Human Gate")
         local field
         for field in "${required_fields[@]}"; do
             if ! printf '%s\n' "$ws_section" | grep -qE "^- ${field}:[[:space:]]*[^[:space:]]"; then
@@ -1276,11 +1368,11 @@ s = importlib.util.spec_from_file_location("pr_gate", "scripts/pr-gate.py")
 m = importlib.util.module_from_spec(s)
 s.loader.exec_module(m)
 try:
-    m.parse_packet(open(sys.argv[1], encoding="utf-8").read())
+    m.parse_packet(open(sys.argv[1], encoding="utf-8").read(), sys.argv[2] or None)
     print("ok")
 except m.GateError as e:
     print("rejected:", e)
-' "$file" 2>/dev/null) || helper_check=""
+' "$file" "$form_arg" 2>/dev/null) || helper_check=""
         case "$helper_check" in
             ok) ;;
             "rejected: duplicate packet fields")
@@ -1291,28 +1383,17 @@ except m.GateError as e:
                 error "PK4: $file の Workflow State の重複の検査に python3 と scripts/pr-gate.py が必要です" ;;
         esac
 
-        local minimum human_gate
-        minimum=$(extract_workflow_field "$ws_section" "Final Review Minimum" full)
-        human_gate=$(extract_workflow_field "$ws_section" "Human Gate" full)
-        if ! is_in_word_list "$minimum" "1 2" || { [ "$level" -eq 4 ] && [ "$minimum" != "2" ]; }; then
-            error "PK4: $file の Final Review Minimum は1/2（R4は2）が必須です"
-        fi
-        if [[ ! "$human_gate" =~ ^(ready|merge|manual|r4)(,(ready|merge|manual|r4))*$ ]] ||
-            [[ ",$human_gate," != *,ready,* || ",$human_gate," != *,merge,* ]] ||
-            { [ "$level" -eq 4 ] && [[ ",$human_gate," != *,r4,* ]]; }; then
-            error "PK4: $file の Human Gate は ready,merge と必要な manual/r4 を明示してください"
-        fi
-
-        local phase_value
-        phase_value=$(extract_workflow_field "$ws_section" "Phase")
-        if printf '%s\n' "$ws_section" | grep -qE '^- Phase:' &&
-            ! is_in_word_list "$phase_value" "$WORKFLOW_STATE_PHASES"; then
-            error "PK4: $file (R${level}) の Phase 値 '${phase_value}' が Phase enum（${WORKFLOW_STATE_PHASES}）に含まれません"
-        elif is_in_word_list "$phase_value" "$WORKFLOW_STATE_PLAN_APPROVED_PHASES"; then
-            local plan_commit_value
-            plan_commit_value=$(extract_workflow_field "$ws_section" "Plan Commit")
-            if [ "$plan_commit_value" = "pending" ]; then
-                error "PK4: $file (R${level}) は Phase '${phase_value}' だが '- Plan Commit:' が pending のままです"
+        if [ "$form" = "old" ]; then
+            local minimum human_gate
+            minimum=$(extract_workflow_field "$ws_section" "Final Review Minimum" full)
+            human_gate=$(extract_workflow_field "$ws_section" "Human Gate" full)
+            if ! is_in_word_list "$minimum" "1 2" || { [ "$level" -eq 4 ] && [ "$minimum" != "2" ]; }; then
+                error "PK4: $file の Final Review Minimum は1/2（R4は2）が必須です"
+            fi
+            if [[ ! "$human_gate" =~ ^(ready|merge|manual|r4)(,(ready|merge|manual|r4))*$ ]] ||
+                [[ ",$human_gate," != *,ready,* || ",$human_gate," != *,merge,* ]] ||
+                { [ "$level" -eq 4 ] && [[ ",$human_gate," != *,r4,* ]]; }; then
+                error "PK4: $file の Human Gate は ready,merge と必要な manual/r4 を明示してください"
             fi
         fi
 
@@ -1330,26 +1411,6 @@ except m.GateError as e:
             error "PK4: $file (R${level}) の Workflow State '- Risk: ${ws_risk_value}' が '## Risk' セクションの 'Risk: ${valid_risk}' と不一致です"
         fi
     done < <(iter_plan_packet_targets "$@")
-
-    # --- active packet と Plans.md「次の行動」の pointer（D-097） ---
-    # 対象は docs/plans/ 直下の実状態そのもの（PLAN_FILES / TARGET_PATH には依存しない）。
-    # lane ごとの link は求めない。一覧は docs/plans/ が持ち、dashboard はそこを指す行を 1 つ持つ。
-    local active_packets active_count
-    active_packets=$(iter_active_dated_plans)
-    active_count=$(printf '%s\n' "$active_packets" | grep -c . || true)
-
-    local plans_md="docs/Plans.md"
-    if [ "$active_count" -gt 0 ]; then
-        local next_actions_pointer=""
-        if [ -f "$plans_md" ]; then
-            next_actions_pointer=$(extract_markdown_h2_section "$plans_md" "次の行動" \
-                | strip_fenced_code_and_html_comments \
-                | grep -F 'docs/plans/' || true)
-        fi
-        if [ -z "$next_actions_pointer" ]; then
-            error "PK4: docs/Plans.md の '## 次の行動' に active packet の一覧（docs/plans/）を指す行がありません"
-        fi
-    fi
 
     if [ "$ERRORS" -eq "$before" ]; then
         info "PK4: Workflow State machine 整合 OK"
@@ -1584,6 +1645,53 @@ check_code_doc_references() {
 
 # --- R3: Markdownリンク先ファイル存在検証 ---
 
+is_merged_plan_file() {
+    case "$1" in
+        docs/plans/*) ;;
+        *) return 1 ;;
+    esac
+    load_plan_scope
+    [ -z "$PLAN_SCOPE_ERROR" ] || return 1
+    [ -z "$PLAN_ORIGIN" ] && return 0
+    git cat-file -e "$PLAN_ORIGIN:$1" 2>/dev/null
+}
+
+# --- FL: 生きた docs に新しく足した `path:行` の引用（D-145 (10) H13、D-125 の目的） ---
+# 起点からの差分の '+' 行だけを見る。D-125 (2)(3)・DOC_STYLE_GUIDE §1 の適用除外は対象外。
+check_new_file_line_references() {
+    header "FL: 新しい path:行 の引用（D-125）"
+    load_plan_scope
+    if [ -n "$PLAN_SCOPE_ERROR" ]; then
+        warn "FL: 起点が取れないので新しい path:行 の検査をしない（$PLAN_SCOPE_ERROR）。pre-push と hosted は起点を渡す"
+        return 0
+    fi
+    if [ -z "$PLAN_ORIGIN" ]; then
+        info "FL: lane の commit が無い（起点 = HEAD）"
+        return 0
+    fi
+    local before=$ERRORS hits
+    hits=$(git diff -U0 --no-renames --no-color "$PLAN_ORIGIN" -- docs AGENTS.md CLAUDE.md 2>/dev/null | awk '
+        /^\+\+\+ / { file = substr($0, 7); next }
+        /^\+/ {
+            if (file ~ /^docs\/(archive|plans|research)\// || file == "docs/decision-log.md") next
+            n = split(file, parts, "/"); if (parts[n] ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/) next
+            line = substr($0, 2)
+            if (file == "docs/backlog.md" && line ~ /(^|[^0-9A-Za-z])[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]+([^0-9A-Za-z]|$)/) next
+            if (match(line, /[A-Za-z0-9_.\/-]+[.](md|rs|ts|tsx|py|sh):[0-9]+/)) print file ": " substr(line, RSTART, RLENGTH)
+        }') || hits=""
+    if [ -n "$hits" ]; then
+        while IFS= read -r line; do
+            error "FL: 生きた docs に path:行 の引用を新しく足した（節名・symbol・決定 ID で引く。D-125）-> $line"
+        done <<< "$hits"
+        if [ -z "${WORKFLOW_BASE_SHA:-}" ]; then
+            info "FL: 起点は origin/main と HEAD の merge-base。origin/main が古ければ git fetch origin してから回し直す（他の lane の file が出るときの原因）"
+        fi
+    fi
+    if [ "$ERRORS" -eq "$before" ]; then
+        info "FL: 新しい path:行 の引用なし"
+    fi
+}
+
 check_markdown_link_targets() {
     header "R3: Markdownリンク先ファイル存在検証"
 
@@ -1625,8 +1733,13 @@ check_markdown_link_targets() {
             checked=$((checked + 1))
             local resolved_path="${dir_of_file}/${link_path}"
             if [ ! -f "$resolved_path" ]; then
-                error "$(basename "$md_file"):${lineno}: リンク先 '${link_path}' が存在しません"
-                broken=$((broken + 1))
+                # D-145 (5) AR6: merge 済みの packet・Matrix（起点の tree にある docs/plans/**）の link 切れは WARN。
+                if is_merged_plan_file "$md_file"; then
+                    warn "$(basename "$md_file"):${lineno}: merge 済みの packet のリンク先 '${link_path}' が存在しません（直すのは任意）"
+                else
+                    error "$(basename "$md_file"):${lineno}: リンク先 '${link_path}' が存在しません"
+                    broken=$((broken + 1))
+                fi
             fi
         done <<< "$links"
     done < <(find "$ALL_DOCS" -name "*.md" -type f 2>/dev/null)
@@ -1850,6 +1963,10 @@ done
 
 # --- モード別実行 ---
 
+# D-145 (5): active な packet の起点と形式を main の shell で 1 回だけ決める（各 check は process substitution の
+# subshell で回るので、ここで読み込まないと状態も ERROR の数も main に届かない）。
+load_plan_scope
+
 if [ "$TARGET_MODE" = "plan" ]; then
     # === プランチェックモード ===
 
@@ -1865,10 +1982,13 @@ if [ "$TARGET_MODE" = "plan" ]; then
             exit 2
         fi
     else
-        # デフォルト: docs/plans/ 直下の active plan のみ。archive や test-matrices は対象外。
-        if [ -d "$PLAN_DIR" ]; then
-            while IFS= read -r f; do PLAN_FILES+=("$f"); done < <(find "$PLAN_DIR" -maxdepth 1 -name "*.md" -type f | sort)
+        # デフォルト: active な packet（D-145 (5) の定義）だけ。merge 済みの packet・archive・test-matrices は対象外。
+        load_plan_scope
+        if [ -n "$PLAN_SCOPE_ERROR" ]; then
+            red "active な packet を決められない: $PLAN_SCOPE_ERROR"
+            exit 1
         fi
+        for f in "${ACTIVE_PLANS[@]}"; do PLAN_FILES+=("$f"); done
     fi
 
     if [ ${#PLAN_FILES[@]} -eq 0 ]; then
@@ -1906,6 +2026,7 @@ if [ "$TARGET_MODE" = "plan" ]; then
     check_stale_parent_doc_references
     check_code_doc_references
     check_markdown_link_targets
+    check_new_file_line_references
 
 else
     # === 設計書チェックモード（従来動作） ===
@@ -1947,6 +2068,7 @@ else
     check_ds_dsr_references
     check_ds_token_hex_sync
     check_ds_checklist_dsr_links
+    check_new_file_line_references
 
     # --- Plan Packet チェック（4項目、active plan は通常チェックでも enforce） ---
     check_plan_packet_sections

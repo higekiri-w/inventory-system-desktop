@@ -1,5 +1,7 @@
 # Test Design Matrix
 
+新しい packet は packet の `## Test Plan` の表に書く（D-145 (10)）。この雛形は、旧形式の packet（Workflow State に `Phase` の行があるもの）が引く Matrix の参照として残す。
+
 ## Risk
 
 Risk: <R2|R3|R4>

@@ -106,6 +106,7 @@ describe("DisposalRecordDetailPage (REQ-204 / REQ-206)", () => {
         message: "廃棄・破損記録が見つかりません",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
 

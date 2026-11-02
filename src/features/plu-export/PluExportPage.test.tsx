@@ -345,6 +345,7 @@ describe("PluExportPage (UI-08 / REQ-402)", () => {
           "PLUファイルに書き出せる商品がありません。商品マスタで13桁JANを確認してください。対象: JAN-NONE（JAN未登録）、JAN-SHORT（JANが13桁ではありません）",
         field: null,
         error_id: null,
+        stocktake_recovery: null,
       },
     });
 

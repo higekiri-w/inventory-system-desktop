@@ -1,48 +1,21 @@
-# Plan Packet
+# Plan Packet: <件名>（PR の件名と同じ）
 
-前文に wave と lane を書く（単独の lane は「wave に属さない単独の lane」と書く）。
+R3/R4 の packet の最小形（D-145 (10)）。規則は `docs/DEV_WORKFLOW.md` の Plan Packet Rules と Workflow State。R0〜R2 は packet を作らず PR body の 5 行で進める。前文に wave と lane を書いてよい（任意）。
 
 ## Workflow State
 
-Use the field definitions, enums, transition evidence, packet-selection rule, and fail-closed behavior from `docs/DEV_WORKFLOW.md` `Workflow State`. Keep exactly one `- Key: value` line per field.
+- Risk: <R3|R4>
+- Plan Commit: pending
+- Amendments: none
 
-実装後の状態はPR native state / 専用record / CIが所有し、trackedに書かない。
-
-- Phase: <kickoff|spec-check|design|plan-draft|plan-gate|plan-approved|implementing|archive>
-- Risk: <R2|R3|R4>
-- Plan Commit: <pending|full SHA>
-- Amendments: <none|full SHA list (append-only)>
-- Coordinator: <role assignment>
-- Writer: <role assignment>
-- Plan Reviewer: <role assignment>
-- Final Reviewer: <role assignment>
-- Final Review Minimum: <1|2>
-- Human Gate: ready,merge
-- Branch: <agent/...>
-
-`Branch` は helper・checker が評価しない追加行。lane の branch を packet から辿るために書く。
-
-必要なmanual/r4をHuman Gateへ追加する。R4はr4とminimum 2、workflow gateもminimum 2。Plan Commit/Amendmentsと既存review独立性を維持する。
-
-## Owner Effort Budget
-
-- 介入回数上限: <N>（既定 6）
-- 実働時間上限: <N分>（既定 30 分）
-- Plan Review round 天井: <N>（既定 3）
-
-| 種別 | 上限 | 消費（時点） | 残りの見込み | 予備 | 合計 |
-|---|---|---|---|---|---|
-| 介入 | <M> | <N と内訳> | <見込みと内訳> | <予備> | <M = 消費 + 見込み + 予備> |
-
-既定値・数え方・上限に届くときの扱いは `docs/DEV_WORKFLOW.md` `Owner Effort Budget` 参照。
-承認依頼フォーマット: `この change での介入 N 回目 / 予算 M 回` + `承認すると利用者から見て何が完了するか1文`。
+`Plan Commit`・`Amendments` は `scripts/plan-approve.sh` が書く（手で写さない）。Final Review Minimum（2）と Human Gate は helper が Risk・classifier・`## L3` 節から導く。明示の承認を足すときだけ `- Human Gate: ready,merge,r4` のように 1 行足す（導いた値から落とす向きは受けない）。
 
 ## Risk
 
-Risk: <R2|R3|R4>
+Risk: <R3|R4>
 
 Reason:
-<why this risk level>
+<理由 1 文。出所つき>
 
 ## Goal
 
@@ -50,154 +23,73 @@ Goal Invariant:
 
 ### 最小完了条件
 
-- <user-visible minimum completion condition>
+- <利用者に見える最小の完了条件>
 
 ### 失敗定義
 
-- <what outcome means this change failed>
+- <この change が失敗したと言える結果>
 
 ### 非目的
 
-- <what this change must not optimize or expand into>
+- <広げない・最適化しないもの>
 
 Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や証跡作業が Goal Invariant を前進させない場合は、Goal を置き換えず簡略化・defer・削除する。
 
-## Ordinary Operation
-
-設計を含む変更（operator の操作、data / command 契約、業務の状態遷移を決める・変える packet）は下表を 1 つ置き、必要なら翌日の起動・再試行まで含める。workflow の変更は、発注 → 停止と訂正 → review → owner 判断の通常列を使う。どちらでもない変更は `not applicable` と理由を 1 行で書き、節は削除しない。範囲を限定した packet（design-only 等）を閉じる場合も、製品の目的が未達なら明記し、「この文書を完了できる」と「通常運用を達成できる」を分けて書く。
-
-| 初期状態 | 操作 | 利用者が得る結果 | 次へ進む条件 | 未確認の前提／probe参照 |
-| --- | --- | --- | --- | --- |
-| <initial state> | <operation> | <result the user gets> | <condition to proceed> | <unconfirmed assumption / probe reference> |
-
 ## Scope
 
-- <in scope>
+- <範囲。触る file と変更の目的>
 
-対象を使う呼出し側・隣接 test・helper / mock・生成物まで確認し、必要な file と変更目的を列挙する。依存更新では対象 package と許容する推移依存・lockfile 差分の範囲も確認する。予期しない拡張は既存の改訂経路へ戻し、「関連 file 全般」を許可範囲にしない。
-
-component の移動・統合・置換を含む Scope は、統合後の各 file が何を import し何を描画するかの表を置き、import の AC をそこから導く。
-
-## Non-scope
-
-- <explicitly out of scope>
+対象を使う呼出し側・隣接 test・helper / mock・生成物まで確かめて列挙する。「関連 file 全般」を許可範囲にしない。Non-scope は必要なら同じ節に書く。
 
 ## Acceptance Criteria
 
-- <observable success condition>
+- <観測できる成功の条件。command・file・test 名・出力・exit code・`WARN` / `ERROR` の期待を含める>
 
-For R3/R4, each bullet should include an observable evidence token such as a command, file path, test name, output field, exit code, or explicit `WARN` / `ERROR` expectation.
-
-- AC は必要な振舞いを定め、対象 test がある場合は全 PASS を要求する。test 総本数・import 数・文字列出現数を機能完成の代理にせず、test 本数は PR / runner 出力を参照する。業務上の固定閾値と既存 test の保護は維持する。
-- 数値の baseline は対象版・測定 command・出力を併記するか `未実測` とし、実装前の観測値と完了時の期待値を区別する。未実測の推定を固定の停止条件にしない。
-- 削除検査は現物の旧表現（表記差も含む）で一致、新しい許容表現で不一致となることを確認する。検査式の PASS に加え Goal Invariant の達成を確認し、Scope / 他の AC と同時に成立しない条件を発注前に訂正する。
+- AC は要る振舞いを定め、対象 test があれば全 PASS を求める。test の本数・文字列の出現数を完成の代理にしない。
+- 数値の baseline は対象版・測定 command・出力を併記するか `未実測`。
+- 削除の検査は旧い表現で一致し、新しい許容の表現で一致しないことを確かめる。
 
 ## Design Readiness
 
-設計の完了条件は `docs/DEV_WORKFLOW.md` Design Phase Rules の Design completion criteria。当たらない箇条は 1 行の理由で閉じる。
+設計の完了条件は `docs/DEV_WORKFLOW.md` Design Phase Rules。当たらない箇条は 1 行の理由で閉じる。
 
 - 引用する設計正本（節まで）:
-- 必要な設計成果物（`docs/DEV_WORKFLOW.md` Design artifact selection の当たる行だけ。状態 = existing sufficient / updated in this PR / deferred）:
-- plan にしかない durable な判断の昇格先（source docs / decision-log / ADR）:
-- 前提・制約と、延期した design gap の follow-up:
-- 絶対保証（cannot happen / always happens）の例外と escape hatch の自己点検:
+- 必要な設計成果物（existing sufficient / updated in this PR / deferred）:
+- plan にしかない durable な判断の昇格先:
+- 前提・制約と延期した design gap:
+- 絶対保証（cannot happen / always happens）の例外と抜け道:
 - 判定（ready / not ready）と理由:
-
-## Registration / Generation Obligations
-
-追加・変更・削除に付随する登録・生成義務の checklist（UI-13 Amendment 1〜4 の failure class「plan 段階の列挙漏れ」対策）。該当する行の義務を Scope に明記し、R3/R4 では Contract Ledger にも契約行として反映してから Plan Gate に出す。該当なしなら `該当なし` と 1 行残す（節の削除はしない）。
-
-| 変更対象 | 登録・生成義務 |
-|---|---|
-| Tauri command（frontend から呼ぶ） | `lib.rs` の specta `collect_commands` 登録 / command 関数への `#[tauri::command]` + `#[specta::specta]` 属性の対 / `cargo run --bin generate_bindings` での `bindings.ts` 再生成 |
-| function-design doc 新設 | `src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` へ entry 追加 / checker が要求する必須セクション（シグネチャ / 処理ステップ / エラーハンドリング）の充足 |
-| source / workflow doc 新設・改名・削除 | 親文書の目次・索引を更新し、リンク先と登録位置を確認する |
-| REQ / coverage の追加・変更・削除（設計書・test 内の既存 REQ 参照の増減を含む） | `cargo run --bin generate_traceability` で `docs/function-design/90-traceability.md` 再生成。生成先を Scope と完了条件へ含める（AUTO-GENERATED、手動編集は禁止のまま） |
-| route 新設・改名・削除 | `npm run generate:routes`（routeTree 生成） |
-| operator 画面新設・改名・削除 | `src/config/navigation.ts` の entry 有効化（`to` + `status: "active"`）+ `navigation.test.ts` に REQ 番号入り到達テスト（ui-11c パターン）。「operator が画面に到達できる」到達導線契約を Contract Ledger の標準行として必ず立てる — route 直 render テストと doc 整合レビューは到達性を検証しない（UI-13 Amendment 4 の実例） |
-
-L1 full の生成系検査は bindings / frontend routes / traceability の 3 種。これらの義務を probe で検証する場合は Contract Probe の「是正を仮適用した状態で end-to-end」に従う。
-
-## Impact Review Lenses
-
-Fill this when the task starts from field investigation, real-device confirmation, external tool behavior, POS/register integration, CSV/TSV/report format changes, operator workflow discoveries, or a finding that may change source design assumptions. Otherwise write `not applicable` and why. この表が lens の唯一の所在（`docs/DEV_WORKFLOW.md` Design Phase Rules は使う場面だけを持つ）。当てはまる lens は finding と follow-up を書き、不該当の lens は節や行を消さず 1 行の理由を書く。
-
-| Lens | Question to answer | Evidence home | Applicability / finding | Follow-up artifact |
-|---|---|---|---|---|
-| Adapter / core boundary | Which concepts belong to replaceable external adapters, and which concepts are stable app-core contracts? | Architecture, function design, decision-log, Plan Packet |  |  |
-| Fact check / design decision split | Which claims are observed facts from hardware/tool/files, and which are app decisions that need source-doc promotion? | Investigation doc, source design docs, decision-log |  |  |
-| Lifecycle / retry | What happens before, during, after, and after failure for import/export, duplicate input, rollback, retry, cancellation, and re-run? | Function design, DB design, UI design, Test Matrix |  |  |
-| Operator workflow | What does the operator do in the real sequence across app, external tool, media, print/export, backup, and recovery? | Screen/UI design, function design, Plan Packet manual checks |  |  |
-| Replacement path | If the external system changes, which files/modules/docs are replaced and which app-core contracts remain stable? | Architecture, function design, decision-log |  |  |
-| Data safety / evidence | How can the claim be supported by anonymized shape/count/hash/procedure evidence without committing real store data? | Plan Packet Data Safety, investigation doc, review evidence |  |  |
-| Reporting / accounting semantics | Are totals, summaries, item records, returns, corrections, and inventory movements modeled separately enough to avoid false business meaning? | DB design, function design, report design, Test Matrix |  |  |
-| Manual verification | Which assertions cannot be proven by automated tests and require Windows native L3, external tool import, or real-device confirmation? | Plan Packet, Test Matrix, PR body |  |  |
-| 環境・再現性 | 新設の環境依存（toolchain / CI runner / OS 差異等）を repo-pinned config で強制するか、明示的に defer するか | repo-pinned config, Plan Packet |  |  |
-
-環境・再現性 lens: 新設の環境依存（toolchain / CI runner / OS 差異等）は repo-pinned config で強制するか、明示的に defer するかを記録する。Node 24 `.node-version` single-owner pin の教訓（`docs/archive/plans/2026-07-30-node24-toolchain-alignment.md`）を参照。
-
-## Boundary / Wire Contract
-
-Required when the change touches JSON API, browser state, CSV, config, manifest, cache schema, Tauri command DTOs, generated bindings, report output, or DB-backed compatibility.
-
-- producer:
-- consumer:
-- wire type:
-- internal type:
-- precision/range:
-- round-trip path:
-- invalid input:
-- compatibility:
-
-## Test Plan
-
-For R3/R4, include or link a Test Design Matrix.
-- If the Human Gate includes L3, Writer completion includes `cargo check --release` before the owner native build; this is not a CI gate.
-- Human Gate に manual（L3）を含むときは、L3 の項目ごとに到達経路・必要な入力物（DB のデータ・import する file・CSV・scan）・依存する既知 backlog を並べ、受理される fixture を Ready の依頼と同時に渡す（`docs/DEV_WORKFLOW.md` Human Visual Confirmation）。
-
-- targeted tests:
-- negative tests:
-- compatibility checks:
-- data safety checks:
-- main wiring/integration checks:
-
-## Review Focus
-
-- <what reviewers should focus on>
 
 ## Contract Ledger
 
-ここから Data Safety までが R3/R4 の部分（R2 は書かなくてよい）。
-R3/R4 は必須。触る設計正本の節の契約・設計判断 ID をすべて行にし（行の欠けは Plan Gate の blocker）、行を書く前に隣接する契約の sweep（adjacent-contract sweep）で Scope が触り得る契約を足すか除外を明記する。Final Review で各行を実装と突き合わせる。
-設計の理由と棄却案は設計正本・decision-log に置き、Ledger には ID で引く。回帰 test がある行は自動 test の列に test 名を書く。
+触る設計正本の節の契約・設計判断の ID を全部行にする（行の欠けは計画の review の blocker）。行を書く前に隣の契約の sweep で Scope が触りうる契約を足すか除外を書く。
 
-| 契約 ID | 設計正本の節 | 実装（Scope） | 自動 test | L3 / 非対象 |
+| 契約 ID | 設計正本の節 | 実装（Scope） | 自動 test | L3・非対象 |
 |---|---|---|---|---|
-|  |  |  |  |  |
+| <ID> | <節> | <Scope の項> | <test 名> | <L3 の項か非対象> |
 
-## Contract Probe
+## Test Plan
 
-Required for R3/R4 plans that rely on an unverified external premise (external library behavior, OS/hardware behavior, etc.). Record the minimal experiment and its result as one line per premise. If not applicable, state N/A and the reason in one line instead of deleting the section.
+| Contract | Failure Mode | Test Type | Test Name | Would fail if... |
+|---|---|---|---|---|
+| <契約> | <防ぐ失敗> | <unit / CLI / integration> | <test 名> | <どの変更で red になるか> |
 
-登録漏れ是正を含む probe は、是正を仮適用した状態で end-to-end に実行する — 未登録状態のままの probe は、登録後に初めて顕在化する義務（specta 属性欠落等）を検出できない（UI-13 Amendment 1 の教訓）。
+runtime の R3 は状態の遷移（initial / pending / success / invalidate / refetch / revisit / restart / failure / retry）・negative・mutation の注入（実装に注入して red を確かめる）を含める。
 
-- <unverified external premise>: <experiment> -> <result>
+## L3
+
+<!-- manual があるときだけ置く（節があること = manual）。無ければ節ごと消す。 -->
+
+- <画面> / <到達手順> / <観測できる合格基準>（`docs/DEV_WORKFLOW.md` L3 の L3 Eligibility と fixture の実 encoding）
+
+## Recovery
+
+<!-- R4 だけ。R3 は節ごと消す。 -->
+
+- <失敗したときの戻し方と、戻せる範囲>
 
 ## Data Safety
 
-Required for R3/R4.
+<!-- R4 だけ（R3 は計画の review の発注の固定の問いで確かめる）。R3 は節ごと消す。 -->
 
-- <what must not be committed>
-- <local-only paths>
-- <synthetic-only paths>
-
-## Implementation Results
-
-Fill after implementation.
-
-Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
-
-## Review Response
-
-Fill after review.
-先行 round の結果・評価（判定・件数・採否・reviewer の意見）はこの節にだけ書く。前半の節と遷移記録には「round N の是正（Review Response 参照）」だけを書く（独立 review は `## Review Response` より前だけを読む）。
+- <commit しないもの・local だけの path・合成だけの path>

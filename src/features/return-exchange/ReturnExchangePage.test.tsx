@@ -326,7 +326,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     mockCreateReturn
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -394,7 +400,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     mockCreateReturn
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -445,7 +457,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
 
     deferred.resolve({
       status: "error",
-      error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+      error: {
+        kind: "internal",
+        message: "一時的なエラー",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
     });
     expect(
       await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
@@ -461,7 +479,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     mockCreateReturn
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",
@@ -496,7 +520,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     mockCreateReturn
       .mockResolvedValueOnce({
         status: "error",
-        error: { kind: "internal", message: "一時的なエラー", field: null, error_id: null },
+        error: {
+          kind: "internal",
+          message: "一時的なエラー",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
       })
       .mockResolvedValueOnce({
         status: "ok",

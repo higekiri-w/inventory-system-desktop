@@ -114,8 +114,13 @@ pub(crate) struct StockCountRow {
     /// `true` なら fresh（「入れ直す」）、`false` なら default（「数を保存」「0 にする」）
     pub fresh: bool,
     pub business_date: String,
-    pub settlement_no: Option<i64>,
+    // 保存した settlement_no（ADR D1 の鍵の n）は判定に使わないので読まない（取り違えを型で作れないようにする）
     pub seen_movement_id: Option<i64>,
+    /// fresh だけ。保存の時点の `MAX(csv_imports.id)`（取り消したものを含む。無ければ NULL）。
+    /// ADR D3 の判定の n はこれ以下の取込みID を持つ active な取込みから求める
+    pub seen_import_id: Option<i64>,
+    /// 保存の時刻（判定には使わない。明細の表示用の写しへ写す。35）
+    pub counted_at: String,
 }
 
 /// 求め直しが読む有効な movement の 1 行（21 `list_ledger_movements_for_product`）
@@ -126,8 +131,26 @@ pub(crate) struct LedgerMovementRow {
     pub business_date: String,
     pub phase: i64,
     pub settlement_no: Option<i64>,
-    /// `reference_type IS NULL`（商品の登録・一括 import の初期在庫）
+    /// 初期在庫の印（`reference_type` が NULL で `movement_type` が `receiving`。商品の登録・一括 import が作る。
+    /// demo の seed の `sale_auto`〈`reference_type` NULL〉は初期在庫にしない。ADR D9）
     pub initial_stock: bool,
+}
+
+/// 計数の保存（21 `insert_stock_count`。`stock_counts` へ 1 行。書換え・削除の関数は持たない）
+#[derive(Debug, Clone)]
+pub(crate) struct NewStockCount {
+    pub product_code: String,
+    pub count_value: i64,
+    /// `true` なら fresh（「入れ直す」）
+    pub fresh: bool,
+    pub business_date: String,
+    /// fresh だけ。保存の時点の active な Z004 の最大の精算回数（取込みが無ければ NULL。ADR D1 の鍵の n）
+    pub settlement_no: Option<i64>,
+    /// fresh だけ。保存の時点の `MAX(inventory_movements.id)`（無ければ 0）
+    pub seen_movement_id: Option<i64>,
+    /// fresh だけ。保存の時点の `MAX(csv_imports.id)`（取り消したものを含む。無ければ NULL。24）
+    pub seen_import_id: Option<i64>,
+    pub stocktake_item_id: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -222,7 +245,8 @@ pub(crate) fn list_stock_counts_for_product(
     product_code: &str,
 ) -> Result<Vec<StockCountRow>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT id, count_value, count_kind, business_date, settlement_no, seen_movement_id
+        "SELECT id, count_value, count_kind, business_date, seen_movement_id, seen_import_id,
+                counted_at
          FROM stock_counts WHERE product_code = ?1 ORDER BY id",
     )?;
     let rows = stmt
@@ -232,23 +256,28 @@ pub(crate) fn list_stock_counts_for_product(
                 count_value: row.get(1)?,
                 fresh: row.get::<_, String>(2)? == "fresh",
                 business_date: row.get(3)?,
-                settlement_no: row.get(4)?,
-                seen_movement_id: row.get(5)?,
+                seen_movement_id: row.get(4)?,
+                seen_import_id: row.get(5)?,
+                counted_at: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
+/// 初期在庫の印の SQL の式（`reference_type` が NULL で `movement_type` が `receiving`。ADR D9）。
+/// 求め直しの読取りと在庫変動の履歴の読取りが共有する（44 の `list_movements`）
+const INITIAL_STOCK_SQL: &str = "reference_type IS NULL AND movement_type = 'receiving'";
+
 /// 商品の `is_voided = 0` の movement を id の順で返す（求め直しの読取り。21）
 pub(crate) fn list_ledger_movements_for_product(
     conn: &DbConnection,
     product_code: &str,
 ) -> Result<Vec<LedgerMovementRow>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, quantity, business_date, phase, settlement_no, reference_type IS NULL
-         FROM inventory_movements WHERE product_code = ?1 AND is_voided = 0 ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, quantity, business_date, phase, settlement_no, {INITIAL_STOCK_SQL}
+         FROM inventory_movements WHERE product_code = ?1 AND is_voided = 0 ORDER BY id"
+    ))?;
     let rows = stmt
         .query_map([product_code], |row| {
             Ok(LedgerMovementRow {
@@ -260,6 +289,55 @@ pub(crate) fn list_ledger_movements_for_product(
                 initial_stock: row.get(5)?,
             })
         })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// 計数を 1 行保存し、id を返す（21。BIZ-06 の `save_stock_count`・`zero_uncounted_items` だけが呼ぶ）
+pub(crate) fn insert_stock_count(
+    conn: &DbConnection,
+    count: &NewStockCount,
+) -> Result<i64, DbError> {
+    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    conn.execute(
+        "INSERT INTO stock_counts (product_code, count_value, count_kind, business_date,
+             settlement_no, seen_movement_id, seen_import_id, stocktake_item_id, counted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            count.product_code,
+            count.count_value,
+            if count.fresh { "fresh" } else { "default" },
+            count.business_date,
+            count.settlement_no,
+            count.seen_movement_id,
+            count.seen_import_id,
+            count.stocktake_item_id,
+            now,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// `MAX(inventory_movements.id)`（無ければ 0。fresh な計数と完了のカーソル）
+pub(crate) fn max_movement_id(conn: &DbConnection) -> Result<i64, DbError> {
+    Ok(conn.query_row(
+        "SELECT COALESCE(MAX(id), 0) FROM inventory_movements",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+/// `MAX(stock_counts.id)`（無ければ NULL。完了のカーソル）
+pub(crate) fn max_stock_count_id(conn: &DbConnection) -> Result<Option<i64>, DbError> {
+    Ok(conn.query_row("SELECT MAX(id) FROM stock_counts", [], |row| row.get(0))?)
+}
+
+/// 計数を持つ商品の一覧（Z004 の確定・取消の求め直しの対象。ADR の横断の表）
+pub(crate) fn list_counted_product_codes(conn: &DbConnection) -> Result<Vec<String>, DbError> {
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT product_code FROM stock_counts ORDER BY product_code")?;
+    let rows = stmt
+        .query_map([], |row| row.get(0))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -307,313 +385,109 @@ pub struct MovementRecord {
     pub created_at: String,
 }
 
-/// 商品別の在庫変動履歴をフィルタ付きでページング取得する
-///
-/// 44-cmd-inventory.md §23.9 list_movements
-/// is_voided=0 を常時付与（ロールバック済み変動は非表示）
-pub fn list_movements(
-    conn: &DbConnection,
-    query: &MovementQuery,
-) -> Result<super::PaginatedResult<MovementRecord>, DbError> {
-    use super::inventory_common::validate_and_offset;
-    use super::inventory_common::ListQuery;
-
-    // validate_and_offset を再利用するために ListQuery を組み立てる
-    let list_query = ListQuery {
-        page: query.page,
-        per_page: query.per_page,
-        date_from: None,
-        date_to: None,
-    };
-    let (limit, offset) = validate_and_offset(&list_query)?;
-
-    let mut where_clauses = vec!["product_code = ?1".to_string(), "is_voided = 0".to_string()];
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-        vec![Box::new(query.product_code.clone())];
-
-    if let Some(ref from) = query.date_from {
-        where_clauses.push(format!("created_at >= ?{}", params.len() + 1));
-        params.push(Box::new(from.clone()));
-    }
-    if let Some(ref to) = query.date_to {
-        // 日付指定の場合は末尾に T23:59:59 を付与して当日末までを含める
-        let to_with_time = if to.len() == 10 {
-            format!("{}T23:59:59", to)
-        } else {
-            to.clone()
-        };
-        where_clauses.push(format!("created_at <= ?{}", params.len() + 1));
-        params.push(Box::new(to_with_time));
-    }
-    if let Some(ref mt) = query.movement_type {
-        where_clauses.push(format!("movement_type = ?{}", params.len() + 1));
-        params.push(Box::new(mt.as_str()));
-    }
-
-    let where_sql = format!("WHERE {}", where_clauses.join(" AND "));
-
-    // total_count
-    let count_sql = format!("SELECT COUNT(*) FROM inventory_movements {}", where_sql);
-    let total_count: u32 = conn.query_row(
-        &count_sql,
-        rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-        |row| row.get(0),
-    )?;
-
-    // data
-    let data_sql = format!(
-        "SELECT id, product_code, movement_type, quantity, stock_after, \
-         reference_type, reference_id, note, created_at \
-         FROM inventory_movements {} \
-         ORDER BY created_at DESC, id DESC \
-         LIMIT ?{} OFFSET ?{}",
-        where_sql,
-        params.len() + 1,
-        params.len() + 2,
-    );
-    params.push(Box::new(limit));
-    params.push(Box::new(offset));
-
-    let mut stmt = conn.prepare(&data_sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-        |row| {
-            Ok(MovementRecord {
-                id: row.get(0)?,
-                product_code: row.get(1)?,
-                movement_type: parse_movement_type(row.get(2)?)?,
-                quantity: row.get(3)?,
-                stock_after: row.get(4)?,
-                reference_type: parse_reference_type(row.get(5)?),
-                reference_id: row.get(6)?,
-                source: None,
-                note: row.get(7)?,
-                created_at: row.get(8)?,
-            })
-        },
-    )?;
-
-    let mut items = Vec::new();
-    for row in rows {
-        items.push(row?);
-    }
-
-    Ok(super::PaginatedResult {
-        items,
-        total_count,
-        page: query.page,
-        per_page: query.per_page,
-    })
+/// 在庫変動の履歴の movement の 1 行（44 の `list_movements`。並びは BIZ）
+#[derive(Debug)]
+pub(crate) struct HistoryMovementRow {
+    /// `source` は BIZ が補う
+    pub movement: MovementRecord,
+    pub business_date: String,
+    pub settlement_no: Option<i64>,
+    pub initial_stock: bool,
 }
 
-/// 時点証拠（SPEC-STK-TIME-D1）の数量と版の更新。⑤ まで test だけが呼ぶ（D-109 (3)）。
-/// 21-io-inventory-repo.md「時点証拠契約（proposed）」
-#[cfg(test)]
-pub(crate) mod time_evidence {
-    use super::NewMovement;
-    use crate::db::{DbConnection, DbError};
-    use rusqlite::OptionalExtension;
+/// 在庫変動の履歴の計数の 1 行（44 の `list_movements`。並びは BIZ）
+#[derive(Debug)]
+pub(crate) struct HistoryCountRow {
+    pub id: i64,
+    pub count_value: i64,
+    /// `true` なら fresh（「入れ直す」）
+    pub fresh: bool,
+    pub business_date: String,
+    pub settlement_no: Option<i64>,
+    pub counted_at: String,
+    /// 計数の商品の今の単位
+    pub stock_unit: super::product_repo::ProductStockUnit,
+    /// 計数が参照する棚卸しの明細の棚卸し
+    pub stocktake_id: Option<i64>,
+}
 
-    /// 現在の版を読み、checked で 1 進めた値を返す。対象なしは None
-    fn next_revision(conn: &DbConnection, product_code: &str) -> Result<Option<i64>, DbError> {
-        let current: Option<i64> = conn
-            .query_row(
-                "SELECT stock_revision FROM products WHERE product_code = ?1",
-                [product_code],
-                |row| row.get(0),
-            )
-            .optional()?;
-        current
-            .map(|revision| {
-                revision.checked_add(1).ok_or_else(|| {
-                    DbError::QueryFailed("stock_revision が上限に達しています".to_string())
-                })
-            })
-            .transpose()
-    }
-
-    /// 数量と `stock_revision` を 1 つの UPDATE で更新する。同じ数量でも版を進める。
-    /// 対象なしは false。版が上限なら数量も版も書かずにエラー。TX は呼出し側が持つ
-    pub(crate) fn update_stock_quantity_with_revision(
-        conn: &DbConnection,
-        product_code: &str,
-        new_quantity: i64,
-    ) -> Result<bool, DbError> {
-        let Some(revision) = next_revision(conn, product_code)? else {
-            return Ok(false);
-        };
-        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let affected = conn.execute(
-            "UPDATE products SET stock_quantity = ?1, stock_revision = ?2, updated_at = ?3
-             WHERE product_code = ?4",
-            rusqlite::params![new_quantity, revision, now, product_code],
-        )?;
-        Ok(affected == 1)
-    }
-
-    /// 数量を変えずに版だけを checked で 1 進め、増分後の版を返す。対象なしは NotFound
-    pub(crate) fn bump_stock_revision(
-        conn: &DbConnection,
-        product_code: &str,
-    ) -> Result<i64, DbError> {
-        let revision = next_revision(conn, product_code)?.ok_or(DbError::NotFound)?;
-        conn.execute(
-            "UPDATE products SET stock_revision = ?1 WHERE product_code = ?2",
-            rusqlite::params![revision, product_code],
-        )?;
-        Ok(revision)
-    }
-
-    /// 商品の movement の最大 ID（void 済みを含む、空は 0）。ledger 上限取得
-    pub(crate) fn max_movement_id(conn: &DbConnection, product_code: &str) -> Result<i64, DbError> {
-        Ok(conn.query_row(
-            "SELECT COALESCE(MAX(id), 0) FROM inventory_movements WHERE product_code = ?1",
-            [product_code],
-            |row| row.get(0),
-        )?)
-    }
-
-    /// 棚卸しの補正区分（`completion` / `recount`）付きの movement を INSERT し ID を返す。
-    /// ⑤ で `NewMovement` へ移すまで `insert_movement` と別の関数（21 proposed）
-    pub(crate) fn insert_stocktake_movement(
-        conn: &DbConnection,
-        movement: &NewMovement,
-        adjustment_kind: &str,
-        recount_id: Option<i64>,
-    ) -> Result<i64, DbError> {
-        let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        conn.execute(
-            "INSERT INTO inventory_movements (
-                product_code, movement_type, quantity, stock_after, reference_type, reference_id,
-                note, is_voided, created_at, stocktake_adjustment_kind, stocktake_recount_id,
-                business_date, phase
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11, 0)",
+/// 商品の `is_voided = 0` の movement を、業務日の範囲（両端を含む）と種別で絞って返す（並べない。44）
+pub(crate) fn list_history_movements(
+    conn: &DbConnection,
+    query: &MovementQuery,
+) -> Result<Vec<HistoryMovementRow>, DbError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, product_code, movement_type, quantity, stock_after, reference_type,
+                reference_id, note, created_at, business_date, settlement_no, {INITIAL_STOCK_SQL}
+         FROM inventory_movements
+         WHERE product_code = ?1 AND is_voided = 0
+           AND (?2 IS NULL OR business_date >= ?2) AND (?3 IS NULL OR business_date <= ?3)
+           AND (?4 IS NULL OR movement_type = ?4)"
+    ))?;
+    let rows = stmt
+        .query_map(
             rusqlite::params![
-                movement.product_code,
-                movement.movement_type.as_str(),
-                movement.quantity,
-                movement.stock_after,
-                movement.reference_type.map(|r| r.as_str()),
-                movement.reference_id,
-                movement.note,
-                now,
-                adjustment_kind,
-                recount_id,
-                movement.business_date,
+                query.product_code,
+                query.date_from,
+                query.date_to,
+                query.movement_type.map(MovementType::as_str),
             ],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
+            |row| {
+                Ok(HistoryMovementRow {
+                    movement: MovementRecord {
+                        id: row.get(0)?,
+                        product_code: row.get(1)?,
+                        movement_type: parse_movement_type(row.get(2)?)?,
+                        quantity: row.get(3)?,
+                        stock_after: row.get(4)?,
+                        reference_type: parse_reference_type(row.get(5)?),
+                        reference_id: row.get(6)?,
+                        source: None,
+                        note: row.get(7)?,
+                        created_at: row.get(8)?,
+                    },
+                    business_date: row.get(9)?,
+                    settlement_no: row.get(10)?,
+                    initial_stock: row.get(11)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-        use crate::db::inventory_repo::{MovementType, ReferenceType};
-        use crate::db::test_support::{seed_product, setup_time_evidence_db};
-
-        #[test]
-        fn test_max_movement_id_req205_ledger_cursor_includes_voided() {
-            // REQ-205 / SPEC-STK-TIME-D1 / 20 proposed「ledger上限取得」: 空は 0、void 済みも数え、他の商品は数えない
-            let (_dir, conn) = setup_time_evidence_db();
-            seed_product(&conn, "TE-1");
-            seed_product(&conn, "TE-2");
-            assert_eq!(max_movement_id(&conn, "TE-1").unwrap(), 0);
-            let movement = |code: &str| NewMovement {
-                product_code: code.to_string(),
-                movement_type: MovementType::Stocktake,
-                quantity: 2,
-                stock_after: 2,
-                reference_type: Some(ReferenceType::Stocktake),
-                reference_id: Some(1),
-                note: None,
-                business_date: "2026-04-01".to_string(),
-                settlement_no: None,
-            };
-            let id = insert_stocktake_movement(&conn, &movement("TE-1"), "recount", None).unwrap();
-            conn.execute(
-                "UPDATE inventory_movements SET is_voided = 1 WHERE id = ?1",
-                [id],
-            )
-            .unwrap();
-            insert_stocktake_movement(&conn, &movement("TE-2"), "completion", None).unwrap();
-            assert_eq!(max_movement_id(&conn, "TE-1").unwrap(), id);
-            let kind: String = conn
-                .query_row(
-                    "SELECT stocktake_adjustment_kind FROM inventory_movements WHERE id = ?1",
-                    [id],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(kind, "recount");
-        }
-
-        fn state(conn: &DbConnection, code: &str) -> (i64, i64) {
-            conn.query_row(
-                "SELECT stock_quantity, stock_revision FROM products WHERE product_code = ?1",
-                [code],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap()
-        }
-
-        #[test]
-        fn test_update_stock_quantity_with_revision_req205_t8_same_quantity_bumps() {
-            // REQ-205 / SPEC-STK-TIME-D1 / T8: 同じ数量でも版を 1 進める（ABA を見逃さない）
-            let (_dir, conn) = setup_time_evidence_db();
-            seed_product(&conn, "TE-1");
-            assert!(update_stock_quantity_with_revision(&conn, "TE-1", 0).unwrap());
-            assert_eq!(state(&conn, "TE-1"), (0, 1));
-            assert!(update_stock_quantity_with_revision(&conn, "TE-1", 5).unwrap());
-            assert_eq!(state(&conn, "TE-1"), (5, 2));
-        }
-
-        #[test]
-        fn test_update_stock_quantity_with_revision_req205_t9_ceiling_and_missing() {
-            // REQ-205 / SPEC-STK-TIME-D1 / T9: 上限では Rust 側の固定の文で拒否し、数量も版も書かない
-            let (_dir, conn) = setup_time_evidence_db();
-            seed_product(&conn, "TE-1");
-            conn.execute(
-                "UPDATE products SET stock_quantity = 7, stock_revision = ?1 WHERE product_code = 'TE-1'",
-                [i64::MAX],
-            )
-            .unwrap();
-            match update_stock_quantity_with_revision(&conn, "TE-1", 3) {
-                Err(DbError::QueryFailed(message)) => {
-                    assert_eq!(message, "stock_revision が上限に達しています")
-                }
-                other => panic!("上限の error を期待: {other:?}"),
-            }
-            match bump_stock_revision(&conn, "TE-1") {
-                Err(DbError::QueryFailed(message)) => {
-                    assert_eq!(message, "stock_revision が上限に達しています")
-                }
-                other => panic!("上限の error を期待: {other:?}"),
-            }
-            assert_eq!(state(&conn, "TE-1"), (7, i64::MAX));
-
-            // 対象なし: false で何も変えない
-            assert!(!update_stock_quantity_with_revision(&conn, "TE-NONE", 3).unwrap());
-            assert!(matches!(
-                bump_stock_revision(&conn, "TE-NONE"),
-                Err(DbError::NotFound)
-            ));
-            assert_eq!(state(&conn, "TE-1"), (7, i64::MAX));
-        }
-
-        #[test]
-        fn test_bump_stock_revision_req205_t10_caller_tx_rollback() {
-            // REQ-205 / SPEC-STK-TIME-D1 / T10: 増分後の版を返し、呼出し側 TX の rollback で両方戻る
-            let (_dir, mut conn) = setup_time_evidence_db();
-            seed_product(&conn, "TE-1");
-            let tx = conn.transaction().unwrap();
-            assert!(update_stock_quantity_with_revision(&tx, "TE-1", 4).unwrap());
-            assert_eq!(bump_stock_revision(&tx, "TE-1").unwrap(), 2);
-            assert_eq!(bump_stock_revision(&tx, "TE-1").unwrap(), 3);
-            assert_eq!(state(&tx, "TE-1"), (4, 3));
-            tx.rollback().unwrap();
-            assert_eq!(state(&conn, "TE-1"), (0, 0));
-        }
-    }
+/// 商品の計数を、業務日の範囲（両端を含む）で絞って返す（並べない。44）
+pub(crate) fn list_history_counts(
+    conn: &DbConnection,
+    query: &MovementQuery,
+) -> Result<Vec<HistoryCountRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT sc.id, sc.count_value, sc.count_kind, sc.business_date, sc.settlement_no,
+                sc.counted_at, p.stock_unit, si.stocktake_id
+         FROM stock_counts sc
+         JOIN products p ON p.product_code = sc.product_code
+         LEFT JOIN stocktake_items si ON si.id = sc.stocktake_item_id
+         WHERE sc.product_code = ?1
+           AND (?2 IS NULL OR sc.business_date >= ?2) AND (?3 IS NULL OR sc.business_date <= ?3)",
+    )?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![query.product_code, query.date_from, query.date_to],
+            |row| {
+                Ok(HistoryCountRow {
+                    id: row.get(0)?,
+                    count_value: row.get(1)?,
+                    fresh: row.get::<_, String>(2)? == "fresh",
+                    business_date: row.get(3)?,
+                    settlement_no: row.get(4)?,
+                    counted_at: row.get(5)?,
+                    stock_unit: super::product_repo::parse_stock_unit(row.get(6)?)?,
+                    stocktake_id: row.get(7)?,
+                })
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -785,7 +659,14 @@ mod tests {
         };
         let id = insert_movement(&conn, &key_movement("KEY-1", "2026-05-03", None)).unwrap();
         assert_eq!(key(id), ("2026-05-03".to_string(), 0, None));
-        let id = insert_movement(&conn, &key_movement("KEY-1", "2026-05-04", Some(0))).unwrap();
+        // vZ の CHECK: phase = 1 は Z004 の movement だけ（fixture を csv_import に。Matrix T10）
+        let z004 = NewMovement {
+            movement_type: MovementType::SaleAuto,
+            reference_type: Some(ReferenceType::CsvImport),
+            reference_id: Some(1),
+            ..key_movement("KEY-1", "2026-05-04", Some(0))
+        };
+        let id = insert_movement(&conn, &z004).unwrap();
         assert_eq!(key(id), ("2026-05-04".to_string(), 1, Some(0)));
     }
 
