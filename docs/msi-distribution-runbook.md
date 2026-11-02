@@ -18,6 +18,7 @@ repo の現物で確かめた（2026-10-17、`src-tauri/tauri.conf.json`・`.git
 | 古い版の上書き | `allowDowngrades` の既定は `true`（新しい版が入っていても古い版を入れられる）。tauri.conf.json に指定は無い | [Tauri config: WindowsConfig](https://v2.tauri.app/reference/config/) |
 | 署名 | 無い（`certificateThumbprint`・`signCommand` の指定が無い）。署名はアプリの実行には要らない。browser から download した file では SmartScreen の警告が出得る | `src-tauri/tauri.conf.json`、[Tauri Windows code signing](https://v2.tauri.app/distribute/sign/windows/) |
 | WebView2 | 既定の `downloadBootstrapper`（WebView2 が無いときに download して入れる。network が要る）。Windows 11 には WebView2 が入っている | [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)、[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §1.2 |
+| MSI に入る実行 file | main の 1 つだけ。開発用の bin（`generate_bindings`・`generate_traceability`・`seed_demo_data`）は workspace の member `src-tauri/dev-tools` にあり、tauri-bundler は tauri の crate の bin だけを入れる（[decision-log](decision-log.md) D-137） | tauri-cli 2.11.1 の `get_binaries`、tauri-bundler の `generate_binaries_data` |
 | データの folder | `identifier`（`com.inventory-system.desktop`、D-132 (3)）の名の folder（Windows では `%APPDATA%\com.inventory-system.desktop`）。DB は `inventory.db`。開発中の `npm run tauri dev` のアプリも同じ folder を使う | `src-tauri/tauri.conf.json`、`src-tauri/src/lib.rs` の `prepare_database_with_init`、68 §68.4「実効保存先の常時表示」（2026-10-24 に確かめた） |
 | データの folder に DB が無い起動 | 起動の作業フォルダーに `inventory.db` があれば、それを取り込む。無ければ空の DB を作る | 22 §12、`src-tauri/src/lib.rs` の `prepare_database_with_init` |
 | backup の保存先 | 設定の `backup_path`。未設定ならデータの folder の `backups` | 71 §71.9 |

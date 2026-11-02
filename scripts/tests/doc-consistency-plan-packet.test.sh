@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # scripts/doc-consistency-check.sh の PK3 (test_token_exists)、PK4
 # (check_plan_packet_workflow_state)、PK1（旧形式の必須の節と新形式の最小形、D-145 (10) H14）、
-# active な packet の定義（D-145 (5)）、新しい path:行 の検査（H13）を synthetic fixture で検証する。
+# active な packet の定義（D-145 (5)）、新しい path:行 の検査（H13）、R0・R1 の走査の範囲 (D-137) を
+# synthetic fixture で検証する。
 # fixture はすべて本 test 自身が tmpdir に生成し、tracked fixture file は増やさない。
 # D-145 (4)(5): run_check は fixture を lane の 1 commit にして起点（PKT_BASE）の後に置く。
 # 起点 BASE_OLD は scripts/plan-approve.sh の無い main（旧形式）、BASE_NEW は在る main（新形式）。
@@ -1457,6 +1458,29 @@ for hygiene_case in route missing_column; do
     fi
     echo "PASS: S1b $hygiene_case (exit 0, ERRORなし)"
 done
+
+# T11 / D-137 (2): R0 (check_stale_parent_doc_references) と R1 (check_code_doc_references) は
+# src-tauri/src と、開発用の bin の置き場 src-tauri/dev-tools/src の両方を走査する。
+# R0 の除外 generate_traceability.rs（索引として FUNCTION_DESIGN.md を読む）は移した後も効く。
+setup_repo_dirs
+reset_packet_defaults
+write_packet "$repo/docs/plans/2026-01-01-fixture.md"
+write_plans_md_linking "2026-01-01-fixture.md"
+r0r1_body='// FUNCTION_DESIGN.md
+// function-design/99-missing.md'
+for r0r1_dir in "src-tauri/src/bin" "src-tauri/dev-tools/src/bin"; do
+    mkdir -p "$repo/$r0r1_dir"
+    printf '%s\n' "$r0r1_body" > "$repo/$r0r1_dir/r0r1_fixture.rs"
+done
+printf '// FUNCTION_DESIGN.md\n' > "$repo/src-tauri/dev-tools/src/bin/generate_traceability.rs"
+if run_check; then cat "$out" >&2; fail "R0/R1 violations in src-tauri bins accepted"; fi
+for r0r1_dir in "src-tauri/src/bin" "src-tauri/dev-tools/src/bin"; do
+    assert_contains "$out" "[ERROR] $r0r1_dir/r0r1_fixture.rs:1: 'FUNCTION_DESIGN.md' を直接参照"
+    assert_contains "$out" "[ERROR] $r0r1_dir/r0r1_fixture.rs:2: 参照先 'docs/function-design/99-missing.md' が存在しません"
+done
+assert_not_contains "$out" "src-tauri/dev-tools/src/bin/generate_traceability.rs:1: 'FUNCTION_DESIGN.md' を直接参照"
+rm -rf "$repo/src-tauri"
+echo "PASS: R0/R1 scan src-tauri/src and src-tauri/dev-tools/src (D-137)"
 
 # ============================================================================
 # D-145: 新形式の packet（PK1N・PH7・PH10）、active な packet の定義（AR2・AR6）、新しい path:行（FL1〜FL3）

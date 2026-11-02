@@ -1,6 +1,6 @@
 //! デモデータ投入ロジック（開発ツール用）
 //!
-//! `src/bin/seed_demo_data.rs` から呼び出す seed 処理本体。
+//! `src-tauri/dev-tools/src/bin/seed_demo_data.rs`（D-137）から呼び出す seed 処理本体。
 //! Phase 2 UI-00 以降の UI 開発で手動 SQL 投入なしにダッシュボード数値が確認できるよう、
 //! 商品 100 件 / 取引先 5 件 / 売上 30 日分 (300 件) / 在庫変動 400 件 を投入する。
 //!
