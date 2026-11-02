@@ -60,6 +60,9 @@ export function buildReturnExchangeRequest(
   const note = values.note.trim();
 
   if (returnDate === "") errors.returnDate = "返品日は必須です";
+  // UI-03-D23: レジでの戻し方は既定を置かず、選ぶまで request を作らない
+  const registerProcessed = values.registerProcessed;
+  if (registerProcessed === null) errors.registerProcessed = "レジでの戻し方を選んでください";
   if (values.rows.length === 0) errors.items = "明細が1件以上必要です";
 
   const hasIn = values.rows.some((row) => row.direction === "in");
@@ -84,7 +87,7 @@ export function buildReturnExchangeRequest(
   if (Object.keys(rowErrors).length > 0) errors.rows = rowErrors;
 
   const signature = buildReturnExchangeSignature(values, receipt.receiptImagePath);
-  if (Object.keys(errors).length > 0) {
+  if (Object.keys(errors).length > 0 || registerProcessed === null) {
     return { request: null, errors, signature };
   }
 
@@ -93,7 +96,7 @@ export function buildReturnExchangeRequest(
       idempotency_key: idempotencyKey,
       return_type: values.returnType,
       return_date: returnDate,
-      register_processed: values.registerProcessed,
+      register_processed: registerProcessed,
       receipt_image_path: receipt.receiptImagePath,
       note: note === "" ? null : note,
       items,

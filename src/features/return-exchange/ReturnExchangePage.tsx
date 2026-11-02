@@ -85,7 +85,8 @@ function createEmptyForm(): ReturnExchangeFormValues {
   return {
     returnDate: getLocalDateString(),
     returnType: "return",
-    registerProcessed: true,
+    // UI-03-D23: 既定を置かない（どちらの既定も片方の向きで黙って誤る。D-148）
+    registerProcessed: null,
     note: "",
     rows: [],
   };
@@ -95,18 +96,33 @@ function formatReturnType(value: string): string {
   return value === "exchange" ? "交換" : "返品";
 }
 
-function formatRegisterProcessed(value: boolean): string {
-  return value ? "レジ戻し済み" : "レジ未処理";
+// UI-03-D23 の文言（63）。true = レジでバーコードを読んで戻した
+const REGISTER_METHOD_LABELS = {
+  read: "レジでバーコードを読んで戻した",
+  notRead: "バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）",
+} as const;
+
+const REGISTER_METHOD_ERROR_ID = "return-register-method-error";
+
+// 記録の値の表示（保存結果・最近の一覧）。null は未選択の form の値で、保存結果には出ない
+function formatRegisterProcessed(value: boolean | null): string {
+  if (value === null) return "—";
+  return value ? "バーコードで戻した" : "バーコードなし";
 }
 
 function formatStockEffectDescription(value: boolean): string {
   return value
-    ? "この保存では在庫数を変更しません。日次CSV取込みで返品分の在庫が反映されます。"
-    : "この保存で在庫数を反映します。日次CSVに同じ返品を重ねて取込まない運用です。";
+    ? "在庫連動の商品は、売上データ（Z004）の取込みで在庫に戻ります。レジの資料に載らない商品（POS販売で在庫を減らさない・JAN が無いか 13 桁でない・JAN が同じ商品がある）は、この保存で在庫を動かします。"
+    : "この保存で全部の商品の在庫を動かします。";
 }
 
-function formatStockEffectBadge(value: boolean): string {
-  return value ? "CSV取込みで反映" : "この保存で反映";
+// 選択肢の Badge と保存結果の行の文言（在庫をこの保存で動かすか）
+function formatStockEffect(appliedOnSave: boolean): string {
+  return appliedOnSave ? "この保存で反映" : "取込みで反映";
+}
+
+function formatDirection(direction: ReturnDirection): string {
+  return direction === "out" ? "渡し（在庫-）" : "戻り（在庫+）";
 }
 
 // 空備考は他の記録画面と同じ「—」で示す。空白だけの値も空として扱う。
@@ -178,6 +194,7 @@ function clearStaleRowErrors(
     else delete nextErrors.rows;
   }
   if (nextValues.rows.length > 0) delete nextErrors.items;
+  if (nextValues.registerProcessed !== null) delete nextErrors.registerProcessed;
   return nextErrors;
 }
 
@@ -246,9 +263,10 @@ export function ReturnExchangePage() {
       setFailedSignature(null);
       setIdempotencyKey(createReturnExchangeIdempotencyKey());
       toast.success("返品・交換を保存しました", { id: "return-save-success" });
+      // UI-03-D23 / D-052 C5: 在庫系 consumer はこの保存で在庫を動かした商品があるときだけ
       await invalidateByContract(
         queryClient,
-        invalidationContract.returnExchange(values.registerProcessed),
+        invalidationContract.returnExchange(data.stock_applied_product_codes.length > 0),
       );
     },
     onError: (error) => {
@@ -417,7 +435,7 @@ export function ReturnExchangePage() {
       <UnsavedChangesDialog warning={unsavedChanges} />
       <PageHeader
         title="返品・交換"
-        subtitle="レジ戻し済みなら帳面記録だけ、未処理ならこの保存で在庫を反映します"
+        subtitle="レジでの戻し方を選んで保存します。売上データの取込みで在庫に戻らない商品は、この保存で反映します"
         actions={
           !isFormLocked ? (
             <Button asChild variant="outline">
@@ -453,11 +471,8 @@ export function ReturnExchangePage() {
               <div className="font-medium">{values.rows.length} 件</div>
             </div>
             <div>
-              <span className="text-muted-foreground">在庫反映</span>
+              <span className="text-muted-foreground">レジでの戻し方</span>
               <div className="font-medium">{formatRegisterProcessed(values.registerProcessed)}</div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatStockEffectDescription(values.registerProcessed)}
-              </p>
             </div>
             <div>
               <span className="text-muted-foreground">画像</span>
@@ -475,6 +490,31 @@ export function ReturnExchangePage() {
               {formatNote(values.note)}
             </p>
           </div>
+          {/* UI-03-D23: どの明細で在庫を動かしたかは BIZ の結果（stock_applied_product_codes）が正本 */}
+          <Table aria-label="保存した商品">
+            <TableHeader>
+              <TableRow>
+                <TableHead>商品コード</TableHead>
+                <TableHead>商品名</TableHead>
+                <TableHead>方向</TableHead>
+                <TableHead>在庫の反映</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {values.rows.map((row) => (
+                <TableRow key={rowKey(row)}>
+                  <TableCell className="font-medium">{row.productCode}</TableCell>
+                  <TableCell>{row.productName}</TableCell>
+                  <TableCell>{formatDirection(row.direction)}</TableCell>
+                  <TableCell>
+                    {formatStockEffect(
+                      result.stock_applied_product_codes.includes(row.productCode),
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           {result.stock_warnings.length > 0 ? (
             <ul className="list-disc space-y-1 pl-5 text-sm">
               {result.stock_warnings.map((warning) => (
@@ -560,14 +600,26 @@ export function ReturnExchangePage() {
           </div>
         </div>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">レジ戻し状況</legend>
+        <fieldset
+          className="space-y-2"
+          aria-describedby={
+            errors.registerProcessed !== undefined ? REGISTER_METHOD_ERROR_ID : undefined
+          }
+        >
+          <legend className="text-sm font-medium">レジでの戻し方</legend>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className={registerOptionClass(values.registerProcessed, isFormLocked, false)}>
+            <label
+              className={registerOptionClass(
+                values.registerProcessed === true,
+                isFormLocked,
+                false,
+              )}
+            >
               <input
                 type="radio"
-                aria-label="レジ戻し済み"
-                checked={values.registerProcessed}
+                name="return-register-method"
+                aria-label={REGISTER_METHOD_LABELS.read}
+                checked={values.registerProcessed === true}
                 disabled={isFormLocked}
                 className="mt-1 accent-primary"
                 onChange={() => {
@@ -576,9 +628,9 @@ export function ReturnExchangePage() {
               />
               <span className="min-w-0 flex-1 space-y-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">レジ戻し済み</span>
+                  <span className="font-medium">{REGISTER_METHOD_LABELS.read}</span>
                   <Badge variant="outline" className="border-stone-200 bg-stone-50 text-stone-700">
-                    {formatStockEffectBadge(true)}
+                    {formatStockEffect(false)}
                   </Badge>
                 </span>
                 <span className="block text-muted-foreground">
@@ -586,11 +638,18 @@ export function ReturnExchangePage() {
                 </span>
               </span>
             </label>
-            <label className={registerOptionClass(!values.registerProcessed, isFormLocked, true)}>
+            <label
+              className={registerOptionClass(
+                values.registerProcessed === false,
+                isFormLocked,
+                true,
+              )}
+            >
               <input
                 type="radio"
-                aria-label="レジ未処理"
-                checked={!values.registerProcessed}
+                name="return-register-method"
+                aria-label={REGISTER_METHOD_LABELS.notRead}
+                checked={values.registerProcessed === false}
                 disabled={isFormLocked}
                 className="mt-1 accent-primary"
                 onChange={() => {
@@ -599,12 +658,12 @@ export function ReturnExchangePage() {
               />
               <span className="min-w-0 flex-1 space-y-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">レジ未処理</span>
+                  <span className="font-medium">{REGISTER_METHOD_LABELS.notRead}</span>
                   <Badge
                     variant="outline"
                     className="border-warning-border bg-warning-soft text-warning-strong"
                   >
-                    {formatStockEffectBadge(false)}
+                    {formatStockEffect(true)}
                   </Badge>
                 </span>
                 <span className="block text-muted-foreground">
@@ -613,6 +672,11 @@ export function ReturnExchangePage() {
               </span>
             </label>
           </div>
+          {errors.registerProcessed !== undefined ? (
+            <p id={REGISTER_METHOD_ERROR_ID} className="text-sm text-destructive">
+              {errors.registerProcessed}
+            </p>
+          ) : null}
         </fieldset>
 
         <div className="space-y-2">
@@ -970,7 +1034,7 @@ export function ReturnExchangePage() {
               <TableRow>
                 <TableHead>返品日</TableHead>
                 <TableHead>種別</TableHead>
-                <TableHead>レジ戻し</TableHead>
+                <TableHead>レジでの戻し方</TableHead>
                 <TableHead>備考</TableHead>
                 <TableHead>記録日時</TableHead>
                 <TableHead className="text-right">操作</TableHead>

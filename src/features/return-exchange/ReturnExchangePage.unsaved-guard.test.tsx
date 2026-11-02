@@ -101,7 +101,13 @@ beforeEach(() => {
   });
   mockCreateReturn.mockResolvedValue({
     status: "ok",
-    data: { record_id: 1, created: true, idempotent_replay: false, stock_warnings: [] },
+    data: {
+      record_id: 1,
+      created: true,
+      idempotent_replay: false,
+      stock_warnings: [],
+      stock_applied_product_codes: ["RT-001"],
+    },
   });
 });
 
@@ -135,6 +141,12 @@ describe("ReturnExchangePage unsaved guard (UI-USW-D1/D3 / SPEC-UISN-2)", () => 
     expect(await screen.findByText("編集内容が保存されていません")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "編集を続ける" }));
     rerenderPage();
+    // UI-03-D23: 既定の選択が無いので、保存の前にレジでの戻し方を選ぶ
+    await user.click(
+      screen.getByLabelText(
+        "バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）",
+      ),
+    );
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     await waitFor(() => {
