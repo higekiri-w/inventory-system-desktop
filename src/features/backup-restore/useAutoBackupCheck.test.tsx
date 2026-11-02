@@ -77,11 +77,11 @@ function offsiteFailure(): OffsiteResult {
   };
 }
 
-type InvalidateSpy = ReturnType<typeof vi.spyOn<QueryClient, "invalidateQueries">>;
-
-function invalidationsOf(spy: InvalidateSpy, key: readonly string[]): number {
+function invalidationsOf(spy: { mock: { calls: unknown[][] } }, key: readonly string[]): number {
   return spy.mock.calls.filter(
-    ([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(key),
+    ([filters]) =>
+      JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey) ===
+      JSON.stringify(key),
   ).length;
 }
 
@@ -549,7 +549,11 @@ describe("PC の外の控えの確認 (REQ-901 / UI-11b-D16)", () => {
       offsiteOk({ kind: "no_local_backup" }),
       offsiteOk({ kind: "medium_missing" }),
       offsiteOk({ kind: "up_to_date" }),
-      offsiteOk({ kind: "copied", file_name: "inventory_backup_20991231_235959.db", labels: ["控え 2"] }),
+      offsiteOk({
+        kind: "copied",
+        file_name: "inventory_backup_20991231_235959.db",
+        labels: ["控え 2"],
+      }),
       offsiteFailure(),
     ];
     for (const result of results) mockCheckOffsite.mockResolvedValueOnce(result);

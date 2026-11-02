@@ -61,6 +61,9 @@ import {
   suspendAutoBackupCheckAndWait,
 } from "./useAutoBackupCheck";
 import { open } from "@tauri-apps/plugin-dialog";
+import { formatBackupDate } from "./offsite-status-text";
+import { OffsiteBackupPanel, type OffsiteAction, type OffsiteMessage } from "./OffsiteBackupPanel";
+import { useOffsiteBackupStatus } from "./useOffsiteBackupStatus";
 
 const BACKUP_SETTING_KEYS = new Set([
   "backup_enabled",
@@ -71,16 +74,6 @@ const BACKUP_SETTING_KEYS = new Set([
 
 function settingValue(settings: AppSetting[] | undefined, key: string, fallback: string): string {
   return settings?.find((setting) => setting.key === key)?.value ?? fallback;
-}
-
-function formatBackupDate(value: string): string {
-  const date = new Date(value.includes("T") ? value : value.replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) return value;
-  const month = String(date.getMonth() + 1);
-  const day = String(date.getDate());
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${month}月${day}日 ${hours}:${minutes}`;
 }
 
 function formatBackupSize(sizeBytes: number): string {
@@ -113,8 +106,70 @@ function checkFromInspection(inspection: BackupInspection): RestoreCheck {
   return { status: "restorable", inspection };
 }
 
+// 復元の対象。一覧の行（BackupInfo）と「控えを選んで確かめる」で選んだ file（UI-11b-D15）。
+// file の作成日時・サイズは確かめ（inspectBackup）が返すまで分からない（§68.9: 取れなければ file 名を出す）
+interface RestoreTarget {
+  file_path: string;
+  file_name: string;
+  created_at: string | null;
+  size_bytes: number | null;
+}
+
+function targetFromBackup(backup: BackupInfo): RestoreTarget {
+  return {
+    file_path: backup.file_path,
+    file_name: backup.file_name,
+    created_at: backup.created_at,
+    size_bytes: backup.size_bytes,
+  };
+}
+
+function targetFromFile(path: string): RestoreTarget {
+  const file_name = path.split(/[\\/]/).pop() ?? path;
+  return { file_path: path, file_name, created_at: null, size_bytes: null };
+}
+
+/** 詳細の見出し・最終確認の日時。作成日時が取れない file は日時を作り出さず file 名（§68.9） */
+function restoreTargetLabel(target: RestoreTarget | null): string {
+  if (target === null) return "";
+  return target.created_at !== null ? formatBackupDate(target.created_at) : target.file_name;
+}
+
+/** §68.7: 復元の選択中（詳細・最終確認を含む）と busy / fatal の間は、用意・作り直し・やめるを止める */
+function offsiteOperationsLocked(
+  controlsDisabled: boolean,
+  selected: RestoreTarget | null,
+): boolean {
+  return controlsDisabled || selected !== null;
+}
+
+function RestoreTargetDetails({ target }: { target: RestoreTarget }) {
+  return (
+    <>
+      {target.size_bytes !== null ? (
+        <p className="text-sm text-muted-foreground">
+          サイズ: {formatBackupSize(target.size_bytes)}
+        </p>
+      ) : null}
+      <p className="text-sm break-all text-muted-foreground">{target.file_path}</p>
+    </>
+  );
+}
+
+/** §68.11 の backup_path 保存失敗: 設定の card の中に文（現在の保存先の表示は保つ） */
+function PathUpdateError({ message }: { message: string | null }) {
+  if (message === null) return null;
+  return (
+    <Alert variant="destructive">
+      <AlertDescription>
+        <p>{message}</p>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 interface RestoreState {
-  selected: BackupInfo | null;
+  selected: RestoreTarget | null;
   check: RestoreCheck | null;
   preBackupFailed: boolean;
   breakGlassAccepted: boolean;
@@ -129,6 +184,79 @@ const initialRestoreState: RestoreState = {
   confirmOpen: false,
 };
 
+/**
+ * UI-11b-D14・§68.4: 「PC の外の控え」の card の 3 つの操作（§68.7 の offsite_preparing / offsite_resetting /
+ * offsite_stopping）。成功・失敗とも status を取り直し（作り直しは一覧も）、card は取り直した status で決める（§68.10）
+ */
+function useOffsiteActions() {
+  const queryClient = useQueryClient();
+  const [action, setAction] = useState<OffsiteAction | null>(null);
+  const [message, setMessage] = useState<OffsiteMessage | null>(null);
+
+  async function run(kind: OffsiteAction, operation: () => Promise<string>, alsoList: boolean) {
+    setAction(kind);
+    setMessage(null);
+    try {
+      setMessage({ tone: "success", text: await operation() });
+    } catch (error) {
+      setMessage({ tone: "error", text: describeError(error) });
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.backupRestore.offsiteStatus() });
+      if (alsoList) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.backupRestore.list() });
+      }
+      setAction(null);
+    }
+  }
+
+  async function prepare() {
+    const selected = await open({ directory: true, multiple: false });
+    if (!selected || Array.isArray(selected)) return;
+    await run(
+      "preparing",
+      async () => {
+        const medium = await unwrapResult(
+          commands.prepareOffsiteMedium({ selected_path: selected }),
+          { source: "commands", cmd: "prepare_offsite_medium" },
+        );
+        return `${medium.label} を PC の外の控えの保存先にしました`;
+      },
+      false,
+    );
+  }
+
+  // CMD が先に backup を作るので、失敗でも一覧を取り直す（§68.4 手順 4）
+  async function reset() {
+    await run(
+      "resetting",
+      async () => {
+        await unwrapResult(commands.resetOffsiteState(), {
+          source: "commands",
+          cmd: "reset_offsite_state",
+        });
+        return "PC の外の控えの記録を作り直しました";
+      },
+      true,
+    );
+  }
+
+  async function stop() {
+    await run(
+      "stopping",
+      async () => {
+        await unwrapResult(commands.stopOffsiteBackup(), {
+          source: "commands",
+          cmd: "stop_offsite_backup",
+        });
+        return "PC の外の控えをやめました";
+      },
+      false,
+    );
+  }
+
+  return { action, message, prepare, reset, stop };
+}
+
 export function BackupRestorePage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -141,6 +269,9 @@ export function BackupRestorePage() {
   const [isUpdatingSetting, setIsUpdatingSetting] = useState(false);
   const [isRunningPreBackup, setIsRunningPreBackup] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const offsite = useOffsiteActions();
+  // §68.4 の backup_path 変更の手順 3（path_update_error）。設定の card の中に出す
+  const [pathError, setPathError] = useState<string | null>(null);
   const [fatalRestoreKind, setFatalRestoreKind] = useState<Extract<
     CmdErrorKind,
     "restore_failed_unrecoverable" | "restore_durability_unknown"
@@ -158,6 +289,8 @@ export function BackupRestorePage() {
       unwrapResult(commands.listBackups(), { source: "commands", cmd: "list_backups" }),
   });
 
+  const offsiteStatusQuery = useOffsiteBackupStatus();
+
   const effectiveBackupDirQuery = useQuery({
     queryKey: queryKeys.backupRestore.effectiveDir(),
     queryFn: () =>
@@ -173,14 +306,23 @@ export function BackupRestorePage() {
   const backupPath = settingValue(settings, "backup_path", "");
   const backupRetentionDays = settingValue(settings, "backup_retention_days", "3");
   const backups = useMemo(() => backupsQuery.data ?? [], [backupsQuery.data]);
-  const selectedBackupLabel = restoreState.selected
-    ? formatBackupDate(restoreState.selected.created_at)
-    : "";
+  const selectedBackupLabel = restoreTargetLabel(restoreState.selected);
   const isFatal = fatalRestoreKind !== null;
   const isInspecting = restoreState.check?.status === "inspecting";
+  // §68.7: 用意・作り直し・やめるの実行中も busy（一覧の行と「控えを選んで確かめる」も止める）
   const isBusy =
-    isCreatingBackup || isUpdatingSetting || isRunningPreBackup || isRestoring || isInspecting;
+    isCreatingBackup ||
+    isUpdatingSetting ||
+    isRunningPreBackup ||
+    isRestoring ||
+    isInspecting ||
+    offsite.action !== null;
   const controlsDisabled = isFatal || isBusy;
+  // §68.7: 復元の選択中（詳細・最終確認を含む）も用意・作り直し・やめるを止める（確認の本体が選んだ控えを掃除しない）
+  const offsiteOperationsDisabled = offsiteOperationsLocked(
+    controlsDisabled,
+    restoreState.selected,
+  );
 
   const backupRows = useMemo(
     () =>
@@ -234,7 +376,33 @@ export function BackupRestorePage() {
   async function handleChooseBackupPath() {
     const selected = await open({ directory: true, multiple: false });
     if (!selected || Array.isArray(selected)) return;
+    setPathError(null);
+    // §68.4 の backup_path 変更の手順 3: 保存の前に確かめ、Err・例外は保存しない（71 MNT-01-D11）
+    setIsUpdatingSetting(true);
+    try {
+      await unwrapResult(commands.checkBackupDirChoice({ selected_path: selected }), {
+        source: "commands",
+        cmd: "check_backup_dir_choice",
+      });
+    } catch (error) {
+      setPathError(describeError(error));
+      return;
+    } finally {
+      setIsUpdatingSetting(false);
+    }
     await updateBackupSetting("backup_path", selected);
+  }
+
+  async function handleChooseBackupFile() {
+    if (controlsDisabled) return;
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: "バックアップ", extensions: ["db"] }],
+    });
+    // cancel は何もしない（止めない）
+    if (!selected || Array.isArray(selected)) return;
+    await selectRestoreBackup(targetFromFile(selected));
   }
 
   async function handleManualBackup() {
@@ -262,7 +430,7 @@ export function BackupRestorePage() {
     }
   }
 
-  async function selectRestoreBackup(backup: BackupInfo) {
+  async function selectRestoreBackup(backup: RestoreTarget) {
     setErrorMessage(null);
     setRestoreFailureErrorId(null);
     setStatusMessage(null);
@@ -276,6 +444,16 @@ export function BackupRestorePage() {
         { source: "commands", cmd: "inspect_backup" },
       );
       check = checkFromInspection(inspection);
+      // 選んだ file の作成日時・サイズは確かめの結果から（取れなければ null のまま、§68.9）
+      const known: RestoreTarget = {
+        ...backup,
+        created_at: backup.created_at ?? inspection.created_at,
+        size_bytes: backup.size_bytes ?? inspection.size_bytes,
+      };
+      setRestoreState((current) =>
+        current.selected === backup ? { ...current, selected: known, check } : current,
+      );
+      return;
     } catch {
       // CmdError（読めない控え）も IPC の例外も同じ固定の文。CmdError の message は画面に出さない
       check = { status: "blocked", message: BLOCKED_UNREADABLE };
@@ -520,6 +698,7 @@ export function BackupRestorePage() {
                   <FolderOpen />
                   保存先を選ぶ
                 </Button>
+                <PathUpdateError message={pathError} />
               </div>
             </CardContent>
           </Card>
@@ -539,6 +718,26 @@ export function BackupRestorePage() {
             </CardContent>
           </Card>
         </section>
+
+        <OffsiteBackupPanel
+          status={offsiteStatusQuery.data}
+          isError={offsiteStatusQuery.isError}
+          onRetry={() => void offsiteStatusQuery.refetch()}
+          operationsDisabled={offsiteOperationsDisabled}
+          fileEntryDisabled={controlsDisabled}
+          busy={offsite.action}
+          message={offsite.message}
+          onPrepare={() => {
+            if (!offsiteOperationsDisabled) void offsite.prepare();
+          }}
+          onReset={() => {
+            if (!offsiteOperationsDisabled) void offsite.reset();
+          }}
+          onStop={() => {
+            if (!offsiteOperationsDisabled) void offsite.stop();
+          }}
+          onChooseFile={() => void handleChooseBackupFile()}
+        />
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
           <Card>
@@ -593,7 +792,7 @@ export function BackupRestorePage() {
                               variant="outline"
                               size="sm"
                               onClick={() => {
-                                void selectRestoreBackup(backup);
+                                void selectRestoreBackup(targetFromBackup(backup));
                               }}
                               disabled={controlsDisabled}
                             >
@@ -618,12 +817,7 @@ export function BackupRestorePage() {
                 <>
                   <div className="space-y-2">
                     <p className="text-lg font-semibold">{selectedBackupLabel} の控え</p>
-                    <p className="text-sm text-muted-foreground">
-                      サイズ: {formatBackupSize(restoreState.selected.size_bytes)}
-                    </p>
-                    <p className="text-sm break-all text-muted-foreground">
-                      {restoreState.selected.file_path}
-                    </p>
+                    <RestoreTargetDetails target={restoreState.selected} />
                   </div>
                   {restoreState.check?.status === "inspecting" ? (
                     <p className="flex items-center gap-2 text-sm" role="status">

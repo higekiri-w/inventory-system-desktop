@@ -21,6 +21,7 @@ import type {
   CmdErrorKind,
   CsvImport,
   DailySalesReport,
+  OffsiteBackupStatus,
   PaginatedResult,
   ProductResponse,
   ProductWithRelations,
@@ -52,6 +53,12 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
       getEffectiveBackupDir: vi.fn(),
       restoreBackup: vi.fn(),
       inspectBackup: vi.fn(),
+      checkOffsiteBackup: vi.fn(),
+      getOffsiteBackupStatus: vi.fn(),
+      prepareOffsiteMedium: vi.fn(),
+      resetOffsiteState: vi.fn(),
+      stopOffsiteBackup: vi.fn(),
+      checkBackupDirChoice: vi.fn(),
       // home (consumer)
       getDailySales: vi.fn(),
       listLowStock: vi.fn(),
@@ -68,6 +75,12 @@ const mockListBackups = vi.mocked(commands.listBackups);
 const mockGetEffectiveBackupDir = vi.mocked(commands.getEffectiveBackupDir);
 const mockRestoreBackup = vi.mocked(commands.restoreBackup);
 const mockInspectBackup = vi.mocked(commands.inspectBackup);
+const mockCheckOffsite = vi.mocked(commands.checkOffsiteBackup);
+const mockGetOffsiteStatus = vi.mocked(commands.getOffsiteBackupStatus);
+const mockPrepareOffsite = vi.mocked(commands.prepareOffsiteMedium);
+const mockResetOffsite = vi.mocked(commands.resetOffsiteState);
+const mockStopOffsite = vi.mocked(commands.stopOffsiteBackup);
+const mockCheckBackupDirChoice = vi.mocked(commands.checkBackupDirChoice);
 const mockOpen = vi.mocked(open);
 
 const mockGetDailySales = vi.mocked(commands.getDailySales);
@@ -108,6 +121,20 @@ function makeInspection(overrides: Partial<BackupInspection> = {}): BackupInspec
     quick_check_ok: true,
     product_count: 37,
     last_operation_at: "2026-07-03T20:47:00",
+    ...overrides,
+  };
+}
+
+function makeOffsiteStatus(overrides: Partial<OffsiteBackupStatus> = {}): OffsiteBackupStatus {
+  return {
+    prepared: true,
+    last_success_at: null,
+    last_success_label: null,
+    days_since_last_success: null,
+    stale: true,
+    attached: [],
+    last_failure_kind: null,
+    local_backup_old: false,
     ...overrides,
   };
 }
@@ -193,6 +220,14 @@ function installDefaultCommands() {
   mockInspectBackup.mockResolvedValue(ok(makeInspection()));
   mockGetEffectiveBackupDir.mockResolvedValue(ok("/tmp/backups"));
   mockOpen.mockResolvedValue(null);
+  mockCheckOffsite.mockResolvedValue(ok({ kind: "not_prepared" as const }));
+  mockGetOffsiteStatus.mockResolvedValue(ok(makeOffsiteStatus({ prepared: false, stale: false })));
+  mockPrepareOffsite.mockResolvedValue(
+    ok({ label: "控え 2", drive_root: "E:\\", newest_copy: null }),
+  );
+  mockResetOffsite.mockResolvedValue(ok({ kind: "up_to_date" as const }));
+  mockStopOffsite.mockResolvedValue(ok(null));
+  mockCheckBackupDirChoice.mockResolvedValue(ok(null));
 
   mockGetDailySales.mockResolvedValue(ok(makeDailySales()));
   mockListLowStock.mockResolvedValue(ok([makeProduct("OUT", 0)]));
@@ -742,6 +777,471 @@ describe("手動バックアップの失敗の後の取り直し (REQ-901 / §68
     expect(listInvalidateCount(invalidateSpy)).toBe(1);
     await waitFor(() => {
       expect(mockListBackups.mock.calls.length).toBeGreaterThan(listCallsBefore);
+    });
+  });
+});
+
+// ---- UI-11b-D14・D15・F3: PC の外の控え（runtime (b)） ----
+
+const OFFSITE_KEY = queryKeys.backupRestore.offsiteStatus();
+const UNREADABLE_CAUSE =
+  "PC の外の控えの記録を読めません。USB メモリを差して「記録を作り直す」を押すか、使わないなら「PC の外の控えをやめる」を押してください。";
+const BEFORE_PREPARE =
+  "PC の外の控えは使っていません（任意。使わなくてもアプリは今までどおり動きます）。使うときは USB メモリを差して「この USB メモリを控えの保存先にする」を押してください。";
+const NO_MEDIUM =
+  "用意した USB メモリが差さっていません。USB メモリを差して「記録を作り直す」を押すか、使わないなら「PC の外の控えをやめる」を押してください";
+const RESET_FAILED =
+  "PC の外の控えの記録の作り直しを終えられませんでした。「記録を作り直す」がまだ出ていれば、もう一度押してください";
+const STOP_FAILED =
+  "PC の外の控えをやめる操作を終えられませんでした。「PC の外の控えをやめる」がまだ出ていれば、もう一度押してください";
+const SAME_FOLDER =
+  "PC の中の保存先が、USB メモリの InventoryBackup フォルダと同じです。「保存先を選ぶ」で PC の中の別のフォルダを選び直してください";
+const FILE_PATH = "E:\\InventoryBackup\\inventory_backup_20991231_235959.db";
+
+function keyCount(spy: { mock: { calls: unknown[][] } }, key: readonly string[]): number {
+  return spy.mock.calls.filter(
+    ([filters]) =>
+      JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey) ===
+      JSON.stringify(key),
+  ).length;
+}
+
+function invalidations(spy: { mock: { calls: unknown[][] } }) {
+  return {
+    offsite: keyCount(spy, OFFSITE_KEY),
+    list: keyCount(spy, queryKeys.backupRestore.list()),
+  };
+}
+
+/** 共通レイアウトの mount の 1 回の確認（offsite）の結果と invalidate を済ませる */
+async function settleMountCheck() {
+  await waitFor(() => {
+    expect(mockCheckOffsite).toHaveBeenCalled();
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+const unreadableStatus = () => makeOffsiteStatus({ last_failure_kind: "state_unreadable" });
+
+// describeError の表示（internal は診断ログの案内を続ける、UI-ERR-D1）
+const internalShown = (message: string) => `${message}。詳細は診断ログに記録されています。`;
+
+describe("PC の外の控えの card (REQ-901 / UI-11b-D14・§68.4)", () => {
+  it("REQ-901 / UI-11b-D14: 「記録を作り直す」で作り直し、status と一覧を取り直し、取り直した status で表示を決める", async () => {
+    const user = userEvent.setup();
+    mockGetOffsiteStatus.mockResolvedValue(ok(unreadableStatus()));
+    const { queryClient } = renderApp("/settings/backup");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    expect(await screen.findByText(UNREADABLE_CAUSE)).toBeInTheDocument();
+    await settleMountCheck();
+    const before = invalidations(invalidateSpy);
+
+    // 取り直しの status は読める記録（(1) 以外の原因）
+    mockGetOffsiteStatus.mockResolvedValue(ok(makeOffsiteStatus()));
+    await user.click(screen.getByRole("button", { name: "記録を作り直す" }));
+
+    expect(await screen.findByText("PC の外の控えの記録を作り直しました")).toBeInTheDocument();
+    expect(mockResetOffsite).toHaveBeenCalledTimes(1);
+    expect(invalidations(invalidateSpy)).toEqual({
+      offsite: before.offsite + 1,
+      list: before.list + 1,
+    });
+    expect(
+      await screen.findByText(
+        "PC の外の控えがまだ写せていません。USB メモリが差してあるか確かめてください。",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(UNREADABLE_CAUSE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "記録を作り直す" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["NoMediumAttached", cmdError(NO_MEDIUM, "validation"), NO_MEDIUM],
+    ["StateResetFailed", cmdError(RESET_FAILED, "internal"), internalShown(RESET_FAILED)],
+  ] as const)(
+    "REQ-901 / UI-11b-D14: 作り直しの失敗（%s）でも status と一覧を取り直し、固定の文を card に出す",
+    async (_label, result, message) => {
+      const user = userEvent.setup();
+      mockGetOffsiteStatus.mockResolvedValue(ok(unreadableStatus()));
+      mockResetOffsite.mockResolvedValueOnce(result);
+      const { queryClient } = renderApp("/settings/backup");
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      await screen.findByText(UNREADABLE_CAUSE);
+      await settleMountCheck();
+      const before = invalidations(invalidateSpy);
+
+      await user.click(screen.getByRole("button", { name: "記録を作り直す" }));
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(invalidations(invalidateSpy)).toEqual({
+        offsite: before.offsite + 1,
+        list: before.list + 1,
+      });
+      // 取り直した status がまだ読めない記録なので、原因の文と button が残り押し直せる
+      expect(screen.getByText(UNREADABLE_CAUSE)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "記録を作り直す" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "PC の外の控えをやめる" })).toBeEnabled();
+    },
+  );
+
+  it("REQ-901 / UI-11b-D14・§68.4 手順 5: やめるは確認をはさみ、キャンセルでは呼ばず、やめると用意の前の文", async () => {
+    const user = userEvent.setup();
+    mockGetOffsiteStatus.mockResolvedValue(ok(makeOffsiteStatus({ stale: false })));
+    const { queryClient } = renderApp("/settings/backup");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByRole("button", { name: "PC の外の控えをやめる" });
+    await settleMountCheck();
+    const before = invalidations(invalidateSpy);
+    await user.click(screen.getByRole("button", { name: "PC の外の控えをやめる" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(
+      within(dialog).getByText(
+        "PC の外の控えをやめますか。USB メモリへの写しとホームの知らせが止まります。USB メモリの上の控えと PC の中のバックアップは消えません。",
+      ),
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "キャンセル" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expect(mockStopOffsite).not.toHaveBeenCalled();
+
+    mockGetOffsiteStatus.mockResolvedValue(
+      ok(makeOffsiteStatus({ prepared: false, stale: false })),
+    );
+    await user.click(screen.getByRole("button", { name: "PC の外の控えをやめる" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "やめる" }),
+    );
+
+    expect(await screen.findByText("PC の外の控えをやめました")).toBeInTheDocument();
+    expect(mockStopOffsite).toHaveBeenCalledTimes(1);
+    expect(invalidations(invalidateSpy)).toEqual({
+      offsite: before.offsite + 1,
+      list: before.list,
+    });
+    expect(await screen.findByText(BEFORE_PREPARE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "PC の外の控えをやめる" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [true, "移す前の失敗は用意の後のまま button が残る"],
+    [false, "移した後の sync の失敗は用意の前の文で button が無い"],
+  ] as [boolean, string][])(
+    "REQ-901 / UI-11b-D14: StopFailed の後は取り直した status で決める（prepared = %s: %s）",
+    async (preparedAfter) => {
+      const user = userEvent.setup();
+      mockGetOffsiteStatus.mockResolvedValue(ok(makeOffsiteStatus({ stale: false })));
+      mockStopOffsite.mockResolvedValueOnce(cmdError(STOP_FAILED, "internal"));
+      const { queryClient } = renderApp("/settings/backup");
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      await screen.findByRole("button", { name: "PC の外の控えをやめる" });
+      await settleMountCheck();
+      const before = invalidations(invalidateSpy);
+      await user.click(screen.getByRole("button", { name: "PC の外の控えをやめる" }));
+      mockGetOffsiteStatus.mockResolvedValue(
+        ok(makeOffsiteStatus({ prepared: preparedAfter, stale: false })),
+      );
+      await user.click(
+        within(await screen.findByRole("alertdialog")).getByRole("button", { name: "やめる" }),
+      );
+
+      expect(await screen.findByText(internalShown(STOP_FAILED))).toBeInTheDocument();
+      expect(invalidations(invalidateSpy).offsite).toBe(before.offsite + 1);
+      if (preparedAfter) {
+        expect(screen.getByRole("button", { name: "PC の外の控えをやめる" })).toBeInTheDocument();
+      } else {
+        expect(await screen.findByText(BEFORE_PREPARE)).toBeInTheDocument();
+        expect(
+          screen.queryByRole("button", { name: "PC の外の控えをやめる" }),
+        ).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("REQ-901 / UI-11b-D14・§68.4 手順 2: 用意は成功・失敗とも status を取り直し、picker の cancel では呼ばない", async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderApp("/settings/backup");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const prepare = await screen.findByRole("button", {
+      name: "この USB メモリを控えの保存先にする",
+    });
+    await settleMountCheck();
+    const before = invalidations(invalidateSpy).offsite;
+
+    mockOpen.mockResolvedValueOnce(null);
+    await user.click(prepare);
+    expect(mockPrepareOffsite).not.toHaveBeenCalled();
+    expect(keyCount(invalidateSpy, OFFSITE_KEY)).toBe(before);
+
+    mockOpen.mockResolvedValueOnce("E:\\");
+    await user.click(prepare);
+    expect(
+      await screen.findByText("控え 2 を PC の外の控えの保存先にしました"),
+    ).toBeInTheDocument();
+    expect(mockPrepareOffsite).toHaveBeenCalledWith({ selected_path: "E:\\" });
+    expect(keyCount(invalidateSpy, OFFSITE_KEY)).toBe(before + 1);
+
+    const refused = "USB メモリを選んでください（この場所は PC の外の控えに使えません）";
+    mockOpen.mockResolvedValueOnce("C:\\");
+    mockPrepareOffsite.mockResolvedValueOnce(cmdError(refused, "validation"));
+    await user.click(prepare);
+    expect(await screen.findByText(refused)).toBeInTheDocument();
+    expect(keyCount(invalidateSpy, OFFSITE_KEY)).toBe(before + 2);
+  });
+});
+
+describe("§68.7 の無効化 (REQ-901 / UI-11b-D14・D15)", () => {
+  const OPERATIONS = [
+    "この USB メモリを控えの保存先にする",
+    "記録を作り直す",
+    "PC の外の控えをやめる",
+  ];
+
+  function expectOperations(disabled: boolean, options: { hidden?: boolean } = {}) {
+    for (const name of OPERATIONS) {
+      const button = screen.getByRole("button", { name, ...options });
+      if (disabled) expect(button).toBeDisabled();
+      else expect(button).toBeEnabled();
+    }
+  }
+
+  it("REQ-901 / §68.7: 復元の詳細・最終確認・確認から詳細へ戻る間は 3 つの操作を止め、閉じると戻る", async () => {
+    const user = userEvent.setup();
+    mockGetOffsiteStatus.mockResolvedValue(ok(unreadableStatus()));
+    renderApp("/settings/backup");
+    await screen.findByText(UNREADABLE_CAUSE);
+    expectOperations(false);
+
+    await selectRow(user, BACKUP_DATE_LABEL);
+    await screen.findByText("この控えは戻せます");
+    expectOperations(true);
+    for (const name of OPERATIONS) {
+      await user.click(screen.getByRole("button", { name }));
+    }
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockPrepareOffsite).not.toHaveBeenCalled();
+    expect(mockResetOffsite).not.toHaveBeenCalled();
+    expect(mockStopOffsite).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "復元の確認へ進む" }));
+    await screen.findByRole("alertdialog", { name: "元に戻せません" });
+    expectOperations(true, { hidden: true });
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expectOperations(true);
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    expectOperations(false);
+  });
+
+  it("REQ-901 / §68.7: 未選択でも busy の間（手動バックアップの実行中）は 3 つの操作と file の入口を止める", async () => {
+    const user = userEvent.setup();
+    mockGetOffsiteStatus.mockResolvedValue(ok(unreadableStatus()));
+    const pending = deferred<Awaited<ReturnType<typeof commands.createBackup>>>();
+    mockCreateBackup.mockReturnValueOnce(pending.promise);
+    renderApp("/settings/backup");
+    await screen.findByText(UNREADABLE_CAUSE);
+
+    await user.click(screen.getByRole("button", { name: "今すぐバックアップを作成" }));
+    expectOperations(true);
+    expect(screen.getByRole("button", { name: "控えを選んで確かめる" })).toBeDisabled();
+
+    pending.resolve(
+      ok({
+        file_name: "inventory_backup_20260706_100000.db",
+        file_path: "/tmp/backups/inventory_backup_20260706_100000.db",
+        size_bytes: 10_000_000,
+      }),
+    );
+    await waitFor(() => {
+      expectOperations(false);
+    });
+    expect(screen.getByRole("button", { name: "控えを選んで確かめる" })).toBeEnabled();
+  });
+
+  it("REQ-901 / §68.7（P3-a）: 用意の実行中は一覧の行と file の入口が disabled で inspectBackup を呼ばない", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<Awaited<ReturnType<typeof commands.prepareOffsiteMedium>>>();
+    mockPrepareOffsite.mockReturnValueOnce(pending.promise);
+    renderApp("/settings/backup");
+    const backupDate = await screen.findByText(BACKUP_DATE_LABEL);
+    const row = backupDate.closest("tr");
+    if (!row) throw new Error("backup row not found");
+
+    mockOpen.mockResolvedValueOnce("E:\\");
+    await user.click(screen.getByRole("button", { name: "この USB メモリを控えの保存先にする" }));
+    await waitFor(() => {
+      expect(mockPrepareOffsite).toHaveBeenCalledTimes(1);
+    });
+    const rowButton = within(row).getByRole("button", { name: "この控えに戻す" });
+    const fileEntry = screen.getByRole("button", { name: "控えを選んで確かめる" });
+    expect(rowButton).toBeDisabled();
+    expect(fileEntry).toBeDisabled();
+    await user.click(rowButton);
+    await user.click(fileEntry);
+    expect(mockInspectBackup).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+
+    pending.resolve(ok({ label: "控え 2", drive_root: "E:\\", newest_copy: null }));
+    await screen.findByText("控え 2 を PC の外の控えの保存先にしました");
+    expect(within(row).getByRole("button", { name: "この控えに戻す" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "控えを選んで確かめる" })).toBeEnabled();
+  });
+});
+
+describe("保存先を選ぶ (REQ-901 / UI-11b-F3・§68.4 の backup_path 変更)", () => {
+  async function choosePath(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "保存先を選ぶ" }));
+  }
+
+  it("REQ-901 / UI-11b-F3: 確かめが BackupDirIsMediumFolder なら保存せず、設定の card に固定の文を出す", async () => {
+    const user = userEvent.setup();
+    mockOpen.mockResolvedValueOnce("E:\\InventoryBackup");
+    mockCheckBackupDirChoice.mockResolvedValueOnce(cmdError(SAME_FOLDER, "validation"));
+    const { queryClient } = renderApp("/settings/backup");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByText("/tmp/backups");
+
+    await choosePath(user);
+
+    const message = await screen.findByText(SAME_FOLDER);
+    expect(message.closest('[data-slot="card"]')).toHaveTextContent("バックアップ設定");
+    expect(mockCheckBackupDirChoice).toHaveBeenCalledWith({ selected_path: "E:\\InventoryBackup" });
+    expect(commands.updateSetting).not.toHaveBeenCalled();
+    expect(screen.getByText("/tmp/backups")).toBeInTheDocument();
+    expect(keyCount(invalidateSpy, queryKeys.backupRestore.list())).toBe(0);
+    expect(keyCount(invalidateSpy, queryKeys.backupRestore.effectiveDir())).toBe(0);
+  });
+
+  it("REQ-901 / UI-11b-F3: IPC の例外でも保存しない", async () => {
+    const user = userEvent.setup();
+    mockOpen.mockResolvedValueOnce("E:\\InventoryBackup");
+    mockCheckBackupDirChoice.mockRejectedValueOnce(new Error("synthetic ipc failure"));
+    renderApp("/settings/backup");
+    await choosePath(user);
+    await waitFor(() => {
+      expect(mockCheckBackupDirChoice).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "保存先を選ぶ" })).toBeEnabled();
+    });
+    expect(commands.updateSetting).not.toHaveBeenCalled();
+  });
+
+  it("REQ-901 / UI-11b-F3: Ok のときだけ確かめた値と同じ値で 1 回保存し、picker の cancel ではどちらも呼ばない", async () => {
+    const user = userEvent.setup();
+    vi.mocked(commands.updateSetting).mockResolvedValue(ok(null));
+    renderApp("/settings/backup");
+
+    mockOpen.mockResolvedValueOnce(null);
+    await choosePath(user);
+    expect(mockCheckBackupDirChoice).not.toHaveBeenCalled();
+    expect(commands.updateSetting).not.toHaveBeenCalled();
+
+    mockOpen.mockResolvedValueOnce("D:\\store-backups");
+    await choosePath(user);
+    await waitFor(() => {
+      expect(commands.updateSetting).toHaveBeenCalledTimes(1);
+    });
+    expect(mockCheckBackupDirChoice).toHaveBeenCalledWith({ selected_path: "D:\\store-backups" });
+    expect(commands.updateSetting).toHaveBeenCalledWith({
+      key: "backup_path",
+      value: "D:\\store-backups",
+    });
+    expect(mockCheckBackupDirChoice.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(commands.updateSetting).mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("控えを選んで確かめる (REQ-901 / UI-11b-D15 の file の入口)", () => {
+  const FILE_LABEL = "12月31日 23:59";
+
+  it("REQ-901 / UI-11b-D15: 選んだ file が同じ path で確かめ・事前バックアップ・復元へ渡る", async () => {
+    const user = userEvent.setup();
+    mockInspectBackup.mockResolvedValue(
+      ok(
+        makeInspection({
+          file_name: "inventory_backup_20991231_235959.db",
+          created_at: "2099-12-31 23:59:59",
+        }),
+      ),
+    );
+    mockRestoreBackup.mockResolvedValueOnce(ok(null));
+    renderApp("/settings/backup");
+
+    mockOpen.mockResolvedValueOnce(FILE_PATH);
+    await user.click(await screen.findByRole("button", { name: "控えを選んで確かめる" }));
+    expect(await screen.findByText("この控えは戻せます")).toBeInTheDocument();
+    expect(mockOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        directory: false,
+        multiple: false,
+        filters: [{ name: "バックアップ", extensions: ["db"] }],
+      }),
+    );
+    expect(mockInspectBackup).toHaveBeenCalledWith({ backup_path: FILE_PATH });
+
+    await startRestore(user, FILE_LABEL);
+    await waitFor(() => {
+      expect(mockRestoreBackup).toHaveBeenCalledWith({ backup_path: FILE_PATH });
+    });
+    expect(mockCreateBackup).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D15: picker の cancel では確かめも停止もしない", async () => {
+    const user = setupFakeTimers();
+    renderApp("/settings/backup");
+    mockOpen.mockResolvedValueOnce(null);
+    await user.click(await screen.findByRole("button", { name: "控えを選んで確かめる" }));
+    expect(mockInspectBackup).not.toHaveBeenCalled();
+    await expectCheckResumes();
+  });
+
+  it("REQ-901 / UI-11b-D15・D16: mount の 1 回の offsite の完了を待ってから確かめ、止めている間は呼ばず、キャンセルでは再開せず、閉じると次の tick で写す", async () => {
+    const user = setupFakeTimers();
+    const pendingOffsite = deferred<Awaited<ReturnType<typeof commands.checkOffsiteBackup>>>();
+    mockCheckOffsite.mockReturnValueOnce(pendingOffsite.promise);
+    mockInspectBackup.mockResolvedValue(
+      ok(
+        makeInspection({
+          file_name: "inventory_backup_20991231_235959.db",
+          created_at: "2099-12-31 23:59:59",
+        }),
+      ),
+    );
+    renderApp("/settings/backup");
+    await screen.findByRole("heading", { name: "バックアップ・復元" });
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+
+    mockOpen.mockResolvedValueOnce(FILE_PATH);
+    await user.click(screen.getByRole("button", { name: "控えを選んで確かめる" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockInspectBackup).not.toHaveBeenCalled();
+
+    pendingOffsite.resolve(ok({ kind: "up_to_date" }));
+    expect(await screen.findByText("この控えは戻せます")).toBeInTheDocument();
+    expect(mockInspectBackup).toHaveBeenCalledTimes(1);
+    await expectNoCheckWhile(120_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "復元の確認へ進む" }));
+    await screen.findByRole("alertdialog", { name: "元に戻せません" });
+    await user.click(screen.getByRole("button", { name: "キャンセル" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    await expectNoCheckWhile(60_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "閉じる" }));
+    await expectCheckResumes();
+    await waitFor(() => {
+      expect(mockCheckOffsite).toHaveBeenCalledTimes(2);
     });
   });
 });
