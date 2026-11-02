@@ -98,13 +98,14 @@ pub enum RegisterSdError {
 /// 29 §29.7.4 手順 1: file system を見る間だけ、その thread の error mode を
 /// `SEM_FAILCRITICALERRORS` にする（空の読取り機の口で Windows の error の dialog を出さない）。
 /// drop で元の値へ戻す（途中で返る経路を含む）。Windows 以外は何もしない。
-struct ErrorModeGuard {
+/// IO-11（`io::register_sd_move`）も使う（29 §29.9.1、IO-11-D3）
+pub(crate) struct ErrorModeGuard {
     #[cfg(windows)]
     previous: Option<u32>,
 }
 
 impl ErrorModeGuard {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::Diagnostics::Debug::{
@@ -287,17 +288,7 @@ pub fn read_register_sd_file(
     max_bytes: u64,
 ) -> Result<RegisterSdFile, RegisterSdError> {
     let _guard = ErrorModeGuard::new();
-    let parts: Vec<&str> = relative_path.split('\\').collect();
-    if parts.iter().any(|part| {
-        part.is_empty()
-            || *part == "."
-            || *part == ".."
-            || part.contains(':')
-            || part.contains('/')
-            || Path::new(part).has_root()
-    }) {
-        return Err(RegisterSdError::InvalidPath);
-    }
+    let parts = split_relative_path(relative_path).ok_or(RegisterSdError::InvalidPath)?;
     let root_real =
         fs::canonicalize(&root.path).map_err(|error| io_error(relative_path, &error))?;
     let joined = parts
@@ -312,6 +303,23 @@ pub fn read_register_sd_file(
         bytes,
         shape,
     })
+}
+
+/// 29 §29.7.6 手順 1: 相対 path を `\\` で分け、空・`.`・`..`・drive 指定・絶対 path の要素があれば None。
+/// `read_register_sd_file` と IO-11（`io::register_sd_move`）が同じ関数で検査する（29 §29.9.1）
+pub(crate) fn split_relative_path(relative_path: &str) -> Option<Vec<&str>> {
+    let parts: Vec<&str> = relative_path.split('\\').collect();
+    if parts.iter().any(|part| {
+        part.is_empty()
+            || *part == "."
+            || *part == ".."
+            || part.contains(':')
+            || part.contains('/')
+            || Path::new(part).has_root()
+    }) {
+        return None;
+    }
+    Some(parts)
 }
 
 /// 29 §29.7.6 手順 2: `max_bytes + 1` byte まで読み、超えたら全体を読まずに `TooLarge`
@@ -436,7 +444,8 @@ fn list_year(
     Ok(())
 }
 
-fn classify_z(
+/// 29 §29.7.5 手順 4 の Z の名前の規則（IO-11 も使う。29 §29.9.1）
+pub(crate) fn classify_z(
     name: &str,
     area: RegisterSdArea,
     year: i32,
@@ -508,8 +517,8 @@ fn file_size(
     Ok(metadata.is_file().then_some(metadata.len()))
 }
 
-/// IO-09-D5: 実体の path に解き、解いた root の下でなければ `InvalidPath`
-fn inside_root(
+/// IO-09-D5: 実体の path に解き、解いた root の下でなければ `InvalidPath`（IO-11 も使う）
+pub(crate) fn inside_root(
     root_real: &Path,
     path: &Path,
     relative_path: &str,
