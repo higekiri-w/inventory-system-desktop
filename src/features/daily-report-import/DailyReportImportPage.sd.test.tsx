@@ -45,8 +45,18 @@ const mockScan = vi.mocked(commands.scanRegisterSd);
 const mockFromSd = vi.mocked(commands.parseAndValidateDailyReportFromSd);
 const mockCommit = vi.mocked(commands.commitDailyReportImport);
 
-const READ_DONE =
-  "読み終わりました。いつもの取込みが済んでいれば、SD はレジに戻してください（次の精算に要ります）。";
+// UI-07-D15 (2)（D-149 の (b) の版）
+const READ_DONE = "読み終わりました。SD はレジに戻してください（次の精算に要ります）。";
+const SCANNING = "SD を読んでいます…終わるまで SD を抜かないでください";
+// UI-07-D15 (7)（D-149、closure 748 の P3-B で SdWrite に「同じ表示が続くときは」を足した）
+const TIDY_FAILURE_TEXT = {
+  SdWrite:
+    "取り込んだ分を SD の中で片付けられませんでした。SD の横のつまみが「LOCK」の側になっていないか確かめ、SD を差し直してから、もう一度「SD から読む」を押してください。同じ表示が続くときは、管理者に伝えてください。片付けができなくても、取込みとレジの精算には差し支えありません。",
+  PcCopy:
+    "取り込んだ分の控えを PC に保存できなかったため、SD の中の片付けをしませんでした。PC の空き容量が足りているか確かめてから、もう一度「SD から読む」を押してください。同じ表示が続くときは、管理者に伝えてください。取込みとレジの精算には差し支えありません。",
+  Other:
+    "取り込んだ分を SD の中で片付けられませんでした。もう一度「SD から読む」を押しても同じ表示なら、管理者に伝えてください。取込みとレジの精算には差し支えありません。",
+} as const;
 
 function candidate(
   key: string,
@@ -62,12 +72,17 @@ function candidate(
   };
 }
 
-function makeScan(candidates: DailyReportSdCandidate[], skipped = 0): DailyReportSdScan {
+function makeScan(
+  candidates: DailyReportSdCandidate[],
+  skipped = 0,
+  tidyFailure: DailyReportSdScan["tidy_failure"] = null,
+): DailyReportSdScan {
   return {
     volume_label: "E:",
     scanned_from: "2026-02-20",
     candidates,
     skipped_unknown_count: skipped,
+    tidy_failure: tidyFailure,
   };
 }
 
@@ -162,6 +177,46 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       );
     }
     expect(screen.queryByText("新しい精算はありません")).not.toBeInTheDocument();
+  });
+
+  it("REQ-401 / UI-07-D15 (2): shows do-not-remove text while scanning", async () => {
+    let resolveScan: (value: Awaited<ReturnType<typeof commands.scanRegisterSd>>) => void = () =>
+      undefined;
+    mockScan.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveScan = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("button", { name: "SD から読む" }));
+    const scanning = await screen.findByRole("button", { name: SCANNING });
+    expect(scanning).toBeDisabled();
+    expect(screen.queryByText(/いつもの取込み/)).not.toBeInTheDocument();
+    resolveScan({ status: "ok", data: { scan: makeScan([]), scan_token: "scan-token" } });
+    expect(await screen.findByText(READ_DONE)).toBeInTheDocument();
+    expect(screen.queryByText(/いつもの取込み/)).not.toBeInTheDocument();
+  });
+
+  it.each(["SdWrite", "PcCopy", "Other"] as const)(
+    "REQ-401 / UI-07-D15 (7): shows tidy failure text per kind (%s)",
+    async (kind) => {
+      await scanWith(makeScan([candidate("A", "Imported")], 0, kind));
+      const text = screen.getByText(TIDY_FAILURE_TEXT[kind]);
+      expect(text.closest('[role="status"]')).not.toBeNull();
+      for (const other of Object.values(TIDY_FAILURE_TEXT)) {
+        if (other !== TIDY_FAILURE_TEXT[kind]) {
+          expect(screen.queryByText(other)).not.toBeInTheDocument();
+        }
+      }
+      // 一覧は出る（片付けの失敗は読取りを止めない）
+      expect(row("A")).toHaveTextContent("取込み済み");
+    },
+  );
+
+  it("REQ-401 / UI-07-D15 (7): shows nothing when tidy_failure is null", async () => {
+    await scanWith(makeScan([candidate("A", "Imported")]));
+    expect(screen.queryByText(/片付け/)).not.toBeInTheDocument();
   });
 
   it("REQ-401 / UI-07-D15 (2)(3): read-done text and the summary text follow the state counts", async () => {

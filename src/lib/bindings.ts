@@ -681,6 +681,8 @@ export type DailyReportSdScan = {
 	candidates: DailyReportSdCandidate[],
 	// 名前の規則に合わず読まなかった file の数（IO-09-D2）
 	skipped_unknown_count: number,
+	// 取り込んだ精算の Z を `XZ_BKUP` へ移せなかった理由（37 §37.12、BIZ-08-D11）。None = 移す物が無い・全部移せた・片付けない
+	tidy_failure: RegisterSdTidyFailure | null,
 };
 
 // 日報の紙の内容（34 §19.3a、SALES-SHEET-D1〜D6）
@@ -1594,6 +1596,15 @@ export type RegisterSdScanResponse = {
 	scan: DailyReportSdScan,
 	scan_token: string,
 };
+
+// 37 §37.12: 片付けの失敗の種類。画面の固定の文を選ぶだけ（55 UI-07-D15 (7)）。数と path は診断ログ
+export type RegisterSdTidyFailure =
+// SD の側の書込みの失敗（IO-11 の Io・移した後の確かめの食い違い）
+"SdWrite" |
+// IO-10 の写しの失敗
+"PcCopy" |
+// DB の読取りの失敗、写しの置き場所を得られない、IO-11 の InvalidPath・NameRule・NoFreeSequence
+"Other";
 
 export type RestoreBackupRequest = {
 	backup_path: string,

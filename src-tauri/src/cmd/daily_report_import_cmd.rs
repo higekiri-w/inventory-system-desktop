@@ -96,15 +96,31 @@ fn preview_and_cache(
 #[specta::specta]
 pub fn scan_register_sd(
     state: State<AppState>,
+    app: tauri::AppHandle,
     selected_path: Option<String>,
 ) -> Result<RegisterSdScanResponse, CmdError> {
-    scan_register_sd_with_state(&state, selected_path, chrono::Local::now().date_naive())
+    // §45.6a: 写しの置き場所（BIZ-08-D11 の片付け）。得られなければ error にせず None を渡し、
+    // BIZ が片付けを飛ばして tidy_failure にする（読取りは続く）
+    let app_data_dir = match app.path().app_data_dir() {
+        Ok(dir) => Some(dir),
+        Err(error) => {
+            tracing::warn!(error = %error, "アプリデータの保存先を取得できないので、SD の片付けをしません");
+            None
+        }
+    };
+    scan_register_sd_with_state(
+        &state,
+        selected_path,
+        chrono::Local::now().date_naive(),
+        app_data_dir.as_deref(),
+    )
 }
 
 fn scan_register_sd_with_state(
     state: &AppState,
     selected_path: Option<String>,
     today: chrono::NaiveDate,
+    app_data_dir: Option<&Path>,
 ) -> Result<RegisterSdScanResponse, CmdError> {
     let selection = match selected_path {
         None => DailyReportSdSelection::Auto,
@@ -125,8 +141,13 @@ fn scan_register_sd_with_state(
             .db
             .lock()
             .map_err(|error| CmdError::internal("DB接続エラー", error))?;
-        daily_report_import_service::scan_register_sd_daily_reports(&conn, selection, today)
-            .map_err(CmdError::from)?
+        daily_report_import_service::scan_register_sd_daily_reports(
+            &conn,
+            selection,
+            today,
+            app_data_dir,
+        )
+        .map_err(CmdError::from)?
     };
     let scan_token = uuid::Uuid::new_v4().to_string();
     let mut cache = state
@@ -739,16 +760,17 @@ mod tests {
         let (dir, state) = app_state();
         let root = sd_tree(&dir.path().join("sd"), "2026-03-21", "0005");
         let selected = Some(root.display().to_string());
-        let first = scan_register_sd_with_state(&state, selected.clone(), today()).unwrap();
+        let first = scan_register_sd_with_state(&state, selected.clone(), today(), None).unwrap();
         let key = first.scan.candidates[0].candidate_key.clone();
-        let second = scan_register_sd_with_state(&state, selected, today()).unwrap();
+        let second = scan_register_sd_with_state(&state, selected, today(), None).unwrap();
         assert_ne!(first.scan_token, second.scan_token);
         assert_eq!(state.register_sd_scan_cache.lock().unwrap().len(), 1);
         let error = parse_from_sd_with_state(&state, first.scan_token, key.clone()).unwrap_err();
         assert_eq!(error.kind, CmdErrorKind::ImportError);
         assert!(parse_from_sd_with_state(&state, second.scan_token, key).is_ok());
         // 空文字の選択は validation
-        let empty = scan_register_sd_with_state(&state, Some(String::new()), today()).unwrap_err();
+        let empty =
+            scan_register_sd_with_state(&state, Some(String::new()), today(), None).unwrap_err();
         assert_eq!(empty.kind, CmdErrorKind::Validation);
     }
 
@@ -760,7 +782,8 @@ mod tests {
         let (dir, state) = app_state();
         let root = sd_tree(&dir.path().join("sd"), "2026-03-21", "0005");
         let scan =
-            scan_register_sd_with_state(&state, Some(root.display().to_string()), today()).unwrap();
+            scan_register_sd_with_state(&state, Some(root.display().to_string()), today(), None)
+                .unwrap();
         let candidate = &scan.scan.candidates[0];
         assert_eq!(candidate.status, DailyReportSdCandidateStatus::NotImported);
         let preview = parse_from_sd_with_state(
@@ -809,7 +832,8 @@ mod tests {
 
         // 取り込んだ後の scan で同じ束は Imported になり、その key では preview を作らない
         let rescan =
-            scan_register_sd_with_state(&state, Some(root.display().to_string()), today()).unwrap();
+            scan_register_sd_with_state(&state, Some(root.display().to_string()), today(), None)
+                .unwrap();
         assert_eq!(
             rescan.scan.candidates[0].status,
             DailyReportSdCandidateStatus::Imported

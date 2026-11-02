@@ -941,6 +941,23 @@ pub(crate) fn latest_completed_daily_report_date(
     )?)
 }
 
+/// completed の日報取込みの `source_files_json` のどれかに、指定の SHA-256 の `file_hash` の file があるか
+///
+/// 24-io-csv-import-repo.md §14.18d（SD の `XZ` の Z を移すかの判定。37 §37.12 手順 2）
+pub(crate) fn exists_completed_daily_report_source_file_hash(
+    conn: &DbConnection,
+    file_hash: &str,
+) -> Result<bool, DbError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (
+             SELECT 1 FROM daily_report_imports AS d, json_each(d.source_files_json) AS f
+             WHERE d.status = 'completed' AND json_extract(f.value, '$.file_hash') = ?1
+         )",
+        [file_hash],
+        |row| row.get(0),
+    )?)
+}
+
 /// daily_report_imports を rolled_back に更新する
 ///
 /// 24-io-csv-import-repo.md §14.19

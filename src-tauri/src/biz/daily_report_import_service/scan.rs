@@ -1,9 +1,12 @@
-//! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜9。手順 10 は PLU の runtime の lane）
+//! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜9。手順 10 は PLU の runtime の lane）。
+//! 手順 2a で、自動で見つけた SD の取り込んだ精算の Z を `XZ_BKUP` へ移す（BIZ-08-D11、§37.12）
 
 use crate::biz::daily_report_import_service::parse::{build_bundle_hash, log_parse_diagnostics};
+use crate::biz::daily_report_import_service::tidy::tidy_register_sd_imported;
 use crate::biz::daily_report_import_service::{
     DailyReportInputFile, DailyReportSdCandidate, DailyReportSdCandidateStatus, DailyReportSdScan,
     DailyReportSdScanResult, DailyReportSdScanSnapshot, DailyReportSdSelection,
+    RegisterSdTidyFailure,
 };
 use crate::biz::BizError;
 use crate::constants;
@@ -16,6 +19,7 @@ use crate::io::register_sd::{
 use chrono::NaiveDate;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::time::Instant;
 
 const WINDOW_DAYS: i64 = 30;
@@ -29,13 +33,21 @@ const READ_FAILED_MESSAGE: &str =
     "SD を読めませんでした。SD を差し直して、もう一度読んでください。";
 const LINK_OUTSIDE_MESSAGE: &str = "SD の中に、SD の外の場所を指す folder かファイル（リンク）があるため、読みませんでした。レジの SD そのものを差して読むか、リンクの無い SD の写しを選んでください。";
 
-/// 37 §37.9 `scan_register_sd_daily_reports`。DB へは書かない
+/// 37 §37.9 `scan_register_sd_daily_reports`。DB へは書かない。
+/// `app_data_dir` は写しの置き場所（BIZ-08-D11 の片付け。CMD-12 が得られなければ None）
 pub fn scan_register_sd_daily_reports(
     conn: &DbConnection,
     selection: DailyReportSdSelection,
     today: NaiveDate,
+    app_data_dir: Option<&Path>,
 ) -> Result<DailyReportSdScanResult, BizError> {
-    scan_with_roots(conn, selection, today, register_sd::find_register_sd_roots)
+    scan_with_roots(
+        conn,
+        selection,
+        today,
+        app_data_dir,
+        register_sd::find_register_sd_roots,
+    )
 }
 
 /// 候補の組（scan の中だけの内部の型）
@@ -59,8 +71,10 @@ pub(super) fn scan_with_roots(
     conn: &DbConnection,
     selection: DailyReportSdSelection,
     today: NaiveDate,
+    app_data_dir: Option<&Path>,
     find_roots: impl FnOnce() -> Result<Vec<RegisterSdRoot>, RegisterSdError>,
 ) -> Result<DailyReportSdScanResult, BizError> {
+    let auto = selection == DailyReportSdSelection::Auto;
     // 手順 1: root を決める（推測で選ばない）
     let root = match selection {
         DailyReportSdSelection::Auto => {
@@ -87,6 +101,17 @@ pub(super) fn scan_with_roots(
             }
         },
         None => default_from,
+    };
+
+    // 手順 2a（BIZ-08-D11）: 自動で見つけた SD だけ、候補を作る前に取り込んだ精算の Z を片付ける。
+    // 失敗しても読取りは続ける（片付けは取込みに要らない）
+    let tidy_failure = match (auto, app_data_dir) {
+        (false, _) => None,
+        (true, Some(app_data_dir)) => tidy_register_sd_imported(conn, &root, from, app_data_dir),
+        (true, None) => {
+            tracing::warn!("写しの置き場所が無いので、SD の片付けをしませんでした");
+            Some(RegisterSdTidyFailure::Other)
+        }
     };
 
     // 手順 3: 列挙（途中の失敗は全体の失敗）
@@ -175,6 +200,7 @@ pub(super) fn scan_with_roots(
             scanned_from: from.format("%Y-%m-%d").to_string(),
             candidates: wire,
             skipped_unknown_count,
+            tidy_failure,
         },
         snapshot: DailyReportSdScanSnapshot {
             created_at: Instant::now(),
