@@ -216,7 +216,7 @@ struct ReceivingRecordWithSupplier {
 
 #### create_return
 
-**関数要求**: 返品・交換記録を作成する。register_processedフラグに応じて在庫を更新する
+**関数要求**: 返品・交換記録を作成する。明細ごとに、register_processed（レジで商品のバーコードを読んで戻したか）と商品の設定から BIZ が決めた明細の在庫を更新する（[31](31-biz-inventory-service.md) §12.4、D-148）
 
 **シグネチャ（Tauriコマンド）**:
 ```
@@ -252,6 +252,7 @@ struct ReturnCreateResult {
     created: bool,
     idempotent_replay: bool,
     stock_warnings: Vec<String>,
+    stock_applied_product_codes: Vec<String>, // この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送も同じ。D-148）
 }
 ```
 
@@ -288,7 +289,8 @@ return_type / direction の値域は generated enum が検査し、exchange片�
   "record_id": 3,
   "created": true,
   "idempotent_replay": false,
-  "stock_warnings": []
+  "stock_warnings": [],
+  "stock_applied_product_codes": ["HZ-0012", "HZ-0013"]
 }
 ```
 
@@ -553,7 +555,7 @@ struct ReceivingRecordDetail {
 
 #### get_return_record
 
-**関数要求**: 返品・交換記録詳細を取得し、明細、レジ戻し済み状態、レシート画像パス、関連在庫変動を表示できる形で返す。
+**関数要求**: 返品・交換記録詳細を取得し、明細、レジでの戻し方（register_processed）、レシート画像パス、関連在庫変動を表示できる形で返す。
 
 **シグネチャ（Tauriコマンド）**:
 ```
@@ -580,7 +582,7 @@ struct ReturnRecordDetail {
 }
 ```
 
-**処理ステップ**: get_receiving_record と同パターン。`register_processed=true` の記録は movements が 0 件でも正常に返す。
+**処理ステップ**: get_receiving_record と同パターン。この保存で在庫を動かした明細が無い記録（`register_processed=true` で、全部の明細が Z004 の取込みで在庫に戻る商品。D-148）は movements が 0 件でも正常に返す。
 
 ---
 

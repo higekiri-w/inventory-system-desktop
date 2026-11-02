@@ -7,11 +7,11 @@
 - 求め直しの関数（新しい module `biz::stock_ledger`。シグネチャは下の「求め直しの関数のシグネチャ」）: `derive_stock`（読取りだけ。整合性の検査〈[36](36-biz-integrity-check.md)〉と完了の後の差〈[35](35-biz-stocktake-service.md)〉が使う）と、`recompute_stock`（`derive_stock` と同じ規則で求め、写し〈`stock_quantity`・`stock_recheck`・`stock_range_low`・`stock_range_high`〉を同じ TX で書く）。`DerivedStock` は `stock`（写しの値）、`range: Option<(i64, i64)>`（要再確認のときの最小と最大）、`recheck_reasons: Vec<RecheckReason>`（`undetermined_settlement` / `same_date_movement` / `conflicting_counts`。ADR D3 の理由 1〜3。(a) の enum は理由 2・3 の 2 つで、b1 が `undetermined_settlement` を足した）。中で、その商品の計数（`stock_counts`）と `is_voided=0` の movement と取り込み済みの精算の一覧（`csv_imports` の active の取込みID・`settlement_date`・`settlement_no`。取込みID は fresh な計数の判定の n を取込みのカーソルと比べて求めるのに使う。ADR D3）を読み、ADR D3 の窓の判定表で、効く計数・それに入っていない記録の和・決まらない記録・範囲を求める。写しを書くのは `recompute_stock` だけ（[21](21-io-inventory-repo.md) の `update_stock_quantity` を呼ぶのはこの関数 1 つ）。`phase=1` の movement（Z004）は、その `settlement_no` の精算として ADR D3 の判定表の「精算 k」の行で判定する（入出庫の行で判定しない）。
 - 求め直す商品は ADR の横断の表の「求め直す商品」の列（D2 の原理: 求め直しの入力が変わる TX は、その入力に依る全ての商品を求め直す）。Z004 の確定・取消は、計数を持つ全ての商品と、その取込みの売上か movement を持つ全ての商品を同じ TX で求め直す（[32](32-biz-csv-import-service.md)）。
 - 決まらない精算の行の判定（ADR D3 の理由 1）は、その精算の取込みに、その商品の有効な Z004 の movement があるか、`sale_records`（`csv_import_id` 付き、`is_voided=0`、`stock_linked=1`）にその商品の行が個数 ≠ 0 または金額 ≠ 0 であること。今の `pos_stock_sync` を見ない（連動を切っても、連動中に作った movement と行で理由と範囲が残る。ADR D8）。
-- `apply_stock_change` は「保存した数 + 差分」をやめ、movement を並びの鍵付きで INSERT してから、その商品を `recompute_stock` で求め直す。署名に並びの鍵（`business_date` と、Z004 のときだけ `settlement_no: Option<i64>`）を足す（(a)。b1 で Z004 の確定が `apply_stock_change` を使わなくなったので、`settlement_no` の引数は b1 で外し、呼ぶのは入出庫 4 業務だけ）。入庫・返品交換（レジ未処理）・手動販売・廃棄の 4 つの `create_*` は header の日付と `None` を渡し（`phase=0`。header の日付の意味は品が動いた日〈入庫は品が届いた日で、納品書の日付ではない〉で、ADR D3 の入出庫の窓はこの日付に依る）、Z004 の確定は `apply_stock_change` を行ごとに呼ばず（b1 で `src-tauri/src/biz/csv_import_service/commit.rs` の `execute_commit` の `apply_stock_change` の呼出しを置き換えた）、在庫連動の行の movement を全部、仮の `stock_after` で `insert_movement`（[21](21-io-inventory-repo.md)）に精算日と精算回数を渡して書き（`phase=1`、`reference_type='csv_import'`。tracking の CHECK で揃う）、全ての行を書いた後に、横断の表の商品をまとめて `recompute_stock` で求め直し、商品ごとにその TX で書いた movement の `stock_after` を `update_movement_stock_after` で写しの値にする（32）。`stock_after` は、同じ TX で求め直した写しの値を、その TX で書いた新しい movement に書く。順は、movement を仮の `stock_after`（NOT NULL のため）で INSERT し、`recompute_stock` の後に同じ TX でその TX の新しい movement の `stock_after` だけを UPDATE する（Z004 の同じ商品の複数の行も同じ値。後入力で前に入った記録があっても既存の movement は書き換えない）。在庫の上限の検査（`999999999`）は `recompute_stock` が写しを書く直前の 1 か所に置く（求めた値と範囲の両端に当てる）。
+- `apply_stock_change` は「保存した数 + 差分」をやめ、movement を並びの鍵付きで INSERT してから、その商品を `recompute_stock` で求め直す。署名に並びの鍵（`business_date` と、Z004 のときだけ `settlement_no: Option<i64>`）を足す（(a)。b1 で Z004 の確定が `apply_stock_change` を使わなくなったので、`settlement_no` の引数は b1 で外し、呼ぶのは入出庫 4 業務だけ）。入庫・返品交換（この保存で在庫を動かす明細。D-148）・手動販売・廃棄の 4 つの `create_*` は header の日付と `None` を渡し（`phase=0`。header の日付の意味は品が動いた日〈入庫は品が届いた日で、納品書の日付ではない〉で、ADR D3 の入出庫の窓はこの日付に依る）、Z004 の確定は `apply_stock_change` を行ごとに呼ばず（b1 で `src-tauri/src/biz/csv_import_service/commit.rs` の `execute_commit` の `apply_stock_change` の呼出しを置き換えた）、在庫連動の行の movement を全部、仮の `stock_after` で `insert_movement`（[21](21-io-inventory-repo.md)）に精算日と精算回数を渡して書き（`phase=1`、`reference_type='csv_import'`。tracking の CHECK で揃う）、全ての行を書いた後に、横断の表の商品をまとめて `recompute_stock` で求め直し、商品ごとにその TX で書いた movement の `stock_after` を `update_movement_stock_after` で写しの値にする（32）。`stock_after` は、同じ TX で求め直した写しの値を、その TX で書いた新しい movement に書く。順は、movement を仮の `stock_after`（NOT NULL のため）で INSERT し、`recompute_stock` の後に同じ TX でその TX の新しい movement の `stock_after` だけを UPDATE する（Z004 の同じ商品の複数の行も同じ値。後入力で前に入った記録があっても既存の movement は書き換えない）。在庫の上限の検査（`999999999`）は `recompute_stock` が写しを書く直前の 1 か所に置く（求めた値と範囲の両端に当てる）。
 - 入出庫 4 業務の `stock_after`: `apply_stock_change` は呼出しごとに、その呼出しが INSERT した movement（id で指す）の `stock_after` だけを、その直後の `recompute_stock` の写しの値で書く。同じ要求に同じ商品の明細が複数あれば、今と同じく明細の順の途中の値になる（計数が無い間は値が今と同じ。ADR SPEC-STK-CNT-D12 の (a)）。
-- 業務日の形と暦の検査（D-118 の runtime の (a) で足した `validate_business_date`。業務日を書く側の検査の唯一の置き場。移行が既存の記録の日付に当てる検査は [22 §19](22-mnt-migration.md) の手順 2）: `biz` の共有の関数 1 つで、(1) 形: 長さ 10 バイトの ASCII で、5・8 文字目が `-`、ほかの 8 文字が数字（`[0-9]{4}-[0-9]{2}-[0-9]{2}`）。合わなければ「日付の形式が不正です（YYYY-MM-DD）」。(2) 暦: 形の合う文字列を `chrono::NaiveDate::parse_from_str(_, "%Y-%m-%d")` で読み、読めなければ「存在しない日付です」。どちらも `ValidationFailed`（文は今の `sales_service.rs` の `validate_date` と同じ）。形を先に見るのは、chrono の `%Y-%m-%d` が `2026-4-7`・` 2026-04-07`・`+2026-04-07` を読み、`-0001-04-07`・`+10000-04-07` は読んで同じ文字列に書き戻すので、読めることも書き戻しの一致も 10 文字の形を保証しないため（形の合う文字列では、読めることと SQLite の `date(d) IS d` が一致し、読んだ日付の書き戻しは入力と同じ。packet の Contract Probe P6・P7）。入庫・返品交換・手動販売・廃棄の 4 つの `create_*` と `sales_service` の日付の検査がこの関数を使う。4 つの `create_*` は header の日付（`receiving_date`・`return_date`・`sale_date`・`disposal_date`）を、DB を見ない検証の段（冪等の再送の判定と TX より前。返品交換の今の `validate_return_request_shape` と同じ段）で確かめ、外れたら何も書かない。返品交換は `register_processed` で在庫を動かすかが分かれる前に確かめるので、movement を作らないレジ処理済みの返品・交換の保存も同じ検査を通る。窓の判定（ADR D3）は日付を文字列の大小で比べるので、形の違う日付を黙って通さない（DB の CHECK は形だけを見る。[tracking](../db-design/tracking-system-tables.md)）。初期在庫の movement の業務日は、商品を登録した TX の PC の今日（`chrono::Local` を `%Y-%m-%d` で書く）。
+- 業務日の形と暦の検査（D-118 の runtime の (a) で足した `validate_business_date`。業務日を書く側の検査の唯一の置き場。移行が既存の記録の日付に当てる検査は [22 §19](22-mnt-migration.md) の手順 2）: `biz` の共有の関数 1 つで、(1) 形: 長さ 10 バイトの ASCII で、5・8 文字目が `-`、ほかの 8 文字が数字（`[0-9]{4}-[0-9]{2}-[0-9]{2}`）。合わなければ「日付の形式が不正です（YYYY-MM-DD）」。(2) 暦: 形の合う文字列を `chrono::NaiveDate::parse_from_str(_, "%Y-%m-%d")` で読み、読めなければ「存在しない日付です」。どちらも `ValidationFailed`（文は今の `sales_service.rs` の `validate_date` と同じ）。形を先に見るのは、chrono の `%Y-%m-%d` が `2026-4-7`・` 2026-04-07`・`+2026-04-07` を読み、`-0001-04-07`・`+10000-04-07` は読んで同じ文字列に書き戻すので、読めることも書き戻しの一致も 10 文字の形を保証しないため（形の合う文字列では、読めることと SQLite の `date(d) IS d` が一致し、読んだ日付の書き戻しは入力と同じ。packet の Contract Probe P6・P7）。入庫・返品交換・手動販売・廃棄の 4 つの `create_*` と `sales_service` の日付の検査がこの関数を使う。4 つの `create_*` は header の日付（`receiving_date`・`return_date`・`sale_date`・`disposal_date`）を、DB を見ない検証の段（冪等の再送の判定と TX より前。返品交換の今の `validate_return_request_shape` と同じ段）で確かめ、外れたら何も書かない。返品交換は明細ごとに在庫を動かすかが分かれる（D-148）前に確かめるので、movement を作らない明細（レジでバーコードを読んで戻した在庫連動の商品）だけの保存も同じ検査を通る。窓の判定（ADR D3）は日付を文字列の大小で比べるので、形の違う日付を黙って通さない（DB の CHECK は形だけを見る。[tracking](../db-design/tracking-system-tables.md)）。初期在庫の movement の業務日は、商品を登録した TX の PC の今日（`chrono::Local` を `%Y-%m-%d` で書く）。
 - 求め直しは、計数・入出庫・初期在庫の窓（ADR D3 の判定表の「入出庫の movement」「初期在庫の movement」の行と「計数どうし」、要再確認の理由 2・3）と、b1 で足した精算の窓（「精算 k」の行・理由 1・取り込み済みの精算の一覧の読取り）を持つ。計数どうしの前後が循環して効く計数が決まらないときは、和へ倒さずに既存の `BizError::DatabaseError`（`DbError::QueryFailed` に「計数の前後を決められません」の文）で止まり、写しを書かない。循環しないことは既定の計数の日付が保存の日以前であることが前提で、その前提は計数の保存の検査（[35](35-biz-stocktake-service.md)）が守る。
-- 冪等な要求の再送は新しい movement を作らない（今のまま）。レジ処理済みの返品は movement を作らない（今のまま）。
+- 冪等な要求の再送は新しい movement を作らない（今のまま）。返品・交換の明細のうち、レジでバーコードを読んで戻し Z004 の取込みが在庫を動かす商品の明細は movement を作らない（D-148。§12.4）。
 - list_inventory_records の棚卸し差異の集計は [65](65-inventory-record-traceability.md) の新契約に従う（計数は movement を作らない）。
 
 求め直しの関数のシグネチャ（D-118 の runtime の (a)。crate の外から呼ばないので `pub(crate)`。`recompute_stock` は `apply_stock_change` と同じく第 1 引数を借りた transaction にし、TX の内側に限ることを型で強制する。`src-tauri/tests/design_compliance_test.rs` の allowlist には足さない）:
@@ -25,7 +25,7 @@ pub(crate) fn recompute_stock(tx: &rusqlite::Transaction<'_>, product_code: &str
 
 [共通規則](10-common-rules.md) SPEC-UNIT-D2・D5・D6・D11 の BIZ-02 の側。単位・上限・行の金額・原価の 1/100 円は現行の契約。
 
-- 入庫・返品・手動販売・廃棄の Request の `quantity` は今どおり在庫の数量の正の整数（長さの商品は cm）。m の入力は UI が cm に直して送る（SPEC-UNIT-D3）。BIZ の検証（INV-1a）は上限を持つ（[共通規則](10-common-rules.md) の「入力の上限と安全な整数の範囲」）: 1 明細の数量は 1 以上 `9999999`。`quantity <= 0` の検証の隣（`src-tauri/src/biz/inventory_service/receiving.rs` の `create_receiving`・`src-tauri/src/biz/inventory_service/manual_sale.rs` の `create_manual_sale`・`src-tauri/src/biz/inventory_service/disposal.rs` の `create_disposal`、返品は `src-tauri/src/biz/inventory_service/returns.rs` の `validate_return_request_shape`）で、在庫を動かすかどうかの分岐より前に全明細を検査する（レジ処理済みの返品〈`register_processed`〉の明細は `apply_stock_change` を通らずに `return_items` へ保存される: `src-tauri/src/biz/inventory_service/returns.rs` の `create_return` の `if !req.register_processed` の分岐）。越えれば `ValidationFailed`（`明細{n}: 数量が大きすぎます`）で何も書かない。`apply_stock_change` は、計算の後の `stock_after` の絶対値が在庫の上限 `999999999` を越えれば、書く前に `ValidationFailed`（`在庫数が大きすぎます`）で TX 全体を戻す（`recompute_stock` が写しを書く直前の検査。上の D-118 の節）。`create_receiving`・`create_disposal` は、保存の前に明細から行の金額（`cost_line_centi`）と合計（`cost_total_yen`）を求めて `check_safe_integer`（`±9007199254740991`）に通し、範囲外は `ValidationFailed`（`合計金額が大きすぎます`）で TX 全体を戻す（在庫・記録・明細・変動・操作ログを書かない。`src-tauri/src/biz/inventory_service/receiving.rs`・`src-tauri/src/biz/inventory_service/disposal.rs` の `check_safe_integer` の呼出し）。保存した明細は書き換えないので、記録詳細（§12.6a）が同じ明細から求める合計は検査した値と同じになり、記録詳細の読取りに範囲の検査を置かない。
+- 入庫・返品・手動販売・廃棄の Request の `quantity` は今どおり在庫の数量の正の整数（長さの商品は cm）。m の入力は UI が cm に直して送る（SPEC-UNIT-D3）。BIZ の検証（INV-1a）は上限を持つ（[共通規則](10-common-rules.md) の「入力の上限と安全な整数の範囲」）: 1 明細の数量は 1 以上 `9999999`。`quantity <= 0` の検証の隣（`src-tauri/src/biz/inventory_service/receiving.rs` の `create_receiving`・`src-tauri/src/biz/inventory_service/manual_sale.rs` の `create_manual_sale`・`src-tauri/src/biz/inventory_service/disposal.rs` の `create_disposal`、返品は `src-tauri/src/biz/inventory_service/returns.rs` の `validate_return_request_shape`）で、在庫を動かすかどうかの分岐より前に全明細を検査する（返品・交換の明細のうち、レジでバーコードを読んで戻し Z004 の取込みが在庫を動かす商品の明細は `apply_stock_change` を通らずに `return_items` へ保存される: `src-tauri/src/biz/inventory_service/returns.rs` の `create_return` の `applies_stock_on_save` の分岐。D-148）。越えれば `ValidationFailed`（`明細{n}: 数量が大きすぎます`）で何も書かない。`apply_stock_change` は、計算の後の `stock_after` の絶対値が在庫の上限 `999999999` を越えれば、書く前に `ValidationFailed`（`在庫数が大きすぎます`）で TX 全体を戻す（`recompute_stock` が写しを書く直前の検査。上の D-118 の節）。`create_receiving`・`create_disposal` は、保存の前に明細から行の金額（`cost_line_centi`）と合計（`cost_total_yen`）を求めて `check_safe_integer`（`±9007199254740991`）に通し、範囲外は `ValidationFailed`（`合計金額が大きすぎます`）で TX 全体を戻す（在庫・記録・明細・変動・操作ログを書かない。`src-tauri/src/biz/inventory_service/receiving.rs`・`src-tauri/src/biz/inventory_service/disposal.rs` の `check_safe_integer` の呼出し）。保存した明細は書き換えないので、記録詳細（§12.6a）が同じ明細から求める合計は検査した値と同じになり、記録詳細の読取りに範囲の検査を置かない。
 - 入庫・廃棄の明細の原価は `cost_price_centi`（1/100 円、`決定（owner、D-113 J2）`。原価の lane、D-128）。BIZ は明細の原価も 0 以上・`99999999`（`999999.99` 円。`MAX_COST_PRICE_CENTI`）以下を負の検査の隣（`src-tauri/src/biz/inventory_service/receiving.rs` の `create_receiving`・`src-tauri/src/biz/inventory_service/disposal.rs` の `create_disposal` の `MAX_COST_PRICE_CENTI` の検査）で検査し、超えれば `ValidationFailed("原価が大きすぎます")`（SPEC-UNIT-D5。UI を通らない IPC でも上限を超える値を保存しない）。§12.3 の原価の差分（CostDiff）は 1/100 円の値で完全一致を比べる。§12.8 の fingerprint の item 行の原価は 1/100 円の 10 進文字列にする。原価の 1/100 円は開発・試験 DB を作り直した起点で入れる（D-119、[22](22-mnt-migration.md) §16 の vB）ので、円の原価で作った fingerprint の記録はその DB に無い。
 - §12.6a の入庫・廃棄の記録詳細は、明細の数量・原価・商品の単位から行の金額と合計を BIZ が求める（SPEC-UNIT-D6。`biz::unit_amount`）。IO は金額を計算しない（[21](21-io-inventory-repo.md) §10.2・§10.5 の手順 3）。wire は行の金額を 1/100 円の整数の十進の文字列（`line_cost_centi`・`line_loss_cost_centi`。i128 の値を損失なく運ぶ。SPEC-UNIT-D6）、合計を円の整数（`total_cost`・`total_loss_cost`、今の型のまま）で返す。入庫の丸めは TD-023 と同じ（`決定（owner、D-113 J3）`）、廃棄も TD-023 に合わせる。
 - 記録詳細と入出庫の行の `stock_unit` は `ProductStockUnit`（SPEC-UNIT-D11）。
@@ -148,7 +148,7 @@ fn create_receiving(conn: &mut DbConnection, req: ReceivingCreateRequest) -> Res
 
 ### 12.4 create_return（返品・交換記録）
 
-**関数要求**: 返品・交換記録を登録する。register_processed フラグに基づき在庫を動かすかどうかを分岐する
+**関数要求**: 返品・交換記録を登録する。明細ごとに、`register_processed`（レジで商品のバーコードを読んで戻したか）と商品の設定から、この保存で在庫を動かすかを決める（D-148）
 
 **シグネチャ**:
 ```
@@ -159,7 +159,7 @@ fn create_return(conn: &mut DbConnection, req: ReturnCreateRequest) -> Result<Re
 - idempotency_key: String
 - return_type: ReturnExchangeType（"return" / "exchange"）
 - return_date: String（YYYY-MM-DD）
-- register_processed: bool
+- register_processed: bool（レジで商品のバーコードを読んで戻した〈Z004 に載る〉か。D-148。画面は既定を置かずに問う〈63 UI-03-D23〉）
 - receipt_image_path: Option<String>
 - note: Option<String>
 - items: Vec<ReturnItemInput>
@@ -174,10 +174,11 @@ fn create_return(conn: &mut DbConnection, req: ReturnCreateRequest) -> Result<Re
 - created: bool
 - idempotent_replay: bool
 - stock_warnings: Vec<String>
+- stock_applied_product_codes: Vec<String>（この保存で在庫を動かした商品コード。昇順・重複なし。D-148 (3)）
 
 **処理ステップ**:
-0. **業務日の検査（DB を見ない検証の段。冪等性チェックと TX より前）**: `validate_return_request_shape` の中で `validate_business_date(&req.return_date)`。register_processed の分岐より前なので、movement を作らないレジ処理済みの返品・交換も同じ検査を通る
-1. **冪等性チェック**（create_receivingと同パターン）
+0. **業務日の検査（DB を見ない検証の段。冪等性チェックと TX より前）**: `validate_return_request_shape` の中で `validate_business_date(&req.return_date)`。明細ごとの在庫の判定より前なので、movement を作らない明細だけの記録も同じ検査を通る
+1. **冪等性チェック**（create_receivingと同パターン）。冪等の再送（`idempotent_replay`。TX の前の一致と、`DuplicateKey` の後の一致の 2 か所）は、既存の記録の movement（`reference_type = return_record`、`reference_id = record_id`。`return_repo::get_return_record_detail` の movement の読取りと同じ）の商品コードから `stock_applied_product_codes` を作る
 2. **バリデーション**: items空チェック、return_type と direction の組み合わせ検証、各item の quantity/product_code検証（値域は enum 型で検査済み）
    - return_type == "return": direction は全itemで "in" のみ許可する。1件以上の "in" item が必要
    - return_type == "exchange": "in" item と "out" item を少なくとも1件ずつ要求する
@@ -189,22 +190,17 @@ fn create_return(conn: &mut DbConnection, req: ReturnCreateRequest) -> Result<Re
 5. insert_return_record → record_id
 6. 各item:
    - insert_return_item
-   - register_processed == true → 在庫は動かさない（CSV取込みで自動反映されるため）
-   - register_processed == false:
+   - 明細の在庫を動かすのは、`req.register_processed` が false のとき、または商品の `jan_code` が NULL か `z004_moves_stock(jan_code, &find_by_jan_code(conn, jan_code)?)` が false のとき（判定は TX の中で、明細の在庫の書込みの直前。`jan_code` は保存された値をそのまま渡し、正規化しない）。動かす明細は:
      - direction == "in" → apply_stock_change(return_date, None, +quantity, Return, ReturnRecord, record_id)
      - direction == "out" → apply_stock_change(return_date, None, -quantity, Return, ReturnRecord, record_id)
+     - 動かした商品コードを `stock_applied_product_codes` に入れる
+   - それ以外（レジでバーコードを読んで戻し、Z004 の取込みの確定がその商品の在庫を動かす明細）は在庫を動かさない（Z004 と二重に戻さない）
 7. **操作ログ**
 8. **COMMIT**
 
-**設計判断 — register_processed分岐**:
-- register_processed=1: レジで「戻し」操作済み。次回CSV精算データに反映される。BIZ-02で在庫を動かすと二重計上
-- register_processed=0: レジ未処理。CSVに反映されないためここで在庫を動かす
-
-**置き換え（D-148、未実装。今の build は上の手順 6 のまま）**: `register_processed` の意味を「レジで商品のバーコードを読んで戻した（Z004 に載る）」と読み替え、手順 6 を明細ごとの判定にする。
-- 判定の関数（BIZ の 1 か所。置き場は `csv_import_service`）: `pub(crate) fn z004_moves_stock(jan_code: &str, candidates: &[Product]) -> bool`。`candidates` は `product_repo::find_by_jan_code(conn, jan_code)` の結果。true になるのは、`jan_code` が ASCII 数字ちょうど 13 桁で全桁ゼロでなく（[23](23-io-z004-parser.md) §13.5 の `normalize_jan` が `Ok(Some)` で返す値の形。前後の空白も削らずに比べる）、`candidates` が 1 商品だけで、その商品の `pos_stock_sync` が true のときだけ。それ以外（8 桁・数字でない・空・13 桁の全桁ゼロ・候補 0・候補 2 以上・在庫連動でない）は false。`plu_target` は見ない（理由は D-148 の Guarantee range）。
-- Z004 の確定の照合（[32](32-biz-csv-import-service.md) の冒頭の「確定の TX は … 連動の設定を取り直し」と共有 JAN の項。code は `src-tauri/src/biz/csv_import_service/commit.rs` の `recheck_matches`）もこの関数を通す。`recheck_matches` に渡る JAN は `normalize_jan` を通った値で必ず 13 桁の非ゼロの形に当たり、候補 0 は手前で拒むので、`!shared && head.pos_stock_sync` と同じ値になる（振舞いは変わらない）。
-- 明細の在庫を動かすのは、`req.register_processed` が false のとき、または商品の `jan_code` が NULL か `z004_moves_stock(jan_code, &find_by_jan_code(conn, jan_code)?)` が false のとき（動かし方は今の手順 6 の false の枝と同じ）。判定は TX の中で、明細の在庫の書込みの直前に行う。
-- `ReturnCreateResult` に `stock_applied_product_codes: Vec<String>`（この保存で在庫を動かした商品コード。昇順・重複なし）を足す。冪等の再送（`idempotent_replay`）では、既存の記録の movement（`reference_type = return_record`、`reference_id = record_id`）の商品コードから同じ列を作る（`return_repo::get_return_record_detail` の movement の読取りと同じ）。
+**設計判断 — 明細ごとの在庫の判定（D-148）**: `register_processed` の意味は「レジで商品のバーコードを読んで戻した（Z004 に載る）」。読んで戻しても、Z004 の取込みが在庫を動かさない商品（`pos_stock_sync=false`・共有 JAN・JAN 無し・JAN が 13 桁の数字でない）の明細は Z004 で戻らないので、この保存で動かす。
+- 判定の関数（BIZ の 1 か所。置き場は `csv_import_service`。code は `src-tauri/src/biz/csv_import_service/mod.rs`）: `pub(crate) fn z004_moves_stock(jan_code: &str, candidates: &[Product]) -> bool`。`candidates` は `product_repo::find_by_jan_code(conn, jan_code)` の結果。true になるのは、`jan_code` が ASCII 数字ちょうど 13 桁で全桁ゼロでなく（[23](23-io-z004-parser.md) §13.5 の `normalize_jan` が `Ok(Some)` で返す値の形。前後の空白も削らずに比べる）、`candidates` が 1 商品だけで、その商品の `pos_stock_sync` が true のときだけ。それ以外（8 桁・数字でない・空・13 桁の全桁ゼロ・候補 0・候補 2 以上・在庫連動でない）は false。`plu_target` は見ない（理由は D-148 の Guarantee range）。
+- Z004 の確定の照合（[32](32-biz-csv-import-service.md) の冒頭の「確定の TX は … 連動の設定を取り直し」と共有 JAN の項。code は `src-tauri/src/biz/csv_import_service/commit.rs` の `recheck_matches`）もこの関数を通す。`recheck_matches` に渡る JAN は `normalize_jan` を通った値で必ず 13 桁の非ゼロの形に当たり、候補 0 は手前で拒むので、旧い式 `!shared && head.pos_stock_sync` と同じ値になる（振舞いは変わらない）。
 - 理由・棄却案・受け入れた穴は D-148。保存と Z004 の確定の間に `pos_stock_sync`・JAN を変えたときの食い違いは受け入れた穴（次の計数で直る）。
 
 **設計判断 — return_type と direction の業務不変条件**:
