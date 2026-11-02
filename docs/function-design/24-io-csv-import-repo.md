@@ -591,7 +591,7 @@ pub(crate) fn latest_completed_daily_report_date(conn: &DbConnection) -> Result<
 
 ---
 
-### 14.18d exists_completed_daily_report_source_file_hash（D-149、BIZ-08-D11、proposed・未実装）
+### 14.18d exists_completed_daily_report_source_file_hash（D-149、BIZ-08-D11）
 
 **関数要求**: completed の日報取込みの `source_files_json` のどれかに、指定の SHA-256 の `file_hash` の file があるかを返す。SD の `XZ` の Z を `XZ_BKUP` へ移すか（[37](37-biz-daily-report-import-service.md) §37.12 手順 2、BIZ-08-D10 の「各 file の hash」）の専用で、呼び手は `biz::daily_report_import_service` だけ。wire に出さない。§14.18c と同じく `pub(crate)`。
 
@@ -812,3 +812,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §14.21 手順 8 を、内部の支払の行（親 ID・行 ID を持ち、BIZ-05 の D2 の入力だけ）、公開する支払の集計（BIZ-05 が足した結果）、Z001 の単純な写像の 3 つに分けて書き直した。手順 6 の DB DTO の命名の例を、無くなる `OfficialDailyPaymentRow` から `OfficialDailyDepartmentRow` に替えた。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
 | 2026-11-02 | xz-bkup-move（起票、D-149） | §14.18d `exists_completed_daily_report_source_file_hash` を proposed で足した（SD の `XZ` の Z を移すかを file の hash で決める。37 §37.12）。 |
+| 2026-11-02 | xz-bkup-move（実装、D-149） | §14.18d の proposed の注記を外した（`src-tauri/src/db/sales_repo.rs`）。 |

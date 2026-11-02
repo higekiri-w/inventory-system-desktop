@@ -451,13 +451,13 @@ fn save_pos_source_copy(
 - 書けない（容量不足・権限・パス長）ときは `std::io::Error` を返す。BIZ が取込みを止める（BIZ-08-D5）。一時 file が残った場合は次回の書込みで別の一時名を使い、最終の名前の file だけを写しとみなす。
 - 採らなかった案: hash だけの名前で置く（店の人や開発者が日付・系列で探せない。CV17 の写しは名前で探せた）、同じ path を上書きする（前の精算の写しが消える）、scan の時にすべて書く（取り込まない束・形の外れた file まで残り、どれが取込みの原本か分からなくなる）、DB に bytes を入れる（DB と backup が大きくなり、日報の行の正本と原本の証拠が混ざる）。
 
-### 29.9 IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す（D-149、proposed・未実装）
+### 29.9 IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す（D-149）
 
 #### 29.9.1 目的と置き場所
 
-`register_sd_move`（module `io::register_sd_move`）は、レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す IO 層の関数である。どの組を移すかと、組の中の順は BIZ-08（37 §37.12、BIZ-08-D11）が決める。DB を呼ばない。D-111 (1) の (b) で、IO-09-D3 のとおり `io::register_sd` に書込みの API を足さず別の module に置く（`register_sd.rs` の許可の列の検査〈`test_req401_module_uses_only_allowed_fs_api`〉はそのまま効く）。§29.7.1 と同じ理由で本書に置き、`src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` の `29-io-daily-report-parser.md` の行に `io::register_sd_move` を足す（runtime）。
+`register_sd_move`（module `io::register_sd_move`）は、レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す IO 層の関数である。どの組を移すかと、組の中の順は BIZ-08（37 §37.12、BIZ-08-D11）が決める。DB を呼ばない。D-111 (1) の (b) で、IO-09-D3 のとおり `io::register_sd` に書込みの API を足さず別の module に置く（`register_sd.rs` の許可の列の検査〈`test_req401_module_uses_only_allowed_fs_api`〉はそのまま効く）。§29.7.1 と同じ理由で本書に置き、`src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` の `29-io-daily-report-parser.md` の行に `io::register_sd_move` を登録している。
 
-IO-09 から使うもの（`pub(crate)` にする読むだけの helper で、IO-09-D3 の許可の列を変えない。名前は IO-11-D3）: 相対 path の要素の検査（§29.7.6 手順 1。今は `read_register_sd_file` の中の inline の検査で、振舞いを変えずに関数 `split_relative_path` へ切り出して `read_register_sd_file` と IO-11 が同じ関数を呼ぶ）と実体の path の root の下の確かめ（`inside_root`、IO-09-D5）、thread の error mode の guard（`ErrorModeGuard`、§29.7.4 手順 1）、Z の名前の規則（`classify_z`、§29.7.5 手順 4）。置き換えない移動は 71 §71.4.1 の操作（今は `mnt/restore.rs` の `StdRestoreFileOps::publish_no_replace`）を `crate::io` の 1 つの関数 `move_no_replace(source, destination)` へ下ろし、MNT の `publish_no_replace` はそれを呼ぶ（IO から MNT は参照しない向き、§29.7.4 手順 1。操作と flags は変えない。flags の source の検査 test も IO の関数へ向け直す）。
+IO-09 から使うもの（`pub(crate)` にする読むだけの helper で、IO-09-D3 の許可の列を変えない。名前は IO-11-D3）: 相対 path の要素の検査（§29.7.6 手順 1。今は `read_register_sd_file` の中の inline の検査で、振舞いを変えずに関数 `split_relative_path` へ切り出して `read_register_sd_file` と IO-11 が同じ関数を呼ぶ）と実体の path の root の下の確かめ（`inside_root`、IO-09-D5）、thread の error mode の guard（`ErrorModeGuard`、§29.7.4 手順 1）、Z の名前の規則（`classify_z`、§29.7.5 手順 4）。置き換えない移動は 71 §71.4.1 の操作を `crate::io` の 1 つの関数 `move_no_replace(source, destination)`（`src-tauri/src/io/mod.rs`）に置き、MNT の `StdRestoreFileOps::publish_no_replace`（`mnt/restore.rs`）はそれを呼ぶだけにする（IO から MNT は参照しない向き、§29.7.4 手順 1。操作と flags は 71 §71.4.1 のまま。flags の source の検査 test〈`mnt/restore.rs` の `test_publish_no_replace_req901_d7_windows_flags_exclude_replace_existing`〉は IO の関数の本体と、MNT が IO を呼ぶだけであることを見る）。IO-11 は `inside_root` の `InvalidPath` と `Io` を IO-09 の error の型を使わずに分けるため、先に `std::fs::canonicalize` で解いて（解けなければ `Io`）から `inside_root` で比べる。
 
 #### 29.9.2 型とシグネチャ
 
@@ -492,7 +492,7 @@ enum RegisterSdMoveError {
 2. 組の各 file の実体の path を解き、root の下で通常の file であることを確かめる（IO-09-D5。外なら `InvalidPath`、解けなければ `Io`）。
 3. 移す先の folder `XZ_BKUP\yyyy\mm` を root の下に用意する: 各段（`XZ_BKUP`・年・月）を、在れば実体の path を解いて root の下の directory であることを確かめ（外なら `InvalidPath`、directory でなければ `Io`〈`kind` は `InvalidInput`〉）、無ければ `std::fs::create_dir` で作ってから同じく確かめる。既存の段の名前の大文字小文字はそのまま使う（`xz_bkup` があればそれを使う）。作った folder は失敗しても消さない（空の folder は IO-09 の列挙に影響しない）。
 4. 組に共通の連番 `nnnn` を 1 つ決める（名前は元の名前の拡張子の前に `_` と 4 桁の連番を足したもの。`Z001_06 .CSV` → `Z001_06 _0001.CSV`、接尾字の空白も残す。名前の比較は大文字小文字を区別しない。移す先の folder の entry を 1 回 `read_dir` で読んで決める）:
-   - (a) 前の片付けの続き: 移す先に、組と同じ日・接尾字で組に無い系列（4 系列のうち組に無いもの）の `_m` の名前が 1 本以上在り、組の全部の名前の `_m` が移す先に無い m があれば、その最大の m。
+   - (a) 前の片付けの続き: 移す先に、組と同じ日・接尾字で組に無い系列（4 系列のうち組に無いもの）の `_m` の名前が 1 本以上在り、組の全部の名前の `_m` が移す先に無い m を候補にする。候補の中で組に無い系列の `_m` の名前が全部在る m（前の片付けで組の残りを移した連番）があれば、その最大の m。無いときだけ候補の最大の m（別に大きい連番の単独の同じ名前があっても、残りは前に移した連番へ揃う。PR #228 の計画の review の closure の P3-A）。
    - (b) 無ければ、4 系列（組に無い系列を含む）の同じ日・接尾字の `_n` の名前が移す先に 1 本も無い最小の n（組に無い系列の名前も空けるのは、組の途中で止まったときに、移した分と残りが (a) で同じ連番に揃うため）。
    - どちらも 0001〜9999 に無ければ `NoFreeSequence`。CV17 の連番の振り方には合わせない（repo の資料に無い。名前が §29.7.5 の `XZ_BKUP` の Z の規則に当たり、組が 1 つの連番に揃い、同じ folder で一意であれば足りる。D-149 の Guarantee range）。
 5. 組の file を渡された順に 1 本ずつ: `move_no_replace(元, 先)`（71 §71.4.1。同じ volume の中なので bytes を写さない改名。置き換えの flag を付けないので、手順 4 の後に同じ名前ができていれば `AlreadyExists` で失敗し、既存の file を変えない。失敗は `Io`）、続けて確かめる: 先の `metadata` が通常の file で `len() == expected_len`、元の path の `try_exists` が `false`。違えば `Verify`、読めなければ `Io`。失敗したら残りを移さずに止める。
