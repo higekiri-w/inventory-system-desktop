@@ -413,6 +413,7 @@ Use concise ADR-style entries.
 - Alternatives considered: 各 page への個別追記（再発面積を残すため却下）; function-design の key 列挙を正本にする（二重管理になるため却下）; production SSOT を test expectation に共有する（mutation survivor を生むため却下）; 全 query invalidate（過剰 refetch で契約の意味を失うため却下）。
 - Revisit: backend の書込み table.column、query の読取り列、または E1〜E6 の除外判断が変わるとき。契約変更では production SSOT、独立 oracle、UI_TECH_STACK、該当 function-design を同一 PR で更新し、production-only mutation 感度を再実測する。
 - 語義注記（2026-08-30、docs 整合性衛生 batch）: 本 Decision 内の「D-052-E1」は `docs/UI_TECH_STACK.md` §2.5 除外表の E1（operation_logs 系 query の invalidation 除外）を指す一意 ID として確定する。旧 `src/lib/query-keys.ts` に存在した literal 例外容認コメントが同じ「E1」表記を使っていた用法は、PR #29（2026-07-28）でコード側から当該コメントごと撤去済みの歴史的用法であり、現行の唯一の参照先は UI_TECH_STACK §2.5 である。
+- Superseded in part by: D-141（件数と C23 = productCreateSharedJan）
 
 ## D-053
 - Decision: 利用者向け error と診断相関の共通境界を確定する（監査是正 順8 / P3-4・P7b-3）。①internal 系（`internal` + `restore_*` 3 kind）の `CmdError` は生成時に `error_id`（`E-<YYYYMMDD-HHMMSS>-<4hex>`、chrono + uuid の既存依存のみ）を発行し、同一値を wire response と `tracing::error!`（診断ログ）の両方に載せる。②`CmdError::internal` は `internal(user_message, detail)` 契約に改め、`message` は操作文脈の日本語定型文言のみ、raw な技術詳細（SQLite / OS error / パス）は診断ログ側にのみ記録する。③UI 側の kind→文言変換は共通 `describeError`（`src/lib/describe-error.ts`）へ一元化する。④PLU 書出し失敗は取込み専用 `import_error` から分離し `BizError::ExportError` → `kind="export_error"` とし、内部型 `PluCsvOutput` / field `csv_output` は実体語彙 `PluFileOutput` / `plu_output` へ改名する。
@@ -1234,7 +1235,7 @@ Use concise ADR-style entries.
 - Revisit: レジが変わり帳票の桁が上限に近づくとき。手動販売の金額欄の上限が決まったとき（10 の (e) から表へ移す）。売上の wire を十進の文字列にする別の理由が出たとき。owner が O2 に b と答えたとき、または紙の切替えの前に UI-09a-D19 の (2) を行えない事情が出たとき（(5) を外し、照合を merge の条件へ戻す）。
 ## D-141: 新規登録で入れた JAN をほかの商品が使っているときは知らせ、独自コードで同じ JAN の群に加える道を出す（2026-10-27）
 
-- Status: proposed（owner の決定 repo 外の回答台帳 TD-349・TD-401、JAN が重複したときの独自コードでの新規登録の lane の起票）
+- Status: accepted（owner の判断、repo 外の回答台帳 TD-550〈Q1 = 採用案〉・TD-551〈Q2 = 同じ JAN の群で売価・税率が違うことを登録の画面で知らせない〉・TD-552〈Q3 = TD-352 からの例外を受け入れる〉、2026-11-01 の PR #212 の L3 の後。PR #212 は 2026-11-02 merge。起票の出所は TD-349・TD-401、JAN が重複したときの独自コードでの新規登録の lane）
 - Note: 方向（独自コードで登録できる道）は TD-349 で決まっている。同じ JAN の在庫連動の商品を外す形（Alternatives の (c) と比べた形）は、owner の方針 TD-401 で推奨を既定にして書いた。owner が答えたら Status を直す。
 - Context: 商品フォームの新規登録は JAN を商品コードにし（TD-338）、同じ商品コードがあると `DuplicateProductCode` で止まる（[30](function-design/30-biz-product-service.md) §4.2 の手順 3a の旧い形）。同じ JAN で色・柄の違う品（布・ファスナー）の 2 色目は商品 CSV でしか入れられない。JAN が別の商品コードの商品の `jan_code` にだけあるときは、黙って JAN を商品コードにした商品ができる。同じ JAN の商品の群は全色を独自コードにし JAN を各色に持たせる（TD-352）。本決定の道は後から加える色に独自コードを振り同じ JAN を各色に持たせる形で、先に JAN を商品コードとして登録した 1 色目は商品コードを変えられないので J のまま群に残る（TD-352 の「全色を独自コード」からの例外。Guarantee range）。ADR SPEC-STK-CNT-D4 は、在庫連動の商品と同じ JAN を持つ別の商品を、どの経路でも作らせない。
 - Decision: (1) 新規登録で入れた JAN を、ほかの商品が JAN か商品コードとして持つときは、`JanInUse`（CMD は kind `duplicate`・field `jan_code`）で使っている商品を全て名指して止める（30 BIZ-01-D11）。JAN がほかの商品に無いときは今どおり JAN を商品コードにする。(2) 商品フォームは確認のダイアログを開き、利用者が「独自コードで登録する」を押したら、同じ入力を `shared_jan_custom_code: true`・在庫連動なしで送り直す（[51](function-design/51-ui-product-form.md) UI-01b-D26）。BIZ は独自コードを振り、JAN を持たせ、同じ JAN の在庫連動の商品を同じ TX で在庫連動なしにし、外した商品を操作ログ（BIZ-01-D7 の形）と結果の `warnings` で名指す。(3) D4 の不変条件は変えない。商品 CSV の取込みの経路（30 §4.8・§4.9）も変えない（商品コードを CSV が持ち、共有 JAN で在庫連動にできない行は今どおり行の error で名指す）。

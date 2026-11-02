@@ -7,7 +7,7 @@
 use super::restore::{RestoreFileOps, StdRestoreFileOps};
 use crate::db::{self, DbConnection, DbError, NewOperationLog};
 use crate::io::REGISTER_SD_FOLDER;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 pub(crate) use crate::db::open_existing_database;
 
@@ -293,6 +293,8 @@ fn is_usable_backup(inspection: &BackupInspection) -> bool {
 /// 絶対化と `.`・`..` の解決（71 §71.4 の「書く先の固定」の (1)）
 #[cfg(not(windows))]
 fn normalize_path(dir: &Path) -> std::io::Result<PathBuf> {
+    use std::path::Component;
+
     let absolute = std::path::absolute(dir)?;
     let mut normalized = PathBuf::new();
     for component in absolute.components() {
