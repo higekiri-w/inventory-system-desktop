@@ -2172,3 +2172,101 @@ fn write_l3_register_sd_tree() {
     put_bundle(&root, &folder(before), &name(before, 'B'), &bom);
     println!("合成の SD の tree を書きました: {}", root.path.display());
 }
+
+/// 37 BIZ-08-D2a から転記した期待の文（production の定数を import しない）
+const OVER_LIMIT_Z001_Z005_MESSAGE: &str = "Z001の金額列の値が大きすぎます。Z005の個数列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。";
+
+fn z005_with_line(date: &str, quantity: &str, amount: &str) -> DailyReportInputFile {
+    source_file(
+        "Z005_260321.CSV",
+        &format!(
+            "{}\"0001\",\"部門A\",\"{quantity}\",\"{amount}\"\r\n",
+            daily_report_preamble(date)
+        ),
+    )
+}
+
+#[test]
+fn test_daily_report_req401_over_limit_names_column_without_raw_value() {
+    // REQ-401 / BIZ-08-D2a: 上限の越えは帳票と列を名指し、値・file 名・行番号を出さない
+    let (_dir, conn) = setup_test_db();
+    let files = vec![
+        // Z005 を先に渡しても帳票の順（Z001 → Z005）で並ぶ
+        z005_with_line("2026-03-21", "10000000.00", "3000"),
+        z001_with_lines(
+            "2026-03-21",
+            &[
+                ("101", "総売", "8", "10000000000"),
+                ("201", "純売", "7", "11000"),
+            ],
+        ),
+        z002("2026-03-21"),
+    ];
+    let result = parse_and_validate_daily_report(&conn, files);
+
+    match result {
+        Err(BizError::ImportError(message)) => {
+            assert_eq!(message, OVER_LIMIT_Z001_Z005_MESSAGE);
+            for leaked in [
+                "10000000000",
+                "10000000",
+                "Z001_260321",
+                "Z005_260321",
+                "行",
+            ] {
+                assert!(!message.contains(leaked), "{leaked} in {message}");
+            }
+        }
+        other => panic!("expected over-limit import error, got {other:?}"),
+    }
+    let (summary, detail_json): (String, Option<String>) = conn
+        .query_row(
+            "SELECT summary, detail_json FROM operation_logs
+             WHERE operation_type = 'daily_report_parse_failed'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(summary, OVER_LIMIT_Z001_Z005_MESSAGE);
+    assert_eq!(detail_json, None);
+    assert_eq!(count_rows(&conn, "daily_report_imports"), 0);
+}
+
+#[test]
+fn test_daily_report_req401_settlement_mismatch_wins_over_over_limit() {
+    // REQ-401 / BIZ-08-D2・D2a: 精算回数の不一致の文が先。形の誤りと上限の越えは上限の越えの列だけを名指す
+    assert_settlement_mismatch_rejected(vec![
+        z001_with_lines(
+            "2026-03-21",
+            &[
+                ("101", "総売", "8", "10000000000"),
+                ("201", "純売", "7", "11000"),
+            ],
+        ),
+        with_settlement(z002("2026-03-21"), "0002"),
+        with_settlement(z005("2026-03-21"), "0002"),
+    ]);
+
+    let (_dir, conn) = setup_test_db();
+    let result = parse_and_validate_daily_report(
+        &conn,
+        vec![
+            z001_with_lines(
+                "2026-03-21",
+                &[
+                    ("101", "総売", "not-a-number", "12000"),
+                    ("201", "純売", "7", "10000000000"),
+                ],
+            ),
+            z002("2026-03-21"),
+            z005("2026-03-21"),
+        ],
+    );
+    match result {
+        Err(BizError::ImportError(message)) => assert_eq!(
+            message,
+            "Z001の金額列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。"
+        ),
+        other => panic!("expected over-limit import error, got {other:?}"),
+    }
+}

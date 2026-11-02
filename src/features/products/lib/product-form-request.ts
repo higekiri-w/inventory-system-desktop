@@ -173,6 +173,8 @@ export function buildCreateProductRequest(
       supplier_id: values.supplierId,
       pos_stock_sync: values.posStockSync,
       plu_target: values.pluTarget,
+      // UI-01b-D26: true は JAN を他の商品が使っているときのダイアログからの送り直しだけ
+      shared_jan_custom_code: false,
     },
     errors,
   };

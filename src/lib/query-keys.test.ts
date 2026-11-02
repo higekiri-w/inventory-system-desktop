@@ -26,6 +26,16 @@ describe("queryKeys UI-06c / UI-01b / UI-09a D-052-S2 prefix contract", () => {
     expectPrefix(queryKeys.dailySalesRoot(), queryKeys.dailySales("2026-07-23"));
   });
 
+  it("keeps dailyReportSheet keys under daily-sales root", () => {
+    // UI-09a-D17: 紙の内容は取込み・取消の dailySalesRoot() の invalidate に乗る
+    expect(queryKeys.dailyReportSheet("2026-07-23")).toEqual([
+      "daily-sales",
+      "sheet",
+      { date: "2026-07-23" },
+    ]);
+    expectPrefix(queryKeys.dailySalesRoot(), queryKeys.dailyReportSheet("2026-07-23"));
+  });
+
   it("REQ-206: keeps csvImportDetail under the inventoryRecords root", () => {
     expectPrefix(queryKeys.inventoryRecords.root(), queryKeys.inventoryRecords.csvImportDetail(41));
     expect(queryKeys.inventoryRecords.csvImportDetail(41)).toEqual([

@@ -15,12 +15,13 @@ import { PageHeader } from "@/components/patterns/PageHeader";
 import { UnsavedChangesDialog } from "@/components/patterns/UnsavedChangesDialog";
 import { PageShell } from "@/components/patterns/PageShell";
 import { useUnsavedChangesWarning } from "@/hooks/useUnsavedChangesWarning";
-import { commands, type ProductWithRelations } from "@/lib/bindings";
+import { commands, type ProductCreateRequest, type ProductWithRelations } from "@/lib/bindings";
 import { describeError } from "@/lib/describe-error";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { isInvokeError, unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { ProductForm } from "./components/ProductForm";
+import { SharedJanCustomCodeDialog } from "./components/SharedJanCustomCodeDialog";
 import { useProductFormOptions } from "./hooks/useProductFormOptions";
 import {
   buildCreateProductRequest,
@@ -67,6 +68,11 @@ export function ProductFormPage({
   const [posSyncTouched, setPosSyncTouched] = useState(false);
   const [pluTargetTouched, setPluTargetTouched] = useState(false);
   const [currentProduct, setCurrentProduct] = useState<ProductWithRelations | null>(null);
+  // UI-01b-D26: JAN を他の商品が使っているときの知らせと、送り直しに使う 1 回目の request
+  const [sharedJan, setSharedJan] = useState<{
+    message: string;
+    request: ProductCreateRequest;
+  } | null>(null);
 
   // 案内は保存の button から離れた欄の下に出るので、案内の領域へ focus を移す（51）
   useEffect(() => {
@@ -104,37 +110,64 @@ export function ProductFormPage({
   }, [mode, productQuery.data]);
 
   const createMutation = useMutation({
-    mutationFn: async () => {
-      const built = buildCreateProductRequest(values, departments);
-      setFormErrors(built.errors);
-      if (built.request === null) throw new Error("validation");
-      return unwrapResult(commands.createProduct(built.request), {
+    mutationFn: (request: ProductCreateRequest) =>
+      unwrapResult(commands.createProduct(request), {
         source: "commands",
         cmd: "create_product",
-      });
-    },
-    onSuccess: async (result) => {
+      }),
+    onSuccess: async (result, request) => {
       setSaveError(null);
+      setSharedJan(null);
       // UI-USW-D1: 保存成功後の画面遷移を離脱ガードで遮らないよう、先に基準値を同期する。
       flushSync(() => {
         setSavedValues({ ...values });
       });
-      // UI-01b-D14: 保存成功 toast は navigate より前に発火する
+      // UI-01b-D14: 保存成功 toast は navigate より前に発火する。UI-01b-D26: 外した商品は 1 件 1 行で説明に添える
       toast.success(
         `商品「${values.name.trim()}」を登録しました（商品コード: ${result.product_code}）`,
         {
           id: "product-save-success",
           duration: 5000,
+          description:
+            result.warnings.length > 0 ? (
+              <ul>
+                {result.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : undefined,
         },
       );
-      await invalidateByContract(queryClient, invalidationContract.productCreate());
+      if (request.shared_jan_custom_code) {
+        // C23（D-141）: 外した商品の修正の画面と要再確認の一覧も古くなる
+        await invalidateByContract(queryClient, invalidationContract.productCreateSharedJan());
+      } else {
+        await invalidateByContract(queryClient, invalidationContract.productCreate());
+      }
       onNavigateToList(safeReturnTo);
     },
-    onError: (error) => {
-      if (error instanceof Error && error.message === "validation") return;
+    onError: (error, request) => {
+      // 型で分岐し message を解析しない。field の無い duplicate は通常の error として出す（40、UI-01b-D26）
+      if (
+        !request.shared_jan_custom_code &&
+        isInvokeError(error) &&
+        error.cmdError.kind === "duplicate" &&
+        error.cmdError.field === "jan_code"
+      ) {
+        // 1 段目は BIZ の message（BIZ-01-D11 が画面の語で作る）。表示は describeError を通す（UI-ERR-D1）
+        setSharedJan({ message: describeError(error), request });
+        return;
+      }
+      setSharedJan(null);
       setSaveError(describeError(error));
     },
   });
+
+  const submitCreate = () => {
+    const built = buildCreateProductRequest(values, departments);
+    setFormErrors(built.errors);
+    if (built.request !== null) createMutation.mutate(built.request);
+  };
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -210,6 +243,10 @@ export function ProductFormPage({
     (field) => values[field] !== savedValues[field],
   );
   const unsavedChanges = useUnsavedChangesWarning(isDirty);
+  const sharedJanDepartment =
+    sharedJan === null
+      ? undefined
+      : departments.find((department) => department.id === sharedJan.request.department_id);
 
   if (mode === "edit" && productQuery.isLoading) {
     return (
@@ -244,6 +281,25 @@ export function ProductFormPage({
   return (
     <PageShell>
       <UnsavedChangesDialog warning={unsavedChanges} />
+      <SharedJanCustomCodeDialog
+        open={sharedJan !== null}
+        message={sharedJan?.message ?? ""}
+        departmentName={sharedJanDepartment?.name ?? ""}
+        canAssignCustomCode={sharedJanDepartment?.code_prefix != null}
+        isPending={createMutation.isPending}
+        onConfirm={() => {
+          if (sharedJan === null) return;
+          // 同じ入力の値で、在庫連動の checkbox によらず在庫連動なしで送り直す（UI-01b-D26）
+          createMutation.mutate({
+            ...sharedJan.request,
+            shared_jan_custom_code: true,
+            pos_stock_sync: false,
+          });
+        }}
+        onCancel={() => {
+          setSharedJan(null);
+        }}
+      />
       <PageHeader title={title} />
       {departmentsQuery.isError ? (
         <Alert variant="destructive">
@@ -319,7 +375,7 @@ export function ProductFormPage({
           setSaveError(null);
           setRecountRequired(false);
           if (mode === "create") {
-            createMutation.mutate();
+            submitCreate();
           } else {
             updateMutation.mutate();
           }

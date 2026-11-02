@@ -9,7 +9,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -77,6 +77,9 @@ describe("AC16 / SC10a: OperationLogsPage perPage 変更後の scroll 位置（G
   });
 
   afterEach(() => {
+    // 先に React の tree を外す（RootLayout が body の直下へ portal で描く日報の印刷の案内を
+    // React の外から消すと、後の unmount が removeChild で落ちる）
+    cleanup();
     document.body.replaceChildren();
   });
 

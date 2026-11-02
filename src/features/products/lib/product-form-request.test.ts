@@ -39,6 +39,8 @@ describe("buildCreateProductRequest (UI-01b-D4/D6)", () => {
       initial_stock: 10,
       pos_stock_sync: true,
       plu_target: false,
+      // REQ-101 / UI-01b-D26: 1 回目の登録は独自コードの道を選ばない
+      shared_jan_custom_code: false,
     });
   });
 

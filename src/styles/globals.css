@@ -163,3 +163,21 @@
     font-family: var(--font-sans);
   }
 }
+
+/* UI-09a-D17・D18（日報の紙）: A4 縦・余白 10 mm。印刷のときはアプリの root を隠し、body 直下の紙だけを出す。
+   画面用の html/body の高さ固定と overflow: hidden を外さないと 2 枚目以降が切れる。 */
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
+@media print {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: #fff;
+  }
+  #root {
+    display: none;
+  }
+}

@@ -100,6 +100,21 @@ describe("UI-12 / DSR-17 RootLayout scroll container", () => {
   });
 });
 
+describe("UI-12 / UI-09a-D18 RootLayout print notice", () => {
+  it("UI-09a-D18: どの画面にも印刷のときだけ出す案内を 1 行置く", async () => {
+    const { container } = renderLayout();
+    await screen.findByText("test outlet");
+
+    const notice = screen.getByText(
+      "この画面の印刷には対応していません。日報は日次売上の画面の「日報を印刷」から印刷してください。",
+    );
+    // #root の外（body の直下）に置き、画面には出さず印刷のときだけ出す
+    expect(container).not.toContainElement(notice);
+    expect(notice.parentElement).toBe(document.body);
+    expect(notice).toHaveClass("hidden", "print:block");
+  });
+});
+
 describe("UI-12 / UI-11b-D13 RootLayout auto backup check", () => {
   it("UI-12 / UI-11b-D13: route を移っても自動バックアップの確認が続く", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });

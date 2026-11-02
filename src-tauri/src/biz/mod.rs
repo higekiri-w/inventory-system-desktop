@@ -68,6 +68,8 @@ pub enum BizError {
     NotFound(String),
     /// 商品コード重複
     DuplicateProductCode(String),
+    /// 新規登録で入れた JAN を他の商品が使っている（BIZ-01-D11。message は BIZ が作る）
+    JanInUse(String),
     /// IO層エラーのラップ
     DatabaseError(DbError),
     /// インポートエラー（BIZ-03 CSV取込みパイプライン）
@@ -103,6 +105,7 @@ impl fmt::Display for BizError {
             BizError::DuplicateProductCode(code) => {
                 write!(f, "商品コード重複: {}", code)
             }
+            BizError::JanInUse(msg) => write!(f, "JAN 使用中: {}", msg),
             BizError::DatabaseError(e) => write!(f, "データベースエラー: {}", e),
             BizError::ImportError(msg) => write!(f, "インポートエラー: {}", msg),
             BizError::SettlementConflict { message, .. } => {
