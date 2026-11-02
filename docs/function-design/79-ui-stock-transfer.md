@@ -28,7 +28,7 @@
 | D-143 / quantity | UI-16-D4 | 数量は行ごとにその商品の単位で入れる（個数は整数、`m` の商品は m で小数 2 桁まで受けて cm に直す。上限は `9999999`〈長さは `99999.99` m〉。[64](64-ui-disposal.md) UI-05-D8 と同じ純関数）。元と先の数の釣り合いは求めず、換算もしない。保存の前に、減らす商品・増やす商品のどちらかが 0 行、数量が 0 以下・形の誤り・上限越えを日本語の field error で止める。 | 元と先の数の対応は回ごとに違いうる（D-143 (3)）。長さと個数を足し合わせる表示は作らない（SPEC-UNIT-D3 の集計の規則に当たる所を作らない）。 |
 | D-143 / cost | UI-16-D5 | 原価・金額の欄を持たない。保存は商品の原価を変えない。 | D-143 (4)。owner の判断事項 (ii) の既定 A。 |
 | D-143 / idempotency | UI-16-D6 | `idempotency_key` は [64](64-ui-disposal.md) UI-05-D9 と同じ（1 保存試行に 1 つ、同内容の再試行で再利用、成功・リセット・編集の後の再送で新しくする）。 | 二重の振替を防ぐ。 |
-| D-143 / submit | UI-16-D7 | 保存中は日付・2 つの表・2 つの商品追加欄・戻る/リセットを disabled にする。非同期の商品検索の結果の採否は UI-05-D15 と同じ event 境界の lock を 1 つ持ち、2 つの商品追加欄が同じ lock を読む。 | backend は単一 TX。片方の欄の検索の結果が保存の後に行を足さないようにする。 |
+| D-143 / submit | UI-16-D7 | 保存中は日付・2 つの表・2 つの商品追加欄・戻る/リセットを disabled にする。非同期の商品検索の結果の採否は UI-05-D15 と同じ event 境界の lock を 1 つ持ち、2 つの商品追加欄が同じ lock を読む。リセット・「続けて」の前に始まった検索の応答は成功・失敗とも採らず、保存失敗後に完了した応答は UI-05-D15 に従って採る。 | backend は単一 TX。片方の欄の検索の結果が保存の後に行を足さないようにする。 |
 | D-143 / result | UI-16-D8 | 保存成功後は record_id、減らした商品と増やした商品の一覧（商品コード・商品名・数量と単位と、行ごとの「在庫を見る」。`/products?q=<商品コード>` を開く。[64](64-ui-disposal.md) UI-05-D11 の先は `selected=<商品コード>` も渡すが、今の `/products` の search schema に `selected` が無いので `q` だけにし、D-138 の実装の時に 64 と一緒に揃える）、stock_warnings（在庫が負になった商品）、`idempotent_replay` の有無を出し、「続けて詰め替え・切り分け」「詳細を見る」を出す。 | 保存の後に元と先の在庫を 1 回で確かめられるようにする。 |
 | D-143 / list | UI-16-D9 | 画面下部に最近の記録を `listInventoryRecords({ record_type: "transfer_record", page: 1, per_page: 10 })` で出す（日付・記録ID・代表商品・記録日時・「詳細を見る」）。「すべての履歴を見る」は `/inventory/records?recordType=transfer_record`。per_page は 10 で、CMD・BIZ の上限 200（[65](65-inventory-record-traceability.md) §65.4.2）を越えない。 | 他の作成画面の recent list と同じ役割（[65](65-inventory-record-traceability.md) TRACE-D1・D7）。 |
 | D-143 / cache | UI-16-D10 | 保存成功時の invalidation は D-052 の C23（`invalidationContract.stockTransfer`）。集合は廃棄の C7 から `disposals.root()` を除いたもの（`inventoryRecords.root()`・`productList.root()`・`lowStock(false)`・`stockInquiryRoot()`・`stockMovements.root()`・`productForm.root()`・`stocktake.itemsRoot()`・`stocktake.recheckList()`）で、正本は `src/lib/invalidation-contract.ts` と decision-log D-052 の Contract 行。 | 振替が書く表（`transfer_*`・`inventory_movements`・`products` の写し）を読む consumer は廃棄と同じで、廃棄の一覧だけを読まない（UI_TECH_STACK §2.5 の導出）。 |
@@ -139,7 +139,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 - UI-16-D3: 2 つの表に Enter で追加でき、同じ表の再追加で数量 +1、もう片方の表にある商品は追加されず案内が出る。payload の `direction` が表に対応する。
 - UI-16-D4: どちらかの表が 0 行で保存できない。数量の 0・負・形の誤り・上限越えを保存の前に止め、長さの商品は m で入れて cm で送る。
 - UI-16-D6: 同内容の再試行で `idempotency_key` を再利用し、成功・リセット・編集の後は新しい key。
-- UI-16-D7: 保存中は 2 つの追加欄と表が disabled、保存 event と競合して完了した検索の結果を反映しない。
+- UI-16-D7: 保存中は 2 つの追加欄と表が disabled、保存 event と競合して完了した検索の結果を反映しない。両側でリセット・「続けて」の前の検索は成功・失敗とも反映せず、保存失敗後の検索完了は反映する。
 - UI-16-D8: 保存結果に record_id、2 つの一覧、warning、replay が読める。
 - UI-16-D9: 最近の記録を `record_type: "transfer_record"` で取得し、空・失敗・成功を出せる。
 - UI-16-D10: 保存成功時の実呼出し集合が D-052-C23 の独立 test oracle と完全一致する。
@@ -153,3 +153,4 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 | 2026-10-27 | stock-transfer の起票（D-143） | 新設（runtime の前の設計）。route、2 つの表の明細、数量と単位、原価を持たないこと、冪等キー、invalidation C23、recent list、記録の詳細、L3 の確認対象を決めた。 |
 | 2026-10-31 | stock-transfer の runtime（PR #216） | 実装に合わせて状態を現行にし、`> 対応仕様:` に REQ-210 を書いた。 |
 | 2026-11-01 | stock-transfer の是正（PR #216） | UI-16-D8 の「在庫を見る」の先を今の契約（`q` だけ）に直し、`selected` を D-138 の実装に送った。 |
+| 2026-11-02 | stock-transfer の是正（PR #216） | UI-16-D7 にリセット・「続けて」の前の検索応答を採らない契約と、保存失敗後は UI-05-D15 に従って採る契約を明記した。 |

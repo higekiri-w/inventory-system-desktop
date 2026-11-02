@@ -353,6 +353,83 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
   });
 
   it.each([
+    ["減らす商品", OUT_SEARCH],
+    ["増やす商品", IN_SEARCH],
+  ])("U7 / UI-16-D7: %sの欄で保存成功後に完了した検索の結果を反映しない", async (_side, label) => {
+    const user = userEvent.setup();
+    const deferredSearch = createDeferred<Awaited<ReturnType<typeof commands.searchProducts>>>();
+    const late = makeMockProductWithRelations({ product_code: "TR-LATE", name: "保留の商品" });
+    mockCreateTransfer.mockResolvedValue(okResult(46));
+    renderWithClient(<StockTransferPage />);
+    await fillBothSides(user);
+    mockSearchProducts.mockReturnValueOnce(deferredSearch.promise);
+    await user.type(screen.getByLabelText(label), "TR-LATE{enter}");
+
+    await user.click(screen.getByRole("button", { name: SAVE }));
+    expect(await screen.findByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
+    await act(async () => {
+      deferredSearch.resolve(searchResult([late]));
+      await deferredSearch.promise;
+    });
+    expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+    expect(screen.queryByText("TR-LATE")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(label)).toBeDisabled();
+    expect(screen.getByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["減らす商品", "validation", OUT_SEARCH, "減らす商品（元）"],
+    ["増やす商品", "validation", IN_SEARCH, "増やす商品（先）"],
+    ["減らす商品", "command", OUT_SEARCH, "減らす商品（元）"],
+    ["増やす商品", "command", IN_SEARCH, "増やす商品（先）"],
+  ])(
+    "U19 / UI-16-D7・UI-05-D15: %sの検索を保留 → 保存 → %s失敗の onError で unlock → 検索成功で明細に追加する",
+    async (_side, failure, label, tableName) => {
+      const user = userEvent.setup();
+      const deferredSearch = createDeferred<Awaited<ReturnType<typeof commands.searchProducts>>>();
+      const late = makeMockProductWithRelations({ product_code: "TR-LATE", name: "保留の商品" });
+      mockCreateTransfer.mockResolvedValue(internalError);
+      renderWithClient(<StockTransferPage />);
+      await fillBothSides(user);
+      if (failure === "validation") {
+        fireEvent.change(screen.getByLabelText("TR-01 の数量"), { target: { value: "0" } });
+      }
+      mockSearchProducts.mockReturnValueOnce(deferredSearch.promise);
+      await user.type(screen.getByLabelText(label), "TR-LATE{enter}");
+      expect(mockSearchProducts).toHaveBeenLastCalledWith(
+        expect.objectContaining({ keyword: "TR-LATE" }),
+      );
+
+      await user.click(screen.getByRole("button", { name: SAVE }));
+      // validation も async mutationFn の失敗を onError が受けて unlock するまで検索を保留する。
+      if (failure === "validation") {
+        expect(
+          await screen.findByText("TR-01: 数量は1以上の整数で入力してください"),
+        ).toBeInTheDocument();
+        expect(mockCreateTransfer).not.toHaveBeenCalled();
+      } else {
+        expect(await screen.findByText("保存に失敗しました")).toBeInTheDocument();
+        expect(mockCreateTransfer).toHaveBeenCalledTimes(1);
+      }
+      await waitFor(() => {
+        expect(screen.getByLabelText(label)).toBeEnabled();
+      });
+      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+
+      await act(async () => {
+        deferredSearch.resolve(searchResult([late]));
+        await deferredSearch.promise;
+      });
+      expect(
+        within(screen.getByRole("table", { name: tableName })).getByLabelText("TR-LATE の数量"),
+      ).toHaveValue(1);
+      expect(screen.getByLabelText(label)).toHaveValue("");
+      expect(screen.getByLabelText("TR-M1 の数量")).toBeInTheDocument();
+      expect(screen.getByLabelText("TR-01 の数量")).toBeInTheDocument();
+    },
+  );
+
+  it.each([
     ["減らす商品", "リセット", "成功", OUT_SEARCH],
     ["減らす商品", "リセット", "失敗", OUT_SEARCH],
     ["減らす商品", "続けて詰め替え・切り分け", "成功", OUT_SEARCH],
