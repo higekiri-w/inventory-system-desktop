@@ -4,7 +4,7 @@ mod biz;
 mod cmd;
 #[allow(dead_code)]
 mod constants;
-// pub: dev bin (src/bin/seed_demo_data.rs) から init_database / DbError を使用する
+// pub: dev bin (src-tauri/dev-tools/src/bin/seed_demo_data.rs、D-137) から init_database / DbError を使用する
 #[allow(dead_code)]
 pub mod db;
 #[cfg(test)]
@@ -16,7 +16,7 @@ mod mnt;
 #[cfg(test)]
 mod test_tracing;
 
-// pub: dev tooling 専用のデモデータ seed ロジック。src/bin/seed_demo_data.rs と
+// pub: dev tooling 専用のデモデータ seed ロジック。dev-tools の crate の seed_demo_data（D-137）と
 // tests/seed_test.rs から参照される
 #[allow(dead_code)]
 pub mod seed_demo;
@@ -237,7 +237,7 @@ fn show_pre_window_fatal(message: &str) {
 ///
 /// `#[specta::specta]` を付けた command の Rust 型を TypeScript 型定義 + command wrapper に
 /// 変換して出力する。`src/lib/bindings.ts` は **git tracked (vendor-in 運用、PR commit に同梱)**、
-/// debug build 時と `bin/generate_bindings` 経由で自動再生成される。
+/// debug build 時と dev-tools の crate の `generate_bindings`（D-137）経由で自動再生成される。
 ///
 /// - debug build: `run()` の先頭から呼ばれて毎起動時に最新化
 /// - release build: 呼ばれない（bindings.ts は開発時のみ必要）
@@ -364,6 +364,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::settings_cmd::check_auto_backup,
         cmd::settings_cmd::list_backups,
         cmd::settings_cmd::get_effective_backup_dir,
+        cmd::settings_cmd::inspect_backup,
         cmd::settings_cmd::restore_backup,
         cmd::settings_cmd::save_receipt_image,
     ]);
@@ -1599,6 +1600,7 @@ pub fn run() {
             cmd::settings_cmd::check_auto_backup,
             cmd::settings_cmd::list_backups,
             cmd::settings_cmd::get_effective_backup_dir,
+            cmd::settings_cmd::inspect_backup,
             cmd::settings_cmd::restore_backup,
             cmd::settings_cmd::save_receipt_image,
         ])

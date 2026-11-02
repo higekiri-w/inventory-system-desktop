@@ -18,6 +18,7 @@ repo の現物で確かめた（2026-10-17、`src-tauri/tauri.conf.json`・`.git
 | 古い版の上書き | `allowDowngrades` の既定は `true`（新しい版が入っていても古い版を入れられる）。tauri.conf.json に指定は無い | [Tauri config: WindowsConfig](https://v2.tauri.app/reference/config/) |
 | 署名 | 無い（`certificateThumbprint`・`signCommand` の指定が無い）。署名はアプリの実行には要らない。browser から download した file では SmartScreen の警告が出得る | `src-tauri/tauri.conf.json`、[Tauri Windows code signing](https://v2.tauri.app/distribute/sign/windows/) |
 | WebView2 | 既定の `downloadBootstrapper`（WebView2 が無いときに download して入れる。network が要る）。Windows 11 には WebView2 が入っている | [Tauri Windows Installer](https://v2.tauri.app/distribute/windows-installer/)、[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §1.2 |
+| MSI に入る実行 file | main の 1 つだけ。開発用の bin（`generate_bindings`・`generate_traceability`・`seed_demo_data`）は workspace の member `src-tauri/dev-tools` にあり、tauri-bundler は tauri の crate の bin だけを入れる（[decision-log](decision-log.md) D-137） | tauri-cli 2.11.1 の `get_binaries`、tauri-bundler の `generate_binaries_data` |
 | データの folder | `identifier`（`com.inventory-system.desktop`、D-132 (3)）の名の folder（Windows では `%APPDATA%\com.inventory-system.desktop`）。DB は `inventory.db`。開発中の `npm run tauri dev` のアプリも同じ folder を使う | `src-tauri/tauri.conf.json`、`src-tauri/src/lib.rs` の `prepare_database_with_init`、68 §68.4「実効保存先の常時表示」（2026-10-24 に確かめた） |
 | データの folder に DB が無い起動 | 起動の作業フォルダーに `inventory.db` があれば、それを取り込む。無ければ空の DB を作る | 22 §12、`src-tauri/src/lib.rs` の `prepare_database_with_init` |
 | backup の保存先 | 設定の `backup_path`。未設定ならデータの folder の `backups` | 71 §71.9 |
@@ -77,7 +78,7 @@ repo の現物で確かめた（2026-10-17、`src-tauri/tauri.conf.json`・`.git
 1. アプリへの入力を止める。
 2. 代表の商品をいくつか選び、在庫の数を控える（流れ 4 の手順 5 で比べる）。流れ 5 から前へ進むために流れ 3 をし直すときの控え方は、流れ 5 の「前へ進むときの照合」のとおり。
 3. 設定の「バックアップ・復元」で手動バックアップを作り、出来た file の名前（`inventory_backup_YYYYMMDD_HHMMSS.db`）を控える。
-4. その file を、backup の保存先の外の、日付の付いた folder と PC の外の媒体の 2 か所へ写す。backup の保存先の中だけだと、保持日数を過ぎて消される（71 §71.5）。元の file と写し 2 つの SHA-256 が同じことを `Get-FileHash` で確かめる。
+4. その file を、backup の保存先の外の、日付の付いた folder と PC の外の媒体の 2 か所へ写す。backup の保存先の中だけだと、保持日数を過ぎて消される（71 §71.5）。PC の外の媒体が PC の外の控えに用意した USB メモリ（D-114）なら、媒体の `InventoryBackup\` の外の folder に置く。中の規約の名前の file はアプリが写しとして数え、新しい 30 本を超えると消す（71 §71.11.7）。元の file と写し 2 つの SHA-256 が同じことを `Get-FileHash` で確かめる。
 5. 配布の記録の「更新の前の backup」に、file の名前と SHA-256、写しの場所を書く。流れ 5 から流れ 3 をし直して前の版と戻す先の backup が変わらないとき（流れ 5 の「前の版と入力の基準」）は、追加の写しと書く。
 6. アプリの窓を全部閉じ、タスク マネージャーでプロセス（「在庫管理システム」の名で出る。M2）が残っていないことを確かめる。
 

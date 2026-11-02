@@ -17,7 +17,7 @@
 //! - `src/**/*.test.{ts,tsx}` の `REQ-NNN` / `UI-NN` 参照
 //!
 //! 仕様 ID: WF-TRACE-01〜04（SPEC-WF-TRACE-2026-06-11）。
-//! パス解決は CARGO_MANIFEST_DIR + 親ディレクトリ（実行時 cwd 非依存、generate_bindings と同方式）。
+//! パス解決は dev-tools の CARGO_MANIFEST_DIR から 2 つ上（実行時 cwd 非依存、D-137 (3)）。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -64,7 +64,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
 
     if check_mode {
         match run_check(&repo_root, FE_UNREFERENCED_BASELINE) {

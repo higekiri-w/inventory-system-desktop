@@ -118,7 +118,7 @@ UI-06b は独立画面ではなく UI-06a への deep-link のため、専用の
 - [IO-08: EJパーサー](function-design/29-io-ej-parser.md) — parse_ej（EJ 1 file を取引単位の記録へ構造復元、24バイト固定幅・CP932・CRLF、純関数）
 
 ### MNT層（保守）
-- [MNT-01: バックアップ・リストア](function-design/71-mnt-backup.md) — create_backup（VACUUM INTO）, restore_backup, check_auto_backup, list_backups, PC の外の控え（prepare_offsite_medium / check_offsite_backup / offsite_status / reset_offsite_state / stop_offsite_backup）と inspect_backup（D-114、runtime は後続の lane）
+- [MNT-01: バックアップ・リストア](function-design/71-mnt-backup.md) — create_backup（VACUUM INTO）, restore_backup, check_auto_backup, list_backups, inspect_backup（D-114、実装済み）, PC の外の控え（prepare_offsite_medium / check_offsite_backup / offsite_status / reset_offsite_state / stop_offsite_backup。D-114、runtime は後続の (b)）
 - [MNT-02: 操作ログ管理](function-design/72-mnt-log-manager.md) — cleanup_old_logs（起動時自動削除）
 - [MNT-03: スキーママイグレーション](function-design/22-mnt-migration.md) — migration v1（初期スキーマ）〜 v4（日報取込みテーブル）
 - [MNT-04: アプリケーション診断ログ](function-design/70-mnt-diagnostic-log.md) — init_diagnostics, cleanup_old_log_files, 既存コードへのtracing埋め込み方針
