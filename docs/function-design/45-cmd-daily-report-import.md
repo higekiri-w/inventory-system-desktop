@@ -158,6 +158,8 @@ struct RegisterSdScanResponse {
 3. 成功時、UUID の scan_token を作り、`register_sd_scan_cache` を空にしてから snapshot を入れる（同時に持つ scan は最新の 1 つだけ）。
 4. response を返す。
 
+**(b) の lane で足すもの（D-149、BIZ-08-D11、proposed・未実装。runtime は Plan Packet `docs/plans/2026-11-02-xz-bkup-move.md`）**: command に `app: tauri::AppHandle` を足し、手順 2 の前に §45.4 手順 3a と同じ取り方で `app_data_dir` を得て、手順 2 の BIZ-08 `scan_register_sd_daily_reports` に渡す（37 §37.12 の「§37.9 に足すもの」。`selected_path` が `Some` でも渡し、使うかは BIZ が決める）。`app_data_dir` を得られなければ §45.4 と同じ `CmdError.kind="internal"`。`DailyReportSdScan` に `tidy_failure: Option<RegisterSdTidyFailure>`（37 §37.12。specta の enum で `"SdWrite" | "PcCopy" | "Other"`）が載り、CMD は変えずに返す。片付けは手順 2 の中（DB の Mutex を持ったまま。SD の書込みは数本の改名）で、CMD は SD の書込みの規則を持たない（CMD-12-D1）。生成 bindings を作り直す（§45.8）。
+
 ### 45.6b parse_and_validate_daily_report_from_sd（CMD-12-D1）
 
 ```rust
@@ -264,3 +266,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-07 | sd-direct-read（Plan Review round 1 の是正） | §45.4 の commit に `app: tauri::AppHandle` と `app_data_dir` の取り方（手順 3a）を足した（BIZ-08-D5 の写しの置き場所）。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | §45.6c（CMD-12-D2）: 一括取込みと EJ の控えの command と、scan に後から足す EJ の数え・Z004 の bytes を proposed で足した。§45.6a・§45.6b は変えていない。Plan Review round 2 の是正で、`Failed` の kind と EJ の kind・mode を生成 enum にし、scan の `ej_unreadable_files` と手で選んだ EJ の保留の判定の置き場を書いた。Plan Review round 3 の是正で、一括取込みと手で選ぶ EJ の取込みの後に無効にする控えの query の key を書いた。Final Review の是正で、(B) の scan が返す `z004_unreadable_files` を書いた。あわせて `z004_unreadable_count` を書いた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
+| 2026-11-02 | xz-bkup-move（起票、D-149） | §45.6a に (b) の lane で足すもの（`app` と `app_data_dir` を BIZ-08 の scan へ渡す、`DailyReportSdScan.tidy_failure`）を proposed で足した。 |

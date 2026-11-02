@@ -591,6 +591,23 @@ pub(crate) fn latest_completed_daily_report_date(conn: &DbConnection) -> Result<
 
 ---
 
+### 14.18d exists_completed_daily_report_source_file_hash（D-149、BIZ-08-D11、proposed・未実装）
+
+**関数要求**: completed の日報取込みの `source_files_json` のどれかに、指定の SHA-256 の `file_hash` の file があるかを返す。SD の `XZ` の Z を `XZ_BKUP` へ移すか（[37](37-biz-daily-report-import-service.md) §37.12 手順 2、BIZ-08-D10 の「各 file の hash」）の専用で、呼び手は `biz::daily_report_import_service` だけ。wire に出さない。§14.18c と同じく `pub(crate)`。
+
+**シグネチャ**:
+```
+pub(crate) fn exists_completed_daily_report_source_file_hash(
+    conn: &DbConnection,
+    file_hash: &str, // 64 桁の小文字の hex（§37.3 手順 5 の file の hash と同じ作り方）
+) -> Result<bool, DbError>
+```
+
+**SQL方針**:
+`SELECT EXISTS (SELECT 1 FROM daily_report_imports AS d, json_each(d.source_files_json) AS f WHERE d.status = 'completed' AND json_extract(f.value, '$.file_hash') = ?)`。`status` の条件は §14.18 と同じで、取り消した（`rolled_back`）取込みの file は数えない。`source_files_json` の各要素の `file_hash` は今の全行にある（§37.4 手順 6。`copy_path` の無い旧い行も `file_hash` は持つ。`src-tauri/src/biz/daily_report_import_service/tests.rs` の `test_req401_commit_records_copy_paths` が確かめる key）。index を足さず、completed の行を全部見る（1 日 1〜2 行の表で、読取りの 1 回に `XZ` の Z の本数だけ呼ぶ。件数と時間は未実測）。
+
+---
+
 ### 14.19 rollback_daily_report_import
 
 **関数要求**: `daily_report_imports` を `rolled_back` に更新する。
@@ -794,3 +811,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-27 | 日報の紙の runtime（起票、D-142） | §14.21 の関数要求と手順 3・5・7 を、支払の行を足さずに返す形に直した（足し方・group の代表・互換の範囲・warning は 34 §19.3 手順 3 の BIZ-05。日報の紙と同じ 1 つの関数。proposed・未実装）。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §14.21 手順 8 を、内部の支払の行（親 ID・行 ID を持ち、BIZ-05 の D2 の入力だけ）、公開する支払の集計（BIZ-05 が足した結果）、Z001 の単純な写像の 3 つに分けて書き直した。手順 6 の DB DTO の命名の例を、無くなる `OfficialDailyPaymentRow` から `OfficialDailyDepartmentRow` に替えた。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
+| 2026-11-02 | xz-bkup-move（起票、D-149） | §14.18d `exists_completed_daily_report_source_file_hash` を proposed で足した（SD の `XZ` の Z を移すかを file の hash で決める。37 §37.12）。 |

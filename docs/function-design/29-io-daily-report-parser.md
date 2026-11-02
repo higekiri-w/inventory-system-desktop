@@ -450,3 +450,57 @@ fn save_pos_source_copy(
 
 - 書けない（容量不足・権限・パス長）ときは `std::io::Error` を返す。BIZ が取込みを止める（BIZ-08-D5）。一時 file が残った場合は次回の書込みで別の一時名を使い、最終の名前の file だけを写しとみなす。
 - 採らなかった案: hash だけの名前で置く（店の人や開発者が日付・系列で探せない。CV17 の写しは名前で探せた）、同じ path を上書きする（前の精算の写しが消える）、scan の時にすべて書く（取り込まない束・形の外れた file まで残り、どれが取込みの原本か分からなくなる）、DB に bytes を入れる（DB と backup が大きくなり、日報の行の正本と原本の証拠が混ざる）。
+
+### 29.9 IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す（D-149、proposed・未実装）
+
+#### 29.9.1 目的と置き場所
+
+`register_sd_move`（module `io::register_sd_move`）は、レジの SD の `XZ\yyyy\mm\` にある 1 本の Z を、CV17 の取込みと同じ形の名前で `XZ_BKUP\yyyy\mm\` へ移す IO 層の関数である。どの file を移すかは BIZ-08（37 §37.12、BIZ-08-D11）が決める。DB を呼ばない。D-111 (1) の (b) で、IO-09-D3 のとおり `io::register_sd` に書込みの API を足さず別の module に置く（`register_sd.rs` の許可の列の検査〈`test_req401_module_uses_only_allowed_fs_api`〉はそのまま効く）。§29.7.1 と同じ理由で本書に置き、`src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` の `29-io-daily-report-parser.md` の行に `io::register_sd_move` を足す（runtime）。
+
+IO-09 から使うもの（crate の中に公開する。読むだけの helper で、IO-09-D3 の許可の列を変えない）: 相対 path の要素の検査と実体の path の root の下の確かめ（§29.7.6 手順 1、IO-09-D5）、thread の error mode の guard（§29.7.4 手順 1）、Z の名前の規則（§29.7.5 手順 4）。置き換えない移動は 71 §71.4.1 の操作（今は `mnt/restore.rs` の `StdRestoreFileOps::publish_no_replace`）を `crate::io` の 1 つの関数 `move_no_replace(source, destination)` へ下ろし、MNT の `publish_no_replace` はそれを呼ぶ（IO から MNT は参照しない向き、§29.7.4 手順 1。操作と flags は変えない。flags の source の検査 test も IO の関数へ向け直す）。
+
+#### 29.9.2 型とシグネチャ
+
+```rust
+fn move_register_sd_file_to_backup(
+    root: &RegisterSdRoot,
+    relative_path: &str,  // IO-09 の RegisterSdEntry.relative_path（`XZ\yyyy\mm\Znnn_dda.CSV`）
+    expected_len: u64,    // BIZ が読んだ bytes の長さ（移した後の確かめ）
+) -> Result<String, RegisterSdMoveError> // 移した先の root からの相対 path（`XZ_BKUP\yyyy\mm\Znnn_dda_nnnn.CSV`）
+
+enum RegisterSdMoveError {
+    InvalidPath,                                            // §29.7.6 手順 1 の検査、または実体の path が root の外（IO-09-D5）
+    NameRule,                                               // `XZ\yyyy\mm\` の連番の無い Z の名前でない
+    NoFreeSequence,                                         // 0001〜9999 がすべて使われている
+    Io { relative_path: String, kind: std::io::ErrorKind }, // 作る・移す・確かめる途中の失敗（書込み禁止・抜いた・同時に同じ名前ができた〈AlreadyExists〉を含む）
+    Verify { relative_path: String },                       // 移動は成功と返ったが、移した先の size が違うか元の名前が残る
+}
+```
+
+#### 29.9.3 処理ステップ
+
+1. guard を作る（§29.7.4 手順 1）。`relative_path` を §29.7.6 手順 1 で検査し、要素が `XZ`（大文字小文字を区別しない）・4 桁の年・2 桁の月・Z の名前の 4 つで、名前が §29.7.5 手順 4 の Z の規則に連番なしで当たらなければ `NameRule`。EJ・`Unknown`・`XZ_BKUP` の file は移さない（EJ は (A) の後に足す。D-149 (2)）。
+2. 元の file の実体の path を解き、root の下で通常の file であることを確かめる（IO-09-D5。外なら `InvalidPath`、解けなければ `Io`）。
+3. 移す先の folder `XZ_BKUP\yyyy\mm` を root の下に用意する: 各段（`XZ_BKUP`・年・月）を、在れば実体の path を解いて root の下の directory であることを確かめ（外なら `InvalidPath`、directory でなければ `Io`〈`kind` は `InvalidInput`〉）、無ければ `std::fs::create_dir` で作ってから同じく確かめる。既存の段の名前の大文字小文字はそのまま使う（`xz_bkup` があればそれを使う）。
+4. 名前を決める: 元の名前の拡張子の前に `_` と 4 桁の連番を足す（`Z001_06 .CSV` → `Z001_06 _0001.CSV`。接尾字の空白も残す）。連番は 0001 から順に、移す先の folder に同じ名前（大文字小文字を区別しない）の entry が無い最小の値。9999 まで無ければ `NoFreeSequence`。CV17 の連番の振り方には合わせない（repo の資料に無い。名前が §29.7.5 の `XZ_BKUP` の Z の規則に当たり、同じ folder で一意であれば足りる。D-149 の Guarantee range）。
+5. `move_no_replace(元, 先)`（71 §71.4.1。Windows は `MoveFileExW(元, 先, MOVEFILE_WRITE_THROUGH)`、同じ volume の中なので bytes を写さない改名。置き換えの flag を付けないので、手順 4 の後に同じ名前ができていれば `AlreadyExists` で失敗し、既存の file を変えない）。失敗は `Io`。
+6. 確かめる: 先の `metadata` が通常の file で `len() == expected_len`、元の path の `try_exists` が `false`。違えば `Verify`、読めなければ `Io`。
+7. 先の相対 path を返す。
+
+**IO-11-D1（CV17 と同じ形で、置き換えずに移す）**: 移した後の名前と置き場所は CV17 の取込みの後と同じ形（SD-02）にする。IO-09 の分類（§29.7.5 手順 4）と BIZ-08 の scan（§37.9）は、移した file を CV17 が移した file と同じに読む。37 §37.11 手順 2 の伸びうるかの判定（連番の有無）も同じ形に依る。既存の file は置き換えない（CV17 か前の片付けが置いた file を消さない）。bytes を書かず改名だけにする（途中で抜いても bytes の欠けた file を作らない。FAT の改名が途中で止まる危険は CV17 の取込みと同じ種類で、`MOVEFILE_WRITE_THROUGH` で書き切る）。
+
+**IO-11-D2（移すのは 1 本ずつ、確かめてから次へ）**: 1 回の呼出しは 1 本だけを移し、移した後に手順 6 で確かめる。続けるかは BIZ が決める（BIZ-08-D11 は失敗で残りを止める）。
+
+**IO-11-D3（使う file system の API）**: `register_sd_move.rs` が使う file system の API は、IO-09-D3 の許可の列に、`std::fs::create_dir` と `Path::try_exists` と `crate::io::move_no_replace` を足したものだけにする。消す（`remove_*`）・写す（`fs::copy`・`File::create`・`OpenOptions`・`std::io::Write`）・置き換える（`std::fs::rename`）・属性と時刻を変える API は使わない。runtime が `register_sd.rs` と同じ形の source の検査 test で確かめる（`move_no_replace` の本体〈Windows 以外の test だけの `hard_link` と `remove_file`〉は `crate::io` の側にあり、この module の検査の外。flags の検査は 71 §71.4.1 の test が持つ）。
+
+#### 29.9.4 採らなかった案
+
+| 案 | 採らない理由 |
+|---|---|
+| `std::fs::rename` | Windows で既存の同じ名前を置き換える（71 §71.4.1） |
+| 写してから元を消す | SD に bytes を書き、途中で抜くと欠けた file ができうる。消す API を SD に向ける |
+| 確かめてから rename する（存在の確認と移動を分ける） | 間に同じ名前ができると置き換える。1 つの呼出しで失敗させる |
+| CV17 の連番に合わせる | 振り方が repo の資料に無い。合わせても同時に使う期間の衝突は無くならず、置き換えない移動が守る |
+| `io::register_sd` に足す | IO-09-D3（読むだけの module の許可の列）を崩す |
+| MNT の `publish_no_replace` を IO から呼ぶ | IO から MNT を参照しない（§29.7.4 手順 1） |
+| 同じ操作を IO に別に書く | 置き換えない移動の flags を 2 か所で持つ（D-147 の根本で 1 か所） |
