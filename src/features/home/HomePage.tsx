@@ -11,8 +11,10 @@ import { PageHeader } from "@/components/patterns/PageHeader";
 import { PageShell } from "@/components/patterns/PageShell";
 import { scrollPageToTop } from "@/lib/page-scroll";
 import { consumeRestoreSuccessPending } from "@/lib/restore-success-notification";
+import { useOffsiteBackupStatus } from "@/features/backup-restore/useOffsiteBackupStatus";
 import { InventoryActionGrid } from "./components/InventoryActionGrid";
 import { MiscActionRow } from "./components/MiscActionRow";
+import { OffsiteBackupWarning } from "./components/OffsiteBackupWarning";
 import { PluNotificationBar } from "./components/PluNotificationBar";
 import { QuickActionGrid } from "./components/QuickActionGrid";
 import { SummaryCards } from "./components/SummaryCards";
@@ -27,6 +29,8 @@ const todayFormatter = new Intl.DateTimeFormat("ja-JP", {
 
 export function HomePage() {
   const summary = useHomeSummary();
+  // UI-00-D12: useHomeSummary の 4 query とは別の独立 query（バックアップ画面と同じ key）
+  const offsiteStatus = useOffsiteBackupStatus();
   const today = todayFormatter.format(new Date());
   const [showRestoreSuccessAlert, setShowRestoreSuccessAlert] = useState(false);
 
@@ -57,6 +61,13 @@ export function HomePage() {
     }
   }, [summary.csvImports.isError]);
 
+  // 53-ui-home.md §53.5 部分障害許容: PC の外の控えの status の失敗は知らせ非表示 + Sonner トースト
+  useEffect(() => {
+    if (offsiteStatus.isError) {
+      toast.error("PC の外の控えの状態を取得できませんでした", { id: "offsite-status-error" });
+    }
+  }, [offsiteStatus.isError]);
+
   // a11y: HTML5 main landmark は 1 ページ 1 つ。RootLayout の <main> 内側のため <div> を採用
   return (
     <PageShell>
@@ -82,6 +93,8 @@ export function HomePage() {
           </AlertDescription>
         </Alert>
       )}
+
+      <OffsiteBackupWarning status={offsiteStatus.isError ? undefined : offsiteStatus.data} />
 
       <SummaryCards summary={summary} />
 
