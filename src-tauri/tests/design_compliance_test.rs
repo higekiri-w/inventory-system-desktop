@@ -88,7 +88,7 @@ const KNOWN_ALLOWLIST: &[(&str, &str)] = &[
     ("db::stocktake_repo", "find_last_completed_stocktake"),
     // DB移行ヘルパー: PR #25 レビュー指摘対応。旧相対パスからapp_data_dir配下への移行
     ("db", "migrate_legacy_db"),
-    // dev tooling (Phase 1 Task 7-9): src/bin/seed_demo_data.rs から呼ぶデモデータ seed。
+    // dev tooling (Phase 1 Task 7-9): dev-tools/src/bin/seed_demo_data.rs（D-137）から呼ぶデモデータ seed。
     // 本番コードパスではないため設計書には記載しない
     ("seed_demo", "run_seed"),
     ("seed_demo", "delete_all"),
