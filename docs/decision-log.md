@@ -1292,3 +1292,19 @@ Use concise ADR-style entries.
 - Guarantee range: Codex の Writer は AGENTS.md の 1 項目と発注で受け、Claude の Writer より弱い。main は AGENTS.md と global の `~/.claude/CLAUDE.md` の行だけで受ける。project の `false` が user global の `true` に勝つことは merge の後の session で観測する（packet の AC8）。効き目の同等性は測らない。
 - owner の決定（repo 外の回答台帳、要旨）: TD-526〜530（plugin をこの project で切る・強度と効果は保つ・AGENTS.md の 1 行は手続きの lane に束ねる・置き換えと切る操作を同じ merge に入れ、#222 に束ねて切る）。
 - Revisit: 切った後の数本の lane の Final で作り込みすぎの指摘を見る。比べる基準として、切る前の lane（#220 など）の差分を同じ観点で数えておく。
+
+## D-148: 返品・交換の在庫の反映は、レジで商品を読んで戻したかを既定なしで問い、レジの資料（Z004）が在庫を戻せない商品の行はこの保存で必ず動かす（2026-11-02）
+
+- Status: proposed（導入の前の関門 10、repo 外の回答台帳 TD-570。lane「返品・交換の `register_processed` の既定」〈Plan Packet `docs/plans/2026-11-02-return-register-processed.md`〉で起票した。owner の判断事項 Q1〜Q4 は推奨を既定にした）
+- Context: [63](function-design/63-ui-return-exchange.md) UI-03-D8 は `register_processed` を既定 true（レジ戻し済み。在庫は動かさず CSV 取込みに任せる）にし、[31](function-design/31-biz-inventory-service.md) §12.4 は true の記録の明細で在庫を一切動かさない。理由「通常の返金/戻しはレジ操作に載り Z004 取込みで反映される」は、レジで PLU（バーコード）を読んで戻し、かつ Z004 の取込みがその商品の在庫を動かす（`src-tauri/src/biz/csv_import_service/commit.rs` の `recheck_matches`: JAN が 1 商品だけに当たり `pos_stock_sync` が true）場合にだけ成り立つ。成り立たない組は、既定のまま保存すると在庫が黙って動かない: (1) 差額だけを戻しで打つ交換（品の出入りが Z004 に出ない。backlog の項目、TD-225）、(2) 部門キーで打った返品（Z004 に出ない。今の店は PLU をレジに書いておらず全部の商品を部門キーで売る〈project-memory の PLU-24〉ので、今はほぼ全部の返品が当たる）、(3) Z004 の取込みが在庫を動かさない商品（`pos_stock_sync=false`・共有 JAN・JAN 無し。レジで読んでも `sale_records` だけで在庫は動かない）。
+- Decision:
+  1. 画面の問いを「レジで商品のバーコードを読んで戻したか」にし、既定を置かない（どちらかを選ぶまで保存できない）。wire の `register_processed: bool` と DB の列は変えず、意味を「レジで商品のバーコードを読んで戻した（Z004 に載る）」と読み替える。
+  2. BIZ（`create_return`）は明細ごとに、`!register_processed || !z004_moves_stock(商品)` のとき在庫を動かす。`z004_moves_stock` は Z004 の取込みの確定と同じ判定（JAN があり、その JAN の商品が 1 つだけで、その商品の `pos_stock_sync` が true）を 1 か所の BIZ の関数に置き、`commit.rs` の `recheck_matches` も同じ関数を通す。
+  3. 結果（`ReturnCreateResult`）に、この保存で在庫を動かした商品コードの列 `stock_applied_product_codes` を足す。冪等の再送では、記録の movement（`return_repo` の詳細の取得と同じ読取り）から同じ列を作る。画面は保存結果の商品の行ごとに「この保存で反映」「取込みで反映」を出す。
+  4. 保存の後の invalidation（D-052 の C5）の条件を `register_processed` から「`stock_applied_product_codes` が空でない」に変える。
+- Why: どちらの既定も片方の向きで黙って誤る（true は上の (1)〜(3) で戻らない、false は PLU を書いた後にレジで読んだ戻しを Z004 と二重に戻す）。operator が覚えているのは「レジでバーコードを読んだか」で、Z004 や在庫連動の設定は覚えていない。(3) は商品の設定から BIZ が決められるので、operator に問わず BIZ が決める（AGENTS の「使い手に押しつけない」）。どの行が動いたかを保存の画面で名指す（「問題は黙って通さず」）。
+- Alternatives: 既定を false にするだけ（PLU を書いた後に二重計上が黙って起きる。(3) で読んだ戻しは残る）; 既定 true のまま知らせだけ足す（(1)(2) は直らない）; 明細ごとに問う（交換の片方だけをレジで読む組まで表せるが、毎行の操作が増える。owner の判断事項 Q4）; (3) の行がある記録の保存を止めて選び直させる（直し方が無い。選び直しても (3) の行は Z004 で戻らない）; 列の名前を変える migration（意味の読み替えで足り、導入の前でも作り直しの手間に見合わない）。
+- Compatibility: 31 §12.4 の「register_processed == true → 在庫は動かさない」と 63 UI-03-D8・D17、44 の create_return、21・`docs/db-design/transaction-tables.md` の `register_processed` の説明、`docs/architecture/biz-task-specs.md` の BIZ-02 の分岐、65 の返品の movement と取消の行、SCREEN_DESIGN の UI-03 の項を、実装の PR で D-148 に合わせる。D-052 は merge 済みなので本文を書き換えず、D-148 が accepted になったら `- Superseded in part by: D-148（C5 の条件）` の行を足す。DB の `register_processed` の `DEFAULT 1` は BIZ が常に値を書くので変えない。導入の前なので、旧い意味で保存した開発・試験 DB の記録は移さない。
+- Guarantee range: 返品・交換の保存と Z004 の確定の間に商品の `pos_stock_sync` や JAN を変えると、保存の時の判定と Z004 の判定が食い違い、二重か欠けが起きうる（次の計数で直る。D-118 の受け入れた穴と同じ形）。交換で片方だけをレジで読んだ組は記録ごとの 1 問では表せない（Q4 の推奨のまま。店の答えで明細ごとへ広げる）。operator が「読んだ」を誤って選べば在庫連動の商品は Z004 に任され、戻らない（結果の行の「取込みで反映」で気づける。記録の取消は 63 の非対象のまま）。
+- owner の決定（repo 外の回答台帳、要旨）: TD-570（関門 10 に足す）、TD-377〜TD-379 の (iii)（b1 の外の小さな lane）、TD-225（差額だけの戻しの交換の申し送り）。
+- Revisit: PLU をレジへ書く時期（Plans の candidate）が決まったとき、店の交換の打ち方の答えが明細ごとの問いを要するとき。

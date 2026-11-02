@@ -28,7 +28,7 @@
 | REQ-202 / image retry | UI-03-D5 | `saveReceiptImage` 成功後に `createReturn` が失敗した場合、UI は保存済み `relative_path` を保持し、同じ画像の同内容 retry では再保存しない。画像・備考だけを変更して再送する場合も新しい `idempotency_key` を採番する。 | BIZ fingerprint は `receipt_image_path` / `note` を除外する。同じ key のまま画像や備考だけ変えても、既存レコードへ反映されたと誤認するため。ファイルと DB は単一 TX にできないので、失敗後 retry で orphan を増やさない設計にする。 |
 | REQ-202 / return type | UI-03-D6 | 種別は `"return"`（返品）と `"exchange"`（交換）を radio / segmented control で選ぶ。`"return"` では明細 direction は `"in"` のみ許可し、`"exchange"` では `"in"`（戻り）と `"out"`（渡し）を行ごとに選べる。この不変条件は UI の事前 validation と BIZ-02 の最終 validation の両方で守る。 | 返品と交換は同じ CMD/BIZ 契約だが、operator の確認観点が違う。返品で渡し行を許すと業務意味が崩れるため、generated command 経由の呼び出しでも BIZ が拒否する。 |
 | REQ-202 / exchange rows | UI-03-D7 | 交換として保存する場合は、少なくとも戻り行 1 件と渡し行 1 件を要求する。返品として保存する場合は戻り行 1 件以上を要求する。この不変条件は UI の事前 validation と BIZ-02 の最終 validation の両方で守る。 | 交換は「戻った商品」と「渡した商品」の対で記録する業務。戻りだけなら返品として記録する方が帳面上明確なので、BIZ でも片側だけの exchange を拒否する。 |
-| REQ-202 / register processed | UI-03-D8 | `register_processed` は既定 true（レジ戻し済み）にする。true の場合は在庫はこの画面で動かないこと、false の場合はこの画面で在庫が増減することを、日本語説明 + Badge で表示する。 | 通常の返金/戻しはレジ操作に載り、Z004 取込みで反映される。二重計上を避けるため、在庫反映有無を色だけでなく文言で明示する。 |
+| REQ-202 / register processed | UI-03-D8 | `register_processed` は既定 true（レジ戻し済み）にする。true の場合は在庫はこの画面で動かないこと、false の場合はこの画面で在庫が増減することを、日本語説明 + Badge で表示する。 | 通常の返金/戻しはレジ操作に載り、Z004 取込みで反映される。二重計上を避けるため、在庫反映有無を色だけでなく文言で明示する。UI-03-D23 で置き換える（D-148、proposed・未実装。今の build はこの行のまま）。 |
 | REQ-202 / product add | UI-03-D9 | 商品追加欄は商品コード / JAN / 商品名を同じ入力で扱い、Enter で `commands.searchProducts` を実行する。1件なら明細へ追加、複数件なら候補リストから選ぶ、0件なら商品登録への導線を出す。 | UI-02 / UI-04 と同じ scan-like flow にして学習コストを下げる。未登録商品作成は `/products/new` へ逃がし、返品画面内で master mutation をしない。 |
 | REQ-202 / scanner | UI-03-D10 | バーコードスキャナは HID キーボードとして商品追加欄へ入力される前提にする。初回実装はグローバルスキャン検知を置かず、フォーカス中の入力欄 + Enter で追加し、追加後は商品追加欄へフォーカスを戻す。 | UI-02 / UI-04 と同じ方針。グローバル検知は全画面 UX への影響が大きく別 Design Phase。 |
 | REQ-202 / rows | UI-03-D11 | 明細の一意性は `product_code + direction` とし、同じ組み合わせを再追加した場合は数量を +1 する。交換では同じ商品を戻り/渡しの両方に持つことを許す。 | 色違い交換や同一商品交換の記録では direction が意味を持つ。product_code だけで統合すると戻りと渡しを相殺してしまう。 |
@@ -37,11 +37,12 @@
 | REQ-202 / submit | UI-03-D14 | 画像保存中と返品保存中はヘッダ、明細、商品追加、画像選択、戻る/リセット導線を disabled にし、中断可能に見せない。 | backend DB は単一 TX だが画像保存は別操作。UI だけで cancel 可能に見せると、画像保存済み / DB未保存の状態を誤認させる。 |
 | REQ-202 / result | UI-03-D15 | 保存成功後は record_id、登録明細数、レジ戻し済みか、画像添付有無、stock_warnings、`idempotent_replay` の有無と、保存した商品の一覧（商品コード・商品名と、行ごとの「在庫を見る」。[61](61-ui-receiving.md) UI-02-D10 と同じ形で、`/products?q=<商品コード>&selected=<商品コード>` を開く）を表示し、「続けて返品・交換」を出す（D-138、proposed・未実装。今の build は「在庫照会へ戻る」で `/stock` を引数なしで開く）。画面の上の戻る導線は「商品と在庫へ」（D-138）。 | 返品・交換は売上帳票ではなく在庫と帳面記録の確認が主目的。レジ戻し済みかどうかを保存後にも読めるようにする。 |
 | REQ-202 / list | UI-03-D16 | 画面下部に最近の返品・交換記録を `listReturns(1, 10, null, null)` で表示する。詳細表示・編集・取消・画像再表示は初回実装では扱わない。 | CMD-03 の一覧契約を UI から疎通確認でき、直近記録の保存結果も確認しやすい。詳細/取消は在庫・画像ファイル扱いが絡むため別設計にする。 |
-| REQ-202 / cache | UI-03-D17 | 保存成功時の invalidation は [D-052](../decision-log.md) C5 と `src/lib/invalidation-contract.ts` を正本とし、`register_processed=true` では在庫系 consumer を対象外にする。 | レジ戻し済みの返品は在庫を書かないため、条件分岐も含めて mutation 契約で固定する。 |
+| REQ-202 / cache | UI-03-D17 | 保存成功時の invalidation は [D-052](../decision-log.md) C5 と `src/lib/invalidation-contract.ts` を正本とし、`register_processed=true` では在庫系 consumer を対象外にする。 | レジ戻し済みの返品は在庫を書かないため、条件分岐も含めて mutation 契約で固定する。条件は UI-03-D23 で「結果の `stock_applied_product_codes` が空でない」に変える（D-148、proposed・未実装）。 |
 | REQ-202 / UI-03 | UI-03-D18 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、種別切替、レジ戻し済みフラグの意味、商品検索/スキャン相当 Enter 追加、同一商品+direction 数量加算、validation、画像選択/プレビュー、保存結果、recent list、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、レジ戻し済みの二重計上防止説明、連続入力、画像選択、フォーカス戻しは CI だけでは判断しづらい。 |
 | REQ-202 / note visibility | UI-03-D19 | 備考は返品・交換の確認優先度が高い項目として、入力時は複数行欄にし、保存結果・recent list・詳細画面では「備考」と分かる独立ラベル付き領域で表示する。本文は `text-foreground` 以上の濃さで、入力なしの場合は「—」を muted 表示する。 | Windows native L3 で、備考が項目立てされず薄い文字で内容を判別しづらいことを確認した。返品理由、交換理由、顧客対応メモは後日の問い合わせ・月末確認で読むため、添付画像や補助説明に埋もれさせない。 |
 | REQ-202 / product add suggest | UI-03-D21 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-03-D9）とフォーカス戻し（UI-03-D10）は不変。lock source は既存 `isFormLocked` 派生 state、候補確定は既存の複数件候補テーブル選択と同一 handler（現在の種別 / 方向ルールへの反映も既存経路のまま）。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
 | REQ-202 / REQ-206 / return | UI-03-D22 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/return` URL を `returnTo` として返品・交換詳細へ送る（DSR-18）。 | 詳細確認後に返品・交換作業画面へ戻れるようにする。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では返品・交換画面の producer だけを固定する。 |
+| REQ-202 / register processed | UI-03-D23 | （D-148、proposed・未実装。UI-03-D8 と D17 の条件を置き換える）レジ戻しの欄は見出し `レジでの戻し方` で、選択肢は `レジでバーコードを読んで戻した`（Badge `取込みで反映`）と `バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）`（Badge `この保存で反映`）。既定を置かず、どちらも選ばれていない form は保存の前の validation で欄の近くに `レジでの戻し方を選んでください` を出して止める（UI-03-D12 と同じ扱い。ページ先頭へはスクロールしない）。前者の説明文は「在庫連動の商品は、売上データ（Z004）の取込みで在庫に戻ります。レジの資料に載らない商品（POS販売で在庫を減らさない・JAN が無い・JAN が同じ商品がある）は、この保存で在庫を動かします。」、後者は「この保存で全部の商品の在庫を動かします。」。どの明細で在庫を動かすかは BIZ が決め（31 §12.4、D-148）、保存結果の商品の行ごとに、結果の `stock_applied_product_codes` に入っていれば `この保存で反映`、無ければ `取込みで反映` を文言で出す（冪等の再送の結果も同じ）。記録の値の表示（保存結果・最近の一覧・詳細）は true を `バーコードで戻した`、false を `バーコードなし` にする。保存の後の invalidation は在庫系 consumer を `stock_applied_product_codes` が空でないときに含める（D-052 C5 の条件の置き換え。集合は `src/lib/invalidation-contract.ts`）。 | 既定 true は差額だけの戻しの交換・部門キーで打った返品・Z004 が在庫を動かさない商品で在庫を黙って動かさず、既定 false は PLU を書いた後にレジで読んだ戻しを二重に戻す。operator が覚えている事実（レジで読んだか）を必ず問い、商品の設定で決まる所は BIZ が決めて保存の画面で名指す。明細ごとに問う案・既定 false だけの案・知らせだけの案は D-148 の Alternatives。 |
 
 ## 63.2 Component / Route 構成
 
@@ -185,11 +186,13 @@ UI-03 実装 PR では以下を generated binding に出す。
 - UI-03-D18: Windows native L3 で連続入力、フォーカス戻し、日本語表示、レジ戻し済み説明、画像選択/プレビュー、保存結果を確認する。
 - UI-03-D19: 備考が入力、保存結果、recent list、返品・交換詳細で独立ラベル付き・通常本文色で読める。入力なしの場合は `—` と表示する。
 - UI-03-D22: 保存結果と recent list の「詳細を見る」が、現在の返品・交換画面 URL を `returnTo` として送る。
+- UI-03-D23（D-148、proposed・未実装）: レジでの戻し方を選ぶまで保存できず、command を呼ばない。保存結果の行ごとの在庫の反映が `stock_applied_product_codes` どおりに読め、在庫系 consumer の invalidation がその列の空・非空に従う。
 
 ## 63.10 変更履歴
 
 | 日付 | 版 | 内容 |
 |---|---|---|
+| 2026-11-02 | 返品・交換の `register_processed` の既定の lane（起票、D-148） | UI-03-D23（proposed・未実装）を足し、D8 と D17 の行に置き換えの注記を足した。§63.3〜§63.6 の本文は実装の PR で D23 に合わせる。 |
 | 2026-09-09 | PR #46 | ⑮ S5 備考「—」への同期。 |
 | 2026-08-30 | PR #20 / DSR-18 | UI-03-D22 を追加し、保存結果 / recent list の詳細導線に返品・交換画面への `returnTo` 送信契約を設定。 |
 | 2026-08-05 | product add suggest design | UI-03-D21 新設: 商品追加欄の live 候補プレビュー（正本 = catalog ⑮ SPEC-SUGGEST-D1〜D10）。Enter commit 経路・フォーカス戻しは不変。 |

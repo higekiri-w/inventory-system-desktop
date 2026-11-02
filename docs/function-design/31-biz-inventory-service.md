@@ -200,6 +200,12 @@ fn create_return(conn: &mut DbConnection, req: ReturnCreateRequest) -> Result<Re
 - register_processed=1: レジで「戻し」操作済み。次回CSV精算データに反映される。BIZ-02で在庫を動かすと二重計上
 - register_processed=0: レジ未処理。CSVに反映されないためここで在庫を動かす
 
+**置き換え（D-148、proposed・未実装。今の build は上の手順 6 のまま）**: `register_processed` の意味を「レジで商品のバーコードを読んで戻した（Z004 に載る）」と読み替え、手順 6 を明細ごとの判定にする。
+- 明細の在庫を動かすのは `!req.register_processed || !z004_moves_stock(conn, 商品)` のとき（動かし方は今の手順 6 の false の枝と同じ）。
+- `z004_moves_stock` は「Z004 の取込みの確定がこの商品の在庫を動かすか」= 商品に JAN があり、`product_repo::find_by_jan_code` がその JAN で 1 商品だけを返し、その商品の `pos_stock_sync` が true。Z004 の確定の照合（[32](32-biz-csv-import-service.md) の冒頭の「確定の TX は … 連動の設定を取り直し」と共有 JAN の項。code は `src-tauri/src/biz/csv_import_service/commit.rs` の `recheck_matches`）と同じ判定で、BIZ の 1 つの関数に置いて両方が通る。判定は TX の中で、明細の在庫の書込みの直前に行う。
+- `ReturnCreateResult` に `stock_applied_product_codes: Vec<String>`（この保存で在庫を動かした商品コード。昇順・重複なし）を足す。冪等の再送（`idempotent_replay`）では、既存の記録の movement（`reference_type = return_record`、`reference_id = record_id`）の商品コードから同じ列を作る（`return_repo::get_return_record_detail` の movement の読取りと同じ）。
+- 理由・棄却案・受け入れた穴は D-148。保存と Z004 の確定の間に `pos_stock_sync`・JAN を変えたときの食い違いは受け入れた穴（次の計数で直る）。
+
 **設計判断 — return_type と direction の業務不変条件**:
 - 返品（return）は商品が戻る記録なので、明細 direction は "in" のみ許可する。"out" を含む返品は帳面上の意味が崩れるため BIZ-02 で拒否する
 - 交換（exchange）は「戻った商品」と「渡した商品」の対を記録するため、"in" と "out" の両方を少なくとも1件ずつ要求する。片側だけなら返品または別の出庫種別として扱う
