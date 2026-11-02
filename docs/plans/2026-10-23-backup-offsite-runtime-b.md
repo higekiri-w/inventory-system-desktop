@@ -47,7 +47,7 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 
 ## Workflow State
 
-- Phase: plan-draft
+- Phase: plan-approved
 - Risk: R4
 - Plan Commit: 5fce1113d9a0c53e1572dc64135f6e0b19900265
 - Amendments: none
@@ -70,6 +70,8 @@ wave に属さない単独の lane。D-114（design lane = PR #155、[packet](..
 6. plan-draft 継続（2026-11-02、Writer）: main `9f43f108`（PR #190 の (a) を含む）を単段で取り込み、43・68・71・53、共有の file 操作・CMD helper・停止と待ち・L3 の観察に Scope・AC・Matrix を合わせた。`Plan Commit: pending` を維持し、計画の承認と実装は行っていない。
 
 7. plan-draft 継続（2026-11-02、Writer）: [計画の review round 1 の裁定](https://github.com/kosei-w90607/inventory-system-desktop/pull/194#issuecomment-6575382611)の受理した 8 行を是正した。計画の承認・実装は行わず、closure は独立 reviewer へ渡す。
+
+8. plan-draft → plan-approved（2026-11-02、Coordinator）: 計画の review の closure（発注 735、Codex Astra・Opus）が 2 本とも approve（P1/P2 0、[報告と裁定](https://github.com/kosei-w90607/inventory-system-desktop/pull/194#issuecomment-6575846144)）。`scripts/plan-approve.sh` で Plan Commit を `5fce1113` に固定した。closure の Opus P3-a（用意などの実行中に控えを選べる逆の順）・P3-b（`Mutex<()>` の poison）は、計画の節を変えずに設計正本と Matrix で実装の発注に入れる。
 
 ## Owner Effort Budget
 
