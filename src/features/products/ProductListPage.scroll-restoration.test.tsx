@@ -19,7 +19,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppRouter } from "@/lib/app-router";
@@ -213,6 +213,9 @@ describe("GA1d: 商品一覧 scroll restoration（Gated Amendment 1、data grid 
 
   afterEach(() => {
     stub.restore();
+    // 先に React の tree を外す（RootLayout が body の直下へ portal で描く日報の印刷の案内を
+    // React の外から消すと、後の unmount が removeChild で落ちる）
+    cleanup();
     document.body.replaceChildren();
   });
 
@@ -421,6 +424,9 @@ describe("GA3b-6: main（縦）と箱（横）が独立に、かつ同時に復�
 
   afterEach(() => {
     stub.restore();
+    // 先に React の tree を外す（RootLayout が body の直下へ portal で描く日報の印刷の案内を
+    // React の外から消すと、後の unmount が removeChild で落ちる）
+    cleanup();
     document.body.replaceChildren();
   });
 

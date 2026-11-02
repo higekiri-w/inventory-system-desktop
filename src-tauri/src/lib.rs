@@ -255,7 +255,7 @@ fn show_pre_window_fatal(message: &str) {
 /// - CMD-07: parse_and_validate_csv / commit_csv_import / rollback_csv_import / list_csv_imports
 /// - CMD-12: parse_and_validate_daily_report / commit_daily_report_import / rollback_daily_report_import / list_daily_report_imports
 /// - CMD-08: prepare_plu_export / confirm_plu_export_saved / list_plu_dirty
-/// - CMD-09: get_daily_sales / get_monthly_sales / export_sales_csv
+/// - CMD-09: get_daily_sales / get_daily_report_sheet / get_monthly_sales / export_sales_csv
 /// - CMD-10: get_active_stocktake / start_stocktake / get_stocktake_items / find_stocktake_item / get_last_completed_stocktake / get_stocktake_record / save_stock_count / preview_stock_count_placement / zero_uncounted_items / list_recheck_products / complete_stocktake
 /// - CMD-11: get_settings / update_setting / list_logs / create_backup / check_auto_backup / list_backups / restore_backup / save_receipt_image
 ///
@@ -338,6 +338,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::plu_export_cmd::list_plu_dirty,
         // CMD-09: 売上集計
         cmd::sales_cmd::get_daily_sales,
+        cmd::sales_cmd::get_daily_report_sheet,
         cmd::sales_cmd::get_monthly_sales,
         cmd::sales_cmd::export_sales_csv,
         // CMD-10: 棚卸し
@@ -1571,6 +1572,7 @@ pub fn run() {
             cmd::plu_export_cmd::list_plu_dirty,
             // CMD-09: 売上集計
             cmd::sales_cmd::get_daily_sales,
+            cmd::sales_cmd::get_daily_report_sheet,
             cmd::sales_cmd::get_monthly_sales,
             cmd::sales_cmd::export_sales_csv,
             // CMD-10: 棚卸し

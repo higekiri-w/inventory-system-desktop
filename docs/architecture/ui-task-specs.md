@@ -302,7 +302,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - URL state: `?date=YYYY-MM-DD&dept=N&sortBy=...&sortDir=...`（TanStack Router validateSearch + zod 4 直接渡し、不正値は `.optional().catch(undefined)` で undefined fallback）
 - 部門フィルタ Select（単一選択、`items` から派生）+ 列ヘッダ click でソート（5 列: product_code / name / quantity / unit_price / amount、部門列は BIZ-05 順固定）
 - CSV出力ボタン → CMD-09 export_sales_csv（base64 → Blob ダウンロード + `setTimeout(100)` で `revokeObjectURL` + Sonner 成功/失敗トースト id-based dedup）
-- 印刷ボタン: 仕様未定のため Phase 2 では disabled（aria-disabled + Tooltip + cursor-not-allowed）。日次は 2026-10-17 に日報の紙として設計した（proposed・未実装、[56](../function-design/56-ui-daily-sales.md) の UI-09a-D17〜D19、D-120）
+- 印刷ボタン: `日報を印刷`。その日のレジの日報を 1 日 1 枚の紙に印刷する（押したときに読み直す。押せない日はボタンの下に理由とリンク・再試行。[56](../function-design/56-ui-daily-sales.md) の UI-09a-D17〜D19、D-120）
 - TabsHeader: UI-09b PR #66 で `src/components/sales/TabsHeader.tsx` に共通化、router-driven `<Link>` で日次 (`/reports/daily`) / 月次 (`/reports/monthly`) 切替（disabled 状態廃止）
 - 主動線: UI-07 ResultStep「売上レポートを見る」CTA → `navigate({ to: "/reports/daily", search: { date: settlementDate } })`（settlementDate を URL state で渡し、当日 fallback されず取込み済日付のデータを直接表示）、UI-07 commitMutation / rollbackMutation success で `["daily-sales"]` prefix invalidate（UI-09a + UI-00 ホーム両方 refetch）
 

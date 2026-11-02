@@ -208,6 +208,7 @@ fn parse_and_validate_daily_report_with_sd_lookup(
    - **BIZ-08-D1**: 各errorの `source_file` / `filename` / `line_no` / `error_type` / `error_message` を開発者向けdiagnostic WARNへ構造化して記録する。filenameはunknown sourceを含む入力識別用で、diagnostic専用とする。
    - 利用者向けerror messageと `operation_logs.summary` は汎用文言を維持し、raw parse detailをwireまたは `operation_logs.detail_json` へ載せない。
    - **BIZ-08-D2**: ただし `parse_errors` に `settlement_mismatch`（IO-07-D3）が 1 件でもあれば、利用者向けの message と `operation_logs.summary` を次の文にする（他の error が同時にあってもこの文を優先する。選び直せば直る失敗で、汎用文では利用者が同じ 3 ファイルを選び直してしまう）: `別の精算の日報ファイルが混ざっています。ファイル名の「Z001」「Z002」「Z005」より後ろが同じ 3 つを選び直してください。` 文は error_type だけから作り、ファイル名・精算回数・行番号などの raw detail を含めない（BIZ-08-D1 は維持）。日付の不一致だけ（`invalid_date`）の文は変えない（3 本とも精算回数を読める束〈通常の layout A〉では、同じ日に 2 回以上精算した日の混在は精算回数で止まり、別の日の混在も精算回数が違えばこの文になる。読めないファイルの出所は確かめない〈TD-110・TD-111 の受容リスク、IO-07-D3〉）。
+   - **BIZ-08-D2a**（数の上限の越え、[D-142](../decision-log.md)）: `settlement_mismatch` が無く、`parse_errors` に `number_too_large`（[29](29-io-daily-report-parser.md) IO-07-D6）が 1 件でもあれば、利用者向けの message と `operation_logs.summary` を `{列の文}この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。` にする（他の error が同時にあってもこの文を優先する。どの帳票のどの列かを名指さないと、利用者は壊れた file を同じに選び直すか、原因の分からないまま止まる。D-127）。`{列の文}` は `number_too_large` の誤りの `error_message`（IO-07-D6 の `{帳票}の{列}の値が大きすぎます`）に `。` を付けたものを、重複を除き、帳票の Z001 → Z002 → Z005 の順、同じ帳票の中は列の左からの順（Z001 は `個数/件数` → `金額`、Z002 は `件数` → `金額`、Z005 は `個数` → `金額`）につないだもの（例 `Z001の金額列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。`）。IO-07-D6 の文は帳票と列の語だけで作られ、値・file 名・行番号を含まないので、BIZ-08-D1 の「raw parse detail を載せない」を破らない（BIZ は `number_too_large` 以外の `error_message` を利用者へ渡さない）。`operation_logs.detail_json` は今どおり NULL。読み取りだけの段なので、何も書かずに止まる（`daily_report_imports` に行を作らない）。
    - 返却前に `operation_logs.operation_type='daily_report_parse_failed'` を best-effort で記録する。
 4. `report_date` を検証する。
    - IO-07はCV17出力上の `YYYY/M/D` / `YYYY-MM-DD` を `YYYY-MM-DD` へ正規化する。BIZ-08では正規化後の日付がYYYY-MM-DD形式でない、暦日として不正、3 sourceで不一致ならエラー。
@@ -329,6 +330,7 @@ fn list_daily_report_imports(
 | CP932 decode失敗 | ImportError | PCツールから出力した元ファイルを確認する |
 | report_date不一致 | ImportError | 同じ営業日の3ファイルを選ぶ |
 | 精算回数不一致（`settlement_mismatch`） | ImportError（BIZ-08-D2 の文） | ファイル名の「Z001」「Z002」「Z005」より後ろが同じ 3 つを選び直す |
+| 数が上限を越える（`number_too_large`、IO-07-D6、D-142） | ImportError（BIZ-08-D2a の文。帳票と列を名指し、値は出さない） | 壊れていないレジの日報ファイルを選び直す |
 | 同一bundle取込み済み | IdempotencyConflict | 取込み済みのため二重取込みしない |
 | 同じ精算（同じ対象日・同じ精算回数）を別の bytes で取込み済み（BIZ-08-D4） | ImportError（固定の文） | 二重に数えない。取り込み直すなら前の取込みを取り消してから |
 | 手で選んだ file が SD 上かを確かめられない（§37.3 手順 1a (i)） | ImportError（固定の文） | もう一度選ぶ |
@@ -712,3 +714,5 @@ struct EjRecordDetail {
 | 2026-10-23 | sd-direct-read-runtime（Plan Review の closure の是正） | §37.9 手順 3 に、IO-09 の `InvalidPath`（root の下の link が SD の外を指す、29 IO-09-D5）の固定の文。`Io` の文と分けた |
 | 2026-10-23 | sd-direct-read-runtime（main への同期の当て直し） | §37.8 の写しの行を、D-114 で決まった未決 B（backup と PC の外の控えに写しを入れない）に合わせた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §37.4 手順 6 の「今の」の注記と、lane で内部の型に替える旨の注記を、実装の内部の型 `StoredSourceFile` の記述に直した。 |
+| 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正、D-142） | §37.3 手順 3 に BIZ-08-D2a（数の上限の越え〈IO-07-D6 の `number_too_large`〉の利用者向けの文。帳票と列を名指し、値・file 名・行番号を出さない）と §37.7 の行を proposed で足した。 |
+| 2026-10-31 | 日報の紙の runtime（実装、D-142） | BIZ-08-D2a と §37.7 の行の proposed の注記を外した。 |

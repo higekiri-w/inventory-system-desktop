@@ -10,6 +10,8 @@ export const queryKeys = {
   // UI-00 ホーム画面
   dailySalesRoot: () => ["daily-sales"] as const,
   dailySales: (date: string) => ["daily-sales", "detail", { date }] as const,
+  // UI-09a-D17 日報の紙。dailySalesRoot() の prefix の invalidate（取込み・取消）に乗る
+  dailyReportSheet: (date: string) => ["daily-sales", "sheet", { date }] as const,
   lowStock: (includeDiscontinued: boolean) =>
     ["products", "low-stock", { includeDiscontinued }] as const,
   pluDirty: () => ["plu-dirty"] as const,
