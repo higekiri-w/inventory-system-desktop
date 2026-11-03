@@ -11,7 +11,7 @@ owner の決定が固定した受入の観点（TD-578 の O3。原文の写し�
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 1d179b893203ab41ffbba4f11fae9597012f7385
 - Amendments: none
 
 ## Risk
