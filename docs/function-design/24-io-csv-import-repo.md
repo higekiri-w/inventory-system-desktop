@@ -94,6 +94,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - imported_at: String
 - rolled_back_at: Option\<String\>
 - note: Option\<String\>
+- settlement_no: Option\<i64\>（束の精算回数〈IO-07-D5〉、NULL は `None`。[55](55-ui-csv-import.md) UI-07-D19 の実装で足す、proposed・未実装）
 
 **NewDailyReportImport構造体**:
 - report_date: String
@@ -106,7 +107,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - note: Option\<String\>
 - settlement_no: Option\<i64\>（D-111 で足す。束の精算回数〈IO-07-D5〉、`None` は NULL。BIZ-08-D4 の照合に使う）
 
-`DailyReportImport`（上）は IO の行の型。今は BIZ-08 §37.6 の一覧がこれを wire にそのまま返す（`specta::Type`）が、[55](55-ui-csv-import.md) UI-07-D19 の実装（proposed・未実装）の後は BIZ-08 が `DailyReportImportRow`（[37](37-biz-daily-report-import-service.md) §37.2）に写して返し、この型は wire に出さない（§14.20 の signature は変えない）。`DailyReportImport` には `settlement_no` を足さない（行の型の読み方を変えない。`DailyReportImport` を返す既存の SELECT は列を名指しし、`row_to_daily_report_import` はその列の位置で読むので、表に列を足しても読み方は変わらない。2026-10-07 の `src-tauri/src/db/sales_repo.rs` で確認）。精算回数での照合は §14.18a の内部の関数だけが読む。
+`DailyReportImport`（上）は IO の行の型。今は BIZ-08 §37.6 の一覧がこれを wire にそのまま返す（`specta::Type`）が、[55](55-ui-csv-import.md) UI-07-D19 の実装（proposed・未実装）の後は BIZ-08 が `DailyReportImportRow`（[37](37-biz-daily-report-import-service.md) §37.2）に写して返し、この型は wire に出さない（§14.20 の signature は変えない）。同じ実装で `DailyReportImport` に `settlement_no` を足す（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 「日報の取込みの記録」の一覧に精算回数の列を出し、同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を行から見分ける。D-111 の時の「足さない〈list の wire を変えない〉」を置き換えた）。`DailyReportImport` を返す SELECT（§14.16・§14.17・§14.18・§14.20 の 4 つ）は列を名指しし、共有の `row_to_daily_report_import` が列の位置で読むので、4 つとも末尾に `settlement_no` を足し、写しの末尾で読む（1 つだけに足すと他の 3 つの位置がずれる）。精算回数での照合は今どおり §14.18a の内部の関数だけが行い、§14.16〜§14.18 の呼出側は足した field を読まない。
 
 **NewDailyReportSummaryLine / NewDailyReportPaymentLine / NewDailyReportDepartmentLine構造体**:
 - DB_DESIGN.md 12c〜12e のカラムに対応するinsert用構造体。`daily_report_import_id` は親INSERT後にBIZ-08が設定する。

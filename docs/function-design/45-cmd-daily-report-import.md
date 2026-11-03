@@ -127,7 +127,7 @@ fn list_daily_report_imports(
 ) -> Result<PaginatedResult<DailyReportImportRow>, CmdError>
 ```
 
-出力の行は BIZ-08 §37.6 の `DailyReportImportRow`（対象日・取込みID・`source_filenames`・総売上・純売上・状態・取込み日時・取消日時。UI-07-D19 の実装〈proposed・未実装〉の前は IO の行 `DailyReportImport` の別名）で、CMD は写さず素通しにする。呼ぶのは「日報の取込みの記録」（[55](55-ui-csv-import.md) §55.12）。
+出力の行は BIZ-08 §37.6 の `DailyReportImportRow`（対象日・取込みID・`source_filenames`・精算回数〈`settlement_no`、NULL は null〉・総売上・純売上・状態・取込み日時・取消日時。UI-07-D19 の実装〈proposed・未実装〉の前は IO の行 `DailyReportImport` の別名）で、CMD は写さず素通しにする。呼ぶのは「日報の取込みの記録」（[55](55-ui-csv-import.md) §55.12）。
 
 **入力ガード**:
 - page < 1 → `CmdError.kind="validation"`
@@ -266,4 +266,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-07 | sd-direct-read（Plan Review round 1 の是正） | §45.4 の commit に `app: tauri::AppHandle` と `app_data_dir` の取り方（手順 3a）を足した（BIZ-08-D5 の写しの置き場所）。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | §45.6c（CMD-12-D2）: 一括取込みと EJ の控えの command と、scan に後から足す EJ の数え・Z004 の bytes を proposed で足した。§45.6a・§45.6b は変えていない。Plan Review round 2 の是正で、`Failed` の kind と EJ の kind・mode を生成 enum にし、scan の `ej_unreadable_files` と手で選んだ EJ の保留の判定の置き場を書いた。Plan Review round 3 の是正で、一括取込みと手で選ぶ EJ の取込みの後に無効にする控えの query の key を書いた。Final Review の是正で、(B) の scan が返す `z004_unreadable_files` を書いた。あわせて `z004_unreadable_count` を書いた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
-| 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
+| 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`。精算回数を含む、TD-590）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
