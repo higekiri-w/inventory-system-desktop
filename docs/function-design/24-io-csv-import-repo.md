@@ -708,7 +708,27 @@ fn get_monthly_official_department_totals(
 2. `daily_report_department_lines` を department_id / label 単位で集計する。個数は `SUM(quantity_hundredths)`（100 倍の整数のまま。BIZ-05 が単位の数に戻す、IO-07-D2）。`SUM` が `i64` を溢れると SQLite は `integer overflow` の error を返し、既存の `map_err` で `DbError::QueryFailed` になる（黙って誤った値を返さない。BIZ-05 以降の経路は §14.21 手順 7 と同じ）。
 3. 対象日報が0件なら Ok(None)。
 4. 対象日報がある場合は Ok(Some(rows))。行が0件なら空Vecを返す。
-5. 同一日複数親もすべて加算対象とする。将来、取込み済み営業日数を返す場合は親件数ではなく `COUNT(DISTINCT report_date)` を使う。
+5. 同一日複数親もすべて加算対象とする。月の中の取り込んだ日は本関数でなく §14.22a が返す（親の件数でなく distinct report date）。
+
+---
+
+### 14.22a get_monthly_official_report_dates（未実装）
+
+**関数要求**: 指定日付範囲の completed 日報取込みのある日（report date）を、重複なしで昇順に返す（34 §19.4 手順 6、57 UI-09b-D10・D11）。
+
+**シグネチャ**:
+```
+fn get_monthly_official_report_dates(
+    conn: &DbConnection,
+    date_from: &str,
+    date_to: &str,
+) -> Result<Vec<String>, DbError>
+```
+
+**処理ステップ**:
+1. `SELECT DISTINCT report_date FROM daily_report_imports WHERE status = 'completed' AND report_date BETWEEN ?1 AND ?2 ORDER BY report_date ASC`（§14.22 の手順 1 と同じ親の条件。`idx_daily_report_imports_report_date` を使える）。
+2. 対象が 0 件なら `Ok(vec![])`（error にしない）。同じ日の completed の親が 2 つ以上でも 1 つ返す。同じ日に rolled_back と completed の親があれば、その日を返す。
+3. 読取りの失敗は `DbError::QueryFailed`（§14.22 と同じ）。
 
 ---
 
@@ -794,3 +814,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-27 | 日報の紙の runtime（起票、D-142） | §14.21 の関数要求と手順 3・5・7 を、支払の行を足さずに返す形に直した（足し方・group の代表・互換の範囲・warning は 34 §19.3 手順 3 の BIZ-05。日報の紙と同じ 1 つの関数。proposed・未実装）。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §14.21 手順 8 を、内部の支払の行（親 ID・行 ID を持ち、BIZ-05 の D2 の入力だけ）、公開する支払の集計（BIZ-05 が足した結果）、Z001 の単純な写像の 3 つに分けて書き直した。手順 6 の DB DTO の命名の例を、無くなる `OfficialDailyPaymentRow` から `OfficialDailyDepartmentRow` に替えた。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
+| 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を足した（未実装、34 §19.4 手順 6・57 UI-09b-D11）。§14.22 手順 5 の「将来、取込み済み営業日数を返す場合は」を §14.22a を引く文に置き換えた（「営業日数」の語は 57 §57.10 Q-1 と合わないので外した）。 |
