@@ -408,6 +408,7 @@ struct DailyReportSdCandidate {
     path_date: String,                     // folder と名前の日付（YYYY-MM-DD）
     report_date: Option<String>,           // 中身の日付（読めた束だけ）
     source_filenames: Vec<String>,         // 3 本の file 名（Z001→Z002→Z005。そろわない束はある分）
+    settlement_no: Option<i64>,            // 束の精算回数（手順 5 の IO-07 `parse_daily_report_bundle` の値。手順 7・8 が使う値と同じ）。手順 5 まで読めなかった束（`Incomplete`・形・大きさ・parse で外れた `Unreadable`）と精算回数の無い束は None。`SameSettlementImported` は手順 7 で Some のときだけなので必ず Some。55 UI-07-D19 の実装で wire に足す（proposed・未実装。owner の決定 2026-11-03、repo 外の回答台帳 TD-592）
     status: DailyReportSdCandidateStatus,
 }
 
@@ -733,3 +734,4 @@ struct EjRecordDetail {
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正、D-142） | §37.3 手順 3 に BIZ-08-D2a（数の上限の越え〈IO-07-D6 の `number_too_large`〉の利用者向けの文。帳票と列を名指し、値・file 名・行番号を出さない）と §37.7 の行を proposed で足した。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-142） | BIZ-08-D2a と §37.7 の行の proposed の注記を外した。 |
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §37.2 に一覧の行の wire `DailyReportImportRow` を、§37.6 に出力（`source_filenames` の出所、`settlement_no`〈TD-590〉、読めない `source_files_json` は一覧全体の `ImportError`、内部の値を返さない）を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
+| 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §37.9 の `DailyReportSdCandidate` に `settlement_no`（手順 5 の値、TD-592）を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
