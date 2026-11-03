@@ -5,7 +5,7 @@ wave に属さない単独の lane。導入の前の関門 12 の前提 A（owne
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: b5136eb28ba47fda49ba91f5ea15f286b5b64fb5
 - Amendments: none
 
 ## Risk
