@@ -712,7 +712,7 @@ fn get_monthly_official_department_totals(
 
 ---
 
-### 14.22a get_monthly_official_report_dates（未実装）
+### 14.22a get_monthly_official_report_dates
 
 **関数要求**: 指定日付範囲の completed 日報取込みのある日（report date）を、重複なしで昇順に返す（34 §19.4 手順 6、57 UI-09b-D10・D11）。
 
@@ -815,3 +815,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §14.21 手順 8 を、内部の支払の行（親 ID・行 ID を持ち、BIZ-05 の D2 の入力だけ）、公開する支払の集計（BIZ-05 が足した結果）、Z001 の単純な写像の 3 つに分けて書き直した。手順 6 の DB DTO の命名の例を、無くなる `OfficialDailyPaymentRow` から `OfficialDailyDepartmentRow` に替えた。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
 | 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を足した（未実装、34 §19.4 手順 6・57 UI-09b-D11）。§14.22 手順 5 の「将来、取込み済み営業日数を返す場合は」を §14.22a を引く文に置き換えた（「営業日数」の語は 57 §57.10 Q-1 と合わないので外した）。 |
+| 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |

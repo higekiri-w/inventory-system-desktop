@@ -251,16 +251,24 @@ fn test_wire_contract_req401_i_w1_i_w2_i_w3_i_w5_generated_binding_is_atomic() {
 }
 
 #[test]
-fn test_sales_design_req502_future_coverage_counts_distinct_report_dates() {
-    // REQ-502 / I-R8 / SPEC-SDI-D6: 未実装coverage fieldの将来契約だけをsource docsへpinする。
-    for path in [
-        "docs/function-design/24-io-csv-import-repo.md",
-        "docs/function-design/34-biz-sales-service.md",
+fn test_sales_design_req502_report_dates_count_distinct_report_dates() {
+    // REQ-502 / I-R8 / SPEC-SDI-D6 / UI-09b-D10: 月の取り込んだ日は親の件数でなく distinct な
+    // report date で数える契約を source docs へ pin する（将来の coverage の仮定の文は 2026-11-03 に
+    // 24 §14.22a・34 §19.4 手順 6 の今の契約へ置き換わった）。
+    for (path, contract) in [
+        (
+            "docs/function-design/24-io-csv-import-repo.md",
+            "SELECT DISTINCT report_date FROM daily_report_imports WHERE status = 'completed'",
+        ),
+        (
+            "docs/function-design/34-biz-sales-service.md",
+            "parent の件数を使わない（同じ日の複数 completed 親は 1 日）",
+        ),
     ] {
         let source = read_repo_file(path);
         assert!(
-            source.contains("COUNT(DISTINCT report_date)"),
-            "{path} must count future coverage by distinct business dates"
+            source.contains(contract),
+            "{path} must count imported days by distinct business dates"
         );
     }
 }

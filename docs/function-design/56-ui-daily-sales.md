@@ -131,7 +131,7 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 | `src/features/daily-sales/hooks/useDailySalesReport.ts` | 2 useQuery + 派生 5 純関数 orchestration + `derived.departmentOptions` 生成 | 100-140 |
 | `src/features/daily-sales/hooks/useExportDailySalesCsv.ts` | useMutation + Blob ダウンロード + `setTimeout(100)` で `revokeObjectURL` + Sonner id-based dedup（UI-09b PR #66 で `useExportFile` 共通化 + 本 hook は wrapper 化 = 20-30 行に縮退） | 80-110 |
 | `src/features/daily-sales/components/DateNavigator.tsx` | 前日 button + `<input type="date">` + 翌日 button | 60-80 |
-| `src/components/sales/TabsHeader.tsx` | 日次（`/reports/daily`）+ 月次（`/reports/monthly`）切替（router-driven `<Link>` 視覚表現、UI-09b PR #66 で共通化 + daily/monthly 共有）。日次の画面は表示中の日（`search.date`、無ければ今日）の月を prop `month` で渡し、`月次` の link はその月を search `month` で開く（[57](57-ui-monthly-sales.md) UI-09b-D11 の日次から月次への戻り。未実装） | 45-60 |
+| `src/components/sales/TabsHeader.tsx` | 日次（`/reports/daily`）+ 月次（`/reports/monthly`）切替（router-driven `<Link>` 視覚表現、UI-09b PR #66 で共通化 + daily/monthly 共有）。日次の画面は表示中の日（`search.date`、無ければ今日）の月を prop `month` で渡し、`月次` の link はその月を search `month` で開く（[57](57-ui-monthly-sales.md) UI-09b-D11 の日次から月次への戻り） | 45-60 |
 | `src/components/patterns/DepartmentFilter.tsx` | shadcn Select 単一選択、hook 側 `derived.departmentOptions` を pure に描画（PR-B で 3 feature のローカル実装を統合、allLabel 既定「すべての部門」、[59-ui-shared-patterns.md](59-ui-shared-patterns.md)） | 50-70 |
 | `src/features/daily-sales/components/SummaryCardsBar.tsx` | 4 カード（売上合計 / 販売点数 / 売上明細数 + Tooltip / 前日比） | 90-130 |
 | `src/features/daily-sales/components/ProductTable.tsx` | shadcn Table 6 列 + 列ソート（5 列対応）+ 部門小計行 + 手動バッジ + 単価列 null = 「—」placeholder | 140-180 |
@@ -621,3 +621,4 @@ export function makeMockItem(overrides: Partial<DailySaleItem> = {}): DailySaleI
 | 2026-10-31 | 日報の紙の runtime（実装、D-120） | UI-09a-D16〜D18 の proposed の注記を外し、§56.1 のファイル構成に紙の component と hook を足した。§56.7 の Tooltip の行と §56.13 の印刷ボタンの行を実装に合わせた。 |
 | 2026-11-01 | 日報の紙の runtime（Final Review round 1 の是正） | UI-09a-D18 に、`日報を印刷` を押さずに印刷したときの案内の 1 行と、紙を描く間は出さないことを足した（D-127）。§56.1 のファイル構成に案内の component を足した。 |
 | 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B。計画の review round 1 の是正） | §56.1 の `TabsHeader` の行に、日次が表示中の日の月を `月次` の link へ渡すこと（57 UI-09b-D11、未実装）を足した。`useTodayDate` の `src/lib/dates/` 移送の非目的の行を、使い手 2 つでは移さず 3 つめで移す、に置き換えた（[packet](../plans/2026-11-03-monthly-imported-days.md)）。closure round 2 の是正で、§56.5 の `useTodayDate` の段の共通化の条件を同じ判断に置き換え、§56.1・§56.5 の「daily-sales 内閉鎖」を月次売上も読む形に直した。 |
+| 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | §56.1 の `TabsHeader` の行の日次から月次への戻り（57 UI-09b-D11）を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |

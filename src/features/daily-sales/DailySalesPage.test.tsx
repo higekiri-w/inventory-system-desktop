@@ -1,6 +1,6 @@
 // src/features/daily-sales/DailySalesPage.test.tsx
 
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,9 +14,13 @@ import type {
 } from "@/lib/bindings";
 
 import { DailySalesPage } from "./DailySalesPage";
+import type { DailySalesSearch } from "./DailySalesPage";
 
+// 受け取った month を文字で出す（57 UI-09b-D11 の日次から月次への戻り。D1〜D3）
 vi.mock("@/components/sales/TabsHeader", () => ({
-  TabsHeader: () => null,
+  TabsHeader: ({ month }: { month?: string }) => (
+    <span data-testid="tabs-header-month">{month ?? "(なし)"}</span>
+  ),
 }));
 
 vi.mock("./hooks/useExportDailySalesCsv", () => ({
@@ -59,15 +63,25 @@ function buildReport(overrides: Partial<DailySalesReport> = {}): DailySalesRepor
   };
 }
 
-function renderPage() {
+function renderPage(
+  search: DailySalesSearch = { date: "2026-03-21" },
+  onSearchChange: (updater: (prev: DailySalesSearch) => DailySalesSearch) => void = vi.fn(),
+) {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY } },
   });
-  return render(
+  const ui = (next: DailySalesSearch) => (
     <QueryClientProvider client={qc}>
-      <DailySalesPage search={{ date: "2026-03-21" }} onSearchChange={vi.fn()} />
-    </QueryClientProvider>,
+      <DailySalesPage search={next} onSearchChange={onSearchChange} />
+    </QueryClientProvider>
   );
+  const result = render(ui(search));
+  return {
+    ...result,
+    rerenderWith: (next: DailySalesSearch) => {
+      result.rerender(ui(next));
+    },
+  };
 }
 
 beforeEach(() => {
@@ -546,5 +560,41 @@ describe("DailySalesPage UI-09a-D16 payment lines (D-120)", () => {
     const note = screen.getByText("日報の確認が必要です").closest('[data-slot="alert"]');
     expect(note).not.toBeNull();
     expect(within(note as HTMLElement).getByText(unsummed)).toBeInTheDocument();
+  });
+});
+
+describe("DailySalesPage REQ-502 UI-09b-D11 日次から月次への戻り", () => {
+  type Updater = (prev: DailySalesSearch) => DailySalesSearch;
+
+  it("D1: 表示中の日 2026-03-23 の月 2026-03 を TabsHeader に渡す", () => {
+    renderPage({ date: "2026-03-23" });
+
+    expect(screen.getByTestId("tabs-header-month")).toHaveTextContent("2026-03");
+  });
+
+  it("D2: 翌日・日付の入力で月が変わった後は、動かした後の日の月を渡す", () => {
+    const onSearchChange = vi.fn<(updater: Updater) => void>();
+    const { rerenderWith } = renderPage({ date: "2026-03-31" }, onSearchChange);
+    expect(screen.getByTestId("tabs-header-month")).toHaveTextContent("2026-03");
+
+    fireEvent.click(screen.getByRole("button", { name: "翌日" }));
+    const afterNext = onSearchChange.mock.calls[0][0]({ date: "2026-03-31" });
+    expect(afterNext).toEqual({ date: "2026-04-01" });
+    rerenderWith(afterNext);
+    expect(screen.getByTestId("tabs-header-month")).toHaveTextContent("2026-04");
+
+    fireEvent.change(screen.getByLabelText("日付を選択"), { target: { value: "2026-05-10" } });
+    const afterInput = onSearchChange.mock.calls[1][0](afterNext);
+    expect(afterInput).toEqual({ date: "2026-05-10" });
+    rerenderWith(afterInput);
+    expect(screen.getByTestId("tabs-header-month")).toHaveTextContent("2026-05");
+  });
+
+  it("D3: search.date が無いときは今日（useTodayDate）の月を渡す", () => {
+    renderPage({});
+
+    expect(screen.getByTestId("tabs-header-month")).toHaveTextContent(
+      new Date().toLocaleDateString("sv-SE").slice(0, 7),
+    );
   });
 });

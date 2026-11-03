@@ -144,6 +144,8 @@ pub struct MonthlySalesReport {
     pub items: Vec<MonthlySaleItem>,
     pub prev_month_comparison: Option<Vec<MonthlySaleItem>>,
     pub official_department_totals: Option<Vec<OfficialMonthlyDepartmentTotal>>,
+    /// completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。空 ⇔ official_department_totals が None（34 §19.4 手順 6）
+    pub official_report_dates: Vec<String>,
 }
 
 /// 月次売上集計アイテム（ランキング付き）
@@ -420,6 +422,8 @@ pub fn get_monthly_sales(
             })
             .collect()
     });
+    let official_report_dates =
+        sales_repo::get_monthly_official_report_dates(conn, &date_from, &date_to)?;
 
     Ok(MonthlySalesReport {
         month: month.to_string(),
@@ -427,6 +431,7 @@ pub fn get_monthly_sales(
         items,
         prev_month_comparison,
         official_department_totals,
+        official_report_dates,
     })
 }
 
@@ -1369,6 +1374,7 @@ mod tests {
         let prev = report.prev_month_comparison.as_ref().unwrap();
         assert!(prev.is_empty());
         assert!(report.official_department_totals.is_none());
+        assert!(report.official_report_dates.is_empty());
     }
 
     #[test]
@@ -1420,6 +1426,64 @@ mod tests {
         assert_eq!(official[0].department_id, Some(1));
         assert_eq!(official[0].label, "その他小物");
         assert_eq!(official[0].amount, 11000);
+    }
+
+    #[test]
+    fn test_get_monthly_sales_req502_report_dates_follow_official_totals() {
+        // REQ-502 / 19.4 手順 6 の不変条件: 日が空 ⇔ 公式部門集計が None（取消の前後）
+        let (_dir, conn) = setup_test_db();
+        let import_id = seed_daily_report(&conn, "2026-03-21", "dates-follow");
+        seed_daily_report_lines(&conn, import_id, Some(1));
+
+        let before = get_monthly_sales(&conn, "2026-03", SalesMode::ByProduct).unwrap();
+        assert_eq!(before.official_report_dates, ["2026-03-21"]);
+        assert!(before.official_department_totals.is_some());
+
+        sales_repo::rollback_daily_report_import(&conn, import_id, "2026-03-22T10:00:00").unwrap();
+
+        let after = get_monthly_sales(&conn, "2026-03", SalesMode::ByProduct).unwrap();
+        assert!(after.official_report_dates.is_empty());
+        assert!(after.official_department_totals.is_none());
+    }
+
+    #[test]
+    fn test_get_monthly_sales_req502_report_dates_exclude_sale_record_only_days() {
+        // REQ-502 / UI-09b-D8: Z004・手動販売だけの日は取り込んだ日に入らない
+        let (_dir, conn) = setup_test_db();
+        seed_product(&conn, "P001", 1);
+        seed_sale(&conn, "P001", "2026-03-10", 1, 500, "auto");
+        let import_id = seed_daily_report(&conn, "2026-03-23", "dates-sale-only");
+        seed_daily_report_lines(&conn, import_id, Some(1));
+
+        let report = get_monthly_sales(&conn, "2026-03", SalesMode::ByProduct).unwrap();
+        assert_eq!(report.official_report_dates, ["2026-03-23"]);
+    }
+
+    #[test]
+    fn test_get_monthly_sales_req502_report_dates_same_for_both_modes() {
+        // REQ-502 / 19.4: 取り込んだ日は mode に依らない
+        let (_dir, conn) = setup_test_db();
+        let import_id = seed_daily_report(&conn, "2026-03-05", "dates-modes");
+        seed_daily_report_lines(&conn, import_id, Some(1));
+
+        let by_product = get_monthly_sales(&conn, "2026-03", SalesMode::ByProduct).unwrap();
+        let by_department = get_monthly_sales(&conn, "2026-03", SalesMode::ByDepartment).unwrap();
+        assert_eq!(by_product.official_report_dates, ["2026-03-05"]);
+        assert_eq!(by_department.official_report_dates, ["2026-03-05"]);
+    }
+
+    #[test]
+    fn test_get_monthly_sales_req502_report_dates_with_empty_department_lines() {
+        // REQ-502 / 19.4 の抜け道: 部門の行が 0 の親の日は日に入り、集計は Some(空)
+        let (_dir, conn) = setup_test_db();
+        seed_daily_report(&conn, "2026-03-07", "dates-no-lines");
+
+        let report = get_monthly_sales(&conn, "2026-03", SalesMode::ByProduct).unwrap();
+        assert_eq!(report.official_report_dates, ["2026-03-07"]);
+        assert_eq!(
+            report.official_department_totals.map(|rows| rows.len()),
+            Some(0)
+        );
     }
 
     #[test]
