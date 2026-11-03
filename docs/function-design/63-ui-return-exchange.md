@@ -40,8 +40,9 @@
 | REQ-202 / cache | UI-03-D17 | 保存成功時の invalidation は [D-052](../decision-log.md) C5 と `src/lib/invalidation-contract.ts` を正本とし、`register_processed=true` では在庫系 consumer を対象外にする。 | レジ戻し済みの返品は在庫を書かないため、条件分岐も含めて mutation 契約で固定する。 |
 | REQ-202 / UI-03 | UI-03-D18 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、種別切替、レジ戻し済みフラグの意味、商品検索/スキャン相当 Enter 追加、同一商品+direction 数量加算、validation、画像選択/プレビュー、保存結果、recent list、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、レジ戻し済みの二重計上防止説明、連続入力、画像選択、フォーカス戻しは CI だけでは判断しづらい。 |
 | REQ-202 / note visibility | UI-03-D19 | 備考は返品・交換の確認優先度が高い項目として、入力時は複数行欄にし、保存結果・recent list・詳細画面では「備考」と分かる独立ラベル付き領域で表示する。本文は `text-foreground` 以上の濃さで、入力なしの場合は「—」を muted 表示する。 | Windows native L3 で、備考が項目立てされず薄い文字で内容を判別しづらいことを確認した。返品理由、交換理由、顧客対応メモは後日の問い合わせ・月末確認で読むため、添付画像や補助説明に埋もれさせない。 |
-| REQ-202 / product add suggest | UI-03-D21 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-03-D9）とフォーカス戻し（UI-03-D10）は不変。lock source は既存 `isFormLocked` 派生 state、候補確定は既存の複数件候補テーブル選択と同一 handler（現在の種別 / 方向ルールへの反映も既存経路のまま）。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
+| REQ-202 / product add suggest | UI-03-D21 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-03-D9）とフォーカス戻し（UI-03-D10）は不変。lock source は UI-03-D24 の form lock ref（suggest 層は同じ ref を `isLocked()` として読み、保存 event の中で `invalidateAndClose()` を同期で呼ぶ。新しい lock は作らない。既存の `isFormLocked` 派生 state からの移しは未実装で、導入の前の関門 13 の lane で入れる）、候補確定は既存の複数件候補テーブル選択と同一 handler（現在の種別 / 方向ルールへの反映も既存経路のまま）。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
 | REQ-202 / REQ-206 / return | UI-03-D22 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/return` URL を `returnTo` として返品・交換詳細へ送る（DSR-18）。 | 詳細確認後に返品・交換作業画面へ戻れるようにする。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では返品・交換画面の producer だけを固定する。 |
+| REQ-202 / async result gate | UI-03-D24 | （未実装。導入の前の関門 13 の lane〈`docs/plans/2026-11-03-stale-direct-search-guard.md`〉で入れる。番号は PR #227 が UI-03-D23 を使うので D24 とした）商品追加欄の直接検索（UI-03-D9 の Enter・SPEC-SUGGEST-D11 の数字確定・検索ボタン）の応答の採否は、[61](61-ui-receiving.md) UI-02-D19 と同じ form lock ref と検索の世代 ref で決める。lock ref は render 中に同期せず、保存 event（画像の保存と `createReturn` の両方を含む）の先頭で lock、validation・画像の保存・command の失敗の event と reset event（リセット・「続けて返品・交換」）で unlock、保存成功の後は lock のまま。世代 ref は保存 event の先頭と reset event で進める。直接検索は始めた時点の世代を持ち、応答を、成功・失敗と 0 件・1 件・複数件のどれでも、世代が変わったか lock 中なら捨てる。明細へ足す handler（直接検索の 1 件・複数件の候補の選択・live 候補の確定）は lock ref を読む。交換で 1 件の応答を足す方向は検索を始めた時点の追加方向とし、足す時点の種別が返品なら戻り（UI-03-D6）。応答を待つ間に種別・追加方向を替えても世代は進めない。 | 検索を始めた render の `isFormLocked` だけを見ると、保存中・保存成功の後・リセットや「続けて返品・交換」の後に届いた応答を採る。保存成功の後に採ると result panel が消えて lock が外れ、新しい key で、前の明細に遅れた商品を足した返品・交換の記録（`register_processed` が false なら在庫の増減も）がもう 1 本できる（2026-11-03 の調べ、vitest の probe で 2 回の create と別の key を確かめた）。UI-03-D14（保存中は商品追加をさせない）と §63.5 の「保存成功後はフォーム本文を操作不可にする」の是正。方向: 応答を待つ間に追加方向を替えても、Enter を押した時点に見えていた方向で足す（今の振舞い。probe で確かめた）。替えた操作で検索を黙って捨てると、読んだ商品が消えて気づけない。足した行は方向の列で見え、行の削除で直せる。種別を返品へ替えた後は、足す時点の種別を見る既存の経路で戻りになり、返品に渡し行は入らない（probe で確かめた）。不採用は UI-02-D19 と同じ。 |
 
 ## 63.2 Component / Route 構成
 
@@ -74,6 +75,8 @@ src/
 | `submit_error` | 保存失敗 | Alert + 入力保持 + 再実行 | `submit_same_request` / `edit_as_new_attempt` |
 
 フォーム state は `returnDate`, `returnType`, `registerProcessed`, `note`, `rows`, `receipt`, `savedReceiptPath`, `idempotencyKey` を持つ。`rows` は `productCode`, `productName`, `departmentName`, `stockUnit`, `currentStockQuantity`, `direction`, `quantity` を持つ UI 内部型とし、command payload には `product_code`, `direction`, `quantity` だけを送る。`receipt` は選択中の `File` 情報、preview URL、extension、base64変換状態を持つ。
+
+商品検索の応答の採否は UI-03-D24 に従う（未実装）。`submit` event は画像の保存と mutation 呼出しより先に form lock ref を lock して検索の世代を進め、validation・画像の保存・command の失敗では入力を保持したまま unlock する。success は `result` と同じく lock を維持し、リセットと `reset_for_next` で unlock して世代を進める。世代が変わる前に始めた `searching_product` の応答（`product_found` / `product_candidates` / `product_not_found` / `search_failed` のどれも）は捨てる。
 
 `submit_error` 後に同内容を再送する場合は `idempotencyKey` と `savedReceiptPath` を保持し、入力・備考・画像を編集して再送する場合は新しい `idempotencyKey` を採番する。
 
@@ -148,6 +151,7 @@ UI-03 実装 PR では以下を generated binding に出す。
 - BIZ validation error: form state を保持する。入力を修正して再送する場合は新しい `idempotencyKey` を採番し、同じ key で異なる fingerprint を送らない。
 - internal error: 入力、`idempotencyKey`、`savedReceiptPath` を保持し、同内容のまま同じ伝票として再試行できるようにする。
 - idempotent replay: result panel に「同じ内容の再送として処理済み」と表示し、二重登録ではないことを示す。
+- 保存の開始・リセット・「続けて返品・交換」の前に始めた商品検索の応答: 成功・失敗と件数によらず、明細・候補・案内の文に出さない。result panel を消さず、次の保存の payload に載せない（UI-03-D24。未実装）。保存の失敗の後は検索欄の文字が残り、operator は同じ検索をし直せる。
 
 ## 63.7 Cache / Navigation
 
@@ -185,11 +189,13 @@ UI-03 実装 PR では以下を generated binding に出す。
 - UI-03-D18: Windows native L3 で連続入力、フォーカス戻し、日本語表示、レジ戻し済み説明、画像選択/プレビュー、保存結果を確認する。
 - UI-03-D19: 備考が入力、保存結果、recent list、返品・交換詳細で独立ラベル付き・通常本文色で読める。入力なしの場合は `—` と表示する。
 - UI-03-D22: 保存結果と recent list の「詳細を見る」が、現在の返品・交換画面 URL を `returnTo` として送る。
+- UI-03-D24（未実装）: 保存中・保存成功の後（「続けて返品・交換」の前）・「続けて返品・交換」の後・リセットの後・保存の失敗の後に届いた、それより前に始めた検索の応答（成功の 1 件・複数件・0 件、失敗）を反映しない。保存成功の後に届いても result panel が残り、create は 1 回だけ。その後に始めた検索は反映する。保存 event が pending render より先に lock する。交換で応答を待つ間に追加方向を替えると Enter の時点の方向で足し、種別を返品へ替えると戻りで足す。
 
 ## 63.10 変更履歴
 
 | 日付 | 版 | 内容 |
 |---|---|---|
+| 2026-11-03 | 導入の前の関門 13 の起票（plan-first、`docs/plans/2026-11-03-stale-direct-search-guard.md`） | UI-03-D24 を追加（未実装）: 直接検索の応答を form lock ref と検索の世代で採否し、交換の方向は Enter の時点の追加方向とする。UI-03-D21 の lock source を UI-03-D24 の lock ref に改めた（未実装）。§63.3・§63.6・§63.9 を合わせた。 |
 | 2026-09-09 | PR #46 | ⑮ S5 備考「—」への同期。 |
 | 2026-08-30 | PR #20 / DSR-18 | UI-03-D22 を追加し、保存結果 / recent list の詳細導線に返品・交換画面への `returnTo` 送信契約を設定。 |
 | 2026-08-05 | product add suggest design | UI-03-D21 新設: 商品追加欄の live 候補プレビュー（正本 = catalog ⑮ SPEC-SUGGEST-D1〜D10）。Enter commit 経路・フォーカス戻しは不変。 |
