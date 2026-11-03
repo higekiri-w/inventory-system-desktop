@@ -674,6 +674,65 @@ mod tests {
         assert_eq!(stock_of(&conn, "RPL-NOJAN-A"), 11, "再送で二重に動かさない");
     }
 
+    thread_local! {
+        /// DuplicateKey の経路の test で、busy handler の中から先に保存する別の接続と要求
+        static RACING_SAVE: std::cell::RefCell<Option<(DbConnection, ReturnCreateRequest)>> =
+            const { std::cell::RefCell::new(None) };
+        static RACING_RESULT: std::cell::RefCell<Option<ReturnCreateResult>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// TX の前の一致を通った後、ヘッダの INSERT が書込みの lock を待つ間に、別の接続が同じ要求を保存し終える
+    fn save_racing_return_while_busy(_attempt: i32) -> bool {
+        let Some((mut other, req)) = RACING_SAVE.with(|slot| slot.borrow_mut().take()) else {
+            return false;
+        };
+        other.execute_batch("ROLLBACK").unwrap();
+        let result = create_return(&mut other, req).unwrap();
+        RACING_RESULT.with(|slot| *slot.borrow_mut() = Some(result));
+        true
+    }
+
+    #[test]
+    fn test_create_return_req202_duplicate_key_replay_returns_stock_applied_codes() {
+        // REQ-202 / D-148 (3) / B6: TX の前の一致を外れ、INSERT の DuplicateKey の後に再送になる経路も、記録の movement から同じ列を返す
+        let (dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "DUP-LINK", "4901234567887", 10);
+        create_test_product(&conn, "DUP-NOJAN", 10);
+        let req = register_processed_return(
+            "ret-duplicate-key-codes",
+            vec![
+                return_item("DUP-LINK", "in", 1),
+                return_item("DUP-NOJAN", "in", 1),
+            ],
+        );
+
+        // 別の接続が書込みの lock を持ち、こちらの TX の前の一致は記録を見ない
+        let other = crate::db::init_database(dir.path().join("test.db").to_str().unwrap()).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        RACING_SAVE.with(|slot| *slot.borrow_mut() = Some((other, req.clone())));
+        conn.busy_handler(Some(save_racing_return_while_busy))
+            .unwrap();
+
+        let replay = create_return(&mut conn, req).unwrap();
+        let first = RACING_RESULT
+            .with(|slot| slot.borrow_mut().take())
+            .expect("busy handler で別の接続が先に保存している");
+
+        assert!(first.created);
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.record_id, first.record_id);
+        assert_eq!(
+            first.stock_applied_product_codes,
+            vec!["DUP-NOJAN".to_string()]
+        );
+        assert_eq!(
+            replay.stock_applied_product_codes,
+            first.stock_applied_product_codes
+        );
+        assert_eq!(stock_of(&conn, "DUP-NOJAN"), 11, "再送で二重に動かさない");
+    }
+
     #[test]
     fn test_create_return_req202_direction_in_increases_stock() {
         // REQ-202: 返品・交換記録 — direction=in → 在庫増加
