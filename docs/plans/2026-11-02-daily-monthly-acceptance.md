@@ -2,7 +2,7 @@
 
 wave に属さない単独の lane。導入の前の関門の 12（[Plans](../Plans.md#導入の前の関門)。owner の決定 2026-11-02、repo 外の回答台帳 TD-570）の起票。製品の runtime（`src/**`・`src-tauri/**`）は変えない。受入を走らせる手順書（管理者向け）と設計正本・Plans・backlog の参照を書く lane で、受入そのものは開発用の Windows で店の SD の写しを使って後に行う（本 lane の merge の条件にしない）。
 
-出所: [56](../function-design/56-ui-daily-sales.md) UI-09a-D13・[57](../function-design/57-ui-monthly-sales.md) UI-09b-D9（導入前受入）、backlog の「日報画面の Excel 印刷・バインダー代替受入判定」と「go-live の検証の流れ（受入台本の第 2 版）」、PR #211（日報の紙）と D-142 (5)、owner の判断 TD-560（#211 の O2: 紙の照合は運用開始の後・切り替える前）・TD-557（紙の 9 pt は導入の時に店のプリンタで）・TD-578（本 packet の O1〜O6 の答え、2026-11-02）。
+出所: [56](../function-design/56-ui-daily-sales.md) UI-09a-D13・[57](../function-design/57-ui-monthly-sales.md) UI-09b-D9（導入前受入）、backlog の「日報画面の Excel 印刷・バインダー代替受入判定」と「go-live の検証の流れ（受入台本の第 2 版）」、PR #211（日報の紙）と D-142 (5)、owner の判断 TD-560（#211 の O2: 紙の照合は運用開始の後・切り替える前）・TD-557（紙の 9 pt は導入の時に店のプリンタで）・TD-578（本 packet の O1〜O6 の答え、2026-11-02）・TD-580（綴りの紙の運び方、2026-11-03）。
 
 ## Workflow State
 
@@ -30,11 +30,13 @@ Goal Invariant:
 
 ### 失敗定義
 
-- 店の SD の写し・受入の data folder・backup・綴りの紙の写真を、repo の checkout（ignored の `.local/` を含む）、AI の agent が読む場所、cloud の同期の folder、開発用の Windows の外へ置かせる。または写しを drive の直下に置かせる（MNT-01-D10 で backup の書込みが止まる）。
+- 店の SD の写し・受入の data folder・backup を、repo の checkout（ignored の `.local/` を含む）、cloud の同期の folder、開発用の Windows と管理者の USB メモリの外へ置かせる。または写しを drive の直下（USB メモリの root を含む）に置かせる（MNT-01-D10 で backup の書込みが止まる。USB メモリの root の `CASIO` は自動の探索が SD と見なす）。
+- AI の agent（Claude・Codex）への発注・報告・handoff に、写し・受入の data folder・backup の path や店の値を書かせる、または agent にそれらを読ませる作業をさせる（agent は開発用の Windows の file を読めるので、場所でなく渡し方で守る）。
+- 綴りの紙の値を写真で運ばせる（TD-580。紙かそのコピーを店から借りて並べ、返す）。
 - 手順書が、店の PC の DB で受入の取込み・復元をさせる。
 - 受入を、開発に使っている data folder（開発の試験のデータ・合成の日報が入ったもの）の上で走らせる（取込み済みの状態と窓が変わり、合否が読めない）。
 - 手順書の画面の文字列・ボタンの名が今の版に無い（管理者が迷う）。
-- 受入の合格基準が、前提の lane の後に確かめる項目を今の版で「確かめた」と読ませる。
+- 受入の合格基準が、前提の lane の後に確かめる項目を今の版で「確かめた」と読ませる。または、前提の行が残る版・A・B の lane が merge される前の版で、全体を合格と読ませる。
 - 紙の切替えの前の照合（UI-09a-D19 の (2)、TD-560）や、月の売上の紙を、この受入で置き換えたと読ませる。
 
 ### 非目的
@@ -65,6 +67,8 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 - **O5 = a**: 合わない項目が 1 つでもあれば運用を始めない。合わなかった項目を控え、直す lane を起こす。店の DB には何も入っていないので、店の側で戻す操作は無い。
 - **O6 = a**: 受入台本の第 2 版に束ねない。第 2 版の起票の時に、同じ版で続けて走る順として本手順書を引く。
 
+綴りの紙の運び方（TD-580、2026-11-03。計画の review round 1 の P2 への答え）: 比べる日の綴りの紙かそのコピーを店から借り、開発用の Windows の前で画面と並べて返す。借りた日と返した日を管理者の記録に書く。写真は手段にしない。
+
 UI-09a-D19 の (2)（紙の切替えの前の照合、TD-560）は、この受入と別に残す（比べるのは運用開始の後の店の PC の SD → アプリの経路の当日と、店のプリンタの紙〈TD-557〉で、この受入では見ない）。
 
 ## 現状の調べ
@@ -80,7 +84,7 @@ backlog の「日報画面の Excel 印刷・バインダー代替受入判定�
 | 未取込み日の識別（月の中の日） | できない（B の後） | `MonthlySalesPage.tsx` は月の公式部門集計と説明 `日報取込み済み日の Z005 部門別売上合計です。`（:161）、月全体の未取込み（:168）だけを出す。UI-09b-D10 の「取込み済み日数」は将来の形 |
 | 修正・再取込み（完了の画面の中） | できる | `DailyReportImportPage.tsx:614`〜`:660` の `取り消す` と確認の dialog（`この取込みだけを取り消します。…`） |
 | 修正・再取込み（完了の画面を離れた後） | できない（A の後） | `rollbackDailyReportImport` を呼ぶのは `useDailyReportImportFlow.ts:187` だけ。`listDailyReportImports` は `src/lib/bindings.ts:186` にあり、`src/features` から呼ばれない（`rg -n "listDailyReportImports" src --glob '!src/lib/bindings.ts'` が 0 件）。backlog の「日報取込み標準手順の残設計」が扱う |
-| backup/restore 後の再現 | できる | 「バックアップ・復元」の復元（68 §68.4）。SD の写しは backup に入らず復元で変わらない（D-111 (8)）が、同じ束の取り込み直しは同じ bytes の写しを書かずに通る（29 IO-10 の手順 2 の `written: false`） |
+| backup/restore 後の再現 | できる（backup の後に値を変える操作は、A の前は取消でなく、まだ取り込んでいない日の取込み） | 「バックアップ・復元」の復元（68 §68.4）。backup を作るには「バックアップ・復元」の画面へ移るので、その前の取込みの完了の画面は残らない（取込みの流れの状態は画面の中だけに持つ。`useDailyReportImportFlow.ts` の `useReducer`）。SD の写しは backup に入らず復元で変わらない（D-111 (8)）が、同じ束の取り込み直しは同じ bytes の写しを書かずに通る（29 IO-10 の手順 2 の `written: false`） |
 | 月の帳票との照合 | 比べる相手が未確認 | O2 (ii)（次の訪店で確かめる）。月次の画面に印刷は無い |
 
 backlog の記述（「実 1 日分での公式集計・過去日到達・欠落日・修正/再取込み・backup/restore 後の再現を横並び確認し、印刷機能の要否を go-live 前に判定する」）のうち、印刷機能の要否は D-120 で決着済み（作った、PR #211）。残る横並びの確認は、上の A・B の後の 2 つを除けば今の版で走る。
@@ -93,18 +97,18 @@ backlog の記述（「実 1 日分での公式集計・過去日到達・欠落
 
 - 新しい手順書 `docs/daily-monthly-acceptance-runbook.md`（管理者向け、開発用の Windows）:
   - 冒頭: 対象（管理者）・いつ使うか（初期投入の流れ 2 と同じ版の MSI ができた後、流れ 3 の前。A・B の lane が merge された版で）・引く正本（56 UI-09a-D13・57 UI-09b-D9・55 UI-07-D15・37 §37.9・29 IO-09/IO-10・68 §68.4・71 MNT-01-D10/§71.13）。
-  - 写しを取る（訪店の時）: 店の PC で、レジの SD の `CASIO\SR500_550_4000` の folder を丸ごと（`XZ` と `XZ_BKUP`）管理者の USB メモリへ写す。SD に書かない・消さない・名前を変えない。写した日を管理者の記録に書く。比べる日の綴りの紙は店で見る（写真を撮るなら写しと同じ扱い）。
-  - 写しの置き場（開発用の Windows）: repo の checkout の外（ignored の `.local/` も不可）、cloud の同期の外、drive の直下でない日付の付いた folder（MNT-01-D10）。AI の agent に読ませない・渡さない。
-  - 準備: msi-distribution-runbook.md の「予行演習の準備と片付け」の「始める前に」で開発の data folder を退避し、店へ入れる版の MSI を入れ、商品と日報の取込みが 0 件の空の DB で起動する。写しを取った日から 30 日以内に走らせる（窓。古い日は一覧に出ない）。
-  - 手順: (1) 日報取込みタブで「SD から読む」→ 見つからないので「場所を選ぶ」で写しの `CASIO` か `SR500_550_4000` の folder を選ぶ。一覧の日の範囲と件数を記録（O2 (iii)）。(2) 比べる日を選び「確認する」→ 取り込む。(3) 日次売上の画面でその日の 3 つの表を綴りの紙の枠と行ごとに並べる（O2 (i): 1 回の日で比べ、2 回以上の日は違いを控える）。(4) 前日・翌日・日付の入力で着く、取り込んでいない日の note。(5) 取込みの完了の画面の中の `取り消す` と取り込み直し。(6) 手動バックアップを作り、1 つの取込みを取り消した後、その backup を復元して値が戻る（受入の data folder の中だけ）。(7) 月次の画面の公式部門集計を、その月に取り込んだ日の日次の部門別集計の和と比べ、取り込んだ日の無い月の note。(8) 記録と判定。
-  - 項目ごとの合格基準の表（UI-09a-D13・UI-09b-D9 の項目と 1 対 1）。A・B の後に確かめる 2 項目は「前提の lane の後に足す」と書いた行（O3 の観点を書き、まだ無い画面の名を書かない）。月の帳票との照合は「O2 (ii) が決まり当たるときだけ。未確認の間は行わず、月の売上の紙を置き換えたと扱わない」の行。
+  - 写しを取る（訪店の時）: 店の PC で、レジの SD の `CASIO\SR500_550_4000` の folder を丸ごと（`XZ` と `XZ_BKUP`）、管理者の USB メモリの root でない日付の付いた folder の中へ写す（root に `CASIO` を置くと、開発用の Windows で自動の探索がその USB を SD と見なし〈29 IO-09 の手順 1〉、店の PC で SD と一緒に差すと SD が 2 枚と数えられ〈37 §37.9 の手順 1〉、その USB への backup も止まる〈MNT-01-D10〉）。SD に書かない・消さない・名前を変えない。写した日を管理者の記録に書く。その USB メモリは店の PC と開発用の Windows でだけ開き、受入の間は管理者が手元に保管する。比べる日の綴りの紙は、紙かそのコピーを店から借りる（TD-580。写真は撮らない）。借りた日を管理者の記録に書く。
+  - 写しの置き場（開発用の Windows）: repo の checkout の外（ignored の `.local/` も不可）、cloud の同期の外（`%OneDrive%` の下でないことを置く前に確かめる。デスクトップ・ドキュメントは同期の下でありうる）、drive の直下でない日付の付いた folder（MNT-01-D10）。AI の agent への発注・報告・handoff に写しや受入の data folder の path・店の値を書かない。agent に読ませる作業をしない。
+  - 準備: msi-distribution-runbook.md の「予行演習の準備と片付け」の「始める前に」で開発の data folder を退避し、店へ入れる版の MSI を入れ、商品と日報の取込みが 0 件の空の DB で起動する。写しを取った日から 30 日以内に走らせる（窓。古い日は一覧に出ない）。窓の外に落ちた日は受入で読まない（予備の経路「ファイルを選んで取り込む」〈UI-07-D16〉は受入で使わない。比べる日が窓から落ちたら、次の訪店で写しを取り直す）。同じ日に初期投入の流れ 2（予行演習）と続けて行うときは、先に行う方の「終わった後」（msi-distribution-runbook.md の同じ節）まで済ませてから、後に行う方の「始める前に」から始める（流れ 2 の後の DB は商品が入っていて空でない。受入の data folder と流れ 2 の folder は別の名で保全し、混ぜない）。
+  - 手順: (1) 日報取込みタブ（`売上データ取込み` の画面の `日報取込み` の tab）で「SD から読む」→ 見つからないので「場所を選ぶ」で写しの `CASIO` か `SR500_550_4000` の folder を選ぶ。一覧の日の範囲と件数を記録（O2 (iii)）。(2) 比べる日を含む同じ月の 2 つ以上の日（同じ日の 2 回の精算は 1 日と数える）を 1 日ずつ選び「確認する」→ 取り込む。2 回以上精算した日の 2 つめの束では同日追加の確認（`同じ日の取込みがあります`）が出るので、同じ日の別の精算であることを確かめて進む。(3) 開発用の Windows の前で、借りた綴りの紙（かそのコピー）と日次売上の画面のその日の 3 つの表を、枠と行ごとに並べる（O2 (i): 1 回の日で比べ、2 回以上の日は違いを控える）。(4) 前日・翌日・日付の入力で着く、取り込んでいない日の note。(5) 取込みの完了の画面の中の `取り消す` と取り込み直し。(6) 受入の data folder の中だけで、取込みの後に手動バックアップを作る → 1 つの取込みを取り消す（その日の値が変わるのを見る。今の版は完了の画面を離れた後に取り消せないので、A の lane の前は、backup の後にまだ取り込んでいない日の束を 1 つ取り込み、その日の値が変わるのを見る形で代える）→ その backup を復元 → 日次・月次の値が backup を作った時の値と同じ。backup を作ってから復元までを同じ日のうちに行う（日をまたぐと起動の時の保持日数の削除で backup が消えうる。71 MNT-01-D3、初期投入の流れ 2 と同じ注意）。(7) 月次の画面の公式部門集計を、その月に取り込んだ日の日次の部門別集計の和と比べ、取り込んだ日の無い月の note。(8) 記録と判定: 項目ごとに PASS/FAIL を書く。「前提の lane の後に足す」のままの行が残る版、または A・B の lane が merge される前の版では、全体の判定は未了で、初期投入の流れ 3 へ進まない（他の項目が全部 PASS でも）。全体の合格は、全部の行が今の版の画面の名で書かれ、その全部が PASS のときだけ。
+  - 項目ごとの合格基準の表（UI-09a-D13・UI-09b-D9 の項目と 1 対 1）。A・B の後に確かめる 2 項目は「前提の lane の後に足す」と書いた行（O3 の観点を書き、まだ無い画面の名を書かない）。A・B の各 lane は、自分の merge の commit でその行を自分の画面の名で書き足す（56 D13・57 D9 の受入の段と backlog の A・B の項目にも同じ義務を書く）。backup/restore 後の再現の行は 56 D13 と同じ文（取込みの後に作った backup → 1 つの取込みを取り消す〈その日の値が変わるのを見る〉→ その backup を復元 → 日次・月次の値が backup を作った時の値と同じ）。月の帳票との照合は「O2 (ii) の店の事実が決まり当たるときだけ。未確認の間は行わず、月の売上の紙を置き換えたと扱わない」の行。
   - FAIL の扱い（O5）: 運用を始めない（初期投入の流れ 3 へ進まない）。合わなかった項目を控え、直す lane を起こす。
-  - 終わった後: アプリを止め、msi-distribution-runbook.md の「予行演習の準備と片付け」の「終わった後」で開発の data folder を戻す。受入の data folder（取り込んだ記録・SD の写し〈IO-10〉・backup を持つ）と USB メモリ・開発用の Windows の写しは店のデータで、FAIL の直しの再受入まで保ち、消す時期は owner が決める（71 §71.13 の別の PC に店のデータを置く間の扱いと同じ）。
-  - 管理者の記録（repo の外）には写した日・一覧の日の範囲と件数・比べた日・項目ごとの PASS/FAIL・合わなかった項目と行の名称を書き、金額を repo に書かない。手順書の例は合成の値で書き、そう明記する。
+  - 終わった後: アプリを止め、msi-distribution-runbook.md の「予行演習の準備と片付け」の「終わった後」で開発の data folder を戻す。その手順の (2) で、受入の data folder（取り込んだ記録・SD の写し〈IO-10〉・backup を持つ）は消さずに別名で `%APPDATA%` に残る。この別名の folder・USB メモリの写し・開発用の Windows の写しは店のデータで、FAIL の直しの再受入まで保ち、消す時期は owner が決める（71 §71.13 の別の PC に店のデータを置く間の扱いと同じ。開発用の Windows へ写して確かめた後に USB メモリの写しを残すかも、この判断に含める）。借りた綴りの紙（かそのコピー）は店へ返し、返した日を管理者の記録に書く（TD-580）。
+  - 管理者の記録（repo の外）には写した日・一覧の日の範囲と件数・綴りの紙を借りた日と返した日・比べた日・項目ごとの PASS/FAIL・合わなかった項目と行の名称を書き、金額を書かない。手順書の金額の例は「合成の値」と書いた例の枠の中だけに置き、file 名は形（`Z001_…` の類）だけで書く。
 - `docs/initial-load-runbook.md`: 流れ 3 の前提に「日報・月次の画面の受入（新しい手順書）が全部合った（導入の前の関門の 12）」を足す。流れ 2・3 の手順は変えない。
-- `docs/function-design/56-ui-daily-sales.md` UI-09a-D13 と `docs/function-design/57-ui-monthly-sales.md` UI-09b-D9: 受入の段（本 packet の起票の commit で書き、TD-578 で直した）に新しい手順書への link を足す（実装の commit）。
+- `docs/function-design/56-ui-daily-sales.md` UI-09a-D13 と `docs/function-design/57-ui-monthly-sales.md` UI-09b-D9: 受入の段（本 packet の起票の commit で書き、TD-578 と計画の review round 1〈TD-580 を含む〉で直した）に新しい手順書への link を足す（実装の commit）。round 1 の是正で、57 D9 の本文の「日次画面と合わせた受入が終わるまで、Excel印刷・バインダーを完全代替したとは扱わない」を、この受入が日報の紙と月の売上の紙のどちらも置き換えないと書く文に置き換えた（O2 (ii)。継ぎ足さず段落ごと）。
 - `docs/Plans.md` の導入の前の関門の 12: 束ねない（O6）、手順の置き場（新しい手順書）、前提の A・B の lane（O3）、受入の場（開発用の Windows と SD の写し、O1）を書く。
-- `docs/backlog.md`: 「日報画面の Excel 印刷・バインダー代替受入判定」に新しい手順書と本 packet を引く行、「go-live の検証の流れ（受入台本の第 2 版）」の束ねる候補の文を O6 の答えに直す、「日報取込み標準手順の残設計」の履歴一覧と取消の導線に関門 12 の前提であること（A）を書く、B（月次の取り込んだ日）の項目を足す、導入の日の約 30 日の扱い（O4 で別に扱う）の項目を足す。
+- `docs/backlog.md`: 「日報画面の Excel 印刷・バインダー代替受入判定」に新しい手順書と本 packet を引く行、「go-live の検証の流れ（受入台本の第 2 版）」の束ねる候補の文を O6 の答えに直す、「日報取込み標準手順の残設計」の履歴一覧と取消の導線に関門 12 の前提であること（A）と、その lane が受入の手順書の「前提の lane の後に足す」の行を自分の画面の名で書き足すことを書く、B（月次の取り込んだ日）の項目を足し、同じ書き足しの義務を書く、導入の日の約 30 日の扱い（O4 で別に扱う）の項目を足す。
 - `docs/PROJECT_HANDOFF.md`: 管理者の手順の表に新しい手順書の行を足す。
 
 Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEPTANCE_SCENARIO.md`、UI-09a-D19 の本文、`docs/msi-distribution-runbook.md`（「予行演習の準備と片付け」を引くだけ）、decision-log（新しい D は置かない。判断は 56・57 の受入の段と Plans が持つ）、A・B の lane の起票、導入の日の約 30 日の扱いの手順。
@@ -112,11 +116,11 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 ## Acceptance Criteria
 
 - AC1: 新しい手順書の合格基準の表が、UI-09a-D13 の 5 項目（公式集計・過去日到達・未取込み日の識別・修正と再取込み・backup/restore 後の再現）と UI-09b-D9 の 4 項目（到達・取込み済み日の範囲・修正後の値・月の帳票との照合）を 1 行ずつ持ち、各行に観測できる合格基準（画面・見る値・何と同じなら PASS）がある。
-- AC2: 新しい手順書が引く画面の文字列・ボタンの名は、今の版の `src/` に在る（`rg -nF "<文字列>" src` が各 1 件以上。確かめた文字列と件数を報告に書く）。前提の lane の後に足す手順は、まだ無い画面の名を書かない。
+- AC2: 新しい手順書が引く画面の文字列・ボタンの名は、今の版の画面の code に在る（`rg -nF "<文字列>" src --glob '!*.test.*' --glob '!src/lib/bindings.ts'` が各 1 件以上。確かめた文字列と件数を報告に書く）。照合する文字列には、画面へ着く道（`売上データ取込み` の画面と `日報取込み` の tab。`src/config/navigation.ts`・`src/features/csv-import/CsvImportPage.tsx`）を含める。前提の lane の後に足す手順は、まだ無い画面の名を書かない。
 - AC3: 新しい手順書（`docs/daily-monthly-acceptance-runbook.md`）の取込みと復元は、開発用の Windows の受入の data folder（開発の data folder を退避した後に、店へ入れる版の MSI で作った空の DB）だけで行い、店の PC の DB で取込み・復元をさせない（手順書の準備・手順 6・終わった後の行を Final Review で照合）。
-- AC4: 前提の 2 項目（A: 離れた後の取消、B: 月の中の取り込んだ日）は、新しい手順書と 56・57 で「前提の lane の後に確かめる」と書かれ、今の版で PASS にできる書き方をしていない（`rg -n "前提" docs/daily-monthly-acceptance-runbook.md docs/function-design/56-ui-daily-sales.md docs/function-design/57-ui-monthly-sales.md` の該当の行を報告に並べる）。
+- AC4: 前提の 2 項目（A: 離れた後の取消、B: 月の中の取り込んだ日）は、新しい手順書と 56・57 で「前提の lane の後に確かめる」と書かれ、今の版で PASS にできる書き方をしていない（`rg -n "前提" docs/daily-monthly-acceptance-runbook.md docs/function-design/56-ui-daily-sales.md docs/function-design/57-ui-monthly-sales.md` の該当の行を報告に並べる）。新しい手順書の記録と判定の節が、「前提の lane の後に足す」のままの行が残る版と A・B の lane が merge される前の版では全体の判定が未了で初期投入の流れ 3 へ進まないという規則を持ち（`rg -n "未了" docs/daily-monthly-acceptance-runbook.md` が判定の節に 1 件以上）、56 D13・57 D9 の受入の段と backlog の A・B の項目が、その lane が行を書き足す義務を書く（`rg -n "書き足す" docs/function-design/56-ui-daily-sales.md docs/function-design/57-ui-monthly-sales.md docs/backlog.md` の行を報告に並べる）。
 - AC5: UI-09a-D19 の (2) の本文は変わらず（`git diff origin/main -- docs/function-design/56-ui-daily-sales.md` に D19 の行が出ない）、56 D13 が D19 (2) を別に残すと書く。
-- AC6: repo に店の売上の値・file・紙の写しが入らない（差分に金額の実値・実の JAN・店の file 名の実例が無い。合成の例を使うときはそう書く。差分 `git diff origin/main` を Final Review で照合）。新しい手順書が、写しと受入の data folder の置き場（repo の checkout・`.local/`・cloud の同期の外、drive の直下でない）と、AI の agent に渡さないこと、終わった後の扱いを書く。
+- AC6: repo に店の売上の値・file・紙の写しが入らないことを、差分（`git diff origin/main`）の形の規則で Final Review が照合する: 金額の例は「合成の値」と書いた例の枠の中だけにある、13 桁の数字の並び（JAN の形）が無い（`git diff origin/main | rg -n "[0-9]{13}"` が 0 件）、file 名は形（`Z001_…` の類）だけで、日付や番号の付いた具体の file 名が無い、diff に画像・CSV・`.txt` の file が無い（`git diff --name-only origin/main` が `.md` だけ）。新しい手順書が、写しと受入の data folder の置き場（repo の checkout・`.local/`・cloud の同期の外、drive の直下と USB メモリの root でない）、AI の agent への発注・報告・handoff に path・値を書かないこと、綴りの紙を借りて返すこと（写真を撮らない、TD-580）、終わった後の扱いを書く。
 - AC7: `bash scripts/doc-consistency-check.sh` が ERROR 0、`bash scripts/doc-consistency-check.sh --target plan docs/plans/2026-11-02-daily-monthly-acceptance.md` が ERROR 0、`bash scripts/check-workflow-git.sh` が exit 0。
 
 ## Design Readiness
@@ -125,8 +129,8 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 - 必要な設計成果物: updated in this PR（56 UI-09a-D13・57 UI-09b-D9 の受入の段。起票の commit で足し、TD-578 の答えで直した）。新しい手順書は実装。
 - plan にしかない durable な判断の昇格先: O1〜O6 の答え（TD-578）は 56・57 の受入の段と Plans の関門 12 に置く。packet の答えの節は記録で、正本ではない。
 - 前提・制約と延期した design gap: O2 (i)（2 回以上の日の紙）・(ii)（月の売上の紙、次の訪店）は未確認で、既定（2 回以上の日は合否に数えない、月の帳票との照合は当たるときだけ）で手順を書く。(iii) は写しの一覧で分かる。A・B の runtime の設計は各 lane へ延期。導入の日の約 30 日の扱いは初期投入の側へ延期（O4）。
-- 絶対保証の例外と抜け道: 「店の売上の file が repo に入らない」は、管理者が手順書の置き場を守る前提に依る（repo の `.gitignore` は repo の外の folder を守らない）。手順書は置き場を repo の checkout の外に固定し、AI の agent に渡さないと書く。窓（今日から 30 日前）は開発用の Windows の日付で決まるので、写しを取ってから 30 日を過ぎると比べたい日が一覧に出ない。準備に期限を書く。
-- 判定: ready（O1〜O6 は TD-578 で答えが出た。未回答の O2 (i)・(ii) は既定で書けて、合否の扱いを手順書が名指す）。
+- 絶対保証の例外と抜け道: 「店の売上の file が repo に入らない」は、管理者が手順書の置き場を守る前提に依る（repo の `.gitignore` は repo の外の folder を守らない）。手順書は置き場を repo の checkout の外に固定する。AI の agent は場所で隔てられない: 開発用の Windows では、WSL の agent が `/mnt/c` を通して写しの folder も `%APPDATA%` も読める。守れるのは、agent への発注・報告・handoff に path・値を書かないことと、agent に読ませる作業をしないことだけで、手順書はそう書く。受入の data folder は片付け（msi-distribution-runbook.md の「終わった後」の (2)）で消さずに別名で `%APPDATA%` に残り、owner が消す時期を決めるまで同じ扱いを続ける。窓（今日から 30 日前）は開発用の Windows の日付で決まるので、写しを取ってから 30 日を過ぎると比べたい日が一覧に出ない。準備に期限を書く。
+- 判定: ready（O1〜O6 は TD-578、綴りの紙の運び方は TD-580 で答えが出た。未回答の O2 (i)・(ii) は既定で書けて、合否の扱いを手順書が名指す）。
 
 ## Contract Ledger
 
@@ -155,10 +159,10 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
 | 手順書が引く画面の文字列（AC2） | 手順書の文字列が今の版に無く、管理者が迷う | CLI | 手順書の引用の各文字列に `rg -nF "<文字列>" src`（報告に文字列と件数を並べる） | 文字列を今の版に無い語で書いたとき、または画面の文字列が変わったとき（0 件） |
-| 項目の対応（AC1・AC4） | 受入の項目が抜ける、前提の lane の後の項目を今の版で PASS にできる | review（計画の review と Final Review の固定の問い） | 56・57 の受入の段と手順書の表の 1 対 1 の照合 | 行が欠けたとき、前提の項目に今の版の手順を書いたとき |
+| 項目の対応（AC1・AC4） | 受入の項目が抜ける、前提の lane の後の項目を今の版で PASS にできる | review（計画の review と Final Review の固定の問い） | 56・57 の受入の段と手順書の表の 1 対 1 の照合、判定の節の未了の規則（`rg -n "未了"`）と書き足しの義務（`rg -n "書き足す"`）の照合 | 行が欠けたとき、前提の項目に今の版の手順を書いたとき、前提の行が残る版で全体を合格と読める判定の節のとき |
 | 受入の DB の範囲（AC3） | 店の PC の DB や開発の data folder で取込み・復元させる | review | 手順書の準備・手順 6・終わった後の照合 | 準備に退避と空の DB の確かめが無いとき、店の PC で走らせる手順があるとき |
 | D19 (2) を残す（AC5） | 紙の切替えの前の照合が消える | CLI | `git diff origin/main -- docs/function-design/56-ui-daily-sales.md` に `UI-09a-D19` の行が無い | D19 の本文を書き換えたとき |
-| 実データの置き場（AC6） | 店の値・file が公開 repo・agent に出る | review | 差分の金額・JAN・file 名の照合と、手順書の置き場・片付けの行の照合 | 実値を書いたとき、置き場に repo の中や drive の直下を許すとき |
+| 実データの置き場（AC6） | 店の値・file が公開 repo・agent に出る | review | AC6 の形の規則（合成の枠・13 桁の数字・file 名の形・`.md` だけ）と、手順書の置き場・紙の借り返し・片付けの行の照合 | 合成の枠の外に金額を書いたとき、13 桁の数字や具体の file 名を書いたとき、置き場に repo の中・drive の直下・USB の root を許すとき、写真を手段にしたとき |
 | docs の整合（AC7） | link 切れ・packet の形 | CLI | `bash scripts/doc-consistency-check.sh`、`--target plan docs/plans/2026-11-02-daily-monthly-acceptance.md`、`bash scripts/check-workflow-git.sh` | link 切れ、Workflow State の欠け、先走り |
 
 ## Recovery
@@ -170,8 +174,9 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 
 ## Data Safety
 
-- 店の SD の写し（`XZ`・`XZ_BKUP` の全 file）と受入の data folder（取り込んだ記録の DB・アプリが残す SD の写し〈IO-10〉・backup）は店の実データ。置き場は管理者の USB メモリと、開発用の Windows の repo の checkout（ignored の `.local/` を含む）と cloud の同期の外の、drive の直下でない日付の付いた folder だけ。AI の agent（Claude・Codex）に読ませない・渡さない・path を発注書に書かない。
-- repo に入れないもの: 店の売上の値（金額・件数）、レジの SD の file と写し、綴りの紙と画面の写真・写し、実の JAN・商品名・店の file 名の実例。手順書の例は合成の値で書き、そう明記する。
-- 管理者の記録（repo の外）に書くもの: 写した日、一覧の日の範囲と件数、比べた日、項目ごとの PASS/FAIL、合わなかった項目と行の名称。owner への報告は TD 番号で引く。
-- 終わった後: 写しと受入の data folder は FAIL の直しの再受入まで保ち、消す時期は owner が決める（71 §71.13 の別の PC に店のデータを置く間の扱いと同じ）。
+- 店の SD の写し（`XZ`・`XZ_BKUP` の全 file）と受入の data folder（取り込んだ記録の DB・アプリが残す SD の写し〈IO-10〉・backup）は店の実データ。置き場は、管理者の USB メモリの root でない日付の付いた folder（その USB は店の PC と開発用の Windows でだけ開く）と、開発用の Windows の repo の checkout（ignored の `.local/` を含む）と cloud の同期の外の、drive の直下でない日付の付いた folder だけ。AI の agent（Claude・Codex）への発注・報告・handoff に path・値を書かない。agent に読ませる作業をしない（agent は開発用の Windows の file を読めるので、場所でなく渡し方で守る。Design Readiness の絶対保証の例外）。
+- 綴りの紙: 紙かそのコピーを店から借りて開発用の Windows の前で並べ、返す（TD-580）。写真は撮らない。
+- repo に入れないもの: 店の売上の値（金額・件数）、レジの SD の file と写し、綴りの紙・そのコピー・画面の写し、実の JAN・商品名・店の file 名の実例。手順書の金額の例は「合成の値」と書いた例の枠の中だけに置く。
+- 管理者の記録（repo の外）に書くもの: 写した日、一覧の日の範囲と件数、綴りの紙を借りた日と返した日、比べた日、項目ごとの PASS/FAIL、合わなかった項目と行の名称。owner への報告は TD 番号で引く。
+- 終わった後: 写し（USB メモリと開発用の Windows）と、片付けで別名になって `%APPDATA%` に残る受入の data folder は、FAIL の直しの再受入まで保ち、消す時期は owner が決める（71 §71.13 の別の PC に店のデータを置く間の扱いと同じ）。
 - 店の SD には書かない・消さない（写すだけ）。写しを取った SD はすぐにレジへ戻す。
