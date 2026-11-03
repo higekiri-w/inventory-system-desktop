@@ -48,7 +48,8 @@
 - 置き場所: 公式部門集計の節の説明の下、部門の表（か `公式部門集計の行はありません。`）の上。`official_department_totals === null` の月は今の note（`この月のレジ日報は未取込みです。`）だけで、日の一覧を出さない。空配列の月は日の一覧と `公式部門集計の行はありません。` の両方を出す。取得の失敗（§57.8 の #1）では日の一覧を出さない。
 - 取り込んだ日: 見出し `取り込んだ日（{N}日分）` の後に、`official_report_dates` の日を `{D}日（{曜}）`（曜は `日`〜`土` の 1 字）の形で `、` でつないで日付の順に並べる。各日は日次売上のその日（`/reports/daily` の search `date` に `YYYY-MM-DD`）への link。`{N}` は `official_report_dates` の数。
 - 取り込んでいない日: 見出し `取り込んでいない日（{M}日分）` の後に、その月の 1 日から月末までの日のうち `official_report_dates` に無い日を同じ形で並べる（link にしない）。0 日なら `なし`。この行に `店を開けなかった日も含みます。` を添える（アプリは休業日を知らない。§57.10 Q-1）。1 日以上あるときは、その行の後に link `売上データ取込みを開く`（`/csv-import` の search `tab` に `daily-report`。[56](56-ui-daily-sales.md) UI-09a-D17 と同じ語）を置く。
-- 今日より後の日: PC の今日（日次売上と同じ `useTodayDate`、local の `YYYY-MM-DD`）より後の日は「取り込んでいない日」に入れない（今日は入れる）。今月だけ `今日より後の日は数えていません。` を添える。来月より先の月の「取り込んでいない日」は空。
+- 今日より後の日: PC の今日（日次売上と同じ `useTodayDate`、local の `YYYY-MM-DD`）より後の日は「取り込んでいない日」に入れない（今日は入れる）。今月（表示中の月が今日の月と同じとき）だけ `今日より後の日は数えていません。` を添える。来月より先の月の「取り込んでいない日」は空で、この文も出さない（`compute-report-days` の `isCurrentMonth`、§57.6）。
+- 日次から月次への戻り: 取り込んだ日の link で日次売上へ進んだ後、日次の画面の `TabsHeader`（Q-3 の共通部品）の `月次` の link は、日次で表示中の日（`search.date`、無ければ今日）の月を search `month` で渡し、その月の月次売上を開く。日次で日付の入力・前日・翌日で日を動かした後は、動かした後の日の月を渡す。月次から日次へ（`日次` の link）は今のまま（search を渡さない）。月次の `mode`・並べ替えは渡さず、月次の既定に戻る。理由: search の無い `月次` の link は今月を開き（§57.4 の `month` の fallback）、使い手が月を選び直すことになる（D-127）。棄却: 戻る操作をブラウザの履歴（Alt+←）に任せる（WebView2 での動きが未確認で、画面に戻り方が見えない）、月次の月を保存して覚える（状態の置き場が増える）。
 - 説明文: 見出しの下の説明を `「取り込んだ日」に並ぶ日の Z005 部門別売上の合計です。` にする（前の `日報取込み済み日の Z005 部門別売上合計です。` を置き換える。同じものを 2 つの語で呼ばない）。
 - 書き方: 状態は見出しの文字で示し、色・アイコンだけで分けない。一覧は表の行にしない（`<ul>`、名前は `取り込んだ日`・`取り込んでいない日`）。数は `{N}日分` と書く（`12日` は 12 日目と読める）。「営業日」「日平均」の語を使わない（§57.10 Q-1）。曜日は `new Date(year, month - 1, day)` の local で引き、`YYYY-MM-DD` を UTC として parse しない。
 - 層の境: completed・distinct・月の範囲は IO/BIZ（[24 §14.22a](24-io-csv-import-repo.md)・34 §19.4）が持つ。UI は BIZ が返した日と暦から「取り込んでいない日」を作り、今日より後の日を除くだけ（純関数 `compute-report-days`、§57.6）。UI で取込みの行を絞って日を作らない（`list_daily_report_imports` を使わない理由は 34 §19.4 の設計判断）。
@@ -163,6 +164,9 @@ export type MonthlySalesReport = {
 | 新規 | `src/features/monthly-sales/lib/compute-report-days.ts` | `computeReportDays(month, importedDates, today)`: 取り込んだ日・取り込んでいない日・今日より後の日を除いたか（§57.6） |
 | 新規 | `src/features/monthly-sales/components/OfficialReportDays.tsx` | 取り込んだ日と取り込んでいない日の 2 行・日次への link・直し方の link（UI-09b-D11） |
 | 更新 | `src/features/monthly-sales/MonthlySalesPage.tsx` | 公式部門集計の節に `OfficialReportDays` を置き、説明文を UI-09b-D11 の文にする。今日は `src/features/daily-sales/lib/date-nav.ts` の `useTodayDate` |
+| 更新 | `src/components/sales/TabsHeader.tsx` | 任意の prop `month`（`YYYY-MM`）。渡されたときだけ `月次` の link に search `month` を付ける（UI-09b-D11 の日次から月次への戻り）。active の判定は変えない |
+| 更新 | `src/features/daily-sales/DailySalesPage.tsx` | `TabsHeader` に表示中の日の月を渡す（56 §56.1 の `TabsHeader` の行） |
+| 更新 | `src/features/daily-sales/lib/date-nav.ts` | 冒頭の comment の共通化の条件を今の判断（使い手 2 つでは移さず、3 つめで `src/lib/dates/` へ）に置き換える。code は変えない |
 
 ### 57.3 データフロー
 
@@ -368,9 +372,10 @@ export function useExportFile() {
 - `makeMockDeptCompositionRow(overrides: Partial<DeptCompositionRow>): DeptCompositionRow`
 - DRY 原則: DTO 5 field + UI 派生 row（`prev_month_diff?: number | null` 含む）
 
-#### compute-report-days（[month, importedDates, today] → { imported, notImported, excludesFutureDays }。UI-09b-D11、未実装）
+#### compute-report-days（[month, importedDates, today] → { imported, notImported, isCurrentMonth }。UI-09b-D11、未実装）
 - 月の日を 1 日から月末まで作る（月末は compute-period-label と同じ `new Date(year, month, 0).getDate()`）。`importedDates` のうちその月の日を `imported`、残りを `notImported` にする。月の外の日は数えない
-- `today`（`YYYY-MM-DD`）より後の日は `notImported` に入れない（今日は入れる）。月の中に今日より後の日があれば `excludesFutureDays: true`
+- `today`（`YYYY-MM-DD`）より後の日は `notImported` に入れない（今日は入れる）。来月より先の月は `notImported` が空
+- `isCurrentMonth` は `month` が `today` の月（`today` の先頭 7 字）と同じときだけ true。`今日より後の日は数えていません。` はこれが true のときだけ出す（今日より後の日を除いたかどうかで決めない。来月より先の月は全部の日を除くが、文は出さない）
 - 各日は `{ date: "YYYY-MM-DD", label: "{D}日（{曜}）" }`。曜は `new Date(year, month - 1, day).getDay()` の local（UTC の parse をしない）
 - completed・distinct は BIZ-05 が保証するので、ここで status や重複の規則を写さない
 - G-9 不正月: 空の結果を返し、throw しない
@@ -473,7 +478,7 @@ function MonthlySalesPage() {
 
 合計テストケース **44-57 ケース**（plan §7 表 42-55 に整合）。
 
-UI-09b-D11 で足す test（未実装。ケースの正本は [packet](../plans/2026-11-03-monthly-imported-days.md) の Test Plan）: `compute-report-days.test.ts`（過去の月・今月の今日より後の除外・来月より先の月・閏年と月の長さ・曜日の local・不正月と月の外の日）、`OfficialReportDays.test.tsx`（見出しの数・日の link・`なし`・直し方の link・今月だけの文）、`MonthlySalesPage.test.tsx`（null の月に一覧が無い、空配列の月に一覧が在る、invalidate の後の refetch、取得の失敗と再試行、月の切替え）。
+UI-09b-D11 で足す test（未実装。ケースの正本は [packet](../plans/2026-11-03-monthly-imported-days.md) の Test Plan）: `compute-report-days.test.ts`（過去の月・今月の今日より後の除外・来月より先の月〈`isCurrentMonth` が false〉・閏年と月の長さ・曜日の local・不正月と月の外の日）、`OfficialReportDays.test.tsx`（見出しの数・日の link・`なし`・直し方の link・今月だけの文〈過去の月と来月より先の月では出ない〉）、`MonthlySalesPage.test.tsx`（null の月に一覧が無い、空配列の月に一覧が在る、invalidate の後の refetch、取得の失敗と再試行、月の切替え）、`src/components/sales/TabsHeader.test.tsx`（`month` を渡すと `月次` の link に search `month`、渡さないと今の href）、`src/features/daily-sales/DailySalesPage.test.tsx`（表示中の日の月を `TabsHeader` に渡す。前日・翌日・日付の入力で月が変わった後も追う）。
 
 ### 57.10 業務ルール
 
@@ -545,4 +550,4 @@ UI-09b-D11 で足す test（未実装。ケースの正本は [packet](../plans/
 | 2026-07-29 | 監査是正 順21a plan-first | UI-TABLE-D1として月次Department 3列 / Ranking 4列のheader implementation ownerを`src/components/sales/SortableHeader.tsx`へ正本化。列集合・sort callback・URL state・表示は不変 |
 | 2026-08-16 | PR #79 | SPEC-SDI-D6: 同日複数active importの月次加算、per-import取消後の減算、series分離、将来coverageのdistinct-date契約を正本化。 |
 | 2026-10-08 | 単位の拡張 design lane | §57.6 compute-summary に単位の拡張の後（proposed・未実装、D-113 / SPEC-UNIT-D3、owner の決定 TD-203）を追加: `count_points`・`length_cm` の 2 本の集計（TD-206・TD-207）、商品別の m。 |
-| 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | UI-09b-D11（未実装）を足した: 公式部門集計の節に取り込んだ日と取り込んでいない日を文字で出す（owner の決定 TD-578 の O3。表示の形は packet の O1〜O5 で、owner の答え〈2026-11-03、repo 外の回答台帳 TD-588〉: O1〜O5 とも a）。UI-09b-D10 の「将来「取込み済み日数」を表示する場合は」を `official_report_dates` を使う今の契約に置き換えた。§57.2 の `MonthlySalesReport` の snippet に欠けていた `official_department_totals` と新しい `official_report_dates` を足した。 |
+| 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | UI-09b-D11（未実装）を足した: 公式部門集計の節に取り込んだ日と取り込んでいない日を文字で出す（owner の決定 TD-578 の O3。表示の形は packet の O1〜O5 で、owner の答え〈2026-11-03、repo 外の回答台帳 TD-588〉: O1〜O5 とも a）。UI-09b-D10 の「将来「取込み済み日数」を表示する場合は」を `official_report_dates` を使う今の契約に置き換えた。§57.2 の `MonthlySalesReport` の snippet に欠けていた `official_department_totals` と新しい `official_report_dates` を足した。計画の review round 1 の是正で、UI-09b-D11 に日次から月次への戻り（日次の `TabsHeader` の `月次` の link が表示中の日の月を search `month` で渡す）を足し、§57.6 の今日より後の文の条件を `isCurrentMonth`（今月だけ）にした。 |
