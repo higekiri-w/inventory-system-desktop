@@ -64,7 +64,7 @@ struct DailyReportPreviewResponse {
 }
 ```
 
-`DailyReportPreviewData`、`DailyReportImportResult`、`DailyReportRollbackResult`、`DailyReportImport` は [37.2](37-biz-daily-report-import-service.md#372-型定義) / `sales_repo` のDTOを所有元とする。CMD-12実装では、UIに返すDTOに `specta::Type` を付けてTauri wire型として公開する。`CachedDailyReportPreview` はAppState内部専用であり、wire型にはしない。
+`DailyReportPreviewData`、`DailyReportImportResult`、`DailyReportRollbackResult`、`DailyReportImportRow` は [37.2](37-biz-daily-report-import-service.md#372-型定義) のDTOを所有元とする（`DailyReportImportRow` は 55 UI-07-D19 の実装〈proposed・未実装〉で `sales_repo` の行の型 `DailyReportImport` の別名から BIZ-08 の struct に替わり、`DailyReportImport` は wire に出なくなる）。CMD-12実装では、UIに返すDTOに `specta::Type` を付けてTauri wire型として公開する。`CachedDailyReportPreview` はAppState内部専用であり、wire型にはしない。
 
 `DailyReportPreviewData.duplicate_check` のwire形状は `status: DailyReportDuplicateStatus` と `same_date_imports: Vec<SameDateDailyReportImportSummary>` で固定する。summaryは `id / source_filenames / gross_amount / net_amount / imported_at` を持ち、順序は `imported_at DESC, id DESC`。hashと単一parent fieldは公開しない。
 
@@ -124,8 +124,10 @@ fn list_daily_report_imports(
     per_page: i64,
     date_from: Option<String>,
     date_to: Option<String>,
-) -> Result<PaginatedResult<DailyReportImport>, CmdError>
+) -> Result<PaginatedResult<DailyReportImportRow>, CmdError>
 ```
+
+出力の行は BIZ-08 §37.6 の `DailyReportImportRow`（対象日・取込みID・`source_filenames`・総売上・純売上・状態・取込み日時・取消日時。UI-07-D19 の実装〈proposed・未実装〉の前は IO の行 `DailyReportImport` の別名）で、CMD は写さず素通しにする。呼ぶのは「日報の取込みの記録」（[55](55-ui-csv-import.md) §55.12）。
 
 **入力ガード**:
 - page < 1 → `CmdError.kind="validation"`
@@ -243,7 +245,7 @@ fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdE
 
 ### 45.8 生成bindings
 
-SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。`settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。37 §37.4 手順 6）。
+SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は UI-07-D19 の実装（proposed・未実装）で `DailyReportImport` から `DailyReportImportRow`（§45.6）に替え、generator で再生成する（bindings から `DailyReportImport` の型が消え、`source_files_json` 等の内部の値が wire から外れる。command の数と名前は変わらない）。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。`settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。37 §37.4 手順 6）。
 
 対象:
 - `parse_and_validate_daily_report`
@@ -264,3 +266,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-07 | sd-direct-read（Plan Review round 1 の是正） | §45.4 の commit に `app: tauri::AppHandle` と `app_data_dir` の取り方（手順 3a）を足した（BIZ-08-D5 の写しの置き場所）。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | §45.6c（CMD-12-D2）: 一括取込みと EJ の控えの command と、scan に後から足す EJ の数え・Z004 の bytes を proposed で足した。§45.6a・§45.6b は変えていない。Plan Review round 2 の是正で、`Failed` の kind と EJ の kind・mode を生成 enum にし、scan の `ej_unreadable_files` と手で選んだ EJ の保留の判定の置き場を書いた。Plan Review round 3 の是正で、一括取込みと手で選ぶ EJ の取込みの後に無効にする控えの query の key を書いた。Final Review の是正で、(B) の scan が返す `z004_unreadable_files` を書いた。あわせて `z004_unreadable_count` を書いた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
+| 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |

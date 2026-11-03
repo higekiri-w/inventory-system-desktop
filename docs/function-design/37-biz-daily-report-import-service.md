@@ -169,9 +169,21 @@ struct DailyReportImport {
     rolled_back_at: Option<String>,
     source_files_json: String,
 }
+
+// §37.6 の一覧の行（wire。UI-07-D19、proposed・未実装。今の実装は DailyReportImport の別名）
+struct DailyReportImportRow {
+    id: i64,
+    report_date: String,
+    source_filenames: Vec<String>, // source_files_json の各要素の filename（§37.6）
+    gross_amount: Option<i64>,
+    net_amount: Option<i64>,
+    status: String, // "completed" | "rolled_back"（DB の CHECK）
+    imported_at: String,
+    rolled_back_at: Option<String>,
+}
 ```
 
-`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。
+`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。`DailyReportImport` は IO の行の型（[24](24-io-csv-import-repo.md) §14.2）で、UI-07-D19 の実装の後は wire に出さない（一覧の wire は `DailyReportImportRow`。`source_files_json` は §37.4 手順 6 の内部の保存の形なので UI に渡さない）。
 
 個数は commit まで 100 倍の整数（`quantity_hundredths`、IO-07-D2）で運び、wire DTO（`DailyReportDepartmentLinePreview.quantity`）だけを単位の数にする。commit は `CachedDailyReportPreview` の 100 倍の整数をそのまま保存し、wire の `f64` から戻さない（往復の丸めを作らない）。`DailyReportDepartmentLinePreview.quantity` の TypeScript の型は `number | null` のまま変わらない（specta は `i64` も `f64` も `number` にする）。
 
@@ -307,8 +319,10 @@ fn rollback_daily_report_import(
 fn list_daily_report_imports(
     conn: &DbConnection,
     query: ListDailyReportImportsQuery,
-) -> Result<PaginatedResult<DailyReportImport>, BizError>
+) -> Result<PaginatedResult<DailyReportImportRow>, BizError>
 ```
+
+**出力**（UI-07-D19、proposed・未実装。今の実装は IO の行〈`DailyReportImport`〉をそのまま返す）: IO-01 の `list_daily_report_imports`（[24](24-io-csv-import-repo.md) §14.20）の行を `DailyReportImportRow`（§37.2）に写す。`source_filenames` は `source_files_json` の各要素の `filename` を並びのまま取り出す（§37.3 の同じ日の取込みの要約〈`SameDateDailyReportImportSummary.source_filenames`〉と同じ関数を使い、規則を 2 つ持たない。`sd_relative_path`・`copy_path` 等のほかの key は読まない）。`source_files_json` を読めない行があれば、その文の `BizError::ImportError`（「既存日報のファイル情報を読み取れません」）で一覧全体を失敗にする（空の名前にして黙って通さない。行は本アプリだけが書くので、読めないのは壊れた DB のとき）。`bundle_hash`・`source_files_json`・`source_adapter`・`note` は返さない（UI が使わない内部の値。「日報の取込みの記録」〈[55](55-ui-csv-import.md) §55.12〉が使う値だけにする）。
 
 **検索条件**:
 - page / per_page
@@ -716,3 +730,4 @@ struct EjRecordDetail {
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §37.4 手順 6 の「今の」の注記と、lane で内部の型に替える旨の注記を、実装の内部の型 `StoredSourceFile` の記述に直した。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正、D-142） | §37.3 手順 3 に BIZ-08-D2a（数の上限の越え〈IO-07-D6 の `number_too_large`〉の利用者向けの文。帳票と列を名指し、値・file 名・行番号を出さない）と §37.7 の行を proposed で足した。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-142） | BIZ-08-D2a と §37.7 の行の proposed の注記を外した。 |
+| 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §37.2 に一覧の行の wire `DailyReportImportRow` を、§37.6 に出力（`source_filenames` の出所、読めない `source_files_json` は一覧全体の `ImportError`、内部の値を返さない）を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
