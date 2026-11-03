@@ -74,7 +74,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 ## owner の判断事項
 
-製品の問いは無い見込み（既存の正本〈UI-02-D9・UI-04-D11・UI-03-D14・UI-05-D10 と「保存成功後はフォーム本文を操作不可」〉に合わせる是正）。1 つだけ、見える振舞いの差を candidate として挙げる（packet の起票の AI が出したもので、Human Gate の必須にしない）:
+製品の問いは無い見込み（既存の正本〈UI-02-D9・UI-04-D11・UI-03-D14・UI-05-D10 と「保存成功後はフォーム本文を操作不可」〉に合わせる是正）。1 つだけ、見える振舞いの差を candidate として挙げた（選択肢と推奨は packet の起票の AI が出した）。owner の答え（2026-11-03、repo 外の回答台帳 TD-594）: O1 = a（保存を押したら捨てる）:
 
 - **O1 保存を押す前に始めた検索**: (a) 保存の結果によらず捨てる。保存の失敗・PLU 確認待ちの後は検索欄の文字が残り、Enter で同じ検索をし直す【推奨】／(b) 保存の失敗・確認待ちで lock が外れた後に届いた応答は採る（#216 の形）。理由: (a) は UI-05-D15 の理由の「保存開始時点から破棄する」と同じで、手動販売の確認待ちの token の食い違い（上の調べ）と、応答を採る `updateValues` が古い render の `failedSignature`・`confirmation` を見る経路を閉じる。(b) は確認待ちの経路を別の条件で閉じる手当てが要る。見える差は、保存を押す直前に読んだ商品が、保存に失敗したときに入らず、もう一度 Enter が要ること（ローカルの SQLite の検索は短く、起きる窓は狭い。窓の長さは未実測）。変わる所: (b) なら 4 画面の正本の「世代 ref は保存 event の先頭と reset event で進める」から保存 event を外し、手動販売に確認待ちの別の手当てを足し、S6・M2 を作り直す。
 
@@ -147,7 +147,7 @@ Non-scope: `src/components/patterns/useProductAddSuggest.ts`・`ProductAddSugges
   - (4) データの安全: 店の実データを使わない。test の値は合成（`makeMockProductWithRelations`）。probe の写しは repo の外の `.local/` にあり commit しない。
   - (5) 前提の出所: 関門と範囲は owner の決定 TD-586（台帳）。経路の事実は上の「現状の調べ」の file:行と probe の実行の出力（本 packet の起票の時に再実行した）。O1 は AI の候補で、owner の決定ではない。
 - この変更で不要になる記述・条件: (i) 61 UI-02-D14・62 UI-04-D16・63 UI-03-D21・catalog ⑮ D4・D10 の「取引 3 画面は既存 `isFormLocked` 派生 state」（lock ref に置き換えた）。(ii) code の、検索の開始・`addProduct`・suggest の `isLocked` の render の `isFormLocked` の検査（ref に置き換える）。(iii) catalog ⑮ の注の「D1〜D10 本文不変」は D4・D10 で成り立たなくなったので、改めた旨を同じ注に足した（凍結の記録として消さない）。(iv) backlog の項目と Plans の関門 13 は実装の merge で済みにする。残すと決めたもの: render の `isFormLocked`（disabled・離脱の guard・result の表示に要る）、廃棄の既存の UI-05-D15 の test 5 本（世代を足しても意味が変わらず、lock の event の境を見張る）、BIZ の冪等と token の検査（最後の防御）。
-- 判定: ready。O1 は既存の UI-05-D15 の意図に合わせた推奨の既定で書いており、owner が (b) を選べば Gated Amendment で直す（Human Gate の必須にしない）。ほかに未解決の設計の問いは無い。
+- 判定: ready。O1 は owner の答え（2026-11-03、TD-594）で a に決まった（既存の UI-05-D15 の意図と同じ）。ほかに未解決の設計の問いは無い。
 
 ## Contract Ledger
 
