@@ -11,6 +11,7 @@ import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { dailyReportImportReducer } from "../reducer";
+import { useRollbackDailyReportImport } from "./useRollbackDailyReportImport";
 import type { DailyReportErrorRecoverTo, DailyReportImportState } from "../types";
 
 const INITIAL_STATE: DailyReportImportState = { status: "idle" };
@@ -182,31 +183,18 @@ export function useDailyReportImportFlow() {
     },
   });
 
-  const rollbackMutation = useMutation({
-    mutationFn: (dailyReportImportId: number) =>
-      unwrapResult(commands.rollbackDailyReportImport(dailyReportImportId), {
-        source: "commands",
-        cmd: "rollback_daily_report_import",
-      }),
-    retry: 0,
-    onSuccess: async () => {
+  // 取消の mutation・Toast・C10 の再取得・取消の応答を待つ間の止めは共有の hook（55 §55.12 UI-07-D19）
+  const rollbackMutation = useRollbackDailyReportImport({
+    onSuccess: () => {
       dispatch({ type: "rollback_succeeded" });
-      // Scope 7(a) UI 表示磨き batch: 取消は破壊的操作の完了通知であり、既定 3 秒
-      // (RootLayout.tsx の Toaster duration) では非IT高齢operatorが読み切れない
-      // おそれがあるため、この通知だけ個別に長く表示する（Toaster 全体設定は不変）。
-      toast.success("日報取込みを取り消しました", { duration: 8000 });
-      await invalidateByContract(queryClient, invalidationContract.dailyReportImport());
-    },
-    onError: () => {
-      toast.error("取り消しに失敗しました。もう一度お試しください");
     },
   });
 
-  // 取込み中と取消の応答を待つ間は画面を離れない（§55.6 の rollback の行「result 画面は維持」）
-  const blocking = state.status === "importing" || rollbackMutation.isPending;
+  // 取込み中は画面を離れない（取消の応答を待つ間の止めは useRollbackDailyReportImport）
+  const importing = state.status === "importing";
   useBlocker({
-    shouldBlockFn: () => blocking,
-    enableBeforeUnload: () => blocking,
+    shouldBlockFn: () => importing,
+    enableBeforeUnload: () => importing,
   });
 
   const scanSd = useCallback(
@@ -404,7 +392,7 @@ export function useDailyReportImportFlow() {
     isParsing: parseMutation.isPending || parseFromSdMutation.isPending,
     isImporting: commitMutation.isPending,
     isRollingBack: rollbackMutation.isPending,
-    /** 取込み中か取消の応答を待つ間（useBlocker と同じ条件。親のタブの切替えも止める、55 §55.7） */
-    isBlocking: blocking,
+    /** 取込み中か取消の応答を待つ間（2 つの useBlocker の条件の和。親のタブの切替えも止める、55 §55.7） */
+    isBlocking: importing || rollbackMutation.isPending,
   };
 }

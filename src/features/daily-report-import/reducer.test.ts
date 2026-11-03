@@ -104,6 +104,7 @@ const scan: DailyReportSdScan = {
       path_date: "2026-03-21",
       report_date: "2026-03-21",
       source_filenames: ["Z001_21 .CSV", "Z002_21 .CSV", "Z005_21 .CSV"],
+      settlement_no: 101,
       status: "NotImported",
     },
     {
@@ -111,6 +112,7 @@ const scan: DailyReportSdScan = {
       path_date: "2026-03-21",
       report_date: "2026-03-21",
       source_filenames: ["Z001_21A.CSV", "Z002_21A.CSV", "Z005_21A.CSV"],
+      settlement_no: 101,
       status: "NotImported",
     },
   ],

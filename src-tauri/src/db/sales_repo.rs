@@ -183,8 +183,8 @@ pub struct VoidedMovement {
 
 /// daily_report_imports テーブルの行マッピング
 ///
-/// 24-io-csv-import-repo.md §14.2 / §14.14-14.20
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+/// 24-io-csv-import-repo.md §14.2 / §14.14-14.20。wire に出さない（一覧の wire は BIZ の `DailyReportImportRow`）
+#[derive(Debug, Clone)]
 pub struct DailyReportImport {
     pub id: i64,
     pub report_date: String,
@@ -197,6 +197,8 @@ pub struct DailyReportImport {
     pub imported_at: String,
     pub rolled_back_at: Option<String>,
     pub note: Option<String>,
+    /// 束の精算回数（IO-07-D5）。NULL は None（24 §14.2、TD-590）
+    pub settlement_no: Option<i64>,
 }
 
 /// daily_report_imports INSERT用（id/imported_at/rolled_back_at は自動設定）
@@ -856,7 +858,7 @@ pub fn find_daily_report_import_by_id(
 ) -> Result<Option<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
@@ -875,7 +877,7 @@ pub fn find_blocking_daily_report_by_bundle_hash(
 ) -> Result<Option<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports
          WHERE bundle_hash = ?1 AND status = 'completed'
          ORDER BY id DESC LIMIT 1",
@@ -896,7 +898,7 @@ pub fn find_daily_report_imports_by_report_date(
 ) -> Result<Vec<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports
          WHERE report_date = ?1 AND status = 'completed'
          ORDER BY imported_at DESC, id DESC",
@@ -1002,7 +1004,7 @@ pub fn list_daily_report_imports(
     let offset = (page - 1) * per_page;
     let select_sql = format!(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports{}
          ORDER BY report_date DESC, imported_at DESC, id DESC
          LIMIT ? OFFSET ?",
@@ -1073,6 +1075,7 @@ fn row_to_daily_report_import(row: &rusqlite::Row) -> rusqlite::Result<DailyRepo
         imported_at: row.get(8)?,
         rolled_back_at: row.get(9)?,
         note: row.get(10)?,
+        settlement_no: row.get(11)?,
     })
 }
 

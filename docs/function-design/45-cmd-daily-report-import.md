@@ -64,7 +64,7 @@ struct DailyReportPreviewResponse {
 }
 ```
 
-`DailyReportPreviewData`、`DailyReportImportResult`、`DailyReportRollbackResult`、`DailyReportImportRow` は [37.2](37-biz-daily-report-import-service.md#372-型定義) のDTOを所有元とする（`DailyReportImportRow` は 55 UI-07-D19 の実装〈proposed・未実装〉で `sales_repo` の行の型 `DailyReportImport` の別名から BIZ-08 の struct に替わり、`DailyReportImport` は wire に出なくなる）。CMD-12実装では、UIに返すDTOに `specta::Type` を付けてTauri wire型として公開する。`CachedDailyReportPreview` はAppState内部専用であり、wire型にはしない。
+`DailyReportPreviewData`、`DailyReportImportResult`、`DailyReportRollbackResult`、`DailyReportImportRow` は [37.2](37-biz-daily-report-import-service.md#372-型定義) のDTOを所有元とする（`DailyReportImportRow` は BIZ-08 の struct で、`sales_repo` の行の型 `DailyReportImport` は wire に出さない。55 UI-07-D19）。CMD-12実装では、UIに返すDTOに `specta::Type` を付けてTauri wire型として公開する。`CachedDailyReportPreview` はAppState内部専用であり、wire型にはしない。
 
 `DailyReportPreviewData.duplicate_check` のwire形状は `status: DailyReportDuplicateStatus` と `same_date_imports: Vec<SameDateDailyReportImportSummary>` で固定する。summaryは `id / source_filenames / gross_amount / net_amount / imported_at` を持ち、順序は `imported_at DESC, id DESC`。hashと単一parent fieldは公開しない。
 
@@ -127,7 +127,7 @@ fn list_daily_report_imports(
 ) -> Result<PaginatedResult<DailyReportImportRow>, CmdError>
 ```
 
-出力の行は BIZ-08 §37.6 の `DailyReportImportRow`（対象日・取込みID・`source_filenames`・精算回数〈`settlement_no`、NULL は null〉・総売上・純売上・状態・取込み日時・取消日時。UI-07-D19 の実装〈proposed・未実装〉の前は IO の行 `DailyReportImport` の別名）で、CMD は写さず素通しにする。呼ぶのは「日報の取込みの記録」（[55](55-ui-csv-import.md) §55.12）。
+出力の行は BIZ-08 §37.6 の `DailyReportImportRow`（対象日・取込みID・`source_filenames`・精算回数〈`settlement_no`、NULL は null〉・総売上・純売上・状態・取込み日時・取消日時）で、CMD は写さず素通しにする。呼ぶのは「日報の取込みの記録」（[55](55-ui-csv-import.md) §55.12）。
 
 **入力ガード**:
 - page < 1 → `CmdError.kind="validation"`
@@ -153,7 +153,7 @@ struct RegisterSdScanResponse {
 }
 ```
 
-候補の `DailyReportSdCandidate` は 55 UI-07-D19 の実装（proposed・未実装、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）で `settlement_no: Option<i64>`（37 §37.9）を持つ。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
+候補の `DailyReportSdCandidate` は `settlement_no: Option<i64>`（37 §37.9）を持つ（55 UI-07-D19、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
 
 **処理ステップ**:
 1. `selected_path` を BIZ-08 の `DailyReportSdSelection`（37 §37.9。`None` → `Auto`、`Some` → `Selected(PathBuf)`）にする。CMD は IO-09 の型を使わない（`src-tauri/tests/architecture_test.rs` の LAYER_RULES で cmd → io は禁止）。空文字は `CmdError.kind="validation"`。
@@ -247,7 +247,7 @@ fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdE
 
 ### 45.8 生成bindings
 
-SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は UI-07-D19 の実装（proposed・未実装）で `DailyReportImport` から `DailyReportImportRow`（§45.6）に替え、generator で再生成する（bindings から `DailyReportImport` の型が消え、`source_files_json` 等の内部の値が wire から外れる。command の数と名前は変わらない）。同じ実装で `DailyReportSdCandidate` に `settlement_no`（§45.6a、TD-592）が足される。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。`settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。37 §37.4 手順 6）。
+SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は `DailyReportImportRow`（§45.6、UI-07-D19）で、bindings に `DailyReportImport` の型と `source_files_json` 等の内部の値は出ない。`DailyReportSdCandidate` は `settlement_no`（§45.6a、TD-592）を持つ。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。preview の cache の `settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。精算回数を wire に出すのは一覧の行〈§45.6〉と SD の候補〈§45.6a〉だけ。37 §37.4 手順 6）。
 
 対象:
 - `parse_and_validate_daily_report`
@@ -270,3 +270,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`。精算回数を含む、TD-590）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §45.6a に候補の `settlement_no`（TD-592）、§45.8 にその再生成を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
+| 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §45.3・§45.6・§45.6a・§45.8 の proposed・未実装の注記を外し、実装の記述にした（bindings は再生成）。§45.8 の wire に出さない精算回数を preview の cache の値と書き分けた。 |

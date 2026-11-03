@@ -234,8 +234,8 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - 日報ファイル選択後 → CMD-12 parse_and_validate_daily_report
 - 日報「取り込む」ボタン → CMD-12 commit_daily_report_import
 - 日報同日別bundleの追加確認時 → 両タブ共通の確認ダイアログ後にcommit（additional_import_confirmed=true）
-- 日報完了取消し（取込みの結果の画面の「取り消す」と、「日報の取込みの記録」の行の「取り消す」の 2 つの入口。共通の確認の後）→ CMD-12 rollback_daily_report_import（55 UI-07-D19、proposed・未実装。今の入口は結果の画面だけ）
-- 「日報の取込みの記録」の表示・ページ送り → CMD-12 list_daily_report_imports（55 UI-07-D19、proposed・未実装）
+- 日報完了取消し（取込みの結果の画面の「取り消す」と、「日報の取込みの記録」の行の「取り消す」の 2 つの入口。共通の確認の後）→ CMD-12 rollback_daily_report_import（55 UI-07-D19）
+- 「日報の取込みの記録」の表示・ページ送り → CMD-12 list_daily_report_imports（55 UI-07-D19）
 - Z004商品別CSV選択後 → CMD-07 parse_and_validate_csv（既存トラック）
 - Z004商品別CSV「取り込む」ボタン → CMD-07 commit_csv_import（既存トラック）
 - Z004商品別CSV完了取消し（取込みの結果の画面の「取り消す」と CSV取込みの詳細の「この取込みを取り消す」の 2 つの入口）→ 共通の確認が CMD-07 preview_rollback_csv_import で取り消した後のようすを読み、確定で CMD-07 rollback_csv_import（55 UI-07-D18）

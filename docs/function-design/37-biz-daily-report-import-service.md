@@ -168,10 +168,10 @@ struct DailyReportImport {
     imported_at: String,
     rolled_back_at: Option<String>,
     source_files_json: String,
-    settlement_no: Option<i64>, // UI-07-D19 の実装で足す（proposed・未実装。24 §14.2）
+    settlement_no: Option<i64>, // 束の精算回数（IO-07-D5）。NULL は None（24 §14.2、TD-590）
 }
 
-// §37.6 の一覧の行（wire。UI-07-D19、proposed・未実装。今の実装は DailyReportImport の別名）
+// §37.6 の一覧の行（wire。UI-07-D19）
 struct DailyReportImportRow {
     id: i64,
     report_date: String,
@@ -185,7 +185,7 @@ struct DailyReportImportRow {
 }
 ```
 
-`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。`DailyReportImport` は IO の行の型（[24](24-io-csv-import-repo.md) §14.2）で、UI-07-D19 の実装の後は wire に出さない（一覧の wire は `DailyReportImportRow`。`source_files_json` は §37.4 手順 6 の内部の保存の形なので UI に渡さない）。
+`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。`DailyReportImport` は IO の行の型（[24](24-io-csv-import-repo.md) §14.2）で、wire に出さない（一覧の wire は `DailyReportImportRow`。`source_files_json` は §37.4 手順 6 の内部の保存の形なので UI に渡さない）。
 
 個数は commit まで 100 倍の整数（`quantity_hundredths`、IO-07-D2）で運び、wire DTO（`DailyReportDepartmentLinePreview.quantity`）だけを単位の数にする。commit は `CachedDailyReportPreview` の 100 倍の整数をそのまま保存し、wire の `f64` から戻さない（往復の丸めを作らない）。`DailyReportDepartmentLinePreview.quantity` の TypeScript の型は `number | null` のまま変わらない（specta は `i64` も `f64` も `number` にする）。
 
@@ -324,7 +324,7 @@ fn list_daily_report_imports(
 ) -> Result<PaginatedResult<DailyReportImportRow>, BizError>
 ```
 
-**出力**（UI-07-D19、proposed・未実装。今の実装は IO の行〈`DailyReportImport`〉をそのまま返す）: IO-01 の `list_daily_report_imports`（[24](24-io-csv-import-repo.md) §14.20）の行を `DailyReportImportRow`（§37.2）に写す。`source_filenames` は `source_files_json` の各要素の `filename` を並びのまま取り出す（§37.3 の同じ日の取込みの要約〈`SameDateDailyReportImportSummary.source_filenames`〉と同じ関数を使い、規則を 2 つ持たない。`sd_relative_path`・`copy_path` 等のほかの key は読まない）。`source_files_json` を読めない行があれば、その文の `BizError::ImportError`（「既存日報のファイル情報を読み取れません」）で一覧全体を失敗にする（空の名前にして黙って通さない。行は本アプリだけが書くので、読めないのは壊れた DB のとき）。`settlement_no` は IO の行の値をそのまま写す（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を一覧の行から見分ける）。`bundle_hash`・`source_files_json`・`source_adapter`・`note` は返さない（UI が使わない内部の値。「日報の取込みの記録」〈[55](55-ui-csv-import.md) §55.12〉が使う値だけにする）。
+**出力**（UI-07-D19）: IO-01 の `list_daily_report_imports`（[24](24-io-csv-import-repo.md) §14.20）の行を `DailyReportImportRow`（§37.2）に写す。`source_filenames` は `source_files_json` の各要素の `filename` を並びのまま取り出す（§37.3 の同じ日の取込みの要約〈`SameDateDailyReportImportSummary.source_filenames`〉と同じ関数を使い、規則を 2 つ持たない。`sd_relative_path`・`copy_path` 等のほかの key は読まない）。`source_files_json` を読めない行があれば、その文の `BizError::ImportError`（「既存日報のファイル情報を読み取れません」）で一覧全体を失敗にする（空の名前にして黙って通さない。行は本アプリだけが書くので、読めないのは壊れた DB のとき）。`settlement_no` は IO の行の値をそのまま写す（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を一覧の行から見分ける）。`bundle_hash`・`source_files_json`・`source_adapter`・`note` は返さない（UI が使わない内部の値。「日報の取込みの記録」〈[55](55-ui-csv-import.md) §55.12〉が使う値だけにする）。
 
 **検索条件**:
 - page / per_page
@@ -408,7 +408,7 @@ struct DailyReportSdCandidate {
     path_date: String,                     // folder と名前の日付（YYYY-MM-DD）
     report_date: Option<String>,           // 中身の日付（読めた束だけ）
     source_filenames: Vec<String>,         // 3 本の file 名（Z001→Z002→Z005。そろわない束はある分）
-    settlement_no: Option<i64>,            // 束の精算回数（手順 5 の IO-07 `parse_daily_report_bundle` の値。手順 7・8 が使う値と同じ）。手順 5 まで読めなかった束（`Incomplete`・形・大きさ・parse で外れた `Unreadable`）と精算回数の無い束は None。`SameSettlementImported` は手順 7 で Some のときだけなので必ず Some。55 UI-07-D19 の実装で wire に足す（proposed・未実装。owner の決定 2026-11-03、repo 外の回答台帳 TD-592）
+    settlement_no: Option<i64>,            // 束の精算回数（手順 5 の IO-07 `parse_daily_report_bundle` の値。手順 7・8 が使う値と同じ）。手順 5 まで読めなかった束（`Incomplete`・形・大きさ・parse で外れた `Unreadable`）と精算回数の無い束は None。`SameSettlementImported` は手順 7 で Some のときだけなので必ず Some。wire に載せ、内部の並べ替えの値と同じ出所から作る（55 UI-07-D19。owner の決定 2026-11-03、repo 外の回答台帳 TD-592）
     status: DailyReportSdCandidateStatus,
 }
 
@@ -735,3 +735,4 @@ struct EjRecordDetail {
 | 2026-10-31 | 日報の紙の runtime（実装、D-142） | BIZ-08-D2a と §37.7 の行の proposed の注記を外した。 |
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §37.2 に一覧の行の wire `DailyReportImportRow` を、§37.6 に出力（`source_filenames` の出所、`settlement_no`〈TD-590〉、読めない `source_files_json` は一覧全体の `ImportError`、内部の値を返さない）を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §37.9 の `DailyReportSdCandidate` に `settlement_no`（手順 5 の値、TD-592）を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
+| 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §37.2 の `DailyReportImportRow`・`DailyReportImport.settlement_no`、§37.6 の出力、§37.9 の候補の `settlement_no` の proposed・未実装と「今の実装は…」の注記を外し、実装の記述にした。 |
