@@ -5,7 +5,7 @@ wave に属さない単独の lane。導入の前の関門の 13（[Plans](../Pl
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 5d049478447c5693e978d1c82d9ce8196e2c6d35
 - Amendments: none
 
 ## Risk
