@@ -285,7 +285,7 @@ Test Design Matrix: [2026-10-06-sd-direct-read](test-matrices/2026-10-06-sd-dire
 
 - 結果: レジの SD を探して売上の file を読み、精算ごとの束を取込み済みと照らし、選んだ束を既存の preview・commit に通し、読んだ原本の写しを PC に残す設計（IO-09・IO-10・IO-07-D5・BIZ-08-D3〜D6・CMD-12-D1・UI-07-D12・D15・D16・`daily_report_imports.settlement_no`）を設計正本に置き、判断を D-111 に記録した。旧い標準手順（CV17 の取込みの後に `EcrDatas` から選ぶ）を通常の手順とする live な記述を置き換えた。本 lane は docs だけで、runtime の code・test・migration は無い。
 - 既存の保護: 既存の取込みの経路（3 ファイルを選ぶ経路・同日追加の確認・取込みごとの取消）と wire は、`DailyReportSourceFileRequest` に省略可の `source_path` を足すほかは変えない設計にした。(b) の lane まで店は CV17 の取込みを今の運用のまま続ける（D-111 の運用の制約）。
-- review・CI・merge（closeout、2026-10-07）: Plan Review は 3 round（round 1・2 は reject で全件是正、round 3 は両者 reject〈P1 0〉で round 天井の disposition の後に owner が plan-approved を承認〈TD-180〉）。Final Review は broad が両者 approve、P3 を Ready の前に Gated Amendment で直し、Codex の closure と Fable 5.1 の fresh broad が approve。hosted CI の `Merge gate` は success で、owner の Ready の承認（TD-183）の後に helper 経由の squash merge。docs の検査の結果は PR の body が持つ。PR: [#150](https://github.com/kosei-w90607/inventory-system-desktop/pull/150)
+- review・CI・merge（closeout、2026-10-07）: Plan Review は 3 round（round 1・2 は reject で全件是正、round 3 は両者 reject〈P1 0〉で round 天井の disposition の後に owner が plan-approved を承認〈TD-180〉）。Final Review は broad が両者 approve、P3 を Ready の前に Gated Amendment で直し、Codex の closure と Fable 5.1 の fresh broad が approve。hosted CI の `Merge gate` は success で、owner の Ready の承認（TD-183）の後に helper 経由の squash merge。docs の検査の結果は PR の body が持つ。PR: [#150](https://github.com/higekiri-w/inventory-system-desktop/pull/150)
 - 後続: runtime の実装・test・Windows の L3 は「SD 直読みの runtime」の lane、取込み済みを `XZ_BKUP` へ移す操作は (b) の lane（どちらも `docs/backlog.md`）。
 - packet との食い違い: なし。
 

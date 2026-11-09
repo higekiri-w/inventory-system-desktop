@@ -231,7 +231,7 @@ not applicable（DTO / wire 非接触。`assign_supplier_id` の契約は不変�
 
 ## Implementation Results
 
-[PR #67](https://github.com/kosei-w90607/inventory-system-desktop/pull/67) で実装し squash merge 済み（`ebbbef14`、2026-09-16）。Writer = Codex 発注書 57（run 1 / 2 は Coordinator の発注書誤りで fail-closed、run 3 で実装 `462ebc87` `612f5f9a`）、検証・Draft PR = Sonnet run（source 編集なし）。GA1〜GA3、base 同期 `54e4c14f`。Final Review round 1 = Sonnet pass（P3 1）/ Opus P2 1 → 裁定合意で pass（`#issuecomment-5684502195`）。owner L3 round 1 PASS（`#issuecomment-5684432477`）。介入 1 / 予算 3、relay 3 / 上限 3
+[PR #67](https://github.com/higekiri-w/inventory-system-desktop/pull/67) で実装し squash merge 済み（`ebbbef14`、2026-09-16）。Writer = Codex 発注書 57（run 1 / 2 は Coordinator の発注書誤りで fail-closed、run 3 で実装 `462ebc87` `612f5f9a`）、検証・Draft PR = Sonnet run（source 編集なし）。GA1〜GA3、base 同期 `54e4c14f`。Final Review round 1 = Sonnet pass（P3 1）/ Opus P2 1 → 裁定合意で pass（`#issuecomment-5684502195`）。owner L3 round 1 PASS（`#issuecomment-5684432477`）。介入 1 / 予算 3、relay 3 / 上限 3
 
 ## Review Response
 

@@ -262,7 +262,7 @@ npm ci --ignore-scripts                  # 環境再構築の標準（D-030 常�
 npm run tauri dev                        # ウィンドウ起動 = 取り込み成功
 ```
 
-origin が旧 private repo（`inventory-system`）のままだと `git fetch` は成功するのに feature ブランチが見つからず取り込みが止まる。旧 private のままなら public repo へ張り替える: `git remote set-url origin git@github.com:kosei-w90607/inventory-system-desktop.git`。
+origin が旧 private repo（`inventory-system`）のままだと `git fetch` は成功するのに feature ブランチが見つからず取り込みが止まる。旧 private のままなら public repo へ張り替える: `git remote set-url origin https://github.com/higekiri-w/inventory-system-desktop.git`。
 
 **毎回ハマる落とし穴（判断は固定）**:
 

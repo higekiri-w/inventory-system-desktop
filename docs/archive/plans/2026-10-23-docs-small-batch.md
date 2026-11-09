@@ -488,7 +488,7 @@ AC（本 run で逐語で実行した結果）:
 closeout（2026-10-24）:
 
 - 結果: decision-log の 15 の D の Status を状態の語と出所だけにし、設計正本・runbook・ADR が backlog を名で引く所を今の項目と節の ID に、task-specs の 5 か所に D-117 の後の形と今の build を書き分ける注記を、archive の 3 file の link を項目の今の置き場に、入庫の正本に取り寄せの品を入れない決まり（TD-350）を、DSR-22・56・`docs/SCREEN_DESIGN.md` と db-design の文を今の code・決定に合わせた。code・migration・bindings・画面の振舞いは変えない。部門 12 の `code_prefix`（S7-1）は別の R3 の lane（PR #195）で code の側を直した。
-- review・CI・merge: Plan Review は round 1〜3（天井）と closure（fresh Opus 5.5 と Codex の両者 approve）。Final Review の broad は Codex と fresh Opus 5.5 の両者 approve（P3 だけ）で、重なる 1 件を除く P3 5 件を Coordinator が直し、closure（fresh Opus 5.5）が approve した。hosted CI は緑で、helper 経由で squash merge した。PR: [#192](https://github.com/kosei-w90607/inventory-system-desktop/pull/192)
+- review・CI・merge: Plan Review は round 1〜3（天井）と closure（fresh Opus 5.5 と Codex の両者 approve）。Final Review の broad は Codex と fresh Opus 5.5 の両者 approve（P3 だけ）で、重なる 1 件を除く P3 5 件を Coordinator が直し、closure（fresh Opus 5.5）が approve した。hosted CI は緑で、helper 経由で squash merge した。PR: [#192](https://github.com/higekiri-w/inventory-system-desktop/pull/192)
 - closeout で直したもの: `docs/Plans.md` の `## 次の行動` の「次の docs の lane の候補」を名で引く句（S6b）、closure の P3 N1 の S4-3 の「結果」列（下の Review Response）、61 の変更履歴の本 packet への link の path。
 - 後続: backlog の「MSI の製品名と upgrade code の固定」の旧名の句は MSI の lane（PR #191）へ申し送り済み（Non-scope）。
 

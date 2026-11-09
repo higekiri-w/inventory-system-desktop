@@ -16,7 +16,7 @@ tracked project hook inventoryは空で、`claude-code-harness`はproject scope�
 
 モデル固有補助は [Anthropicの当該モデル向けガイド](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices) と実際の観測で選ぶ。Astraの特性をClaudeへ転記しない。
 
-owner に渡すコピペ物（command・URL の一覧・checklist）は返答の本文に inline で書き、path は省略しない完全な形で書く（WSL は `/home/kosei/...`、Windows は `C:\Users\Owner\...`、Windows から WSL の file は `\\wsl.localhost\Ubuntu-22.04\home\kosei\...`。D-127）。
+owner に渡すコピペ物（command・URL の一覧・checklist）は返答の本文に inline で書き、path は省略しない完全な形で書く（WSL は `/home/alice/...`、Windows は `C:\Users\Alice\...`、Windows から WSL の file は `\\wsl.localhost\Ubuntu-26.04\home\alice\...`。D-127）。
 
 ## 座組と effort
 
