@@ -109,6 +109,8 @@ Closure = {head: SHA, base: SHA, audit: Audit} | {head: SHA, base: SHA, sync_fro
 
 `sync_from`の形のclosureは、helperが同期だけの条件とcodeに触れない条件で記録したもの（後述の「base同期だけでheadが変わる場合」）で、独立監査を表さない。
 
+`repo`は`scripts/pr-gate.py`の`REPO`（GitHubの今の名前）。2026-11-09のGitHubのuser名の変更より前に書いたrecordの旧名`kosei-w90607/inventory-system-desktop`は、recordを読むときだけ受け、helperが次にそのrecordを書くときに今の名前で書き直す。origin・PRのbase/headのrepo・CIの`head_repository`の照合では旧名を受けない（D-150）。
+
 初回のbroad監査はpacketのFinal Review Minimum以上の独立auditを必要とする。auditsは監査の実施記録で、各監査でfindingが出たことを隠さない。現在版の全findingが裁定・解消された場合だけreview.outcomeをpassにする。run_refは重複不可の公開可能な識別子であり、モデルのsession識別子ではない。packet の review を not-required にはできず、Broad.plan_commitは承認されたPlan Commitと一致するfull SHAを必須としnullを拒否する。schemaのplan_commit=nullは packet なしの道（R0〜R2）だけに許す。R0/R1の不要reviewはbroad/closureともnull、R2 は差分の review 1 本の broad を持つ。
 
 broadと現在のhead/baseが同じならclosureはnull。異なる場合は、同じPlan Commit/Amendmentsの範囲で、必要数を満たすbroadを保持し、現在head/baseに一致する独立closureを1回以上必要とする。closureのauditは過去の監査・既存finding・累積修正を踏まえた現在候補の完了判定を含む。単に最新の1行だけ見た結果を完了判定にしない。Plan契約が変わった場合やbroadの同一scope適用を確認できない場合は、新しいbroadを必要とする。base同期にもこのclosure数を適用し、初回Double Auditを無条件にやり直さない。同期だけでcodeに触れない版は、独立closureの代わりにhelperが`sync_from`の形のclosureを記録する（MG-D13）。
