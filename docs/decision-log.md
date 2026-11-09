@@ -1292,3 +1292,14 @@ Use concise ADR-style entries.
 - Guarantee range: Codex の Writer は AGENTS.md の 1 項目と発注で受け、Claude の Writer より弱い。main は AGENTS.md と global の `~/.claude/CLAUDE.md` の行だけで受ける。project の `false` が user global の `true` に勝つことは merge の後の session で観測する（packet の AC8）。効き目の同等性は測らない。
 - owner の決定（repo 外の回答台帳、要旨）: TD-526〜530（plugin をこの project で切る・強度と効果は保つ・AGENTS.md の 1 行は手続きの lane に束ねる・置き換えと切る操作を同じ merge に入れ、#222 に束ねて切る）。
 - Revisit: 切った後の数本の lane の Final で作り込みすぎの指摘を見る。比べる基準として、切る前の lane（#220 など）の差分を同じ観点で数えておく。
+
+## D-150: GitHub の user 名の変更に helper の REPO を合わせ、旧名の record を読むときだけ受け、直す PR だけ owner が直接 merge する（2026-11-09）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-599・TD-600、2026-11-09。lane は Plan Packet `docs/plans/2026-11-09-pr-gate-repo-rename.md`）
+- Context: 2026-11-04 の旧 WSL の感染で開発の環境を作り直し、GitHub の user 名を `kosei-w90607` → `higekiri-w` に変えた（TD-598）。helper（`scripts/pr-gate.py`）の `REPO` が旧名のままで、origin の URL・PR の base/head の repo・record の author の照合で止まり、`status` も出ない。helper は PR の base の版でだけ動く（D-099）ので、`REPO` を直す PR は helper で merge できない。2026-11-09 に open な PR（8 本）の record は `repo` に旧名を持ちうる。
+- Decision: (1) `REPO` を今の名前 `higekiri-w/inventory-system-desktop` にする。origin・PR の base/head の repo・CI の `head_repository` の照合は今の名前だけを受ける。(2) record の `repo` は、読むときだけ旧名 `kosei-w90607/inventory-system-desktop` も受け、helper が次にその record を書くときに今の名前で書き直す（TD-600。規則の文は `docs/agent-guidance/merge-evidence.md` の RecordV1 の後の段落）。(3) この変更の PR に限り、計画の review と Final Review（座組表どおり各 2 本）と hosted の `Merge gate` を済ませた後、owner が `gh pr merge <N> --squash --match-head-commit <head>` で直接 merge する（TD-599）。helper の review・manual の確かめは PR の comment の review の結果で代える。他の PR には使わない。
+- Why: base の版の helper は旧名のままなので、どの PR も helper を通れず、直す PR を通す道が helper の外にしかない。旧名の record を受けるのは record の中の文字列だけで、record の comment は author の照合（今の login）を先に通るので、他人の comment を record として受けることにならない。旧名は他人が取りうるので、origin・PR・CI の照合では旧名を受けない。書くときに今の名前へ直すので、旧名の受け入れは書き直されていない record が残る間だけ要る。
+- Alternatives: 旧名の record の comment を消して取り直す（TD-600 の b。PR ごとの外部の書込みと record の履歴の喪失）; origin の URL を旧名に戻して照合を通す（PR の API は今の名前の full_name を返すので通らず、旧名が他人に取られると転送が止まる）; helper の base の版の照合（D-099）を一時的に外す（PR が自分の review の要件を変えうる穴を開く）; 旧名を受けずに全 PR の review を取り直す（broad の review の費用）。
+- Compatibility: D-099 は変えない（この PR が merge された後の PR から、helper は今の名前の base の版で動く）。`AGENTS.md` Working Rules の「merge は helper 経由」「直接UI mergeは禁止」は変えず、(3) はこの PR だけの例外。
+- Guarantee range: (3) の PR では helper の review・manual・R4 の機械の確かめが無く、owner と Coordinator が PR の comment の review の結果で確かめる。
+- Revisit: 2026-11-09 に open な PR が全部 merge・close されるか、その record が全部今の名前で書き直されたら、旧名を受ける条件（`scripts/pr-gate.py` の `LEGACY_REPO`）を消す lane を起こす。
