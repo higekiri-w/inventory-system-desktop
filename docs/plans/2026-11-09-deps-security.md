@@ -108,11 +108,11 @@ Non-scope: `docs/archive/**` の schema の引用（当時の記録）。`src-ta
 ## Design Readiness
 
 - 引用する設計正本（節まで）: `docs/function-design/30-biz-product-service.md` の BIZ-01-D5 の設計判断、`docs/function-design/58-ui-stock-inquiry.md` の route search の schema、`docs/design-system/01-decision-rules.md` の DSR-15・DSR-18、`docs/decision-log.md` D-030・D-066、`AGENTS.md` の npm 供給網ガード。
-- 必要な設計成果物: BIZ-01-D5 の文・58 の例・D-151 を本 commit で書く（updated in this PR）。helper は新しい振舞いを足さず、今の数え方を保つ。
+- 必要な設計成果物: BIZ-01-D5 の文・58 の例・66 の UI-06c-D9 の引用・D-151 を本 commit で書く（updated in this PR）。90-traceability は実装の commit で再生成する。helper は新しい振舞いを足さず、今の数え方を保つ。
 - plan にしかない durable な判断の昇格先: 「frontend の長さの検査は UTF-16 code unit を保ち、zod の長さの検査を使わない」を D-151 と BIZ-01-D5 の文へ。
 - 前提・制約と延期した design gap: zod 4.6 の数え方の変更は現物で確かめた（上の「zod の長さの数え方」）。`happy-dom` 21 の変更は、base（20.10.6）と更新の後（21.0.4）の vitest の test ごとの状態の比較で、2059 件の集合と状態が zod の 1 件を除いて同じことで確かめた（Plan Review round 1 の実測）。21 は CSS の file と iframe の外の読込みを既定で切るが、この repo は vitest の `css: false` で、外の CSS・iframe に頼る test は無い（UI の振舞いの差は test の外。L3 は置かない: 変わるのは test の環境と dev server で、製品の bundle に入るのは `zod` だけ）。`returnTo` の 500 の数え方は正本に無く、今の振舞い（UTF-16 code unit）を保つ。
-- 絶対保証の例外と抜け道: 静的な test は `z.string(…)` から 1 行で繋げた形（引数と空白を含む）を見る。複数行に割った書き方や `z.string()` を変数に置いてから繋げる書き方は拾わない（本 lane の 13 か所は全部 1 行の形。複数行の chain は 2026-11-09 に 0 件）。helper に正しい境界の値を渡したかは見ない（値は差分の review で確かめる）。
-- 判定: ready。外の前提は実測で確かめ、正本の該当節は 2 か所と新しい D 1 件。
+- 絶対保証の例外と抜け道: 静的な test は `z.string(…)` から 1 行で繋げた形（引数と空白を含む）を見る。複数行に割った書き方や `z.string()` を変数に置いてから繋げる書き方は拾わない（本 lane の 13 か所は全部 1 行の形。複数行の chain は 2026-11-09 に 0 件）。helper に正しい境界の値を渡したかは見ない（値は差分の review で確かめる）。見る folder は `src/features`・`src/routes`・`src/components`・`src/lib` で、`src/hooks`・`src/pages`・`src/config` は見ない（2026-11-09 の zod の利用は `src/features` と `src/routes` だけ。`git grep -l 'from "zod"' -- src`）。
+- 判定: ready。外の前提は実測で確かめ、正本の文の直しは Scope の「正本の文」のとおり。
 
 ## Contract Ledger
 
@@ -130,6 +130,6 @@ Non-scope: `docs/archive/**` の schema の引用（当時の記録）。`src-ta
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
 | BIZ-01-D5 の UTF-16 の上限 | zod 4.6 の code point の数え方で `"\u{2000B}".repeat(51)` を受理する | unit（既存） | `REQ-301 / BIZ-01-D5: selected は BIZ と同じ数え方で 100 まで受理する` | `selected` を `z.string().max(100)` のままにする（zod 4.6.7 で red を実測済み） |
-| helper の上限・下限 | helper が code point で数える。上限・下限の境界が 1 つずれる | unit（`src/lib/utf16-string.test.ts`） | `REQ-301 / BIZ-01-D5: utf16String は UTF-16 code unit で長さを数える`（上限 100・500、下限 1 の境界を subTest） | 上限か下限の判定を `[...s].length` にする。`<=` を `<` に、`>=` を `>` にする。`max` の省略を上限 0 に扱う |
+| helper の上限・下限 | helper が code point で数える。上限・下限の境界が 1 つずれる | unit（`src/lib/utf16-string.test.ts`） | `REQ-301 / BIZ-01-D5: utf16String は UTF-16 code unit で長さを数える`（上限 100・500、下限 1・2、`min`・`max` の省略の境界を `it.each` などで分ける） | 上限か下限の判定を `[...s].length` にする。`<=` を `<` に、`>=` を `>` にする。`max` の省略を上限 0 に扱う |
 | 13 か所が helper を使う | 後の変更で `z.string().max(…)` に戻り、BMP の外の文字で上限を超える | static（`src/lib/utf16-string-no-zod-length.test.ts`） | `REQ-301 / BIZ-01-D5: route search の文字列の長さは utf16String で検査する` | 13 か所のどれか 1 つを `z.string().max(…)` に戻す |
 | 依存の更新の後の既存の振舞い | `happy-dom` 21・`vitest` 4.1.12 が DOM や assertion の振舞いを変える | 既存の frontend の test 全部 | `npm run test` | 更新した依存が既存の test の assertion を外す（例: zod 4.6.7 で `selected` の境界の test が red になった）。skip・削除・弱体化はこの行では捕まえず、差分の review で確かめる |
