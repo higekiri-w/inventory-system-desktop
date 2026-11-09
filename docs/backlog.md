@@ -152,6 +152,8 @@
 
 - **`minimatch` の moderate の脆弱性（`typescript-eslint` 経由）**（出所: 依存の脆弱性の lane〈Plan Packet `docs/plans/2026-11-09-deps-security.md`〉の起票の実測、2026-11-09）: `npm audit` の moderate 7 件は全部 `minimatch` 7.0.0〜11.0.0（`typescript-eslint` 8.58.2 経由）。Dependabot の open の alert には無く、high でもないので、その lane の外にした。直すなら `typescript-eslint` を名指しで上げる（lint の道具だけで、製品の bundle に入らない）。
 
+- **棚卸しの画面の `returnTo` に長さの上限が無い**（出所: 依存の脆弱性の lane〈PR #240〉の Final Review の Claude 側の P3、2026-11-09）: `src/routes/stocktake/index.tsx` の `returnTo` は `z.string().optional().catch(undefined)` で上限が無く、記録の詳細の route などの `returnTo` の 7 か所（`utf16String({ max: 500 })`）と揃っていない。main にあった形のままで、DSR-15 の検証（`src/lib/return-to.ts` の `returnToLinkProps`）は別に効いている。揃えるなら route の search の契約の変更（R3）で、66 の UI-06c-D9 の着地の記述と合わせる。
+
 #### 見た目・UX
 
 - **「フォーマット異常」badge の危険の塗り**（色と強調 lane の除外、decision-log D-094）: `ff05436f` の時点で `src/features/csv-import/lib/formatErrorRow.ts:22` が `variant: "destructive"`（危険の塗り）の badge を返す（`ErrorRowsTable.tsx` が描く）。00 は危険の塗りを dialog の実行ボタンだけに限るため、②分類か①状態（destructive tone の outline + icon）かを design で決めて移す
