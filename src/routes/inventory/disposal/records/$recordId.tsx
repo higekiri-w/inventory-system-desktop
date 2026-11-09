@@ -5,11 +5,12 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 import { DisposalRecordDetailPage } from "@/features/inventory-records/DisposalRecordDetailPage";
 
 const searchSchema = z.object({
-  returnTo: z.string().max(500).optional().catch(undefined),
+  returnTo: utf16String({ max: 500 }).optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/inventory/disposal/records/$recordId")({

@@ -4,11 +4,12 @@
 
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 import { CsvImportRecordDetailPage } from "@/features/inventory-records/CsvImportRecordDetailPage";
 
 const searchSchema = z.object({
-  returnTo: z.string().max(500).optional().catch(undefined),
+  returnTo: utf16String({ max: 500 }).optional().catch(undefined),
 });
 
 export const Route = createFileRoute("/csv-import/records/$importId")({

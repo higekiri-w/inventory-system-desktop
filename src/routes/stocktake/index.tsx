@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 import { StocktakePage } from "@/features/stocktake/StocktakePage";
 import type { StocktakeSearch } from "@/features/stocktake/types";
@@ -13,7 +14,7 @@ const searchSchema = z.object({
   dept: z.coerce.number().int().positive().optional().catch(undefined),
   counted_only: booleanSearch.optional().catch(undefined),
   page: z.coerce.number().int().positive().optional().catch(undefined),
-  product: z.string().min(1).optional().catch(undefined),
+  product: utf16String({ min: 1 }).optional().catch(undefined),
   returnTo: z.string().optional().catch(undefined),
 });
 

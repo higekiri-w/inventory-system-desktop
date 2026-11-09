@@ -176,13 +176,14 @@ SearchBar + StatusChips + DepartmentFilter（options={departmentOptions} / selec
 ```ts
 // src/routes/stock/index.tsx
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 const searchSchema = z.object({
-  q: z.string().min(1).max(100).optional().catch(undefined),
+  q: utf16String({ min: 1, max: 100 }).optional().catch(undefined), // 長さは UTF-16 code unit（D-151）
   dept: z.coerce.number().int().positive().optional().catch(undefined),
   status: z.enum(["all", "stockout", "low_stock"]).optional().catch(undefined),
   page: z.coerce.number().int().positive().optional().catch(undefined),
-  selected: z.string().min(1).max(100).optional().catch(undefined), // 上限は q と同じ 100（66 UI-06c-D9）
+  selected: utf16String({ min: 1, max: 100 }).optional().catch(undefined), // 上限は q と同じ 100（66 UI-06c-D9）
 });
 ```
 
