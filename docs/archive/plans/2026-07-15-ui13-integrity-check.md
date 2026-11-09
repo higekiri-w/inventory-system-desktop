@@ -252,7 +252,7 @@ Contract ID: SPEC-UI13-INTEGRITY
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- PR: https://github.com/kosei-w90607/inventory-system-public/pull/5（Draft）
+- PR: https://github.com/higekiri-w/inventory-system-public/pull/5（Draft）
 - Codex 機能実装: 設計 doc（75-ui 新設 + FUNCTION_DESIGN 目次）、specta 登録是正（Amendment 1）、compliance test 登録（Amendment 2）、traceability 再生成（Amendment 3、REQ-904 covered 化）、route + IntegrityCheckPage + Matrix 全テスト。品質 gate 全 green、L1 full CLEAN
 - Claude 陣営 visual polish pass（independent-review 前、表示層のみ）: 補正確認ダイアログを不可逆操作 warning Alert パターン（StocktakeCompleteDialog / BackupRestorePage と同構成）に整合、内訳列挙の再構成、見出しサイズ統一
 - Amendment 1〜3 は同一 failure class（登録・生成義務の plan 列挙漏れ）。WER で lesson 化予定

@@ -353,7 +353,7 @@ Contract ID: SPEC-SUPI
 
 - migration v6、IO / BIZ / CMD の取引先改名・統合・usage 付き一覧、generated bindings、UI-15 route / navigation / 追加・インライン改名・2 段階統合、D-052 C21/C22、REQ-107 昇格と source docs 同期を実装した。
 - Rust / frontend / docs / generated drift / release check の自動検証と、補助 Codex review-only の指摘是正・closure confirmation を完了した。Windows native L3 と packet 指定の独立 Sonnet Final Review は Draft PR 後の gate として残す。
-- Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/4
+- Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/4
 
 ## Review Response
 

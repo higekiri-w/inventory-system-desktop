@@ -506,7 +506,7 @@ Fill after implementation.
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- 実装: [PR #123](https://github.com/kosei-w90607/inventory-system-desktop/pull/123)。S1〜S12 を Writer（Opus 5.5 subagent、発注 133）が 4 commit で実装した（helper、PK5、PK4、文書と D-097）。AC1〜AC12 を満たし、MU1〜MU13 を実注入して red を確かめた。S10 の `.claude/commands/plan-rally.md` も sandbox に拒まれず編集できた。
+- 実装: [PR #123](https://github.com/higekiri-w/inventory-system-desktop/pull/123)。S1〜S12 を Writer（Opus 5.5 subagent、発注 133）が 4 commit で実装した（helper、PK5、PK4、文書と D-097）。AC1〜AC12 を満たし、MU1〜MU13 を実注入して red を確かめた。S10 の `.claude/commands/plan-rally.md` も sandbox に拒まれず編集できた。
 - 文言の細部で packet の逐語から離れた所: D-097 は closeout での移送で link が切れないよう、packet を link でなく名前で参照した。DEV_WORKFLOW の S8 の文から行番号の参照を省いた。Scope・AC は変えていない。
 - commit 3（PK4）だけを checkout すると、実 repo の self-pass の test が Plans.md の pointer 行（commit 4）の前なので red になる。最終 head では green。
 - 実装の要旨: helper は PR に結び付く packet を head の `docs/plans/` の一覧でなく PR の差分が触る active packet で決め（R2+ はちょうど `--packet` の 1 つ、R0 / R1 は active packet を触らず、closeout の移送は同じ PR の中の同名の archive への移送で Phase archive のものだけ）、Plans.md の link の照合をやめた。PK5 は branch の差分が触る packet に絞り、起点が解決できない・merge-base が 1 つでない・差分の取得に失敗したときは全 packet に倒す。PK4 は `## 次の行動` に `docs/plans/` を指す行を求める。merge-evidence・DEV_WORKFLOW・template・入口の語を、closeout を待たない base 同期（`merge.directoryRenames=false` の単段 merge）と wave ごとにまとめる closeout へ書き換え、D-097 を置いた。

@@ -200,7 +200,7 @@ Contract ID: SPEC-WF-UI13WER
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- PR: https://github.com/kosei-w90607/inventory-system-public/pull/7
+- PR: https://github.com/higekiri-w/inventory-system-public/pull/7
 - 実装: `templates/plan-packet.md` へ Registration / Generation Obligations 節（義務表 5 行 + Ledger 到達導線標準行）と Contract Probe 是正仮適用 1 文、`DEV_WORKFLOW.md` へ probe 規定 1 bullet + materialize 局所検査 1 bullet。全て追加のみ（削除・変更行 0）
 - 新規則の self-dogfood: 本 change 自身の plan-approved materialize 直後に `check-workflow-git.sh` を局所実行し PASS を確認
 

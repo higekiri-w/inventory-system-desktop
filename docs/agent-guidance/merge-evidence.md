@@ -7,7 +7,7 @@ Contract ID: SPEC-MERGE-EVIDENCE
 
 目的は、検証した版を確実にマージしながら、AIとownerが証跡の転記・読み直し・状態記録に費やす手間を減らすこと。モデルの思考と独立レビューは、設計判断と欠陥検出に使う。SHAを短く表示するだけでは、記録更新でcommitが増え、再検証と説明が連鎖する原因を除けない。
 
-[PR #52](https://github.com/kosei-w90607/inventory-system-desktop/pull/52)では、実装・独立reviewを終えた内容に対してhuman-confirmとReadyのstate-only commitを追加し、Ready HEADでRust/frontendを含むfullを再実行した。これは当時の規定に従った処理である。D-033はprivate Freeでrequired checksを利用できなかった事情、D-035は自分のSHAを書き込む自己参照問題への対応だった。現在はpublicで、GitHubによる強制を選べる。2026-09-14にownerは「GitHubで強制し、docs・後処理は軽いPR経路」を選択した。
+[PR #52](https://github.com/higekiri-w/inventory-system-desktop/pull/52)では、実装・独立reviewを終えた内容に対してhuman-confirmとReadyのstate-only commitを追加し、Ready HEADでRust/frontendを含むfullを再実行した。これは当時の規定に従った処理である。D-033はprivate Freeでrequired checksを利用できなかった事情、D-035は自分のSHAを書き込む自己参照問題への対応だった。現在はpublicで、GitHubによる強制を選べる。2026-09-14にownerは「GitHubで強制し、docs・後処理は軽いPR経路」を選択した。
 
 成功は、通常のReady/mergeでSHAの手転記と実装後の状態記録commitを不要にし、必要な検証結果を短い機械判定で確認できること。Plan Gate、非Writerによる独立review、ownerのReady/merge判断、Windows L3・R4の保護は維持する。CI未検証版をGitHubが通すこと、helper経由の正規mergeで未了review/manual/R4を通すこと、必要jobのskipを成功扱いすること、記録を作ること自体が目的になることを失敗とする。token削減量は未実測で、異なるreview roundを比較して効率改善を主張しない。
 
@@ -67,7 +67,7 @@ native拒否のprobeは、ownerに具体的対象を示したうえで`ci-probe/
 
 ### 実応答の既定項目との互換性（MG-D1a）
 
-GitHubのruleset detailは、送信payloadにない既定parameterを返す。[検証用PR #57](https://github.com/kosei-w90607/inventory-system-desktop/pull/57) / [#58](https://github.com/kosei-w90607/inventory-system-desktop/pull/58)の試験ではnativeの拒否・正常mergeが成立した一方、`pull_request.parameters`に追加された次の項目でhelperの全体比較が不一致になった。
+GitHubのruleset detailは、送信payloadにない既定parameterを返す。[検証用PR #57](https://github.com/higekiri-w/inventory-system-desktop/pull/57) / [#58](https://github.com/higekiri-w/inventory-system-desktop/pull/58)の試験ではnativeの拒否・正常mergeが成立した一方、`pull_request.parameters`に追加された次の項目でhelperの全体比較が不一致になった。
 
 | 応答だけに存在する項目 | 許容する値・型 |
 |---|---|

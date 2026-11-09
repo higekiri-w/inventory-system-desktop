@@ -286,7 +286,7 @@ Fill after implementation.
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- 実装: [PR #118](https://github.com/kosei-w90607/inventory-system-desktop/pull/118)。S1〜S8 を Writer（Opus 5.5 subagent）が実装した。manual の L3-1・L3-2 は owner が PASS とした後、main の取込みで衝突を解いたため、最終の head でやり直す（merge-evidence の再利用の条件を満たさない）。
+- 実装: [PR #118](https://github.com/higekiri-w/inventory-system-desktop/pull/118)。S1〜S8 を Writer（Opus 5.5 subagent）が実装した。manual の L3-1・L3-2 は owner が PASS とした後、main の取込みで衝突を解いたため、最終の head でやり直す（merge-evidence の再利用の条件を満たさない）。
 - 保守の 3 件: `migrate` のコメントの手順番号を 22 §3.2 に合わせ（S1）、`generate_custom_code` の第 1 引数を借りた transaction に型で限って 30 §4.2・§4.3 を直し（S2）、`formatDateTime` を `src/lib/date-time.ts` へ移して re-export を残さず、production source 全体を走査する test で置き場を固定した（S3）。
 - 表示: PLU書出しの「最終読込み日時」「保存日時」を `YYYY-MM-DD HH:mm:ss`（ローカル時刻）にした（S4。`snapshot_at` は `Date` に通さず、`savedAt` の保存形は ISO の UTC のまま）。部門の絞り込み欄の幅を共有部品が `w-[11rem]` だけで持ち、呼び出し側の `widthClass` を消した（S5）。
 - 正本: CSV 取込みの解析・取込みの失敗は `ErrorState` とする 55 §55.5・§55.9 と、PLU slot の `activated_at` / `released_at` の意味を実装に合わせた plu-tables §25 は plan 側で訂正し、取込み由来の `internal` を固定する hook test を足した（S6・S7）。traceability は再生成した（S8）。
@@ -305,4 +305,4 @@ Fill after review.
 
 - Findings Freeze: not yet frozen; post-freeze exceptions: none.
 
-- Closeout（2026-09-28）: Plan Review は round 3（上限）まで回し plan-approved（遷移記録のとおり）。Final Review broad の P3 3 件の是正と、PR3 #117・#120 を含む main の取込みの後の closure は Claude 側 fresh Opus 5.5（`f4b6d478`）= approve（新しい P1 / P2 0、P3 1）。その P3（Risk の「環境・再現性」の行が TZ を固定する test を T-S4b だけとし、T-S4a の仕様にも TZ の固定が書かれていない）は本 closeout で 2 か所を直した。manual は owner の Windows native L3（`f4b6d478`、2026-09-28）で L3-1・L3-2 とも PASS。`988a9198` での PASS は、その後に衝突を解いた main の取込みがあったため再利用せず（merge-evidence の再利用の条件を満たさない）、最終の head でやり直した。専用 record は review pass（broad 2 + closure 1）、manual pass。hosted CI は全ジョブ pass、[PR #118](https://github.com/kosei-w90607/inventory-system-desktop/pull/118) を squash merge（`b0f3b68b`）。owner 決定（2026-09-28）: 開発で Codex に頼るのは基本 review だけ（今のところ）。
+- Closeout（2026-09-28）: Plan Review は round 3（上限）まで回し plan-approved（遷移記録のとおり）。Final Review broad の P3 3 件の是正と、PR3 #117・#120 を含む main の取込みの後の closure は Claude 側 fresh Opus 5.5（`f4b6d478`）= approve（新しい P1 / P2 0、P3 1）。その P3（Risk の「環境・再現性」の行が TZ を固定する test を T-S4b だけとし、T-S4a の仕様にも TZ の固定が書かれていない）は本 closeout で 2 か所を直した。manual は owner の Windows native L3（`f4b6d478`、2026-09-28）で L3-1・L3-2 とも PASS。`988a9198` での PASS は、その後に衝突を解いた main の取込みがあったため再利用せず（merge-evidence の再利用の条件を満たさない）、最終の head でやり直した。専用 record は review pass（broad 2 + closure 1）、manual pass。hosted CI は全ジョブ pass、[PR #118](https://github.com/higekiri-w/inventory-system-desktop/pull/118) を squash merge（`b0f3b68b`）。owner 決定（2026-09-28）: 開発で Codex に頼るのは基本 review だけ（今のところ）。

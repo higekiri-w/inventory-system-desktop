@@ -279,7 +279,7 @@ Test Design Matrix: [2026-10-16-stocktake-count-placement-design](test-matrices/
 - 既存の保護: 実装は変えていないので、店の動作は今のまま（旧棚卸しと Z004 の業務 commit は停止 ADR のまま止まっている）。撤去する pub fn は無く、設計照合 test と traceability の検査は green のまま。
 - 記録して閉じる食い違い（Final Review の Codex の P3〈C3〉）: 冒頭の「規模と手法」の触った正本の数（`git diff --name-only` の出力 45）と AC5 の「横断の約束の表」の行数（5 行）は、起票と round の是正の時点の数で、merge の版の実測は正本 47 file、表は 6 行。表の 1 行は round 1 の是正で在庫連動の切替の行を足したため、file の数は round の是正で触る file が増えたため。本文の数は書き換えず、ここに記録する。
 - 未検証: Contract Probe の P5（1 商品の求め直しの速さ）の店の Windows の PC での値は、runtime の lane が測る。73 の (a)〜(e) と Z004 の取込みの preview の拒否と知らせは runtime の lane の L3。
-- review・CI・merge（closeout、2026-10-17）: Plan Review は round 3（天井）までで、round 1 の後に相談役が窓の重なりの原理を出して ADR D3 を書き直し、round 3 の後に owner の決定で天井を越えて closure 2 回で確かめた（TD-299・TD-300）。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は success で、owner の Ready・merge の承認（TD-302）の後に helper 経由の squash merge。PR: [#167](https://github.com/kosei-w90607/inventory-system-desktop/pull/167)
+- review・CI・merge（closeout、2026-10-17）: Plan Review は round 3（天井）までで、round 1 の後に相談役が窓の重なりの原理を出して ADR D3 を書き直し、round 3 の後に owner の決定で天井を越えて closure 2 回で確かめた（TD-299・TD-300）。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は success で、owner の Ready・merge の承認（TD-302）の後に helper 経由の squash merge。PR: [#167](https://github.com/higekiri-w/inventory-system-desktop/pull/167)
 - 後続: `docs/backlog.md` の「棚卸しの数の置き場と在庫数の求め直しの runtime」（Final Review の closure の P3 の follow-up を含む）、「売上の SD からの一括取込みと EJ の控えの閲覧」（本 lane の後）、「日報の紙と意味づけ」（並走できる）。DB の作り直しを 1 回にするため、原価の lane（D-119）を runtime の最初の配布の単位より先に入れる。
 
 ## Review Response

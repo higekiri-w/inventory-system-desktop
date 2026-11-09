@@ -307,7 +307,7 @@ R2 のため必須でない。店のデータ・secret・`.env*`・`auth.json` �
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-PR: [#132](https://github.com/kosei-w90607/inventory-system-desktop/pull/132)（Writer = Opus 5.5 subagent。helper 経由の squash merge、2026-10-01）。AC の実測表と検証の結果は PR body。
+PR: [#132](https://github.com/higekiri-w/inventory-system-desktop/pull/132)（Writer = Opus 5.5 subagent。helper 経由の squash merge、2026-10-01）。AC の実測表と検証の結果は PR body。
 
 - S1: `docs/Plans.md` の `## 直近の完了` の長文 entry 全件と Wave Registry の完了済み wave 10〜12 の行（lane の行を含む）を、`git show origin/main:docs/Plans.md` から機械的に切り出して `docs/archive/harness-context/2026-09-30-Plans-completed.md` へ移した（相対 link の接頭だけ D1 の規則で補正、AC-S1-5 の diff が一致）。`Plans.md` には直近 10 件を D3 の形の 1 行で置き、Wave Registry は見出しと形式の行だけにした。`docs/DEV_WORKFLOW.md` Post-Merge Closeout の行を D4 の英文に置き換え、MANUAL §5.3 の 1 に移送先を足した。
 - S2: `AGENTS.md` の Workspace Access を、全 session 共通（WSL の checkout と cwd の確認、repo 外の Skill の読み方）と、Windows の Codex Desktop から動かすときだけの項（`.codex/README.md`・wrapper の読書・検索・allow しない command・PowerShell / UNC）に組み替えた。`## Safety` 以降は不変。

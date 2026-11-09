@@ -327,7 +327,7 @@ Minimum design checks for business-app work: 製品の layer / command / DB / op
 
 ## Implementation Results
 
-[PR #93](https://github.com/kosei-w90607/inventory-system-desktop/pull/93) で実装し squash merge 済み（`e40e50b9`、2026-09-25）。S1〜S6 を実装した: 「復元する候補」47 行と「追補2・追補3 から足す事実」5 行の計 52 行を、`docs/project-memory.md` の Store Premises Facts、`docs/backlog.md`、`docs/db-design/master-tables.md`、`docs/plu-export-and-real-csv-verification.md` へ要旨・確認日・回答者の区分つきで戻した（`40564b4a`）。誤りと判定された記述（約 929 件の否定、`docs/SCREEN_DESIGN.md` の 1 日の動線を S3 の固定文言へ、業務シナリオ例の語、`docs/function-design/73-ui-stocktake.md` §73.1 の期間を準備と年末の正式カウントに分けた文、単位の拡張の「店の回答由来ではない」、PLUV の部門数）を直した。Writer の自己照合で言い換えを台帳の意味に寄せ（`1fd8e5d3`）、Final Review broad（Opus）の P3 8 件を `da304f51` で是正した。他 lane の行（PM の Z004 layout A/B の 2 行、時点証拠契約節）と D-01 保留の行には触れていない（AC7）。
+[PR #93](https://github.com/higekiri-w/inventory-system-desktop/pull/93) で実装し squash merge 済み（`e40e50b9`、2026-09-25）。S1〜S6 を実装した: 「復元する候補」47 行と「追補2・追補3 から足す事実」5 行の計 52 行を、`docs/project-memory.md` の Store Premises Facts、`docs/backlog.md`、`docs/db-design/master-tables.md`、`docs/plu-export-and-real-csv-verification.md` へ要旨・確認日・回答者の区分つきで戻した（`40564b4a`）。誤りと判定された記述（約 929 件の否定、`docs/SCREEN_DESIGN.md` の 1 日の動線を S3 の固定文言へ、業務シナリオ例の語、`docs/function-design/73-ui-stocktake.md` §73.1 の期間を準備と年末の正式カウントに分けた文、単位の拡張の「店の回答由来ではない」、PLUV の部門数）を直した。Writer の自己照合で言い換えを台帳の意味に寄せ（`1fd8e5d3`）、Final Review broad（Opus）の P3 8 件を `da304f51` で是正した。他 lane の行（PM の Z004 layout A/B の 2 行、時点証拠契約節）と D-01 保留の行には触れていない（AC7）。
 
 ## Review Response
 

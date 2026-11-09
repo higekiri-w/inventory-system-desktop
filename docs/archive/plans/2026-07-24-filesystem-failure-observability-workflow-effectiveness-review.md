@@ -10,7 +10,7 @@
 - external review: Plan Review 一次、Final Review 一次 + 独立再実測
 - human approval: Plan / Ready / merge の3接点
 - gates: targeted Rust tests、X1-X7 mutation、doc consistency、traceability、
-  L1 full CLEAN、[exact-HEAD hosted final](https://github.com/kosei-w90607/inventory-system-public/actions/runs/30032542718)
+  L1 full CLEAN、[exact-HEAD hosted final](https://github.com/higekiri-w/inventory-system-public/actions/runs/30032542718)
 
 ## What Worked
 

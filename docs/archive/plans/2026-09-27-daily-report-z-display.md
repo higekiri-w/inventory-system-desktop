@@ -419,7 +419,7 @@ Contract ID: SPEC-DRZ
 
 - Writer（Opus 5.5 subagent）が S1〜S8 を設計正本へ書いた: 56 に UI-09a-D16（日計〈Z001〉の表の置き場所・列・見出し・行の順・0 の行・「—」・同日複数取込みの見出しと並び・合算の文の完全一致の文字列・既存 2 表の見出しの出どころ）、34 §19 に `summary_imports` と 2 つの型、24 §14.21 に Z001 の行を取込みごとに読む手順と古い「実装遷移義務」の削除、§14.24 と biz-task-specs BIZ-08 に D-096 の 1 句、SCREEN_DESIGN §3 に 1 行、decision-log に D-096、29 §29.4.1 に匿名化した Z001 / Z002 の形、backlog に後続 runtime lane と follow-up。
 - Final Review で P1/P2 は無く、base 同期の後の closure の P2（packet の Codex の model の根拠）を是正した（両 reviewer の行に owner 決定 2026-09-26 を記し、予算を実数に）。Fable の P3 2 件は後続 runtime lane の起票時に直す（backlog）。
-- CI: hosted CI success（https://github.com/kosei-w90607/inventory-system-desktop/actions/runs/36336635693）。Ready・merge は owner 指示（2026-09-28）で helper 経由、[PR #114](https://github.com/kosei-w90607/inventory-system-desktop/pull/114)。
+- CI: hosted CI success（https://github.com/higekiri-w/inventory-system-desktop/actions/runs/36336635693）。Ready・merge は owner 指示（2026-09-28）で helper 経由、[PR #114](https://github.com/higekiri-w/inventory-system-desktop/pull/114)。
 
 ## Review Response
 

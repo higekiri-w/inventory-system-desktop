@@ -303,7 +303,7 @@ Test Design Matrix: [2026-10-04-ej-grammar](test-matrices/2026-10-04-ej-grammar.
 exact-HEAD SHA と test 件数は書かない（D-035 / D-038）。
 
 - 実装の要旨（closeout、2026-10-06）: `parse_ej` は記録の種類（`EjRecordKind`）を本文の行で決め、精算票（モード欄に依らない完了、ＰＬＵ Z・勤怠 Z、次のヘッダで閉じた中断）・点検票・設定・練習・入金 / 出金 / 替・領収書・取引中止を、明細を返さない記録として返す。取引の合計域（`対象計`・支払行・`お預り` / `お  釣` の折返し、`合  計` の無い取引の照合の金額）と明細域（訂正は直前の項目の取消、小計値引き・明細値引き・マイナスキーは `adjustments`、戻の印の明細）を読み、規則に合わない記録は今どおり `Unresolved` に倒す。Gated Amendment 1・2 の是正で、ほかの行種の形の行と `i64` に収まらない金額の行は `ItemName` にならず、数量行の単価は全角の `－` も拒み、合計域の `Continued` の受け手は正本の定義どおりになった（D-105）。
-- review・CI・merge: Final Review の是正（Gated Amendment 1・2）の後の closure と、Amendments が変わった後の Claude 側の broad の取り直しがともに approve で、記録した。AC11（Coordinator、実物の EJ、repo 外）は是正の前後とも (a)〜(d) が PASS。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-05）。manual は not-required。検証の実測値は PR の body が持つ。PR: [#141](https://github.com/kosei-w90607/inventory-system-desktop/pull/141)（Writer = Opus 5.5 subagent）
+- review・CI・merge: Final Review の是正（Gated Amendment 1・2）の後の closure と、Amendments が変わった後の Claude 側の broad の取り直しがともに approve で、記録した。AC11（Coordinator、実物の EJ、repo 外）は是正の前後とも (a)〜(d) が PASS。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-05）。manual は not-required。検証の実測値は PR の body が持つ。PR: [#141](https://github.com/higekiri-w/inventory-system-desktop/pull/141)（Writer = Opus 5.5 subagent）
 
 ### Gated Amendment 1（2026-10-05、Coordinator）
 

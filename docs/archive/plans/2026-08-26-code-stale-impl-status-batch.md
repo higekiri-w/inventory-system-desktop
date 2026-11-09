@@ -240,7 +240,7 @@ Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Owner
 
 - Codex Writer が発注 1 本・fail-closed 停止 0 で完走。Scope A/B/C を単一 content commit で実装（在庫照会 CTA 2 個の Link 化 + DisabledCta/Tooltip import 撤去 + link test 追加 + 58-ui §58.6/§58.7 同期 + コメント現況化 11 箇所 + 90-traceability 再生成）。
 - AC-1〜AC-14 全 PASS（Writer 実測 + Coordinator spot 再実測 + Final Reviewer 独立再実測の三者一致）。L1 full CLEAN PASS（evidence SHA と log 位置は PR body を正とする）。
-- PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/7
+- PR: https://github.com/higekiri-w/inventory-system-desktop/pull/7
 
 ## Review Response
 

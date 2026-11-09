@@ -270,7 +270,7 @@ Contract ID: SPEC-RETURNTO-HYGIENE-2026-09-17
 
 ## Implementation Results
 
-[PR #78](https://github.com/kosei-w90607/inventory-system-desktop/pull/78) で実装し squash merge 済み（`a68ba291`、2026-09-17）。初回実装（S1〜S8）は Sonnet subagent（commit `1839de7d` / `bd56e4da` / `b4364544`）。Final Review round 1 の是正は Codex（GA2、発注書 63）が担当し、`normalizeReturnTo` / `returnToLinkProps` の URL 解析を 1 回へ集約、解決後 pathname の `//` 拒否、throw しない契約（C7）、pin の近傍負例、query 付き fallback の分解 test、66 / review-checklist の旧記述同期を実装した。Final Review round 2 の P3 3 件（コメントの site 数表現、DSR-15 の主語、pin 併用時 fallback の責務コメント）は Sonnet subagent が是正した。
+[PR #78](https://github.com/higekiri-w/inventory-system-desktop/pull/78) で実装し squash merge 済み（`a68ba291`、2026-09-17）。初回実装（S1〜S8）は Sonnet subagent（commit `1839de7d` / `bd56e4da` / `b4364544`）。Final Review round 1 の是正は Codex（GA2、発注書 63）が担当し、`normalizeReturnTo` / `returnToLinkProps` の URL 解析を 1 回へ集約、解決後 pathname の `//` 拒否、throw しない契約（C7）、pin の近傍負例、query 付き fallback の分解 test、66 / review-checklist の旧記述同期を実装した。Final Review round 2 の P3 3 件（コメントの site 数表現、DSR-15 の主語、pin 併用時 fallback の責務コメント）は Sonnet subagent が是正した。
 
 ## Gated Amendments
 
@@ -284,7 +284,7 @@ Contract ID: SPEC-RETURNTO-HYGIENE-2026-09-17
 
 ### Gated Amendment 2（2026-09-17、Final Review round 1 の是正）
 
-- round 1 の結果: pass A = Codex（[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#pullrequestreview-5233517717)）P1 0 / P2 2 / P3 2、pass B = Opus P1 0 / P2 1 / P3 2。両 pass とも AC1〜AC7 と mutant 5 本の Writer 報告を独立に再現し、実 routeTree の実クリックで 3 段往復（数字だけの商品コード、記号入りの検索語）が文字列一致で戻ることを確認した
+- round 1 の結果: pass A = Codex（[review](https://github.com/higekiri-w/inventory-system-desktop/pull/78#pullrequestreview-5233517717)）P1 0 / P2 2 / P3 2、pass B = Opus P1 0 / P2 1 / P3 2。両 pass とも AC1〜AC7 と mutant 5 本の Writer 報告を独立に再現し、実 routeTree の実クリックで 3 段往復（数字だけの商品コード、記号入りの検索語）が文字列一致で戻ることを確認した
 - **根は 1 つ、原因は packet の設計指示**: S1 を「origin 一致」だけで書き、S2 で「`normalizeReturnTo` の返り値を `decompose` が再解析する」2 段構えを許した。`/..//evil.example` は 1 回目の解析で base origin に解決されて guard を通り、dot-segment の畳み込みで返り値が `//evil.example` になる（Opus P2）。`/a/..//[` では 2 回目の `new URL` が throw し、実 route で詳細画面が ErrorBoundary へ落ちて戻り link を失う（Codex F1。baseline では描画できていたので本 PR の退行）。先例 `products/lib/return-to.ts` は pathname allowlist の 2 段目を持つため同じ入力で安全で、Coordinator が先例の 2 段目を S1 へ移植し損ねた
 - 裁定（全件 accept）: Codex F1 + Opus P2 → S1 / S2 / C1 / C7（解析は 1 回、`//` 始まりの pathname を拒否、throw しない）。Codex F2（pin の近傍負例が無く `startsWith` へ緩める mutant が 339 本 green のまま生存）→ T4 と AC5 (6)。Codex F3 + Opus P3（fallback の分解・検証に test が無い / fallback を無検証で `new URL` する）→ T2 と AC5 (7)、fallback も同じ 1 回解析の経路を通す。Codex F4 + Opus P3（66 §66.3 / review-checklist:83 の旧「prefix」「`//` 始まり」、DSR-18 の送信側の記述と手組み 2 site の食い違い）→ S8
 - Scope の増分: `docs/quality/review-checklist.md`（1 行）。実装 file の集合は不変（`src/lib/return-to.ts` と test）。consumer 7 file は helper の署名が変わらなければ触らない
@@ -312,17 +312,17 @@ Contract ID: SPEC-RETURNTO-HYGIENE-2026-09-17
 
 ### Final Review round 1（2026-09-17、head `1c01f0ce`）
 
-- pass A（Codex、Contract Audit、[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#pullrequestreview-5233517717)）: P1 0 / P2 2 / P3 2。F1（`return-to.ts:25` 相当、正規化後の pathname を再度 `new URL` に通すと `/a/..//[` が throw し詳細画面が ErrorBoundary へ落ちる）/ F2（`/stock` の exact pin に近傍負例が無く、`!==` を `startsWith` へ緩める mutant が AC4 全 339 本 green のまま生存）/ F3（fallback を無検証で分解する test が無く、fallback 未分解 mutant が生存）/ F4（66 §66.3 / review-checklist:83 に旧「prefix」「`//` 始まり」表現が残存）
+- pass A（Codex、Contract Audit、[review](https://github.com/higekiri-w/inventory-system-desktop/pull/78#pullrequestreview-5233517717)）: P1 0 / P2 2 / P3 2。F1（`return-to.ts:25` 相当、正規化後の pathname を再度 `new URL` に通すと `/a/..//[` が throw し詳細画面が ErrorBoundary へ落ちる）/ F2（`/stock` の exact pin に近傍負例が無く、`!==` を `startsWith` へ緩める mutant が AC4 全 339 本 green のまま生存）/ F3（fallback を無検証で分解する test が無く、fallback 未分解 mutant が生存）/ F4（66 §66.3 / review-checklist:83 に旧「prefix」「`//` 始まり」表現が残存）
 - pass B（Opus）: P1 0 / P2 1 / P3 2。P2 は Codex F1 と同根（`/..//evil.example` が dot-segment 畳み込みで `//evil.example` に読み替わり guard を回避）。P3 2 件は F2 / F4 と同種の指摘
 - 裁定（GA2、全件 accept）: 根は 1 つ（S1 の origin 判定と S2 の再解析 2 段構えを packet が許していた）。F1 + Opus P2 → URL 解析を 1 回に集約し `//` 始まり pathname を拒否・throw しない契約（C7）へ。F2 → pin の近傍負例 test。F3 → fallback 分解 test。F4 → docs 3 file 同期。是正 Writer = Codex（発注書 63、GA3 で禁止行の衝突を是正し再実行）
 
 ### Final Review round 2 — broad（2026-09-17、head `2d329aa5`）
 
-- pass A（Sonnet、Contract Audit、[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#issuecomment-5713123096)）: P1 0 / P2 0 / P3 2。round 1 の 7 件すべて closed を確認。新規 P3: Contract Coverage Ledger / Trace Matrix に C7（no-throw）の独立行が無い（本 commit で追加）/ `options.pathname` 指定時に fallback へ pin が再適用されない（コード変更不要、コメントで責務明示）
-- pass B（Opus、[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#issuecomment-5713123393)）: P1 0 / P2 0 / P3 4。round 1 の 7 件すべて closed を確認。新規 P3: `InventoryRecordsPage.tsx:67` のコメントの「8 site」が実数と合わない / `65-inventory-record-traceability.md:114` の TRACE-D11 が「`//` で始まる URL」のまま 66 との粒度不整合 / `normalizeReturnTo` の production caller が 0 件（削除は非推奨、DSR-15 の主語の寄せ先） / sentinel `{ to: "", search: {} }` を型で強制する案（署名変更）
+- pass A（Sonnet、Contract Audit、[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/78#issuecomment-5713123096)）: P1 0 / P2 0 / P3 2。round 1 の 7 件すべて closed を確認。新規 P3: Contract Coverage Ledger / Trace Matrix に C7（no-throw）の独立行が無い（本 commit で追加）/ `options.pathname` 指定時に fallback へ pin が再適用されない（コード変更不要、コメントで責務明示）
+- pass B（Opus、[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/78#issuecomment-5713123393)）: P1 0 / P2 0 / P3 4。round 1 の 7 件すべて closed を確認。新規 P3: `InventoryRecordsPage.tsx:67` のコメントの「8 site」が実数と合わない / `65-inventory-record-traceability.md:114` の TRACE-D11 が「`//` で始まる URL」のまま 66 との粒度不整合 / `normalizeReturnTo` の production caller が 0 件（削除は非推奨、DSR-15 の主語の寄せ先） / sentinel `{ to: "", search: {} }` を型で強制する案（署名変更）
 - 裁定: 両 pass とも P1/P2 0 のため review = pass 可。round 2 の P3 6 件は「この PR で直す（3 件）/ closeout・backlog へ（3 件）」に振り分け、closure で反映を確認
 
-### Closure review（2026-09-17、Opus、独立 fresh context、[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#issuecomment-5713358531)）
+### Closure review（2026-09-17、Opus、独立 fresh context、[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/78#issuecomment-5713358531)）
 
 - 判定: P1 0 / P2 0 / P3 2 — closure pass。delta = `2d329aa5..d71437bc`（6 file・30 行、src の実コード差分 0 行、コメントのみ）
 - round 2 の P3 6 件の裁定（Coordinator）: この PR で直す = Opus P3-1（コメントの「8 site」）/ Opus P3-3（DSR-15 の主語）/ Sonnet P3（pin 指定時の fallback の責務コメント）→ すべて closed（`2c9ffc9b` / `9beeb794` / コメント追記）。closeout・backlog へ = Opus P3-2（65 TRACE-D11、Scope 外）/ Sonnet P3（packet の Ledger に C7 行。packet 改訂は GA になり broad を無効化するため見送り）/ Opus P3-4（sentinel の型強制、署名変更を伴う）
@@ -332,7 +332,7 @@ Contract ID: SPEC-RETURNTO-HYGIENE-2026-09-17
 
 - github mode の専用 record: review = pass（closure の裁定を反映）、manual = pass（下記 owner L3）で登録。R4 = not-required。GitHub PR #78 の Ready 化・hosted CI green・owner merge を経て `a68ba291` へ squash merge
 
-### owner L3（Windows native、AC-L3-1、2026-09-17、[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/78#issuecomment-5713473067)）
+### owner L3（Windows native、AC-L3-1、2026-09-17、[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/78#issuecomment-5713473067)）
 
 - 対象 head `d71437bc`。owner 原文「(a) OK / (b) OK」= PASS。(a) 入出庫履歴で数字だけの語を検索 → 詳細 → 「前の画面へ戻る」で検索語と結果が残った一覧へ戻る。(b) 在庫照会で検索・商品選択 → 在庫変動履歴 → 元記録の詳細 → 「前の画面へ戻る」→「在庫照会へ戻る」で絞り込み・検索条件・選択行が残る（NAV-1 の 3 段往復）
 - 任意項目（scroll 位置の復元）は owner の言及なし = 未確認のまま
