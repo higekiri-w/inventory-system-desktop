@@ -150,6 +150,8 @@
 
 ### 保留（要望・実需・顕在化待ち）
 
+- **`minimatch` の moderate の脆弱性（`typescript-eslint` 経由）**（出所: 依存の脆弱性の lane〈Plan Packet `docs/plans/2026-11-09-deps-security.md`〉の起票の実測、2026-11-09）: `npm audit` の moderate 7 件は全部 `minimatch` 7.0.0〜11.0.0（`typescript-eslint` 8.58.2 経由）。Dependabot の open の alert には無く、high でもないので、その lane の外にした。直すなら `typescript-eslint` を名指しで上げる（lint の道具だけで、製品の bundle に入らない）。
+
 #### 見た目・UX
 
 - **「フォーマット異常」badge の危険の塗り**（色と強調 lane の除外、decision-log D-094）: `ff05436f` の時点で `src/features/csv-import/lib/formatErrorRow.ts:22` が `variant: "destructive"`（危険の塗り）の badge を返す（`ErrorRowsTable.tsx` が描く）。00 は危険の塗りを dialog の実行ボタンだけに限るため、②分類か①状態（destructive tone の outline + icon）かを design で決めて移す
