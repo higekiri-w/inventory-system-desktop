@@ -288,7 +288,7 @@ Contract ID: SPEC-UISN
 
 ## Implementation Results
 
-実装は Draft PR #60（https://github.com/kosei-w90607/inventory-system-public/pull/60、Writer = Codex）。Error Boundary 2 層（`main.tsx` defaultErrorComponent + `__root.tsx` errorComponent）+ 共通 `RouteErrorFallback`、`useUnsavedChangesWarning` + `UnsavedChangesDialog`、適用 6 画面配線（ProductFormPage は `flushSync` による navigate 前 baseline 同期 = UI-USW-D1 MUST の実装形）、全 26 page 明示分類の sweep test（適用 6 + 除外 20 の個別列挙）、実装段 docs 同期（DEV_SETUP_CHECKLIST 7-8a/7-8c 消化ほか）を含む。生成物（bindings / routeTree / traceability）・依存の diff ゼロ。定量 evidence（test 件数 / exact-HEAD SHA / gate 記録）は D-035/D-038 に従い PR body を正とする。
+実装は Draft PR #60（https://github.com/higekiri-w/inventory-system-public/pull/60、Writer = Codex）。Error Boundary 2 層（`main.tsx` defaultErrorComponent + `__root.tsx` errorComponent）+ 共通 `RouteErrorFallback`、`useUnsavedChangesWarning` + `UnsavedChangesDialog`、適用 6 画面配線（ProductFormPage は `flushSync` による navigate 前 baseline 同期 = UI-USW-D1 MUST の実装形）、全 26 page 明示分類の sweep test（適用 6 + 除外 20 の個別列挙）、実装段 docs 同期（DEV_SETUP_CHECKLIST 7-8a/7-8c 消化ほか）を含む。生成物（bindings / routeTree / traceability）・依存の diff ゼロ。定量 evidence（test 件数 / exact-HEAD SHA / gate 記録）は D-035/D-038 に従い PR body を正とする。
 
 ## Review Response
 

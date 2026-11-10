@@ -368,7 +368,7 @@ Test Design Matrix: `docs/plans/test-matrices/2026-10-27-jan-dup-custom-code.md`
 exact-HEAD の SHA と test の本数は写さない（Evidence Ownership、D-038）。正本は PR #212 の本文・comment と helper の record。
 
 - 実装（発注 678）: `948bb671`〜`6faff008`。BIZ の `JanInUse` と手順 3a・3a2（同じ JAN の群の在庫連動を外し、求め直し、操作ログ、warnings を同じ TX で）、CMD の kind `duplicate`・field `jan_code` の変換、wire の `shared_jan_custom_code`、商品フォームの `SharedJanCustomCodeDialog` と送り直し、D-052 の entry `productCreateSharedJan`（C23）、bindings と traceability の再生成。Matrix の B1〜B10・C1・U1〜U7・I1。M1〜M11 が assertion で red になることは Final Review の Codex も実測した（PR #212 の comment）。
-- Final Review（2 本、https://github.com/kosei-w90607/inventory-system-desktop/pull/212#issuecomment-6543042258）: Codex は request changes（P2 2・P3 1）、Fable 5 は approve（P3 2）。裁定は全件受理。
+- Final Review（2 本、https://github.com/higekiri-w/inventory-system-desktop/pull/212#issuecomment-6543042258）: Codex は request changes（P2 2・P3 1）、Fable 5 は approve（P3 2）。裁定は全件受理。
 - 是正（発注 685）: ダイアログの高さを viewport の中に収め、文だけを scroll し、title と button を scroll の外に固定した（F1。U2 の多数の商品の case）。Final の closure（発注 689、Codex P2）を受け、本文の箱を名前の付いた scroll の region（`tabIndex={0}`）にし、Tab と Shift+Tab で入れることを U2 で確かめ、L3-1 を本文の region の focus と矢印の key の観測に書き直した。U3 に遷移の時点の dirty が false の assert を足した（F2。M13）。設計正本の「未実装」の印を「D-141 proposed・実装済み（PR #212、L3 待ち）」にし、本節と Review Response を埋めた（F3 と Fable 5 の P3）。
 - 残り: L3-1〜L3-3（AC15、Human Gate `manual`）と closure の review。D-141 の Status は owner の Q1〜Q3 の確認まで proposed のまま。
 

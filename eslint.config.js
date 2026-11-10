@@ -18,6 +18,8 @@ export default tseslint.config(
       // .agents/ と .claude/ はハーネス内部運用（.prettierignore と揃える）
       ".agents/**",
       ".claude/**",
+      // .local/ は owner の手元だけの file（.gitignore 済み）。flat config は .gitignore を読まないので明記する（prettier は .gitignore を読む）
+      ".local/**",
     ],
   },
   // Type-aware linting は TS ファイル限定（JS には適用しない）

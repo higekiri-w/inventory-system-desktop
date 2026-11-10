@@ -375,7 +375,7 @@ Contract ID: SPEC-WF-HARNESS3
 - 入口: npm 供給網ガード（D-030）と問い合わせの行き先（PR 操作と委任の範囲を含む）を `AGENTS.md` へ移し、`CLAUDE.md` は冒頭の `@AGENTS.md` の import と Claude 固有の補助だけにした。座組と effort は MANUAL の座組表を参照する。Session Start の R2+ 行から Evidence Mode・legacy の手順を消し、初回レビュー行に発注で範囲を指定した review の最短経路を足した。D-093 を記録した。
 - review: 依頼・出力の規範（重大度・出力形式・確信度）を `docs/code_review.md` に統合し、保守者観点（P2）と「現場の前提」の照合を置いた。`inventory-code-review`・`engineering-review` の重大度・出力形式を code_review に従わせ、review-checklist の件数上限とカテゴリ外の除外をやめた。`pr-review` / `review-only-subagent` Skill、rules 2 本、commands 3 本、`pr-review-prompt` template を削除し参照を是正した。
 - その他: PR template・HANDOFF から Evidence Mode の記述を消し、project-profile を repo 固有の節に絞った。drift test の直接 UI merge 禁止の要求先を `AGENTS.md` と `docs/DEV_WORKFLOW.md` に絞り、T13 から `CLAUDE.md` を外した（T12 の旧 path・旧 namespace の拒否は残す）。
-- CI・merge: hosted CI は全ジョブ pass。Ready・merge は helper 経由、[PR #117](https://github.com/kosei-w90607/inventory-system-desktop/pull/117)（2026-09-28）。
+- CI・merge: hosted CI は全ジョブ pass。Ready・merge は helper 経由、[PR #117](https://github.com/higekiri-w/inventory-system-desktop/pull/117)（2026-09-28）。
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

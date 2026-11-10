@@ -30,12 +30,12 @@
 
 ### ローカル field-check 参考資料
 
-- WSL path: `/home/kosei/downloads/inventory-field-check`
-- Windows path: `\\wsl.localhost\Ubuntu-22.04\home\kosei\downloads\inventory-field-check`
-- CV17 / レジスターツールのマニュアル参照: `approved-readable/ECRCV17.pdf`
+- WSL path: `/home/alice/downloads/inventory-field-check`
+- Windows path: `\\wsl.localhost\Ubuntu-26.04\home\alice\downloads\inventory-field-check`
+- CV17 / レジスターツールのマニュアル参照: `approved-readable/manuals/ECRCV17.pdf`
 - PDF画面で確認できる主な根拠: `5.4` は `PLU(商品)` / `ｽｷｬﾆﾝｸﾞPLU(商品)` の一覧・サブ画面、`5.7.2` は `ｽｷｬﾆﾝｸﾞPLU 開始ﾒﾓﾘNo.`、`5.8` はデータのエクスポート/インポートとテキストファイル保存・取込み。
 - 調査結果の参照優先: `summaries/` 配下の匿名化・要約済みメモを優先する。CSV / XLSX / PLU export / register backup / screenshot 等の実データは repo にコピーしない。
-- issue #135 の Z004 形状根拠: `summaries/2026-07-06-z00x-shape-analysis.md` を正とし、`approved-readable/Issue採取ファイル/` の実CSV・DB・スクリーンショットは参照元のままrepoへ入れない。
+- issue #135 の Z004 形状根拠: `summaries/2026-07-06-z00x-shape-analysis.md` を正とし、`approved-readable/_dup/Issue採取ファイル/` の実CSV・DB・スクリーンショットは参照元のままrepoへ入れない。
 - 画面外観の確認: このrepoから自動的にライブ画面は見えない。必要な場合は上記PDF、匿名化スクリーンショット、または明示的に許可されたOSスクリーンショットだけを確認材料にする。
 
 ### 2026-06-30 フィールド確認で得た仕様変更候補

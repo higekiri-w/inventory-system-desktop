@@ -308,7 +308,7 @@ Contract ID: SPEC-65-4D-SIX-SYMMETRY-2026-08-29
 - IO / BIZ は6種横断、3値status正規化、4値filter、棚卸し差異母集団、種別別の日付・記録日時写像を実装し、既存4種の既定挙動を維持した。
 - hub UI は6種・4値の選択肢、検索母集団差の常設注記、進行中棚卸しの両列「-」、完了差異0件の「差異なし」、CSV取込み / 棚卸し詳細へのSPA遷移を実装した。
 - D-052 SSOT / 独立oracle / decision-log を6種化のconsumer集合へ同期し、REQ-206 / REQ-207 traceabilityを再生成した。wire型・schema・公開シグネチャは不変。
-- Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/14
+- Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/14
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

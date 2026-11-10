@@ -257,7 +257,7 @@ Probe は scratch の仮の test（`product_service.rs` の test module の末�
 ## Implementation Results
 
 - 実装の要旨（closeout、2026-10-06）: `generate_custom_code` は、同じ接頭辞の既存の独自コード（`{接頭辞}-` + ASCII 数字だけ、部門を問わない）の番号の最大 + 1 と部門の next_seq の大きい方から振り、抜けた番号は埋めない（TD-108）。9999 の次は 5 桁以上で続け（TD-109）、i64 の上限は next_seq の更新の前に `ValidationFailed` で止める。`product_repo` に `list_product_codes_by_prefix`（`LIKE` を使わない）と `raise_next_seq`（next_seq を下げない）を足し、引上げは登録と同じ TX で戻る。前提が BIZ-01-D6 と食い違う既存 test 1 本を改名して書き直し、traceability を再生成した（D-106）。
-- review・CI・merge: Final Review broad は互いに独立の 2 本がともに approve（Fable 5.1 は P3 1、Codex GPT-6.1 Sol は P 0）。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-04）。manual は not-required。検証（AC1〜AC8、mutant M1〜M6）の実測値は PR の body が持つ。PR: [#138](https://github.com/kosei-w90607/inventory-system-desktop/pull/138)（Writer = Opus 5.5 subagent）
+- review・CI・merge: Final Review broad は互いに独立の 2 本がともに approve（Fable 5.1 は P3 1、Codex GPT-6.1 Sol は P 0）。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-04）。manual は not-required。検証（AC1〜AC8、mutant M1〜M6）の実測値は PR の body が持つ。PR: [#138](https://github.com/higekiri-w/inventory-system-desktop/pull/138)（Writer = Opus 5.5 subagent）
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

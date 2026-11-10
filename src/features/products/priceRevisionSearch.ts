@@ -1,6 +1,7 @@
 import type { ProductSearchQuery, SortKey } from "@/lib/bindings";
 import { LIST_PER_PAGE_OPTIONS } from "@/components/patterns/list-per-page";
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 import { PRODUCT_SORT_OPTIONS } from "./search";
 
@@ -18,7 +19,7 @@ const booleanSearchParam = z
   .catch(undefined);
 
 export const priceRevisionSearchSchema = z.object({
-  q: z.string().max(100).optional().catch(undefined),
+  q: utf16String({ max: 100 }).optional().catch(undefined),
   supplier: z.coerce.number().int().positive().optional().catch(undefined),
   includeUnassigned: booleanSearchParam,
   dept: z.coerce.number().int().positive().optional().catch(undefined),
