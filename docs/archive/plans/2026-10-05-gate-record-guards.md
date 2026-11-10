@@ -258,7 +258,7 @@ Test Design Matrix: [test-matrices/2026-10-05-gate-record-guards.md](test-matric
 - S5: 自己照合の message の末尾を `shlex.join(sys.argv[1:])` にした。test は T5-1。
 - S7: `docs/ci.md` の `ci()` の参照を実装後の行範囲に直した。
 - Final Review broad の是正（Codex P2 = Fable P3）: T2-1 は初回の audit を pass で試していたので、照合を書込みの後へ動かしても `broad audits below minimum` が書込みの前に止め、comment の照合が効いていなかった。T2-1 を `outcome='pending'` にし、「pending のときだけ照合を書込みの後へ動かす」mutant と M6 の両方で T2-1 が comment の照合で red になることを確かめた（修正前の test はこの mutant を全件 green で見逃していた）。
-- 検証（AC1〜AC9、Matrix の Mutation M1〜M13 の各 mutant）の実測値と Draft の run は PR の body が持つ。PR: [#142](https://github.com/kosei-w90607/inventory-system-desktop/pull/142)（Writer = Opus 5.5 subagent。helper 経由の squash merge、2026-10-05）
+- 検証（AC1〜AC9、Matrix の Mutation M1〜M13 の各 mutant）の実測値と Draft の run は PR の body が持つ。PR: [#142](https://github.com/higekiri-w/inventory-system-desktop/pull/142)（Writer = Opus 5.5 subagent。helper 経由の squash merge、2026-10-05）
 - review・CI・merge（closeout、2026-10-06）: Plan Review は 3 round の上限で P1 / P2 = 0 になり plan-approved。Final Review broad は Fable 5.1 が approve（P3 1）、Codex GPT-6.1 Sol が reject（P2 1）で同じ所を指し、是正の後の closure（Fable 5.1）は approve。是正の後の Draft の run は、attempt 1 で Rust tests の job が runner の apt の段で止まり owner の了承で cancel して出し直し、attempt 2 が success。Ready の後の run の `Merge gate` で helper 経由で merge した（owner の Ready・merge、2026-10-05）。Human Gate は `ready,merge`。
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.

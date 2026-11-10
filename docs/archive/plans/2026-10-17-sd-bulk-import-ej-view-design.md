@@ -385,7 +385,7 @@ owner に聞く設計の問い: 無し。
 - 結果: 締めの SD の読取りで日報・Z004・EJ を一度に取り込む一括取込み（37 §37.10 BIZ-08-D7 の順・TX・失敗）、日報の同日追加の確認を同じ日の取込みが全て精算回数を持つときに精算回数の照合で置き換えること（BIZ-08-D8）、EJ の記録の番号を鍵に記録の文を保存してレシートの控えとして見せること（§37.11 BIZ-08-D9、pos-tables の `ej_records`、SCREEN_DESIGN の UI-09c）、CV17 との併存と `XZ_BKUP` へ移す lane への約束（BIZ-08-D10）を設計正本に置き、D-121 に記録した。D-071 は Superseded in part。Z004 と EJ の小数の数量は拾わない（D-121 (6)）。D-111 の正本の節（37 §37.3〜§37.9 ほか）は変えず、後から足すものを 37 §37.10 の「§37.9 に足すもの」と D-121 の Compatibility に書いた。本 lane は docs だけで、code・migration・bindings は変えていない（runtime は後続の (A)・(B)）。
 - 既存の保護: 実装は変えていないので、店の動作は今のまま（日報は 1 件ずつ取り込み、EJ は取り込まない）。設計照合 test と traceability の検査は green のまま。
 - 未検証: Contract Probe の P5（SD-23）・P7（等幅の字形）・P8（書きかけの記録の書き方）は (A) の L3 とその前の確かめ。店に聞く 2 つの問い（控えの探し方・昔の控え）は既定のまま。
-- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）までで、round 3 の残りは owner の決定（TD-317）で直して plan-approved。Final Review は broad 1 回と是正の後の closure 2 回（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#175](https://github.com/kosei-w90607/inventory-system-desktop/pull/175)
+- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）までで、round 3 の残りは owner の決定（TD-317）で直して plan-approved。Final Review は broad 1 回と是正の後の closure 2 回（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#175](https://github.com/higekiri-w/inventory-system-desktop/pull/175)
 - 後続: `docs/backlog.md` の「SD の一括取込みと EJ の控えの runtime（A）」「Z004 を SD の一括取込みに入れる runtime（B）」「店に聞く: レシートの控えの探し方と昔の控え」と、「取込み済みの Z・EJ を `XZ_BKUP` へ移す操作（(b) の lane）」の D-121 からの申し送り。
 
 ## Review Response

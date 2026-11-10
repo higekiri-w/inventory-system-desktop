@@ -525,7 +525,7 @@ Fill after implementation.
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- 実装: [PR #127](https://github.com/kosei-w90607/inventory-system-desktop/pull/127)。S1〜S12 を Writer（Opus 5.5 subagent、発注 154）が 6 commit で実装した（classifier、helper の自己照合と `--reviewed-head`、local-ci、pre-push、settings の env と hook test、正本の文書と D-099）。AC1〜AC11（AC7 の merge 後の項目を除く）を満たし、MU1〜MU18 を実注入して red を確かめた。
+- 実装: [PR #127](https://github.com/higekiri-w/inventory-system-desktop/pull/127)。S1〜S12 を Writer（Opus 5.5 subagent、発注 154）が 6 commit で実装した（classifier、helper の自己照合と `--reviewed-head`、local-ci、pre-push、settings の env と hook test、正本の文書と D-099）。AC1〜AC11（AC7 の merge 後の項目を除く）を満たし、MU1〜MU18 を実注入して red を確かめた。
 - G1 (a) の経路: `.claude/agents/{writer,reviewer}.md` と `.claude/settings.json` は Writer が tool で書けた。`.gitignore` の編集は auto mode の classifier に拒否され（Self-Modification）、Writer は迂回せず、owner が sandbox の外で `.gitignore` の 2 か所と定義 2 本を commit・push した（予備の介入 1 を使用）。
 - 実装の判断: pre-push の push 範囲の起点を関数 `push_range_base` に移し、D7 と分類で共用した（分類の振舞いは変えない）。AC2 の実物（新しい helper の `status` の exit 1）は broad の record の前に確かめた。record の後の再確認は「本 lane 自身の検査と merge」の 6 として Coordinator が行う。
 - base 同期: origin/main を単段 merge で取り込んだ（衝突なし。main 側は `docs/backlog.md`・`docs/project-memory.md` だけ）。

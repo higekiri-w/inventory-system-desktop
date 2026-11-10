@@ -290,7 +290,7 @@ Test Design Matrix: [2026-10-07-backup-offsite](test-matrices/2026-10-07-backup-
 
 ## Implementation Results
 
-design lane で docs だけ（code・test・bindings は変えない、AC6）。PR: [#155](https://github.com/kosei-w90607/inventory-system-desktop/pull/155)。
+design lane で docs だけ（code・test・bindings は変えない、AC6）。PR: [#155](https://github.com/higekiri-w/inventory-system-desktop/pull/155)。
 
 成果物:
 
@@ -333,7 +333,7 @@ AC1〜AC6 の最終の出力（closure の是正と TD-381 の反映の後、逐
 closeout（2026-10-23）:
 
 - 結果: 確かめ済みの最新の backup を用意した USB メモリへ自動で写して読み戻しで照合し、PC の中と PC の外の成功を分けて画面とホームに出し、復元の前に控えを確かめて新しすぎる版・壊れた控えを止め、別の PC で媒体の控えから戻す手順までを設計正本と D-114 に置いた。USB の控えは任意で、やめる操作を持つ（TD-381）。code・migration・bindings は変えず、店で PC の外の控えが毎日取れる通常運用は後続の runtime の lane の後に成り立つ。
-- review・CI・merge: Plan Review は round 1〜3（上限）と同期の closure（reject → 是正）・同期の closure 2（fresh Opus、approve）で、owner が R4 の計画を承認した（TD-376）。Final Review（Minimum 2、Claude 側 Fable 5.1 と Codex GPT-6 Astra）は broad と closure の reject と是正を重ね、途中の契約の変更を Gated Amendment として記録して broad を取り直し、closure の 2 回目で両者が approve（P3 だけ）した。helper の専用 record は review pass・r4 pass で、owner の R4 の承認と Ready（TD-383）の後の run の `Merge gate` は success、owner の merge の指示（TD-385）の後に helper 経由で squash merge した。PR: [#155](https://github.com/kosei-w90607/inventory-system-desktop/pull/155)
+- review・CI・merge: Plan Review は round 1〜3（上限）と同期の closure（reject → 是正）・同期の closure 2（fresh Opus、approve）で、owner が R4 の計画を承認した（TD-376）。Final Review（Minimum 2、Claude 側 Fable 5.1 と Codex GPT-6 Astra）は broad と closure の reject と是正を重ね、途中の契約の変更を Gated Amendment として記録して broad を取り直し、closure の 2 回目で両者が approve（P3 だけ）した。helper の専用 record は review pass・r4 pass で、owner の R4 の承認と Ready（TD-383）の後の run の `Merge gate` は success、owner の merge の指示（TD-385）の後に helper 経由で squash merge した。PR: [#155](https://github.com/higekiri-w/inventory-system-desktop/pull/155)
 - 後続: `docs/backlog.md` の「PC の外の控えの runtime」（申し送りは上の「runtime の置き場所」と申し送りの表、下の Review Response の closeout の段落の (a)〜(c)、Contract Probe の P7・P8）と、自動 backup の確認の失敗の知らせの候補（AI の review 由来）。導入の前の関門 3 の残りは、その runtime の lane と復元の予行演習（71 §71.13）。
 
 ## Review Response

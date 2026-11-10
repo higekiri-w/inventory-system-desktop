@@ -281,7 +281,7 @@ Contract ID: SPEC-WF-LIGHT1A
 
 ## Implementation Results
 
-[PR #90](https://github.com/kosei-w90607/inventory-system-desktop/pull/90) で実装し squash merge 済み（`89f0bc2d`、2026-09-22）。`docs/templates/plan-packet.md` に `## Ordinary Operation` 節、`docs/DEV_WORKFLOW.md` の Review Rules・Plan Packet Rules・Owner Effort Budget に規則項目と `### 問い合わせの行き先` の表、`docs/AGENT_OPERATING_MANUAL.md` §5.6 に「Writer が編集前に止まったとき」の規則文、`docs/decision-log.md` に D-090 を追加した。4 file とも既存行の削除は無く追加のみ。Writer 実装後、Coordinator の diff 確認で packet 内だけの略記 `D1`〜`D4` が正本へ漏れた箇所・Writer 向けの指示文が規則文へ残った箇所・D-090 の Why の文意・表の注記の Markdown 描画の 5 点を是正した。Final Review broad の finding のうち 3 点（注記 (a) の複数行一致時の適用範囲〈A-1 / B-5〉、Plan Packet Rules の項目の出典を template へ明示〈B-2〉、非遡及の 1 句〈B-3〉）を採用して是正した。
+[PR #90](https://github.com/higekiri-w/inventory-system-desktop/pull/90) で実装し squash merge 済み（`89f0bc2d`、2026-09-22）。`docs/templates/plan-packet.md` に `## Ordinary Operation` 節、`docs/DEV_WORKFLOW.md` の Review Rules・Plan Packet Rules・Owner Effort Budget に規則項目と `### 問い合わせの行き先` の表、`docs/AGENT_OPERATING_MANUAL.md` §5.6 に「Writer が編集前に止まったとき」の規則文、`docs/decision-log.md` に D-090 を追加した。4 file とも既存行の削除は無く追加のみ。Writer 実装後、Coordinator の diff 確認で packet 内だけの略記 `D1`〜`D4` が正本へ漏れた箇所・Writer 向けの指示文が規則文へ残った箇所・D-090 の Why の文意・表の注記の Markdown 描画の 5 点を是正した。Final Review broad の finding のうち 3 点（注記 (a) の複数行一致時の適用範囲〈A-1 / B-5〉、Plan Packet Rules の項目の出典を template へ明示〈B-2〉、非遡及の 1 句〈B-3〉）を採用して是正した。
 
 ## Review Response
 

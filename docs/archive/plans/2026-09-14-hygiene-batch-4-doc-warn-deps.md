@@ -222,7 +222,7 @@ R2 のため省略。Scope の各項と AC の対応を維持する。
 
 ## Implementation Results
 
-[PR #61](https://github.com/kosei-w90607/inventory-system-desktop/pull/61) で実装し squash merge 済み（2026-09-15）。
+[PR #61](https://github.com/higekiri-w/inventory-system-desktop/pull/61) で実装し squash merge 済み（2026-09-15）。
 
 - S1a: `74-ui-operation-logs.md` §74.10 に per_page 上限の記述を追記し、`40-cmd-product.md:279` をページング引数を持たない表現へ言い換えた。
 - S1b: `scripts/doc-consistency-check.sh` の col_part 抽出直後に拡張子除外の `case` を追加し、route path のカラム誤読 WARN を解消した。`scripts/tests/doc-consistency-plan-packet.test.sh` に route path 正例 / 未定義カラム負例の fixture を追加した。

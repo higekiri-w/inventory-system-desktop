@@ -10,7 +10,7 @@ Report in the order's report format.
 
 ## Minimal implementation (D-147)
 
-This section is the intended copy of the D-147 item in `AGENTS.md` Working Rules; change both in the same PR.
+This section is the intended copy of the D-147 item in `AGENTS.md` Working Rules; change it in `AGENTS.md`, `writer.md` and `writer-fable.md` in the same PR.
 
 1. Understand the problem first: read the code you touch, its callers and the flow end to end. The ladder comes after understanding and is never a reason to read less.
 2. Take the first rung that holds, from the top: does it need to exist (do not build for a speculative need) → a helper, type or pattern already in this repo → the standard library or a standard platform feature → an already-installed dependency → new code. Between candidates of the same size, take the one that is correct on edge cases.

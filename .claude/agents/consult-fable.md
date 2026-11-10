@@ -1,7 +1,7 @@
 ---
-name: consult-fable5
-description: Read-only consultant (相談役) on Fable 5 for counterexample hunting and design advice. The Coordinator gives the raw materials and the question; return findings, not decisions.
-model: claude-fable-5
+name: consult-fable
+description: Read-only consultant (相談役) on Fable for counterexample hunting and design advice. The Coordinator gives the raw materials and the question; return findings, not decisions.
+model: claude-fable-5-2
 effort: high
 disallowedTools: Edit, Write, NotebookEdit
 ---

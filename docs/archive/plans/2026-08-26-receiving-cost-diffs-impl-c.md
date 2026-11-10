@@ -280,7 +280,7 @@ Contract ID: SPEC-PRVC
 
 - Codex Writer が発注 1 本・実装 1 commit で完走（fail-closed 停止なし）。BIZ step 10 + CostDiff + ダイアログ component 新設 + ReceivingPage 接続 + 予約 test 全数 + bindings / 90-traceability 再生成。凍結例外 class の実需要は 2 file（`ReceivingPage.suggest.test.tsx` は `createReceiving` result literal 非保持のため追従不要 — Final Review が実読確認）。
 - 記録是正（Final Review P2-1）: idempotent replay の result panel 文言「同じ内容の再送として処理済み」は 61-ui §61.6 の設計契約（2026-07-13 起源）が旧実装では Badge「再送結果」のみで未実装だったものを、本 commit で初実装した。Ledger / Matrix T6 の「既存の replay 表示が維持される」は「設計契約どおりの replay 表示が提示される（本 PR で契約充足）」と読み替える。設計契約自体は 61-ui 正本どおりで逸脱なし。
-- Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/5
+- Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/5
 
 ## Review Response
 

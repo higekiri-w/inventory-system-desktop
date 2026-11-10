@@ -11,6 +11,7 @@ import type {
 } from "@/lib/bindings";
 import { LIST_PER_PAGE_OPTIONS } from "@/components/patterns/list-per-page";
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 export const PRODUCT_DISCONTINUED_OPTIONS = [
   { value: "active", label: "表示中", payload: false },
@@ -52,7 +53,7 @@ const PRODUCT_SORT_VALUES = descriptorValues(PRODUCT_SORT_OPTIONS);
 const PRODUCT_SORT_DIRECTION_VALUES = descriptorValues(PRODUCT_SORT_DIRECTION_OPTIONS);
 
 export const productListSearchSchema = z.object({
-  q: z.string().max(100).optional().catch(undefined),
+  q: utf16String({ max: 100 }).optional().catch(undefined),
   dept: z.coerce.number().int().positive().optional().catch(undefined),
   discontinued: z.enum(PRODUCT_DISCONTINUED_VALUES).optional().catch(undefined),
   plu: z.enum(PRODUCT_PLU_VALUES).optional().catch(undefined),

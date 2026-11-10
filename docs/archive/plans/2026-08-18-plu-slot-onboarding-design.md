@@ -382,7 +382,7 @@ Contract ID: SPEC-PLS-2026-08-18
 
 SPEC-PLS-D1〜D10、owner 裁定 Q1〜Q5（Q2=A）を durable source docs へ昇格した。PLU slot の schema / lifecycle、Z004 occupancy snapshot、永続予約・解放、Diff / Full、CSV / filter 全件 bulk onboarding、operator UI / DTO、D-072、REQ-907 を正本化し、実装・generated outputs・実店舗データは変更していない。
 
-PR: [#84](https://github.com/kosei-w90607/inventory-system-public/pull/84)
+PR: [#84](https://github.com/higekiri-w/inventory-system-public/pull/84)
 
 ## Mechanical Impact Inventory
 

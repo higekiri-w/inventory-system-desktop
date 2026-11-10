@@ -273,7 +273,7 @@ ownerは提示済みの本branch公開・Ready・分類失敗fixture PRの作成
 
 公開前の実L0は、旧い全Rust関数名へのREQ番号述語が既存のSPEC技術テストを拒否してFAILした。S3/S4のpre-pushの不整合としてコード変更を状態記録と分離し、canonical traceabilityへ集約した候補`f28e5891ac42cc8c180de711c151c0aa2e102d3b`で実L0とlegacy fullがCLEAN/PASS。T1〜T4とsrc-tauriは変更していない。Sonnet highの限定closureは実物/evidenceを照合してP1/P2なし・契約維持と判定した。元のDouble Auditと後続保持裁定は維持する。
 
-[PR #54](https://github.com/kosei-w90607/inventory-system-desktop/pull/54)をDraftで公開し、本文へ当該contentのfull、監査、P3裁定を記録した。公開時のPR head/base/本文を実物照合済み。これらの証拠とowner裁定を根拠に、`implementing -> local-verified -> independent-review -> human-confirm`を隣接遷移として実体化し、Reviewed Content HEADを当該監査contentへ設定する。この遷移にはScope/AC/Matrix/実装を同乗させない。既に承認されたReadyは次のstate-onlyとそのexact HEADのL1を完了してから実行する。
+[PR #54](https://github.com/higekiri-w/inventory-system-desktop/pull/54)をDraftで公開し、本文へ当該contentのfull、監査、P3裁定を記録した。公開時のPR head/base/本文を実物照合済み。これらの証拠とowner裁定を根拠に、`implementing -> local-verified -> independent-review -> human-confirm`を隣接遷移として実体化し、Reviewed Content HEADを当該監査contentへ設定する。この遷移にはScope/AC/Matrix/実装を同乗させない。既に承認されたReadyは次のstate-onlyとそのexact HEADのL1を完了してから実行する。
 
 ### Ready遷移とDraft観測（2026-09-14）
 
@@ -284,11 +284,11 @@ ownerの公開・Ready承認に基づき、Draft中に`human-confirm -> ready-ho
 
 ### 実装mergeと機械的closeout（2026-09-14）
 
-[PR #54](https://github.com/kosei-w90607/inventory-system-desktop/pull/54)を2026-09-14T03:51:19Zにsquash mergeした。merge commitは`786824584778cca9c85596c749c8f1e3cb39f848`。ownerは介入6回目 / 予算8回で、実装PRのmergeと本R0 docs-only closeoutの公開・Ready・CI確認・mergeまでを承認済み。現在のPhase=archiveは実装PRの記録移送を表し、ruleset有効化の完了を表さない。上の「未実行」「修正中」等は各記録時点の履歴として保存する。
+[PR #54](https://github.com/higekiri-w/inventory-system-desktop/pull/54)を2026-09-14T03:51:19Zにsquash mergeした。merge commitは`786824584778cca9c85596c749c8f1e3cb39f848`。ownerは介入6回目 / 予算8回で、実装PRのmergeと本R0 docs-only closeoutの公開・Ready・CI確認・mergeまでを承認済み。現在のPhase=archiveは実装PRの記録移送を表し、ruleset有効化の完了を表さない。上の「未実行」「修正中」等は各記録時点の履歴として保存する。
 
-実装PRのReady対象版は`d483ad5f4145e7e190ab254a8bf8dd4928f7f88d`。[正常run](https://github.com/kosei-w90607/inventory-system-desktop/actions/runs/34802569373)は全必要jobとGitHub Actions/15368の`Merge gate`がsuccess。legacyのCLEAN L1・PR head・successful hosted headShaの一致はPR #54本文に記録し、独立Double Auditと各修正closure、owner Ready/mergeを完了した。
+実装PRのReady対象版は`d483ad5f4145e7e190ab254a8bf8dd4928f7f88d`。[正常run](https://github.com/higekiri-w/inventory-system-desktop/actions/runs/34802569373)は全必要jobとGitHub Actions/15368の`Merge gate`がsuccess。legacyのCLEAN L1・PR head・successful hosted headShaの一致はPR #54本文に記録し、独立Double Auditと各修正closure、owner Ready/mergeを完了した。
 
-[Draft run](https://github.com/kosei-w90607/inventory-system-desktop/actions/runs/34801155403)ではrunner割当なし・required名なしを確認した。aggregateの表示は短いDraft名ではなく未展開の条件式だった差異を保持する。Ready時は実際の`Merge gate`名で成功を確認し、[分類失敗fixture PR #55](https://github.com/kosei-w90607/inventory-system-desktop/pull/55) / [run](https://github.com/kosei-w90607/inventory-system-desktop/actions/runs/34802715739)ではfilter/changesと、起動した評価器/`Merge gate`のfailureを確認した。fixtureはmainへmergeせずclose済み。試験branchの削除は今回の承認範囲に含めず保持する。
+[Draft run](https://github.com/higekiri-w/inventory-system-desktop/actions/runs/34801155403)ではrunner割当なし・required名なしを確認した。aggregateの表示は短いDraft名ではなく未展開の条件式だった差異を保持する。Ready時は実際の`Merge gate`名で成功を確認し、[分類失敗fixture PR #55](https://github.com/higekiri-w/inventory-system-desktop/pull/55) / [run](https://github.com/higekiri-w/inventory-system-desktop/actions/runs/34802715739)ではfilter/changesと、起動した評価器/`Merge gate`のfailureを確認した。fixtureはmainへmergeせずclose済み。試験branchの削除は今回の承認範囲に含めず保持する。
 
 このcloseoutはpacket/Matrixの移送とPlans更新だけを行うR0 PR。docs（実PK5を含む）と`Merge gate`の同一HEAD成功、Rust/frontend非実行は、このcloseout PRのhosted結果で確認してからmergeする。現時点でそのdocs-only経路を成功済みとは記録しない。成功head/baseは次のruleset probeのpositive controlへ渡し、このcloseout自身の後処理PRは再帰作成しない。
 

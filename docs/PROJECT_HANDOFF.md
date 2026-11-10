@@ -19,6 +19,7 @@
 | 計画・実装・レビュー・完了手続き | [DEV_WORKFLOW.md](DEV_WORKFLOW.md)、[CI](ci.md) |
 | 実装後のPR状態・review/manual記録・merge保護 | [merge evidence](agent-guidance/merge-evidence.md) とhelper status |
 | 決定理由 | [decision-log.md](decision-log.md)、[ADR](adr/README.md) |
+| session の進捗と次の見通し、Coordinator の操作の教訓（作業 checkout の手元だけ） | 最新の `.local/reports/handoff-<日付>.md` と `.local/checklists/README.md`（`.gitignore` の file で公開の repo に無い。環境を作り直したら写しから戻し、最初に読む） |
 
 再開時は対象の現物と必要な状態を確認し、既に完了した工程を繰り返さない。未解決判断と未実施検証を引き継ぐ。
 
