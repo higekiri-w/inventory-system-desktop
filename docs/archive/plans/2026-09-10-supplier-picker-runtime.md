@@ -368,7 +368,7 @@ Contract ID: SPEC-SUPPICK-RT-1
 
 ## Implementation Results
 
-Codex Writer（medium、2026-09-10〜11、発注書 36 → 36b → 36c で完走、是正 42）: 取引先の選択と追加を `SupplierPickerDialog` に統合し、`CreateSupplierDialog` を suppliers 配下の 1 本に集約、3 host（一括価格改定 filter / 商品登録 form / 入庫記録）を trigger + picker 経由に置換、取引先管理に検索 input と scroll 箱を追加。Final Review round 1 の是正で現在値の解決を `supplierCurrentLabel` 1 関数に集約（未解決時は「取引先を確認できません」）、picker の submit 防壁に理由 comment と test、取引先管理の外枠撤去、filter 行の trigger 幅固定。S7 で catalog ⑧ 小節 / DSR-01 / 4 function-design を同期。PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/50
+Codex Writer（medium、2026-09-10〜11、発注書 36 → 36b → 36c で完走、是正 42）: 取引先の選択と追加を `SupplierPickerDialog` に統合し、`CreateSupplierDialog` を suppliers 配下の 1 本に集約、3 host（一括価格改定 filter / 商品登録 form / 入庫記録）を trigger + picker 経由に置換、取引先管理に検索 input と scroll 箱を追加。Final Review round 1 の是正で現在値の解決を `supplierCurrentLabel` 1 関数に集約（未解決時は「取引先を確認できません」）、picker の submit 防壁に理由 comment と test、取引先管理の外枠撤去、filter 行の trigger 幅固定。S7 で catalog ⑧ 小節 / DSR-01 / 4 function-design を同期。PR: https://github.com/higekiri-w/inventory-system-desktop/pull/50
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

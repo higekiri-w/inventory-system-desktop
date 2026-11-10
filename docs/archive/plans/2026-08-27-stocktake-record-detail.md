@@ -293,7 +293,7 @@ Contract ID: SPEC-UI06C-STOCKTAKE-DETAIL-2026-08-27
 
 IO / BIZ / CMD / generated bindings から layout + index route、棚卸し記録詳細 UI、query key / invalidation までを実装し、補正 movement 起点の差異、状態変換、NotFound、returnTo、既存棚卸し作業画面の search state を自動テストで固定した。D-052 は gated Amendment 1 に従い C1 / C3 / C11 の consumer 集合拡張として同期し、C15 / C16 の非追加根拠を Contract 行へ追記した。必須 mutation とローカル品質 gate は通過済み。
 
-Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/9
+Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/9
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

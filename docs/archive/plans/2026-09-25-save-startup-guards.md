@@ -463,6 +463,6 @@ Fill after implementation.
 
 ### Final Review と Human Gate（2026-09-26、対象 `4660cdd4`、互いに独立）
 
-- broad Codex 側（GPT-6 Astra）: approve、P1/P2/P3 = 0。AC1〜AC11 PASS、mutant 14/14 red。[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/111)
+- broad Codex 側（GPT-6 Astra）: approve、P1/P2/P3 = 0。AC1〜AC11 PASS、mutant 14/14 red。[review](https://github.com/higekiri-w/inventory-system-desktop/pull/111)
 - broad Claude 側（Fable 5.1、fresh、read-only）: approve、P1/P2 = 0、P3 1（`migration.rs` の `migrate` の doc comment の手順番号が 22 §3.2 と合わない）→ Findings Freeze 後の P3 として follow-up（backlog）。Contract Audit C1〜C9 一致、R4 の 3 条件を実装で確認、重い mutant 5 本 red。
 - manual（L3-1、Windows native）: owner PASS。r4: owner が Rollback / recovery notes の 3 条件を承認（新しすぎる backup の復元が Recovered になる意味を確認のうえ）。

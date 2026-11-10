@@ -647,7 +647,7 @@ ADR全文、packetの現在契約、S1〜S6のproposed節で旧DB/移行/legacy/
 
 ### Final Review 初回 broad（2026-09-21、pass A Sonnet / pass B Opus、対象 `552a7be7`、裁定 Coordinator = Fable）
 
-- Findings Freeze: 本節の指摘集合（`P2 4件 / P3 4件、全件accept`）で固定する。出所はPR #85の[pass A](https://github.com/kosei-w90607/inventory-system-desktop/pull/85#issuecomment-5760084126) / [pass B](https://github.com/kosei-w90607/inventory-system-desktop/pull/85#issuecomment-5760084479)。過去rallyの記録は変更しない。
+- Findings Freeze: 本節の指摘集合（`P2 4件 / P3 4件、全件accept`）で固定する。出所はPR #85の[pass A](https://github.com/higekiri-w/inventory-system-desktop/pull/85#issuecomment-5760084126) / [pass B](https://github.com/higekiri-w/inventory-system-desktop/pull/85#issuecomment-5760084479)。過去rallyの記録は変更しない。
 - Gated Amendment 1適用後の発注70として是正。Workflow Stateのfield、Scope、ACは変更しない。GA1でAmendmentsの範囲が変わったため、次はCoordinatorが是正後headへ`broad 2本`を取り直し、現在版のclosureを確認する。今回の自己点検を独立Final Review通過とは扱わない。
 
 | Finding / 種別 | disposition | 是正と根拠 / path |
@@ -696,7 +696,7 @@ ADR全文、packetの現在契約、S1〜S6のproposed節で旧DB/移行/legacy/
 
 ### Final Review broad `2 回目`（2026-09-21、pass A Sonnet / pass B Opus、対象 `7de29376`、裁定 Coordinator = Fable）
 
-- 出所はPR #85の[pass A](https://github.com/kosei-w90607/inventory-system-desktop/pull/85#issuecomment-5760937476) / [pass B](https://github.com/kosei-w90607/inventory-system-desktop/pull/85#issuecomment-5760937847)。前回指摘は両passで`P2 4件 / P3 4件、全件CLOSED`と確認された。今回のFindings Freezeは`P2 3件 / P3 5件、全件accept`の下記集合で固定する。
+- 出所はPR #85の[pass A](https://github.com/higekiri-w/inventory-system-desktop/pull/85#issuecomment-5760937476) / [pass B](https://github.com/higekiri-w/inventory-system-desktop/pull/85#issuecomment-5760937847)。前回指摘は両passで`P2 4件 / P3 4件、全件CLOSED`と確認された。今回のFindings Freezeは`P2 3件 / P3 5件、全件accept`の下記集合で固定する。
 - 発注71のdocs是正。開始HEADは`0d8ae025`、tracked tree clean。Workflow Stateのfield・Scope・AC・Gated Amendments・過去Review Response・Store Premises Factsは不変。次はCoordinatorが是正後headへ`broad 2本、rally 3回目（round天井）`を取り直す。Writerの自己点検を独立Final Review通過とは扱わない。
 
 | Finding / 種別 | disposition | 是正先と結果 |

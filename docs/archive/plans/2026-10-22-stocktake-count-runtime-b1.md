@@ -932,7 +932,7 @@ Gated Amendment の 2 本目（2026-10-23。Amendment の review の Codex 側 P
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-PR: [#188](https://github.com/kosei-w90607/inventory-system-desktop/pull/188)（2026-10-24 に helper 経由で squash merge）。
+PR: [#188](https://github.com/higekiri-w/inventory-system-desktop/pull/188)（2026-10-24 に helper 経由で squash merge）。
 
 - 1 段目（S1〜S7 と S9 の L3 の fixture の生成）: migration v11（vZ）、精算の窓と理由 1、計数の保存・0 にする・要再確認の一覧・完了の新しい経路、Z004 の preview・確定・取消の新しい経路、共有 JAN と在庫連動を始める検査、`stocktake_guard` と回復型、新設 4 command と bindings、`io::l3_fixtures`。停止の入口・旧本体・時点証拠の code と probe を撤去し、STK-1・STK-2 の診断 2 本を通常の回帰 test にした。Gated Amendment（取込みのカーソル）の code も同じ段に入った。
 - 2 段目（S8 と S9 の残り）: 棚卸しの画面（数を保存・入れ直す・前の日の分・日付の変わり目の確認・m の入力・要再確認の一覧・「今の数を入れる」の入口〈`/stocktake/` の search の `product`・`returnTo`〉・完了の拒否の理由ごとの一覧と「0 にする」・在庫を動かさない結果）、Z004 タブ（知らせ・取込みと取消の結果の要再確認の一覧、停止と同じ日の追加の確認を外す）、商品フォームの `recount_required` の導線（離脱の確認を通る）、商品一括 import の確定の拒否の画面の test、棚卸しの記録の詳細（BIZ の差異とロス原価・完了の後の差）、整合性の画面の共有 JAN の欄、`CMD_ERROR_KIND` と D-052 の SSOT の要再確認の一覧の key。正本の「proposed・未実装」の b1 の分を現行に直し、停止 ADR を superseded に、停止の節（35 §20.0・32 §15.0・55 §55.0・73 §73.15）を外し、旧本体の手順を新しい経路に置き換え、ERD・db-design の列・`tests/fixtures/z004/README.md` の L3 の fixture の表を足した。
