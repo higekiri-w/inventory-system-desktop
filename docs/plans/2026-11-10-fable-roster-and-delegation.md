@@ -142,5 +142,3 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
 | 旧環境の path | 旧い path・旧い repo の名・死んだ参照が残る | CLI（git grep） | AC8 | §4.6・§3.1・§4.5・runbook のどれかに旧い形を残す、§3.3 の行を T13 の行の範囲の外へずらす |
 | docs の検査 | link 切れ・packet の形の誤り | 既存の検査 | `bash scripts/doc-consistency-check.sh`・`--target plan` | packet の節を欠く、MANUAL の link を壊す |
 | 実効の model と effort | 定義が効かず session の model・effort で動く | 手での確かめ（merge の後） | AC11 | `model:` の ID を誤る、定義が読まれない、Claude Code の版が下限より古い |
-</content>
-</invoke>
