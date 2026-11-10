@@ -2471,6 +2471,18 @@ fn test_req401_tidy_moves_only_fully_hash_matched_groups() {
     lucky[2].bytes = imported[2].bytes.clone();
     put_bundle(&root, "XZ\\2026\\03", "23 .CSV", &lucky);
     put_sd(&root, "XZ\\2026\\03\\Z004_23 .CSV", &z004_bytes("23"));
+    // Z001・Z002 は取り込んだ bytes と同じで Z005 だけ違う組（24）、Z001・Z005 は同じで Z002 だけ違う組（25）
+    for (name, differs) in [("24 .CSV", 2), ("25 .CSV", 1)] {
+        let mut files = imported.clone();
+        files[differs] = bundle("2026-03-23", "0007", "12000")[differs].clone();
+        assert_ne!(files[differs].bytes, imported[differs].bytes);
+        put_bundle(&root, "XZ\\2026\\03", name, &files);
+        put_sd(
+            &root,
+            &format!("XZ\\2026\\03\\Z004_{name}"),
+            &z004_bytes(name),
+        );
+    }
 
     let before = sd_tree(&root);
     let result = scan_auto(&conn, &root, day("2026-03-25"), Some(&app));
@@ -2488,6 +2500,79 @@ fn test_req401_tidy_moves_only_fully_hash_matched_groups() {
         .filter(|path| path.starts_with("XZ_BKUP"))
         .collect();
     assert_eq!(moved, MOVED_21.iter().collect::<Vec<_>>());
+
+    // 取り込んだ組でも、Z001・Z002・Z005 の 1 本でも読めなければ Z004 を含めて 1 本も移さない（37 §37.12 手順 2）。
+    // 読めない file は mode 000 で作る。root では読めてしまうので効かない（CI の runner と開発の user は root でない）。
+    // scan は読めない file で全体が失敗する（§37.9 手順 5）ので、片付けを直接呼ぶ
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let unreadable = bundle("2026-03-19", "0003", "12000");
+        import(&mut conn, dir.path(), unreadable.clone(), false);
+        put_bundle(&root, "XZ\\2026\\03", "19 .CSV", &unreadable);
+        put_sd(&root, "XZ\\2026\\03\\Z004_19 .CSV", &z004_bytes("19"));
+        let before = sd_tree(&root);
+        for series in ["Z001", "Z002", "Z005"] {
+            let path = sd_path(&root, &format!("XZ\\2026\\03\\{series}_19 .CSV"));
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let failure = tidy::tidy_register_sd_imported(&conn, &root, day("2026-02-23"), &app);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(failure, None, "{series}");
+            assert_eq!(sd_tree(&root), before, "{series} が読めない組が動いた");
+        }
+        // 読めるようになれば同じ組が移る（移らなかった理由は読めないことだけ）
+        let failure = tidy::tidy_register_sd_imported(&conn, &root, day("2026-02-23"), &app);
+        assert_eq!(failure, None);
+        let after = sd_tree(&root);
+        for series in ["Z001", "Z002", "Z004", "Z005"] {
+            assert!(!after.contains_key(&format!("XZ\\2026\\03\\{series}_19 .CSV")));
+            assert!(after.contains_key(&format!("XZ_BKUP\\2026\\03\\{series}_19 _0001.CSV")));
+        }
+    }
+}
+
+#[test]
+fn test_req401_tidy_leaves_files_before_window() {
+    // REQ-401 / BIZ-08-D11 手順 1 / D-149 の Guarantee range: 窓（§37.9 手順 2）より前の `XZ` の file は、
+    // 取り込んだ組でも列挙しないので移さない。窓の始まりが 1 日早ければ同じ組が移る
+    let (dir, mut conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    let app = dir.path().join("app");
+    let old = bundle("2026-02-22", "0003", "12000");
+    import(&mut conn, dir.path(), old.clone(), false);
+    put_bundle(&root, "XZ\\2026\\02", "22 .CSV", &old);
+    put_sd(&root, "XZ\\2026\\02\\Z004_22 .CSV", &z004_bytes("22"));
+    imported_group_on_sd(&mut conn, dir.path(), &root);
+    let before = sd_tree(&root);
+
+    // 2026-03-25 の 30 日前は 2026-02-23（最後の取込みの対象日 2026-03-21 より前なので、これが窓の始まり）
+    let result = scan_auto(&conn, &root, day("2026-03-25"), Some(&app));
+    assert_eq!(result.scan.tidy_failure, None);
+    assert_eq!(result.scan.scanned_from, "2026-02-23");
+    let after = sd_tree(&root);
+    for (path, bytes) in &before {
+        if path.starts_with("XZ\\2026\\02\\") {
+            assert_eq!(
+                after.get(path),
+                Some(bytes),
+                "窓より前の file が動いた: {path}"
+            );
+        }
+    }
+    let moved: Vec<_> = after
+        .keys()
+        .filter(|path| path.starts_with("XZ_BKUP"))
+        .collect();
+    assert_eq!(moved, MOVED_21.iter().collect::<Vec<_>>());
+
+    let result = scan_auto(&conn, &root, day("2026-03-24"), Some(&app));
+    assert_eq!(result.scan.tidy_failure, None);
+    assert_eq!(result.scan.scanned_from, "2026-02-22");
+    let after = sd_tree(&root);
+    for series in ["Z001", "Z002", "Z004", "Z005"] {
+        assert!(!after.contains_key(&format!("XZ\\2026\\02\\{series}_22 .CSV")));
+        assert!(after.contains_key(&format!("XZ_BKUP\\2026\\02\\{series}_22 _0001.CSV")));
+    }
 }
 
 #[test]
@@ -2643,6 +2728,59 @@ fn test_req401_tidy_sd_failure_stops_rest() {
         Some(RegisterSdTidyFailure::SdWrite)
     );
     assert_eq!(sd_tree(&root2), before2);
+
+    // IO-11 の失敗の種類の写し（37 §37.12 手順 3b）: Io と確かめの食い違い（Verify）は SdWrite、ほかは Other。
+    // どれも以後の組（3 月）を移さない。Verify・InvalidPath・NameRule・NoFreeSequence は BIZ が渡す tree からは
+    // 作れないので、IO-11 の呼出しを差し替えて返す。診断ログには移せなかった file の相対 path が残る（D-149 (6)）
+    use crate::io::register_sd_move::{RegisterSdGroupMove, RegisterSdMoveError};
+    let failed_path = "XZ\\2026\\02\\Z001_27 .CSV".to_string();
+    let not_moved = format!(
+        "not_moved={:?}",
+        [
+            "XZ\\2026\\02\\Z001_27 .CSV",
+            "XZ\\2026\\02\\Z002_27 .CSV",
+            "XZ\\2026\\02\\Z005_27 .CSV",
+        ]
+    );
+    for (error, expected) in [
+        (
+            RegisterSdMoveError::Io {
+                relative_path: failed_path.clone(),
+                kind: std::io::ErrorKind::PermissionDenied,
+            },
+            RegisterSdTidyFailure::SdWrite,
+        ),
+        (
+            RegisterSdMoveError::Verify {
+                relative_path: failed_path.clone(),
+            },
+            RegisterSdTidyFailure::SdWrite,
+        ),
+        (
+            RegisterSdMoveError::InvalidPath,
+            RegisterSdTidyFailure::Other,
+        ),
+        (RegisterSdMoveError::NameRule, RegisterSdTidyFailure::Other),
+        (
+            RegisterSdMoveError::NoFreeSequence,
+            RegisterSdTidyFailure::Other,
+        ),
+    ] {
+        let calls = std::cell::Cell::new(0);
+        let (failure, log) = crate::test_tracing::capture(|| {
+            tidy::tidy_with_mover(&conn, &root, day("2026-02-23"), &app, |_, _| {
+                calls.set(calls.get() + 1);
+                RegisterSdGroupMove {
+                    moved: Vec::new(),
+                    error: Some(error.clone()),
+                }
+            })
+        });
+        assert_eq!(failure, Some(expected), "{error:?}");
+        assert_eq!(calls.get(), 1, "以後の組も移そうとした: {error:?}");
+        assert!(log.contains(&not_moved), "{error:?}: {log}");
+    }
+    assert_eq!(sd_tree(&root), before);
 }
 
 #[test]
@@ -2673,32 +2811,64 @@ fn test_req401_tidy_listing_error_returns_none() {
 
 #[test]
 fn test_req401_tidy_resumes_after_partial_move() {
-    // REQ-401 / AC6 / BIZ-08-D11（restart）: 組の Z004・Z001 だけが移った後（2 本目の後で止まった状態）、
-    // 止まった状態の一覧は `XZ` と `XZ_BKUP` に割れた 2 行。次の Auto の scan で残りが同じ連番で移り 1 行に戻る。
-    // 移す先に組に無い系列の小さい連番の名前（別の `Z001_21 _0001.CSV`）があっても同じ連番に揃う
-    use crate::io::register_sd_move::{move_register_sd_group_to_backup, RegisterSdMoveItem};
+    // REQ-401 / AC6 / BIZ-08-D11（restart）: 片付けは組を Z004・Z001・Z002・Z005 の順で IO-11 へ渡す。
+    // 2 本目（Z001）の移した後の確かめで止まると、Z004 と Z001 だけが移っている。止まった状態の一覧は
+    // `XZ` と `XZ_BKUP` に割れた 2 行。次の Auto の scan で残りが同じ連番で移り 1 行に戻る。
+    // 移す先に組に無い系列の小さい連番の名前（別の `Z001_21 _0001.CSV`）があっても同じ連番に揃う。
+    // 失敗は IO-11 の呼出しを差し替えて注入する: 2 本目の expected_len を違えて本物の IO-11 を呼ぶ
+    // （29 §29.9.3 手順 5 の Verify）
+    use crate::io::register_sd_move::move_register_sd_group_to_backup;
     let (dir, mut conn) = setup_test_db();
     let root = sd_root_at(&dir.path().join("sd"));
     let app = dir.path().join("app");
     imported_group_on_sd(&mut conn, dir.path(), &root);
     put_sd(&root, "XZ_BKUP\\2026\\03\\Z001_21 _0001.CSV", b"other\r\n");
-    let item = |name: &str| {
-        let relative = format!("XZ\\2026\\03\\{name}");
-        RegisterSdMoveItem {
-            expected_len: std::fs::metadata(sd_path(&root, &relative)).unwrap().len(),
-            relative_path: relative,
-        }
-    };
-    let partial =
-        move_register_sd_group_to_backup(&root, &[item("Z004_21 .CSV"), item("Z001_21 .CSV")]);
-    assert_eq!(partial.error, None);
+    let passed = std::cell::RefCell::new(Vec::new());
+    let (failure, log) = crate::test_tracing::capture(|| {
+        tidy::tidy_with_mover(&conn, &root, day("2026-02-23"), &app, |root, items| {
+            passed.borrow_mut().push(
+                items
+                    .iter()
+                    .map(|item| item.relative_path.clone())
+                    .collect::<Vec<_>>(),
+            );
+            let mut items = items.to_vec();
+            items[1].expected_len += 1;
+            move_register_sd_group_to_backup(root, &items)
+        })
+    });
+    assert_eq!(failure, Some(RegisterSdTidyFailure::SdWrite));
+    // 組の中の順は Z004 を先に、続けて Z001・Z002・Z005（37 §37.12 手順 3b）
+    let passed = passed.into_inner();
+    assert_eq!(passed.len(), 1);
     assert_eq!(
-        partial.moved,
+        passed[0],
         [
-            "XZ_BKUP\\2026\\03\\Z004_21 _0002.CSV",
-            "XZ_BKUP\\2026\\03\\Z001_21 _0002.CSV"
+            "XZ\\2026\\03\\Z004_21 .CSV",
+            "XZ\\2026\\03\\Z001_21 .CSV",
+            "XZ\\2026\\03\\Z002_21 .CSV",
+            "XZ\\2026\\03\\Z005_21 .CSV",
         ]
     );
+    // Z004 と Z001 だけが `_0002` で移り、Z002・Z005 は `XZ` に残る
+    assert_eq!(
+        sd_tree(&root).keys().collect::<Vec<_>>(),
+        [
+            "XZ\\2026\\03\\Z002_21 .CSV",
+            "XZ\\2026\\03\\Z005_21 .CSV",
+            "XZ_BKUP\\2026\\03\\Z001_21 _0001.CSV",
+            "XZ_BKUP\\2026\\03\\Z001_21 _0002.CSV",
+            "XZ_BKUP\\2026\\03\\Z004_21 _0002.CSV",
+        ]
+    );
+    // 診断ログに、移した 2 本の元と先と、移せなかった 2 本の相対 path が残る（D-149 (6)）
+    for line in [
+        r#"from=XZ\2026\03\Z004_21 .CSV to=XZ_BKUP\2026\03\Z004_21 _0002.CSV"#,
+        r#"from=XZ\2026\03\Z001_21 .CSV to=XZ_BKUP\2026\03\Z001_21 _0002.CSV"#,
+        r#"not_moved=["XZ\\2026\\03\\Z002_21 .CSV", "XZ\\2026\\03\\Z005_21 .CSV"]"#,
+    ] {
+        assert!(log.contains(line), "{line}: {log}");
+    }
     // 止まった状態の一覧（Selected は片付けない）: 割れた 2 行と、別口の 1 行
     let stopped = scan_selected(&conn, &root, day("2026-03-25")).unwrap().scan;
     let incomplete = stopped

@@ -944,6 +944,7 @@ pub(crate) fn latest_completed_daily_report_date(
 /// completed の日報取込みの `source_files_json` のどれかに、指定の SHA-256 の `file_hash` の file があるか
 ///
 /// 24-io-csv-import-repo.md §14.18d（SD の `XZ` の Z を移すかの判定。37 §37.12 手順 2）
+// ponytail: index を足さず completed の行を全部見る（1 日 1〜2 行の表。件数と時間は未実測）。「SD から読む」が遅くなったら file_hash を引ける列か index を足す
 pub(crate) fn exists_completed_daily_report_source_file_hash(
     conn: &DbConnection,
     file_hash: &str,

@@ -119,15 +119,26 @@ fn move_group(
         let relative = &file.item.relative_path;
         move_no_replace(source, &destination).map_err(|error| io_error(relative, &error))?;
         moved.push(format!("{month_relative}\\{name}"));
-        let metadata = fs::metadata(&destination).map_err(|error| io_error(relative, &error))?;
-        let source_left = source
-            .try_exists()
-            .map_err(|error| io_error(relative, &error))?;
-        if !metadata.is_file() || metadata.len() != file.item.expected_len || source_left {
-            return Err(RegisterSdMoveError::Verify {
-                relative_path: relative.clone(),
-            });
-        }
+        verify_moved(source, &destination, file.item)?;
+    }
+    Ok(())
+}
+
+/// 手順 5 の確かめ: 先が通常の file で size が `expected_len`、元の名前が無い。違えば `Verify`、読めなければ `Io`
+fn verify_moved(
+    source: &Path,
+    destination: &Path,
+    item: &RegisterSdMoveItem,
+) -> Result<(), RegisterSdMoveError> {
+    let relative = &item.relative_path;
+    let metadata = fs::metadata(destination).map_err(|error| io_error(relative, &error))?;
+    let source_left = source
+        .try_exists()
+        .map_err(|error| io_error(relative, &error))?;
+    if !metadata.is_file() || metadata.len() != item.expected_len || source_left {
+        return Err(RegisterSdMoveError::Verify {
+            relative_path: relative.clone(),
+        });
     }
     Ok(())
 }
@@ -477,10 +488,12 @@ mod tests {
     #[test]
     fn test_req401_resumed_group_reuses_sequence() {
         // REQ-401 / IO-11 手順 4 (a): 移す先に別の `Z001_06 _0001.CSV` があり、組の Z004・Z001 を `_0002` で
-        // 移した後に残りの Z002・Z005 を渡すと `_0002` で移る
+        // 移した後に残りの Z002・Z005 を渡すと `_0002` で移る。別の `Z004_06 _0001.CSV` もあるので、
+        // 組に無い系列（Z001・Z004）が全部在る連番は `_0001` と `_0002` の 2 つで、その最大を選ぶ
         let dir = tempfile::tempdir().unwrap();
         let root = make_root(dir.path());
         put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0001.CSV", b"other");
+        put(&root, "XZ_BKUP\\2026\\10\\Z004_06 _0001.CSV", b"other");
         let group = put_group(&root, &[4, 1, 2, 5], "06 .CSV");
         let first = move_register_sd_group_to_backup(&root, &group[..2]);
         assert_eq!(first.error, None);
@@ -493,6 +506,38 @@ mod tests {
                 "XZ_BKUP\\2026\\10\\Z002_06 _0002.CSV",
                 "XZ_BKUP\\2026\\10\\Z005_06 _0002.CSV",
             ]
+        );
+
+        // 組に無い系列が全部は在らない連番しか無いとき（Z001 だけの `_0001` と `_0003`）は、その最大へ合わせる
+        let dir2 = tempfile::tempdir().unwrap();
+        let root2 = make_root(dir2.path());
+        put(&root2, "XZ_BKUP\\2026\\10\\Z001_06 _0001.CSV", b"other");
+        put(&root2, "XZ_BKUP\\2026\\10\\Z001_06 _0003.CSV", b"other");
+        let rest2 = put_group(&root2, &[2, 5], "06 .CSV");
+        let result2 = move_register_sd_group_to_backup(&root2, &rest2);
+        assert_eq!(result2.error, None);
+        assert_eq!(
+            result2.moved,
+            [
+                "XZ_BKUP\\2026\\10\\Z002_06 _0003.CSV",
+                "XZ_BKUP\\2026\\10\\Z005_06 _0003.CSV",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_req401_no_free_sequence_when_all_taken() {
+        // REQ-401 / IO-11 手順 4: 0001〜9999 のどの連番も 4 系列のどれかの名前で埋まっていれば NoFreeSequence。
+        // 9999 本の tree を作らず、移す先の名前の列（`existing_names` が返す形）を直接渡す
+        let taken: Vec<String> = (1..=9999).map(|n| format!("Z001_06 _{n:04}.CSV")).collect();
+        assert_eq!(
+            choose_sequence(&taken, "Z004_06 .CSV", &[4, 1, 2, 5]),
+            Err(RegisterSdMoveError::NoFreeSequence)
+        );
+        // 最後の連番だけが空いていれば 9999 を選ぶ
+        assert_eq!(
+            choose_sequence(&taken[..9998], "Z004_06 .CSV", &[4, 1, 2, 5]),
+            Ok(9999)
         );
     }
 
@@ -597,6 +642,7 @@ mod tests {
         put(&root, "XZ\\2026\\10\\Z003_06 .CSV", b"z3");
         put(&root, "XZ\\2026\\10\\NOTE.DAT", b"x");
         put(&root, "XZ_BKUP\\2026\\10\\Z001_05 _0001.CSV", b"b");
+        put(&root, "XZ_BKUP\\2026\\10\\Z001_06 .CSV", b"nb");
         put(&root, "XZ\\2026\\10\\Z002_07 .CSV", b"d7");
         put(&root, "XZ\\2026\\10\\Z002_06A.CSV", b"sa");
         put(&root, "XZ\\2026\\09\\Z002_06 .CSV", b"m9");
@@ -626,6 +672,11 @@ mod tests {
             ),
             (
                 vec![item("XZ_BKUP\\2026\\10\\Z001_05 _0001.CSV")],
+                RegisterSdMoveError::NameRule,
+            ),
+            // `XZ` でない場所の、連番の無い Z の名前
+            (
+                vec![item("XZ_BKUP\\2026\\10\\Z001_06 .CSV")],
                 RegisterSdMoveError::NameRule,
             ),
             (
@@ -680,6 +731,18 @@ mod tests {
             assert!(result.moved.is_empty());
             assert_eq!(fs::read(&outside).unwrap(), b"outside");
             assert!(!linked.path.join("XZ_BKUP").exists());
+
+            // 移す先の段（`XZ_BKUP`）が root の外を指す link: 1 本も移さず、外に何も作らない
+            let outside_backup = tempfile::tempdir().unwrap();
+            let linked_backup = make_root(&dir.path().join("linked-backup"));
+            let group = put_group(&linked_backup, &[1], "06 .CSV");
+            std::os::unix::fs::symlink(outside_backup.path(), linked_backup.path.join("XZ_BKUP"))
+                .unwrap();
+            let result = move_register_sd_group_to_backup(&linked_backup, &group);
+            assert_eq!(result.error, Some(RegisterSdMoveError::InvalidPath));
+            assert!(result.moved.is_empty());
+            assert!(path_of(&linked_backup, &group[0].relative_path).exists());
+            assert_eq!(fs::read_dir(outside_backup.path()).unwrap().count(), 0);
         }
     }
 
@@ -698,6 +761,21 @@ mod tests {
             })
         );
         assert_eq!(result.moved.len(), 2);
+
+        // 元の名前が残るのも Verify。`move_no_replace` は成功すれば元を残さないので、手順 5 の確かめに
+        // 元も先もある状態を直接渡す（元が無くなれば通る）
+        let left = put_group(&root, &[2], "06 .CSV");
+        let source = path_of(&root, &left[0].relative_path);
+        let destination = path_of(&root, "XZ_BKUP\\2026\\10\\Z002_06 _0001.CSV");
+        fs::copy(&source, &destination).unwrap();
+        assert_eq!(
+            verify_moved(&source, &destination, &left[0]),
+            Err(RegisterSdMoveError::Verify {
+                relative_path: left[0].relative_path.clone()
+            })
+        );
+        fs::remove_file(&source).unwrap();
+        assert_eq!(verify_moved(&source, &destination, &left[0]), Ok(()));
     }
 
     #[test]

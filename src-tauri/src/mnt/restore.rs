@@ -2149,11 +2149,11 @@ mod tests {
         // Windows の公開が既存の正式名を置き換えないことを source で見る（restore の replace は見ない）。
         // 置き換えない移動の本体は `crate::io::move_no_replace`（29 §29.9.1）で、restore はそれを呼ぶだけ
         let io_source = include_str!("../io/mod.rs");
-        let flags = windows_publish_flags(io_source).unwrap();
-        assert!(flags.contains("MOVEFILE_WRITE_THROUGH"), "flags={flags}");
-        assert!(
-            !flags.contains("MOVEFILE_REPLACE_EXISTING"),
-            "flags={flags}"
+        // flags は `MOVEFILE_WRITE_THROUGH` だけ（置き換えの `MOVEFILE_REPLACE_EXISTING` も、別の volume へ
+        // 写して消す `MOVEFILE_COPY_ALLOWED` も付けない）
+        assert_eq!(
+            windows_publish_flags(io_source).as_deref(),
+            Ok("MOVEFILE_WRITE_THROUGH")
         );
         let restore_source = include_str!("restore.rs");
         assert!(delegates_to_io(&std_publish_body(restore_source).unwrap()));
@@ -2166,6 +2166,10 @@ mod tests {
             (
                 "MOVEFILE_WRITE_THROUGH,",
                 "MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,",
+            ),
+            (
+                "MOVEFILE_WRITE_THROUGH,",
+                "MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,",
             ),
             ("MOVEFILE_WRITE_THROUGH,", "0,"),
             ("MoveFileExW(", "std_fs_rename("),
@@ -2182,11 +2186,9 @@ mod tests {
                 region.replacen(from, to, 1),
                 &io_source[fn_end..]
             );
-            assert!(
-                !windows_publish_flags(&mutated).is_ok_and(|flags| {
-                    flags.contains("MOVEFILE_WRITE_THROUGH")
-                        && !flags.contains("MOVEFILE_REPLACE_EXISTING")
-                }),
+            assert_ne!(
+                windows_publish_flags(&mutated).as_deref(),
+                Ok("MOVEFILE_WRITE_THROUGH"),
                 "red にならない: {to}"
             );
         }

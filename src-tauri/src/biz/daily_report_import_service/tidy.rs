@@ -27,6 +27,25 @@ pub(super) fn tidy_register_sd_imported(
     from: NaiveDate,
     app_data_dir: &Path,
 ) -> Option<RegisterSdTidyFailure> {
+    tidy_with_mover(
+        conn,
+        root,
+        from,
+        app_data_dir,
+        register_sd_move::move_register_sd_group_to_backup,
+    )
+}
+
+/// `tidy_register_sd_imported` の本体。IO-11 の呼出しを引数に取るのは、組の途中の失敗（移した後の確かめの
+/// 食い違い等。組の file は同じ folder にあり、file system の権限では 1 本だけを止められない）を test が
+/// 注入するため（`scan_with_roots` の `find_roots` と同じ形）
+pub(super) fn tidy_with_mover(
+    conn: &DbConnection,
+    root: &RegisterSdRoot,
+    from: NaiveDate,
+    app_data_dir: &Path,
+    move_group: impl Fn(&RegisterSdRoot, &[RegisterSdMoveItem]) -> RegisterSdGroupMove,
+) -> Option<RegisterSdTidyFailure> {
     // 手順 1: 列挙の失敗は続く §37.9 手順 3 が利用者に出すので、ここでは重ねない
     let listing = match register_sd::list_register_sd_entries(root, from) {
         Ok(listing) => listing,
@@ -101,15 +120,21 @@ pub(super) fn tidy_register_sd_imported(
                 expected_len: file.bytes.len() as u64,
             })
             .collect();
-        let RegisterSdGroupMove { moved, error } =
-            register_sd_move::move_register_sd_group_to_backup(root, &items);
+        let RegisterSdGroupMove { moved, error } = move_group(root, &items);
         for (item, destination) in items.iter().zip(&moved) {
             tracing::info!(from = %item.relative_path, to = %destination, "SD の Z を XZ_BKUP へ移しました");
         }
         moved_count += moved.len();
         if let Some(error) = error {
+            // 移せなかった file は、この組の `moved` の後ろの item（相対 path だけ。中身は出さない）
+            let not_moved: Vec<&str> = items
+                .iter()
+                .skip(moved.len())
+                .map(|item| item.relative_path.as_str())
+                .collect();
             tracing::warn!(
                 error = ?error,
+                not_moved = ?not_moved,
                 moved = moved_count,
                 left = total - moved_count,
                 "SD の片付けを途中で止めました"
