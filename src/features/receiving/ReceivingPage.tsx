@@ -116,6 +116,10 @@ export function ReceivingPage() {
   const queryClient = useQueryClient();
   const returnTo = useRouterState({ select: (state) => state.location.href });
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const isFormLockedRef = useRef(false);
+  // ponytail: 直接検索の lock と世代は画面ごとに持つ（UI-02-D19・catalog ⑮ D9）。同じ gate を持つ画面が
+  // 6 つ（振替を入れて）を超えるか、gate の条件が増えたら共有 hook を検討する。
+  const searchGenerationRef = useRef(0);
   const [initialValues, setInitialValues] = useState<ReceivingFormValues>(createEmptyForm);
   const [values, setValues] = useState<ReceivingFormValues>(initialValues);
   const [errors, setErrors] = useState<ReceivingFormErrors>({});
@@ -182,6 +186,7 @@ export function ReceivingPage() {
       await invalidateByContract(queryClient, invalidationContract.receiving());
     },
     onError: (error) => {
+      isFormLockedRef.current = false;
       if (error instanceof Error && error.message === "validation") return;
       scrollPageToTop();
       setSaveError(describeError(error));
@@ -192,7 +197,7 @@ export function ReceivingPage() {
   const isFormLocked = isSaving || result !== null;
   const productSuggest = useProductAddSuggest({
     value: searchText,
-    isLocked: () => isFormLocked,
+    isLocked: () => isFormLockedRef.current,
     onSelect: addProduct,
   });
   const canSubmit = values.rows.length > 0 && values.receivingDate.trim() !== "" && !isFormLocked;
@@ -226,7 +231,7 @@ export function ReceivingPage() {
   }
 
   function addProduct(product: ProductWithRelations) {
-    if (isFormLocked) return;
+    if (isFormLockedRef.current) return;
     updateValues((prev) => ({ ...prev, rows: addProductToRows(prev.rows, product) }));
     setSearchText("");
     setCandidates([]);
@@ -236,7 +241,9 @@ export function ReceivingPage() {
 
   async function handleProductSearch(keywordOverride?: string) {
     const keyword = (keywordOverride ?? searchText).trim();
-    if (keyword === "" || isFormLocked) return;
+    if (keyword === "" || isFormLockedRef.current) return;
+    const generation = searchGenerationRef.current;
+    const isStale = () => generation !== searchGenerationRef.current || isFormLockedRef.current;
     setSearchMessage(null);
     setCandidates([]);
     try {
@@ -247,6 +254,7 @@ export function ReceivingPage() {
           cmd: "search_products",
         },
       );
+      if (isStale()) return;
       if (products.items.length === 0) {
         setSearchMessage("該当する商品がありません");
         return;
@@ -258,11 +266,14 @@ export function ReceivingPage() {
       setCandidates(products.items);
       setSearchMessage("候補から入庫する商品を選んでください");
     } catch (error) {
+      if (isStale()) return;
       setSearchMessage(describeError(error));
     }
   }
 
   function resetForm() {
+    isFormLockedRef.current = false;
+    searchGenerationRef.current += 1;
     const emptyValues = createEmptyForm();
     setInitialValues(emptyValues);
     setValues(emptyValues);
@@ -658,6 +669,8 @@ export function ReceivingPage() {
             onClick={() => {
               productSuggest.invalidateAndClose();
               setSaveError(null);
+              isFormLockedRef.current = true;
+              searchGenerationRef.current += 1;
               createMutation.mutate();
             }}
           >
