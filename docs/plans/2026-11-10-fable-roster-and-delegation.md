@@ -10,7 +10,7 @@ decision-log の番号: 本 lane は D-152 を予約する（main は D-151 ま�
 
 - Risk: R3
 - Plan Commit: f7a6f2f67a36172ccaa555bd03efffdf79bfd175
-- Amendments: none
+- Amendments: 69906b32db1aab1928e740b57fba784e6370e4d4
 
 ## Risk
 
