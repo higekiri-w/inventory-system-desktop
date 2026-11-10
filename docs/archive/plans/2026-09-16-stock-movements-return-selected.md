@@ -270,7 +270,7 @@ Contract ID: SPEC-UI06C-D9-R1
 
 ## Implementation Results
 
-[PR #75](https://github.com/kosei-w90607/inventory-system-desktop/pull/75) で実装し squash merge 済み（`6f7928ed`、2026-09-17）。Writer = Codex 発注書 60 run 1〜3（run 1 = AC4 の削除 oracle の regex が新記述にも一致して fail-closed、run 2 = 実装 `3495e85e` / docs `081b1303` 完了後に `local-ci.sh full` の traceability 検査で停止、run 3 = 発注書の再開版に残っていた着手条件で停止）+ Sonnet subagent（GA4、90-traceability 再生成 `9e8d02be`）。GA5 修正 = Codex 発注書 61（実装 `60865ddf` / 90 再生成 `8192c2db`）、66 の記述同期 = Sonnet（`4b48cd38`）。
+[PR #75](https://github.com/higekiri-w/inventory-system-desktop/pull/75) で実装し squash merge 済み（`6f7928ed`、2026-09-17）。Writer = Codex 発注書 60 run 1〜3（run 1 = AC4 の削除 oracle の regex が新記述にも一致して fail-closed、run 2 = 実装 `3495e85e` / docs `081b1303` 完了後に `local-ci.sh full` の traceability 検査で停止、run 3 = 発注書の再開版に残っていた着手条件で停止）+ Sonnet subagent（GA4、90-traceability 再生成 `9e8d02be`）。GA5 修正 = Codex 発注書 61（実装 `60865ddf` / 90 再生成 `8192c2db`）、66 の記述同期 = Sonnet（`4b48cd38`）。
 
 Final Review round 1（head `9e8d02be`）= Sonnet pass A / Opus pass B とも P1/P2 0。owner L3 round 1 = (a) PASS / (b) FAIL（数字だけの商品コードで文字列 fallback が `parseSearch` により number 化し検索前状態へ戻る）→ Gated Amendment 5。Final Review round 2（head `8192c2db`）= Sonnet / Opus とも P2 1（66 の fallback 記述が GA5 前のまま drift）→ `4b48cd38` で是正 → closure pass。owner L3 round 2 = (a)(b) PASS、round 2 の結果を `4b48cd38` の確認として owner が承認。
 
@@ -332,32 +332,32 @@ If R3 review-only sub-agent is skipped, record an explicit line beginning with `
 
 ### Final Review round 1（2026-09-17、head `9e8d02be`）
 
-- pass A（Sonnet、Contract Audit）: P1/P2 = 0（P3 2、いずれも evidence quality）。AC1〜AC5 逐語再実行一致、mutant 4 本再注入で kill、Workflow State / Amendments 整合を確認（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5700325983)）
-- pass B（Opus）: P1/P2 = 0（P3 6、いずれも merge blocker ではない）。mutant 独立 6 本 kill、隔離 probe で `returnTo` 3 段往復・不正値拒否を実証。findings: diagrams 現況化・`return-to.ts` の `/\evil` 通過・入れ子長さ概算・PR body log 所在は closeout/backlog へ（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5700326393)）
+- pass A（Sonnet、Contract Audit）: P1/P2 = 0（P3 2、いずれも evidence quality）。AC1〜AC5 逐語再実行一致、mutant 4 本再注入で kill、Workflow State / Amendments 整合を確認（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5700325983)）
+- pass B（Opus）: P1/P2 = 0（P3 6、いずれも merge blocker ではない）。mutant 独立 6 本 kill、隔離 probe で `returnTo` 3 段往復・不正値拒否を実証。findings: diagrams 現況化・`return-to.ts` の `/\evil` 通過・入れ子長さ概算・PR body log 所在は closeout/backlog へ（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5700326393)）
 - 裁定: 両 pass とも P1/P2 = 0 のため review = pass 可。P3 は closeout（本 commit）と backlog（returnTo 衛生 lane）へ振り分け
 
 ### owner L3 round 1（2026-09-17、head `9e8d02be`、介入 2/3）
 
-- (a) PASS / (b) FAIL（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5700876468)）。原因・是正は Gated Amendment 5 に記録
+- (a) PASS / (b) FAIL（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5700876468)）。原因・是正は Gated Amendment 5 に記録
 
 ### Final Review round 2（2026-09-17、head `8192c2db`、GA5 後の新しい broad）
 
-- pass A（Sonnet、Contract Audit）: P1 0 / P2 1（66 の fallback 記述が GA5 前のまま drift）/ P3 3。mutant (5) 再現で T2-num のみ FAIL を確認、`@tanstack/router-core` ソースで root cause を裏取り。裁定: P2 は 66 の docs-only 再同期 commit（`4b48cd38`）で解消、P3 は closeout へ（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5701266797)）
-- pass B（Opus）: P1 0 / P2 1（同件、docs SSOT drift）/ P3 5。実 routeTree probe で fallback 分岐 15 パターンを検証、Adjacent Pattern audit で他 site への波及なしを確認。P3 5 件はすべて backlog（returnTo 衛生 lane）へ（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5701297781)）
+- pass A（Sonnet、Contract Audit）: P1 0 / P2 1（66 の fallback 記述が GA5 前のまま drift）/ P3 3。mutant (5) 再現で T2-num のみ FAIL を確認、`@tanstack/router-core` ソースで root cause を裏取り。裁定: P2 は 66 の docs-only 再同期 commit（`4b48cd38`）で解消、P3 は closeout へ（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5701266797)）
+- pass B（Opus）: P1 0 / P2 1（同件、docs SSOT drift）/ P3 5。実 routeTree probe で fallback 分岐 15 パターンを検証、Adjacent Pattern audit で他 site への波及なしを確認。P3 5 件はすべて backlog（returnTo 衛生 lane）へ（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5701297781)）
 - 裁定: P2（両 pass 共通、66 の記述 drift）を accept し `4b48cd38` で是正。実装・test は不変のため review = pass 見込み、closure で確認
 
 ### owner L3 round 2（2026-09-17、head `8192c2db`、介入 3/3）
 
-- (a)(b) とも PASS（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5701173911)）。GA5 の修正で round 1 (b) FAIL が解消
+- (a)(b) とも PASS（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5701173911)）。GA5 の修正で round 1 (b) FAIL が解消
 
 ### Final Review closure（2026-09-17、head `4b48cd38`）
 
-- Sonnet、fresh context、read-only: `4b48cd38` は 66 のみ（+4/−3）、round 2 の P2 = closed。round 1 / round 2 / L3 round 1〜2 の全 finding を通しで確認し未解消の merge blocker なし。新規 P3（PR body の HEAD 表記 / packet 旧 prose / backlog 実ファイリング未確認）はすべて closeout へ（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5701397542)）
+- Sonnet、fresh context、read-only: `4b48cd38` は 66 のみ（+4/−3）、round 2 の P2 = closed。round 1 / round 2 / L3 round 1〜2 の全 finding を通しで確認し未解消の merge blocker なし。新規 P3（PR body の HEAD 表記 / packet 旧 prose / backlog 実ファイリング未確認）はすべて closeout へ（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5701397542)）
 - 判定: **closure pass 可**
 
 ### manual（owner L3）の確認（2026-09-17）
 
-- L3 round 2 の結果を `4b48cd38` の確認として owner が承認。manual = pass として record（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/75#issuecomment-5701443037)）
+- L3 round 2 の結果を `4b48cd38` の確認として owner が承認。manual = pass として record（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/75#issuecomment-5701443037)）
 
 ### Closeout（本 commit、Findings 解消）
 

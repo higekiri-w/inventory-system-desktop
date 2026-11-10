@@ -420,7 +420,7 @@ Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Owner
 
 - S1〜S11 を実装し、共有 perPage 選択肢、6 画面の Select 配線、件数文言・weight、client-side slice、inventory BIZ の 200 OK / 201 NG 境界、Gated Amendment 1 を含む設計 doc を同期した。
 - S13（Gated Amendment 2）を実装し、8 画面の表示件数変更後の先頭 scroll、操作ログ native 入力欄の control token、現行 operation type 5 種の registry と設計 doc・traceability を同期した。
-- Draft PR: [#34](https://github.com/kosei-w90607/inventory-system-desktop/pull/34)
+- Draft PR: [#34](https://github.com/higekiri-w/inventory-system-desktop/pull/34)
 
 ## Review Response
 

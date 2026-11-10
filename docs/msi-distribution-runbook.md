@@ -52,7 +52,7 @@ repo の現物で確かめた（2026-10-17、`src-tauri/tauri.conf.json`・`.git
 
 ## 流れ 1: MSI を作る
 
-開発用の Windows の clone（[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の `C:\Users\Owner\projects\inventory-system-public`）で、PowerShell から行う。
+開発用の Windows の clone（[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の `C:\Users\Alice\projects\inventory-system-desktop`）で、PowerShell から行う。
 
 1. 配布する commit を checkout し、`git status` に変更が無いことと、`git log -1` が配布する commit であることを確かめる。変更が `package-lock.json` だけなら、[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の落とし穴 1 のとおり `git restore package-lock.json` で捨てて確かめ直す。それ以外の変更があれば、その clone の MSI を配布しない。
 2. `npm ci --ignore-scripts`（[AGENTS.md](../AGENTS.md) の npm 供給網ガード、D-030）。

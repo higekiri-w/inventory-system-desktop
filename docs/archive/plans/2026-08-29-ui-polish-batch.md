@@ -271,7 +271,7 @@ owner L3-lite round 3（「owner L3-lite round 3 と裁定」節の Coordinator 
 
 owner L3（Windows 実機）で発見の P1（merge blocker）を受けた gated Amendment 5 是正: 入庫確定後の原価差分ダイアログが外クリック・Escape・右上×で閉じ、結果画面に再表示経路がないため、owner が再確認のため入庫を再実行し在庫二重加算が実発生（61 §61.5「商品ごとの確認を必須にする」と不整合）。①`CostDiffDialog.tsx` の `DialogContent` へ `onPointerDownOutside` / `onEscapeKeyDown` の `preventDefault` + `showCloseButton={false}` を追加し modal を硬化（共通 `dialog.tsx` は無変更、prop 実在は L45 で確認済み）。既存の `isPending` guard は維持。終了経路は footer の「見送って閉じる / 閉じる」のみ②結果画面への再表示ボタンは不採用（状態管理拡大の回避、見送り時の次回入庫再提示契約が既存 safety net）③`61-ui-receiving.md` §61.5 へ「原価差分ダイアログは明示ボタンのみで閉じる（外側クリック・Escape・× では閉じない）」を追記④Matrix T11: overlay pointer-down / Escape で dialog 残存・×ボタン不在・footer 明示ボタンで閉じるの 4 assert を実装し、是正前の実装へ一時的に戻して red 化することを確認した上で復元（mutation kill 実証）。更新中 disabled・成功後表示の既存 T4/T5/T7-T9 は無変更で green のまま。
 
-Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/15（是正反映後に body 更新済み）
+Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/15（是正反映後に body 更新済み）
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

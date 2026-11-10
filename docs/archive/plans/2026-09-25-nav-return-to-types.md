@@ -336,6 +336,6 @@ Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Owner
 
 ### Final Review broad（2026-09-26、対象 `f5f69aed`、互いに独立）
 
-- Codex 側（GPT-6 Sol、high）: approve、P1 0 / P2 0 / P3 0。AC1〜AC9 すべて PASS（local-ci full を含む）、AC6 の mutant 7 本すべて red、正規の戻り先で旧実装との 560 通りの比較の byte 差 0。[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/106#pullrequestreview-5320379437)
+- Codex 側（GPT-6 Sol、high）: approve、P1 0 / P2 0 / P3 0。AC1〜AC9 すべて PASS（local-ci full を含む）、AC6 の mutant 7 本すべて red、正規の戻り先で旧実装との 560 通りの比較の byte 差 0。[review](https://github.com/higekiri-w/inventory-system-desktop/pull/106#pullrequestreview-5320379437)
 - Claude 側（Fable 5.1、fresh、read-only）: approve、P1 0 / P2 0 / P3 0。Ordinary Operation 6 行を実装後の現物で確認（行 6 は既定の戻り先を外すと typecheck が TS2322）。AC1〜AC7・AC9 を再実行、mutant 7/7 red、`detailReturnTo` の同一性を 196 通り + `/` 始まりのランダム 20,000 件で確認（差 0）。
 - helper の record: review broad 2 本（pass）。owner の Ready・merge 指示（2026-09-26）で helper `ready` → hosted CI 成功 → helper `merge`。

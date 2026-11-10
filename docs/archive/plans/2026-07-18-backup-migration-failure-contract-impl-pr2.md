@@ -258,7 +258,7 @@ Contract ID: SPEC-MNT-FAILURE-PR2
 ## Implementation Results
 
 - MNT-01-D2 / MNT-01-D3 / MNT-03-D1 を実装し、設定読取失敗時の fail-safe、cleanup の保持日数確定条件、migration transaction / FK 復元の二次失敗併合を契約どおりに統一した。Matrix C1〜C8 / D1〜D5 / E1〜E7 + E3b / G1〜G3、実 mutation X1a〜X1e、R4 Double Audit はいずれも完了し、未解決 P1/P2 は 0。
-- Draft PR: [#17](https://github.com/kosei-w90607/inventory-system-public/pull/17)
+- Draft PR: [#17](https://github.com/higekiri-w/inventory-system-public/pull/17)
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
