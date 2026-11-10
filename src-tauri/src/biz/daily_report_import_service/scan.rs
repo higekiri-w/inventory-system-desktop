@@ -116,11 +116,20 @@ pub(super) fn scan_with_roots(
 
     // 手順 3: 列挙（途中の失敗は全体の失敗）
     let listing = register_sd::list_register_sd_entries(&root, from).map_err(sd_error)?;
-    let skipped_unknown_count = listing
+    let skipped_unknown: Vec<&str> = listing
         .entries
         .iter()
         .filter(|entry| entry.kind == RegisterSdEntryKind::Unknown)
-        .count() as i64;
+        .map(|entry| entry.relative_path.as_str())
+        .collect();
+    let skipped_unknown_count = skipped_unknown.len() as i64;
+    // 画面は数だけを出すので、どの file を読まなかったかは診断ログで追う（相対 path だけ。中身は読まない）
+    if !skipped_unknown.is_empty() {
+        tracing::info!(
+            skipped_unknown = ?skipped_unknown,
+            "名前の規則に合わない file を読みませんでした"
+        );
+    }
 
     // 手順 4: (area、folder、日、接尾字、連番) が同じ Z001 / Z002 / Z005 を組にする
     let mut groups: BTreeMap<(String, u8, char, Option<u16>), Group> = BTreeMap::new();

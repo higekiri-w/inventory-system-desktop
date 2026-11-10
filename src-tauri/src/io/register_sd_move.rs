@@ -270,7 +270,8 @@ fn ensure_dir(
 }
 
 /// 移す先の folder の entry を 1 回の `read_dir` で読み、IO-09 の分類（`classify_z`）で組と同じ日・接尾字の
-/// Z になる名前の (系列, 連番) を返す。綴りが違っても IO-09 が同じ Z と読む名前は同じ名前として数える
+/// Z になる名前の (系列, 連番) を返す。綴りが違っても IO-09 が同じ Z と読む名前（ASCII の大文字小文字の違い）は
+/// 同じ名前として数え、IO-09 が Unknown と読む名前（ASCII でない文字を含む名前など）は数えない
 /// （移した file を IO-09 が組に戻すときの見方と揃える。29 §29.9.3 手順 4）
 fn taken_sequences(
     dir: &Path,
@@ -498,11 +499,12 @@ mod tests {
 
     #[test]
     fn test_req401_taken_sequence_is_seen_by_io09_classification() {
-        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (b)（PR #228 の closure 797 の P2）: 連番の空きは、移す先の名前を
-        // IO-09 の分類（`classify_z`）で見る。綴りが違っても IO-09 が同じ日・接尾字・系列・連番の Z と読む名前
-        // （`(?i)` が S と同じに読む U+017F の `.CſV`、小文字）が在れば、その連番は使わず `_0002` に揃える。
-        // 移す名前は元の綴りのまま
-        for taken in ["Z002_06 _0001.CſV", "z002_06 _0001.csv"] {
+        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (b)（PR #228 の closure 797 の P2、Gated Amendment 1）: 連番の空きは、
+        // 移す先の名前を IO-09 の分類（`classify_z`）で見る。綴りが違っても IO-09 が同じ日・接尾字・系列・連番の Z と
+        // 読む名前（ASCII の大文字小文字の違い。小文字の `z002_06 _0001.csv`）が在れば、その連番は使わず `_0002` に
+        // 揃える。IO-09 が Unknown と読む名前（ASCII でない綴り。U+017F の `.CſV`）は占有にせず、組は `_0001`。
+        // 移す名前は元の綴りのままで、先に在った file は変わらない
+        for (taken, sequence) in [("z002_06 _0001.csv", "0002"), ("Z002_06 _0001.CſV", "0001")] {
             let dir = tempfile::tempdir().unwrap();
             let root = make_root(dir.path());
             let taken = format!("XZ_BKUP\\2026\\10\\{taken}");
@@ -512,12 +514,8 @@ mod tests {
             assert_eq!(result.error, None, "{taken}");
             assert_eq!(
                 result.moved,
-                [
-                    "XZ_BKUP\\2026\\10\\Z004_06 _0002.CSV",
-                    "XZ_BKUP\\2026\\10\\Z001_06 _0002.CSV",
-                    "XZ_BKUP\\2026\\10\\Z002_06 _0002.CSV",
-                    "XZ_BKUP\\2026\\10\\Z005_06 _0002.CSV",
-                ],
+                [4, 1, 2, 5]
+                    .map(|series| format!("XZ_BKUP\\2026\\10\\Z{series:03}_06 _{sequence}.CSV")),
                 "{taken}"
             );
             assert_eq!(tree(&root)[&taken], b"other");
@@ -601,28 +599,42 @@ mod tests {
 
     #[test]
     fn test_req401_resumed_group_is_seen_by_io09_classification() {
-        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (a)（PR #228 の closure 797 の P2）: 前の片付けの続きも IO-09 の分類で
-        // 見る。前に移した Z004・Z001 の `_0002` を、残りの先頭（Z002）の綴りが `.CſV` でも見つけて揃える。
-        // 別の `Z001_06 _0001.CSV` があるので、先頭の綴りから作った名前で見ると残りは `_0001` へ行く
-        let dir = tempfile::tempdir().unwrap();
-        let root = make_root(dir.path());
-        put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0001.CSV", b"other");
-        put(&root, "XZ_BKUP\\2026\\10\\Z004_06 _0002.CSV", b"moved");
-        put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0002.CSV", b"moved");
-        let rest = [
-            put_group(&root, &[2], "06 .CſV"),
-            put_group(&root, &[5], "06 .CSV"),
-        ]
-        .concat();
+        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (a)（PR #228 の closure 797 の P2、Gated Amendment 1）: 前の片付けの
+        // 続きも IO-09 の分類で見る。前に移した Z004・Z001 の `_0002` を、残りの先頭（Z002）の綴りが小文字の
+        // 拡張子（`.csv`）でも見つけて揃える。別の `Z001_06 _0001.CSV` があるので、先頭の綴りから作った名前を
+        // 大文字小文字を畳まずに比べると残りは `_0001` へ行く
+        let resumed_tree = |head_tail: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let root = make_root(dir.path());
+            put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0001.CSV", b"other");
+            put(&root, "XZ_BKUP\\2026\\10\\Z004_06 _0002.CSV", b"moved");
+            put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0002.CSV", b"moved");
+            let rest = [
+                put_group(&root, &[2], head_tail),
+                put_group(&root, &[5], "06 .CSV"),
+            ]
+            .concat();
+            (dir, root, rest)
+        };
+        let (_dir, root, rest) = resumed_tree("06 .csv");
         let result = move_register_sd_group_to_backup(&root, &rest);
         assert_eq!(result.error, None);
         assert_eq!(
             result.moved,
             [
-                "XZ_BKUP\\2026\\10\\Z002_06 _0002.CſV",
+                "XZ_BKUP\\2026\\10\\Z002_06 _0002.csv",
                 "XZ_BKUP\\2026\\10\\Z005_06 _0002.CSV",
             ]
         );
+
+        // 残りの先頭が ASCII でない綴り（U+017F の `.CſV`）なら、IO-09 が Unknown と読む名前なので組にしない:
+        // `NameRule` で 1 本も移さない（29 §29.9.3 手順 1）
+        let (_dir, root, rest) = resumed_tree("06 .CſV");
+        let before = tree(&root);
+        let result = move_register_sd_group_to_backup(&root, &rest);
+        assert_eq!(result.error, Some(RegisterSdMoveError::NameRule));
+        assert!(result.moved.is_empty(), "{:?}", result.moved);
+        assert_eq!(tree(&root), before);
     }
 
     #[test]

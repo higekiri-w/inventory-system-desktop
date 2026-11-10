@@ -173,6 +173,7 @@ Non-scope: `src-tauri/src/io/pos_source_copy.rs`（IO-10 はそのまま呼ぶ�
 | IO-11-D2 | 移動の後の食い違いを見逃す・失敗の後も組の残りを移す | unit | `register_sd_move::test_req401_verify_detects_size_mismatch`、`register_sd_move::test_req401_group_stops_at_first_failure` | 手順 5 の確かめを外す（`expected_len` を違えて渡すと `Verify`）、失敗の後の停止を外す |
 | IO-11-D3 | この module に削除・複写・置換えの API や別の module の呼出しが入る | unit（source の検査） | `register_sd_move::test_req401_module_uses_only_allowed_fs_api` | `remove_file`・`fs::rename`・`fs::copy`・`OpenOptions`・`std::io::Write`・改名した `use`・`super::pos_source_copy`・`crate::db` の mutant が red にならない |
 | IO-09 §29.7.5 手順 4（Gated Amendment 1） | ASCII でない文字を含む名前を Z・EJ と分類し、片付けが組を割る・移した file が `Unknown` になる | unit（IO-09・BIZ） | `test_req401_name_rules_are_ascii_only`、`test_req401_tidy_leaves_non_ascii_names` | 規則の `(?i-u)` を `(?i)` に戻す（`ſ`・`K`〈U+212A〉・全角の数字を受ける） |
+| 37 §37.9 手順 3（Gated Amendment 1） | 読まなかった file の名前を追えない | unit（BIZ、診断ログ） | `test_req401_scan_logs_unknown_relative_paths` | ログの行を消す・絶対 path を出す |
 | IO-09-D3 | 検査の切り出しで `read_register_sd_file` の拒否が変わる | unit（既存） | `test_req401_read_rejects_escaping_paths`、`test_req401_module_uses_only_allowed_fs_api` | 切り出した関数が `/`・`:`・`has_root` のどれかを落とす |
 | 71 §71.4.1 | 移す先を置き換える | unit | `io::test_req401_move_no_replace_does_not_replace_existing`、向け直した flags の検査 test | Windows の flags に `MOVEFILE_REPLACE_EXISTING` を足す（mutation）、hard_link の経路を rename にする |
 | 24 §14.18d | rolled_back の file を数える・別の key を見る | unit（DB） | `test_req401_exists_completed_daily_report_source_file_hash` | `status` の条件か `$.file_hash` の path を外す |
@@ -189,6 +190,8 @@ Non-scope: `src-tauri/src/io/pos_source_copy.rs`（IO-10 はそのまま呼ぶ�
 | UI-07-D15 (2) | 読取り中・読み終えた文が古いまま | vitest | `DailyReportImportPage.sd.test.tsx` の `shows do-not-remove text while scanning` と読み終えた文の期待 | 文を替えない、条件つきの文を残す |
 | UI-07-D15 (7) | 失敗が出ない・成功で文が出る・message で分岐する・`PcCopy` で原因を空き容量と言い切る | vitest | `shows tidy failure text per kind`、`shows nothing when tidy_failure is null` | 3 つの値の文の対応を変える、`null` で文を出す、`PcCopy` の文から「同じ表示が続くときは、管理者に伝えてください。」を落とす |
 | CMD-12-D1・bindings | wire の型が生成物と食い違う | CLI | `bash scripts/doc-consistency-check.sh`（Command registry drift）と bindings の再生成の差分の検査（CI） | `tidy_failure` を手で bindings に書く、command の登録が片方だけ |
+
+是正 798 の 3 本（`register_sd_move::test_req401_taken_sequence_is_seen_by_io09_classification`・`register_sd_move::test_req401_resumed_group_is_seen_by_io09_classification`・`test_req401_tidy_group_stays_on_one_sequence_with_spelling_variant`）は Gated Amendment 1 で `.CſV` の期待を `Unknown` に改めた（占有にしない・組にせず `NameRule`。3 本目は ASCII の大文字小文字の tree〈`z002_21 .csv`〉に替え、ASCII でない名前の tree は `test_req401_tidy_leaves_non_ascii_names` が持つ: その名前の file は移らず、組の残りは 1 つの連番で移る）。ASCII の大文字小文字の期待は残す。
 
 traceability: Rust の新しい test は名前を `test_req401_` で始め（既存の `register_sd.rs`・`tests.rs` と同じ）、test の先頭の comment に `REQ-401` と契約 ID を書く。vitest の新しい `it` は既存の `DailyReportImportPage.sd.test.tsx` と同じく文の先頭に `REQ-401 / UI-07-D15 (2)` か `(7)` を付ける（上の表の名前はその後ろの文）。
 

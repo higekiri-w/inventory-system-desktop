@@ -444,7 +444,8 @@ fn list_year(
     Ok(())
 }
 
-/// 29 §29.7.5 手順 4 の Z の名前の規則（IO-11 も使う。29 §29.9.1）
+/// 29 §29.7.5 手順 4 の Z の名前の規則（IO-11 も使う。29 §29.9.1）。
+/// 大文字小文字の畳み込みと数字は ASCII だけ（`(?i-u)`）。ASCII でない文字を含む名前は Unknown
 pub(crate) fn classify_z(
     name: &str,
     area: RegisterSdArea,
@@ -453,7 +454,7 @@ pub(crate) fn classify_z(
 ) -> (RegisterSdEntryKind, Option<NaiveDate>) {
     static Z_NAME: OnceLock<Regex> = OnceLock::new();
     let re = Z_NAME.get_or_init(|| {
-        Regex::new(r"(?i)^Z(\d{3})_(\d{2})([ A-Z])(_(\d{4}))?\.CSV$").expect("Z の名前の規則")
+        Regex::new(r"(?i-u)^Z(\d{3})_(\d{2})([ A-Z])(_(\d{4}))?\.CSV$").expect("Z の名前の規則")
     });
     let Some(caps) = re.captures(name) else {
         return (RegisterSdEntryKind::Unknown, None);
@@ -480,10 +481,11 @@ pub(crate) fn classify_z(
     )
 }
 
+/// 29 §29.7.5 手順 4 の EJ の名前の規則。Z と同じく ASCII だけ（`(?i-u)`）
 fn classify_ej(name: &str, area: RegisterSdArea) -> (RegisterSdEntryKind, Option<NaiveDate>) {
     static EJ_NAME: OnceLock<Regex> = OnceLock::new();
     let re = EJ_NAME.get_or_init(|| {
-        Regex::new(r"(?i)^EJ(\d{2})(\d{2})(\d{2})(_(\d{4}))?\.TXT$").expect("EJ の名前の規則")
+        Regex::new(r"(?i-u)^EJ(\d{2})(\d{2})(\d{2})(_(\d{4}))?\.TXT$").expect("EJ の名前の規則")
     });
     let Some(caps) = re.captures(name) else {
         return (RegisterSdEntryKind::Unknown, None);
@@ -789,6 +791,75 @@ mod tests {
             .collect();
         assert!(areas.contains(&("XZ_BKUP\\EJ261005_0001.TXT", RegisterSdArea::Backup)));
         assert!(areas.contains(&("XZ\\EJ261006.TXT", RegisterSdArea::Sales)));
+    }
+
+    #[test]
+    fn test_req401_name_rules_are_ascii_only() {
+        // REQ-401 / IO-09 §29.7.5 手順 4（PR #228 の Gated Amendment 1）: Z と EJ の名前の規則は、大文字小文字の
+        // 畳み込みも数字も ASCII だけ。ASCII の大文字小文字は受け、ASCII でない文字を含む名前
+        // （Unicode の畳み込みで S・K と同じに読まれる字、Unicode の数字）はどちらの area でも Unknown
+        use RegisterSdArea::{Backup, Sales};
+        let z = |suffix, backup_seq| RegisterSdEntryKind::Z {
+            series: 1,
+            day: 6,
+            suffix,
+            backup_seq,
+        };
+        for (name, area, kind) in [
+            ("z001_06 .csv", Sales, z(' ', None)),
+            ("Z001_06 .Csv", Sales, z(' ', None)),
+            ("Z001_06a.csv", Sales, z('A', None)),
+            ("z001_06 _0001.csv", Backup, z(' ', Some(1))),
+        ] {
+            assert_eq!(
+                classify_z(name, area, 2026, 11),
+                (kind, Some(date(2026, 11, 6))),
+                "{name}"
+            );
+        }
+        for (name, area, backup_seq) in [
+            ("Ej261110.txt", Sales, None),
+            ("ej261110_0001.TxT", Backup, Some(1)),
+        ] {
+            assert_eq!(
+                classify_ej(name, area),
+                (
+                    RegisterSdEntryKind::Ej { backup_seq },
+                    Some(date(2026, 11, 10))
+                ),
+                "{name}"
+            );
+        }
+
+        let unknown = (RegisterSdEntryKind::Unknown, None);
+        for name in [
+            // 拡張子・接尾字の `ſ`（U+017F。Unicode の畳み込みでは S と同じ）
+            "Z001_06 .C\u{017F}V",
+            "Z001_06\u{017F}.CSV",
+            // 接尾字のケルビンの記号（U+212A。Unicode の畳み込みでは K と同じ）
+            "Z001_06\u{212A}.CSV",
+            // 全角の数字（系列・連番）
+            "Z00１_06 .CSV",
+            "Z001_06 _１２３４.CSV",
+            // アラビア（U+0660〜）とインド（U+0966〜）の数字（日・連番）
+            "Z001_\u{0660}\u{0666} .CSV",
+            "Z001_06 _\u{0660}\u{0660}\u{0660}\u{0661}.CSV",
+            "Z001_\u{0966}\u{096C} .CSV",
+            "Z001_06 _\u{0966}\u{0966}\u{0966}\u{0967}.CSV",
+        ] {
+            for area in [Sales, Backup] {
+                assert_eq!(classify_z(name, area, 2026, 11), unknown, "{name} {area:?}");
+            }
+        }
+        for name in [
+            "ej261110_１２３４.txt",
+            "EJ26111０.TXT",
+            "EJ261110_\u{0660}\u{0660}\u{0660}\u{0661}.TXT",
+        ] {
+            for area in [Sales, Backup] {
+                assert_eq!(classify_ej(name, area), unknown, "{name} {area:?}");
+            }
+        }
     }
 
     #[test]
