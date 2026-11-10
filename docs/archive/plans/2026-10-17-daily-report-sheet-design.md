@@ -297,7 +297,7 @@ agent 側で解く問い（設計の問いではない。runtime の lane で確
 - 結果: 日報を手で写して印刷する作業を無くすため、その日の完了した日報の取込みを位置と名称の組で足した 1 日 1 枚の紙（34 §19.3a SALES-SHEET-D1〜D6）、A4 縦・文字 9 pt 以上・色なしの既定の並び、WebView の印刷と代わりの道、紙の切替えの時期（56 UI-09a-D17〜D19）を設計正本に置き、D-120 に記録した。日次売上の支払集計の合算の鍵も紙と同じ規則にし（24 §14.21 手順 3）、`credit` の規則を外して半角カナの正規化を入れない理由を書いた（29 IO-07-D4a）。紙の用途の記述を事実（店の控えと店の外の提出先へ渡す用を兼ねる）に直した。D-096 の本文は変えず、Revisit の後に 1 行足した。本 lane は docs だけで、code・migration・bindings は変えていない（runtime は後続の「日報の紙の runtime」）。
 - 既存の保護: 実装は変えていないので、店の動作は今のまま（日次売上の印刷ボタンは押せないまま）。設計照合 test と traceability の検査は green のまま。
 - 未検証: Contract Probe の P1（WebView2 の印刷）は runtime の lane の実装の前、P2（レジスターツールの日報との値の一致）と P5（1 枚に収まるか）は runtime の lane の L3。owner への Q1（紙の並び）・Q2（切替えの日）は既定 a のまま。
-- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）までで、round 3 の残りは owner の決定（TD-317）で直して plan-approved。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#173](https://github.com/kosei-w90607/inventory-system-desktop/pull/173)
+- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）までで、round 3 の残りは owner の決定（TD-317）で直して plan-approved。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#173](https://github.com/higekiri-w/inventory-system-desktop/pull/173)
 - 後続: `docs/backlog.md` の「日報の紙の runtime」（Final Review の closure の P3 の申し送りを含む）と、その起票の前に決める「日次売上と日報の紙の wire の i64 を安全な整数の範囲で扱う横断の規則を決める」。
 
 ## Review Response

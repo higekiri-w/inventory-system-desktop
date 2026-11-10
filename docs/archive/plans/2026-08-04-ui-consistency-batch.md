@@ -239,7 +239,7 @@ Contract ID: SPEC-UICB
 
 ## Implementation Results
 
-入出庫履歴の商品検索欄を共有 `SearchBar` live 型へ統一し、debounce / Enter / IME / raw `q` / page reset / accessibility の regression coverage を更新した。52 / 59 / 65 / 73 の設計記述と自動生成 90 を同期し、bindings / route generation / package manifests は不変。Writer mutation は M-A1〜M-A8 / M-B1〜M-B2 の全対象で red、復元後 clean を確認し、L1 full と release profile check を完了した。Draft PR [#61](https://github.com/kosei-w90607/inventory-system-public/pull/61) を作成済み。
+入出庫履歴の商品検索欄を共有 `SearchBar` live 型へ統一し、debounce / Enter / IME / raw `q` / page reset / accessibility の regression coverage を更新した。52 / 59 / 65 / 73 の設計記述と自動生成 90 を同期し、bindings / route generation / package manifests は不変。Writer mutation は M-A1〜M-A8 / M-B1〜M-B2 の全対象で red、復元後 clean を確認し、L1 full と release profile check を完了した。Draft PR [#61](https://github.com/higekiri-w/inventory-system-public/pull/61) を作成済み。
 
 Closeout 追記（2026-08-04、squash merge 済み）: Coordinator mutation 独立再実測（記録非参照の独立導出、隔離 worktree）で M-A1〜M-A8 / M-B1〜M-B2 全 red・survivor 0、独立 Sonnet Final Review は Ledger 全行適合で裁定後 P1/P2=0（P2-1 = 遷移 subject 非 canonical は disposition 記録、Review Response 参照）、owner L3（Windows native）3 項目 PASS。exact-HEAD の L1 / hosted / PR HEAD 三点一致は PR body を正とする。実績 = 介入 3/3・relay 2/2・Writer fail-closed 1 件（true positive、gated Amendment 1）。
 

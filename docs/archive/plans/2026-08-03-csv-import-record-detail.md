@@ -279,7 +279,7 @@ Contract ID: SPEC-UI06C-CSV-DETAIL-2026-08-03
 
 ## Implementation Results
 
-IO / BIZ / CMD の `get_csv_import_record`、generated bindings、CSV取込み詳細 route / Page、rollback invalidation、T1-T16 を実装した。gated Amendment 1 に従って CSV取込み画面を layout + index route へ再構成し、詳細 link の runtime 遷移と既存 `/csv-import` 直接進入を両方固定した。生成物 3 種の drift 確認、L1 full、X1-X7 実注入を完了し、Draft PR [#58](https://github.com/kosei-w90607/inventory-system-public/pull/58) を作成した。独立 Final Review と Windows native L3 は pending。
+IO / BIZ / CMD の `get_csv_import_record`、generated bindings、CSV取込み詳細 route / Page、rollback invalidation、T1-T16 を実装した。gated Amendment 1 に従って CSV取込み画面を layout + index route へ再構成し、詳細 link の runtime 遷移と既存 `/csv-import` 直接進入を両方固定した。生成物 3 種の drift 確認、L1 full、X1-X7 実注入を完了し、Draft PR [#58](https://github.com/higekiri-w/inventory-system-public/pull/58) を作成した。独立 Final Review と Windows native L3 は pending。
 
 （2026-08-03 完了時追記）独立 Final Review = Ledger 22/22 適合・P1/P2=0・P3×1（JAN 列 pre-existing → Plans.md backlog）、Coordinator mutation 独立再実測 = X1-X7 全 red（X7 は注入形を変えて label/route 両面感度を確認）。owner 初回 L3 = 主要動線 PASS + P3（ErrorRowsTable accordion の発見性）→ owner 裁定の同 PR 是正を正規 backtrack + gated Amendment 2 で処理し、明示的操作文言 + 文言隣接 chevron + T17 + 55 §55.5 同期 + X8 相当 red を追加、Post-Freeze closure 6/6 PASS（findings 0）。再 L3（accordion 発見性限定）PASS + owner Ready 承認により ready-hosted-final へ遷移（本 content commit に同乗、STATECAP 3/3 消費済みのため）。exact-HEAD evidence と hosted run は PR body 所管。
 

@@ -24,6 +24,8 @@ REQ=dict(risk='R3',plan_commit=P,amendments=[],minimum=2,manual=True,r4=True)
 APPROVAL='https://example.invalid/owner'
 # D-107 (3): literals from the packet's Boundary / Wire Contract, not from the helper.
 FRESH_BROAD='broad Plan contract changed; fresh broad required: record --review-stage broad at the current head (a closure cannot carry this broad)'
+# D-150: the name before the GitHub rename, from the packet, not from the helper.
+LEGACY='kosei-w90607/inventory-system-desktop';LEGACY_LOGIN='kosei-w90607'
 BROAD_REQUIRED='broad required: record --review-stage broad at the current head until it has Final Review Minimum audits (no usable broad on the server; a closure cannot replace it)'
 
 def good_record():
@@ -108,6 +110,36 @@ class Records(unittest.TestCase):
         with patch.object(g,'api',return_value=[[item]]):self.assertEqual(self.gate.server_record()['record'],self.record)
         for items in ([item,item],[item|dict(user=dict(login='attacker'))],[item|dict(body=g.MARKER+'bad')]):
             with patch.object(g,'api',return_value=[items]),self.assertRaises(g.GateError):self.gate.server_record()
+    def test_record_repo_accepts_legacy_name_on_read(self):
+        # AC2 / D-150 (2): a record written under the old name is read; any other repo stays another repo's record.
+        data=copy.deepcopy(self.record);data['repo']=LEGACY
+        self.assertEqual(g.validate_record(data,7),data)
+        for repo in ('someone/inventory-system-desktop','kosei-w90607/other'):
+            data=copy.deepcopy(self.record);data['repo']=repo
+            with self.subTest(repo=repo),self.assertRaisesRegex(g.GateError,'^record belongs to another repo/PR$'):g.validate_record(data,7)
+    def test_record_author_legacy_login_rejected(self):
+        # AC5 / D-150 (1): the old login is not the owner; its MARKER comment is not a record.
+        item=dict(id=1,user=dict(login=LEGACY_LOGIN),body=g.MARKER+'\n```json\n'+json.dumps(self.record)+'\n```',updated_at='today')
+        with patch.object(g,'api',return_value=[[item]]),self.assertRaisesRegex(g.GateError,'^invalid workflow record author$'):
+            self.gate.server_record()
+    def test_pr_legacy_full_name_rejected(self):
+        # AC4 / D-150 (1): a PR whose base or head repo is the old name is not this repo's PR.
+        def pr(base=g.REPO,head=g.REPO):
+            return dict(number=7,state='open',base=dict(ref='main',sha=B,repo=dict(full_name=base)),head=dict(ref='feature',sha=H,repo=dict(full_name=head)))
+        with patch.object(g,'api',return_value=pr()):self.assertEqual(self.gate.pr(),pr())
+        for side in ('base','head'):
+            with self.subTest(side=side),patch.object(g,'api',return_value=pr(**{side:LEGACY})):
+                with self.assertRaisesRegex(g.GateError,'^PR repo/base mismatch$'):self.gate.pr()
+    def test_ci_legacy_head_repository_rejected(self):
+        # AC5 / D-150 (1): a run from the old-name repo is not Merge gate evidence.
+        def transport(repo):
+            run=dict(id=10,head_sha=H,created_at='2026-11-09',event='pull_request',path='.github/workflows/ci.yml',head_repository=dict(full_name=repo),
+                     head_branch='feature',status='completed',conclusion='success',check_suite_id=2,html_url='https://example.invalid/run')
+            check=dict(name='Merge gate',app=dict(id=15368),status='completed',conclusion='success')
+            return lambda path,**kw:[dict(workflow_runs=[run])] if '/runs?' in path else [dict(check_runs=[check])]
+        pr=dict(head=dict(sha=H,ref='feature'))
+        with patch.object(g,'api',side_effect=transport(g.REPO)):self.assertEqual(self.gate.ci(pr),'https://example.invalid/run')
+        with patch.object(g,'api',side_effect=transport(LEGACY)),self.assertRaisesRegex(g.GateError,'^wrong CI workflow/source$'):self.gate.ci(pr)
     def test_r0_still_requires_explicit_manual(self):
         data=copy.deepcopy(self.snap); data['server']=None
         data['requirements'].update(minimum=0,r4=False,manual=True)
@@ -148,7 +180,7 @@ class RecordLifecycle(unittest.TestCase):
     # MG-D13: a server pass is carried (A) or reused with approval (B) at a synced head; closures follow.
     # real=False stubs the sync checks (H2/H3); real=True leaves them to the synthetic repo patched in by the caller.
     def exercise(self, old, kind='manual', outcome='pass', source=OLD, values=None, mutate_capture=False, captured_requirements=None,
-                 head=H, base=B, req=REQ, approval=APPROVAL, stage='closure', reviews=(), real=False, **extra):
+                 head=H, base=B, req=REQ, approval=APPROVAL, stage='closure', reviews=(), real=False, login=g.OWNER, **extra):
         self.writes=[]
         with tempfile.TemporaryDirectory() as tmp:
             self.gate.root=Path(tmp)
@@ -163,7 +195,7 @@ class RecordLifecycle(unittest.TestCase):
             pr=dict(head=dict(sha=head),base=dict(sha=base))
             state={'server':server}
             def transport(path,method='GET',payload=None,**kwargs):
-                if path=='user':return dict(login=g.OWNER)
+                if path=='user':return dict(login=login)
                 if '/pulls/7/reviews' in path and method=='GET':return [list(reviews)]
                 self.assertIn('/comments',path)
                 self.writes.append(path)
@@ -224,6 +256,10 @@ class RecordLifecycle(unittest.TestCase):
     def test_changed_plan_requires_new_broad(self):
         old=self.previous();old['review']['broad']['plan_commit']=P.replace('c','f')
         with self.assertRaises(g.GateError):self.exercise(old,kind='review',source=None)
+    def test_record_writer_legacy_login_rejected(self):
+        # AC5 / D-150 (1): only the current owner login writes a record; the old login writes nothing.
+        with self.assertRaisesRegex(g.GateError,'^record writer must be repository owner$'):self.exercise(self.previous(),login=LEGACY_LOGIN)
+        self.assertEqual(self.writes,[])
 
 
 # MG-D13: synthetic git histories in a tmpdir; the helper's git() is pointed there, never at this clone.
@@ -551,6 +587,22 @@ class SyncRecords(SyncCase):
         self.assertEqual(record['review']['closure'],dict(head=self.head(),base=self.repo.base,sync_from=self.repo.source))
         self.assertEqual(record['review']['outcome'],'pass')
         self.assertEqual(record['r4'],dict(outcome='pending',evidence=[]))
+    def test_record_rewrites_legacy_repo_on_sync(self):
+        # AC3 / D-150 (2): the first record after a sync writes the current name and keeps the broad and manual.
+        self.docs_sync()
+        old=self.old();old['repo']=LEGACY
+        record=self.rec(old,kind='review',stage='sync',**SYNC)
+        self.assertEqual(record['repo'],g.REPO)
+        self.assertEqual(record['review']['broad'],old['review']['broad'])
+        self.assertEqual(record['manual'],self.carried|dict(source_head=self.repo.source))
+        self.assertEqual(record['review']['closure'],dict(head=self.head(),base=self.repo.base,sync_from=self.repo.source))
+    def test_origin_legacy_url_rejected(self):
+        # AC4 / D-150 (1): an origin still at the old name is refused in every accepted URL form.
+        self.repo.git('remote','add','origin','https://github.com/'+g.REPO)
+        g.Gate(args())
+        for url in (f'git@github.com:{LEGACY}.git',f'git@github.com:{LEGACY}',f'https://github.com/{LEGACY}.git',f'https://github.com/{LEGACY}'):
+            self.repo.git('remote','set-url','origin',url)
+            with self.subTest(url=url),self.assertRaisesRegex(g.GateError,'^origin repo mismatch$'):g.Gate(args())
     def test_sync_stage_chain_keeps_audited_origin(self):
         self.docs_sync();first=self.sync_review(self.old(req=NO_MANUAL))
         self.assertEqual(first['review']['closure'],dict(head=self.head(),base=self.repo.base,sync_from=self.repo.source))

@@ -136,7 +136,7 @@ cargo test --offline --lib cross_feature_tests -- --ignored --nocapture
 
 テスト本体は [cross_feature_tests.rs](../../src-tauri/src/biz/csv_import_service/tests/cross_feature_tests.rs)。通常の操作集合は `OPERATIONS` を正本とする。各順序付きペアの後に入庫とDB再接続を固定で追加し、その入庫の再送・内容不一致拒否、同日売上/返品の追加、active hash再取込み拒否、対象importの取消/再取消、取消後再取込み、再取込み後の同hash拒否・旧IDの再取消、最後のDB再接続を続ける。各操作後に独立モデルと比較する。数量/金額/商品数を任意に生成する無限探索ではない。
 
-探索件数・所要時間は上記コマンドの `XFA_NORMAL traces=...` とRust testの `finished in ...` で測定する。測定値と出力は [PR #69のValidation](https://github.com/kosei-w90607/inventory-system-desktop/pull/69) に公開時に反映し、テスト件数の正本を文書へ複製しない。所要時間はその環境での実測であり、性能保証ではない。
+探索件数・所要時間は上記コマンドの `XFA_NORMAL traces=...` とRust testの `finished in ...` で測定する。測定値と出力は [PR #69のValidation](https://github.com/higekiri-w/inventory-system-desktop/pull/69) に公開時に反映し、テスト件数の正本を文書へ複製しない。所要時間はその環境での実測であり、性能保証ではない。
 
 | 検証 | 結果 | 根拠 |
 |---|---|---|

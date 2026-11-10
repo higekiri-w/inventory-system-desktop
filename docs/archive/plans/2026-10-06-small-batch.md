@@ -272,7 +272,7 @@ Test Design Matrix: [test-matrices/2026-10-06-small-batch.md](test-matrices/2026
 - Scope 2: `docs/TOOLING_SKILL_COMMANDS.md` の見出しを `DEV_WORKFLOW.md#verification-gates` の Rust/backend の行を指す形にした。本文の command は変えていない。
 - Scope 3: `.codex/README.md` の `## PR evidence helper` の文から「適用条件を満たしたgithub mode」と「個人recipeからlegacyのstate-only/三点一致を新modeへ追加しない」を消し、文頭を「merge-evidence の手順で helper を使う」にした。helper の command・status read-only・capture の置き場・承認の範囲・設定と権限を変えない、は残した。
 - packet との食い違い: なし。
-- review・CI・merge（closeout、2026-10-06）: Final Review broad は互いに独立の 2 本がともに approve（Fable 5.1 は P 0、Codex GPT-6.1 Sol は P 0）。Ready の後の hosted run の `Merge gate` は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-06）。検証（AC1〜AC8、mutant M1〜M9）の実測値は PR の body が持つ。PR: [#144](https://github.com/kosei-w90607/inventory-system-desktop/pull/144)（Writer = Opus 5.5 subagent）
+- review・CI・merge（closeout、2026-10-06）: Final Review broad は互いに独立の 2 本がともに approve（Fable 5.1 は P 0、Codex GPT-6.1 Sol は P 0）。Ready の後の hosted run の `Merge gate` は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-06）。検証（AC1〜AC8、mutant M1〜M9）の実測値は PR の body が持つ。PR: [#144](https://github.com/higekiri-w/inventory-system-desktop/pull/144)（Writer = Opus 5.5 subagent）
 
 ## Review Response
 

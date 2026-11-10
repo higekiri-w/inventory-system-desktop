@@ -385,7 +385,7 @@ Contract ID: SPEC-PRVB
 
 - `ProductSearchQuery` の取引先 filter、UI-14 の URL state / 行単位価格確定 / 取引先漸進補完 / 履歴 badge、D-052 C20、navigation、共有 loading pattern を実装し、設計書・生成 bindings・traceability を同期した。
 - review-only 監査で検出した browser 履歴経由の取引先変更時 state reset と Empty recovery oracle を是正し、契約値の paging test も補強した。
-- Draft PR: https://github.com/kosei-w90607/inventory-system-public/pull/95
+- Draft PR: https://github.com/higekiri-w/inventory-system-public/pull/95
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

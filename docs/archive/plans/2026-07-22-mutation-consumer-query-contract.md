@@ -264,7 +264,7 @@ Contract ID: SPEC-INV-CONTRACT-01
 - 全 16 mutation / 18 success handler の invalidation を `invalidation-contract.ts`（D-052 SSOT）経由へ統一し、監査 findings P5-1〜P5b-3 の欠落全件と、契約化過程で発見した過剰（CSV の pluDirty）・網羅漏れ（棚卸し開始/明細更新）・C14 拡張を解消。prefix helper 3 domain 新設、stocktake error-path の named helper 集約、literal `["daily-sales"]` の factory 化
 - テストは契約表 D-052-Cn 独立転記 oracle との完全一致比較へ全面書換え。静的 gate は AST/import-graph 検査（transitive re-export 遮断・helper 引数変形拒否・computed call 検出 + survivor 3 形の fixture regression）。M1〜M8 の production-only mutation 感度を clean tree で実測（記録は PR body）
 - 設計正本: UI_TECH_STACK §2.5 へ導出原則（table.column 粒度・列カテゴリ基準・過剰禁止・prefix collateral 許容）+ 除外表 E1〜E6 を正本化、decision-log D-052 新設、function-design 15 doc + 45-cmd を SSOT 参照へ同期
-- PR: https://github.com/kosei-w90607/inventory-system-public/pull/21（squash merge `187d7a7`、2026-07-23）
+- PR: https://github.com/higekiri-w/inventory-system-public/pull/21（squash merge `187d7a7`、2026-07-23）
 
 ## Review Response
 

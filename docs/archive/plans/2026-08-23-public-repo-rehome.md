@@ -282,7 +282,7 @@ Contract ID: SPEC-REHOME
 
 README を利用者向けの紹介文へ全面改訂し、移植判断 D-077、public→public rehome の runbook addendum、Windows native clone の current remote 記述を同期した。実装対象は発注書で許可された docs 5 file に限定した。
 
-Draft PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/1
+Draft PR: https://github.com/higekiri-w/inventory-system-desktop/pull/1
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

@@ -54,7 +54,7 @@ R2 と R3 で迷えば R3 にする（安定した契約・出力の schema・�
 
 | Risk | packet | 計画の review | Final Review | L3・目視 | owner |
 |---|---|---|---|---|---|
-| R0・R1 | なし。PR body の 5 行（目的・範囲・非目的・AC・Risk） | なし | なし | 画面に触れれば目視（helper の manual） | Ready・merge の承認 |
+| R0・R1 | なし。PR body の 5 行（目的・範囲・非目的・AC・Risk） | なし | なし | 画面に触れれば目視（helper の manual） | Ready・merge の承認（lane の外で見つけた目視の要らない R0 のうち規則の文書に触れないものは AGENTS.md の常設の委任） |
 | R2 | なし。PR body の 5 行 | なし | 差分の review 1 本 | operator 向けの画面に触れれば目視（helper の manual） | Ready・merge の承認 |
 | R3 | 最小形（[Plan Packet Rules](#plan-packet-rules)） | 2 本（[座組](AGENT_OPERATING_MANUAL.md#座組)） | 2 本（helper が導く。TD-484） | `## L3` 節があれば L3 | Ready・merge の承認、L3 の PASS/FAIL |
 | R4 | 最小形と Recovery・Data Safety | 2 本 | 2 本 | 当たれば L3 | 上に加えて `r4` の明示の承認 |
@@ -249,7 +249,7 @@ Final Review（broad audit）の標準の手順（D-034。PR #159 で設計正�
 
 ## 承認依頼
 
-- owner への承認依頼は「承認すると利用者から見て何が完了するか」を 1 文で書く。L3 と束ねた Ready・merge の承認を除き、owner の手を増やす承認を足さない。
+- owner への承認依頼は「承認すると利用者から見て何が完了するか」を 1 文で書く。Ready・merge の承認では、merge すると入るもの（アプリの動き・画面・データ・build・手元の道具に何が変わるか）と入らないものを添える（TD-616）。L3 と束ねた Ready・merge の承認を除き、owner の手を増やす承認を足さない。
 - owner の質的な不満（「時間がかかりすぎ」「何を作っているか分からない」）は `goal-drift signal`。すぐ止まり、今の結果を Goal Invariant と比べ、最小完了の道と補助の証跡を比べ、次の一手が最小完了条件を目に見えて進めるまで再開しない。
 - 一回きり × 不可逆 × owner の関門の task shape は、[AGENT_OPERATING_MANUAL.md](AGENT_OPERATING_MANUAL.md) §3.5 の `one-shot irreversible` の owner 同席の time-box の session を使え、その停止が優先する。
 - 問い合わせの行き先と委任の範囲は [AGENTS.md](../AGENTS.md) の Decision and Approval Boundaries が持つ。

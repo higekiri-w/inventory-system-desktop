@@ -318,7 +318,7 @@ Contract ID: IO-08-D1〜D10（source doc 正本は本 PR で新設する `docs/f
 
 ## Implementation Results
 
-[PR #94](https://github.com/kosei-w90607/inventory-system-desktop/pull/94) で実装し squash merge 済み（`8bd2bc9a`、2026-09-25）。S1〜S7 を実装した: `src-tauri/src/io/ej_parser.rs` に純関数 `parse_ej`（IO-08）と出力型を新設し、行を記録の種類と位置で分類して、通常・返品の取引は数量×単価・点数・合計（無ければ現金）が記録内でそろうときだけ明細へ復元する。そろわない記録・未知の行・幅違反（24 バイトの中の孤立 CR / LF を含む）は記録単位の復元不能と固定文言の診断にし、行を捨てない。関数設計書 `docs/function-design/29-io-ej-parser.md` を新設して IO-08-D1〜D10 と行の文法表を正本化し、`docs/FUNCTION_DESIGN.md`・`docs/ARCHITECTURE.md`・`docs/architecture/io-task-specs.md`・`design_compliance_test` へ登録した。Final Review の是正として、数量 0 と `-` つきの単価の数量行の拒否、24 バイト内の孤立 CR / LF の検査（先頭断片・ヘッダ・本文）、`i64::MIN` の金額の読取り、fail-closed の分岐の test と弱い負例の fixture の補強を入れた。実物 6 本の構造確認（AC9、Coordinator 手元、件数だけ）は是正の前後とも復元不能 0・診断 0 で、件数は PR body に記録した。
+[PR #94](https://github.com/higekiri-w/inventory-system-desktop/pull/94) で実装し squash merge 済み（`8bd2bc9a`、2026-09-25）。S1〜S7 を実装した: `src-tauri/src/io/ej_parser.rs` に純関数 `parse_ej`（IO-08）と出力型を新設し、行を記録の種類と位置で分類して、通常・返品の取引は数量×単価・点数・合計（無ければ現金）が記録内でそろうときだけ明細へ復元する。そろわない記録・未知の行・幅違反（24 バイトの中の孤立 CR / LF を含む）は記録単位の復元不能と固定文言の診断にし、行を捨てない。関数設計書 `docs/function-design/29-io-ej-parser.md` を新設して IO-08-D1〜D10 と行の文法表を正本化し、`docs/FUNCTION_DESIGN.md`・`docs/ARCHITECTURE.md`・`docs/architecture/io-task-specs.md`・`design_compliance_test` へ登録した。Final Review の是正として、数量 0 と `-` つきの単価の数量行の拒否、24 バイト内の孤立 CR / LF の検査（先頭断片・ヘッダ・本文）、`i64::MIN` の金額の読取り、fail-closed の分岐の test と弱い負例の fixture の補強を入れた。実物 6 本の構造確認（AC9、Coordinator 手元、件数だけ）は是正の前後とも復元不能 0・診断 0 で、件数は PR body に記録した。
 
 ## Review Response
 

@@ -28,7 +28,7 @@ validate_inventory() {
         return 1
     jq -e --arg key "$HARNESS_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
         return 1
-    # D-147: the ponytail plugin stays off in this project (AGENTS.md and writer.md carry the rule instead).
+    # D-147: the ponytail plugin stays off in this project (AGENTS.md, writer.md and writer-fable.md carry the rule instead).
     jq -e --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
         return 1
     # SPEC-WF-HARNESS5-D4: subagent nesting stays off (depth 1).
@@ -122,10 +122,20 @@ validate_repo_ignore() {
     [[ "$ignored_by" == .gitignore:* ]]
 }
 
+# D-147 / D-152: writer-fable.md carries the same body as writer.md (frontmatter aside) whenever both exist.
+validate_writer_copies() {
+    local agents="$1/.claude/agents"
+    local body='NR == 1 && $0 == "---" { fm = 1; next } fm && $0 == "---" { fm = 0; next } !fm'
+
+    [[ -f "$agents/writer.md" && -f "$agents/writer-fable.md" ]] || return 0
+    cmp -s <(awk "$body" "$agents/writer.md") <(awk "$body" "$agents/writer-fable.md")
+}
+
 validate_contract() {
     local root="$1"
 
     validate_inventory "$root" &&
+        validate_writer_copies "$root" &&
         validate_live_docs "$root" &&
         validate_canonical_gates "$root" &&
         validate_audit_wiring "$root" &&
@@ -272,6 +282,20 @@ printf '%s\n' '---' 'name: writer' 'description: fixture' 'model: opus' 'effort:
 printf '%s\n' '---' 'name: example' 'metadata:' '  updated: 2026-09-30' '---' 'body' \
     > "$frontmatter_fixture/.agents/skills/example/SKILL.md"
 validate_contract "$frontmatter_fixture" || fail "clean agent and skill frontmatter was rejected"
+
+# D-147 / D-152: writer.md and writer-fable.md with the same body pass; one changed body line is rejected.
+writer_copies_fixture="$tmp/writer-copies-fixture"
+cp -a "$frontmatter_fixture" "$writer_copies_fixture"
+printf '%s\n' '---' 'name: writer' 'description: fixture' 'model: opus' 'effort: medium' '---' 'line one' '---' 'line two' \
+    > "$writer_copies_fixture/.claude/agents/writer.md"
+printf '%s\n' '---' 'name: writer-fable' 'description: fixture' 'model: claude-fable-5-2' 'effort: high' '---' 'line one' '---' 'line two' \
+    > "$writer_copies_fixture/.claude/agents/writer-fable.md"
+validate_contract "$writer_copies_fixture" || fail "writer.md and writer-fable.md with the same body were rejected"
+
+writer_copies_mutant="$tmp/writer-copies-mutant"
+cp -a "$writer_copies_fixture" "$writer_copies_mutant"
+sed -i 's/^line two$/line 2/' "$writer_copies_mutant/.claude/agents/writer-fable.md"
+expect_rejected "D-147 writer-fable body copy" "$writer_copies_mutant"
 
 depth_mutant="$tmp/depth-mutant"
 cp -a "$fixture" "$depth_mutant"

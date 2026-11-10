@@ -2,7 +2,7 @@
 
 # ハーネスの文脈効率
 
-Status: accepted（2026-09-14、[PR #52](https://github.com/kosei-w90607/inventory-system-desktop/pull/52)でmerge）。この入口を適用する。整備PR自身は変更前のworkflow gateで検証した。
+Status: accepted（2026-09-14、[PR #52](https://github.com/higekiri-w/inventory-system-desktop/pull/52)でmerge）。この入口を適用する。整備PR自身は変更前のworkflow gateで検証した。
 
 ## 目的と境界
 
