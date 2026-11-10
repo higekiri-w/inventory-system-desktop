@@ -93,7 +93,7 @@ pub(super) fn tidy_with_mover(
     // 手順 3: 組ごとに、写してから移す。失敗したら以後の組を移さない
     let total: usize = planned.iter().map(Vec::len).sum();
     let mut moved_count = 0usize;
-    for group in &planned {
+    for (index, group) in planned.iter().enumerate() {
         // 3a
         for file in group {
             if let Err(error) = pos_source_copy::save_pos_source_copy(
@@ -105,6 +105,7 @@ pub(super) fn tidy_with_mover(
                     kind = ?error.kind(),
                     error = %error,
                     relative_path = %file.relative_path,
+                    not_moved = ?not_moved_paths(&planned[index..], 0),
                     moved = moved_count,
                     left = total - moved_count,
                     "SD の片付けの前に写しを保存できなかったので、片付けを止めました"
@@ -126,15 +127,9 @@ pub(super) fn tidy_with_mover(
         }
         moved_count += moved.len();
         if let Some(error) = error {
-            // 移せなかった file は、この組の `moved` の後ろの item（相対 path だけ。中身は出さない）
-            let not_moved: Vec<&str> = items
-                .iter()
-                .skip(moved.len())
-                .map(|item| item.relative_path.as_str())
-                .collect();
             tracing::warn!(
                 error = ?error,
-                not_moved = ?not_moved,
+                not_moved = ?not_moved_paths(&planned[index..], moved.len()),
                 moved = moved_count,
                 left = total - moved_count,
                 "SD の片付けを途中で止めました"
@@ -151,6 +146,17 @@ pub(super) fn tidy_with_mover(
     }
     // 手順 4
     None
+}
+
+/// 手順 4: 止めた時点でまだ移っていない片付けの対象の全部の、元の相対 path（中身は出さない）。
+/// `rest` は止めた組から後ろの組で、止めた組は先頭の `moved_in_first` 本が移っている。
+/// file は元の場所にあり、移す先の名前は決まっていないので出さない（packet の Recovery）
+fn not_moved_paths(rest: &[Vec<GroupFile>], moved_in_first: usize) -> Vec<&str> {
+    rest.iter()
+        .flatten()
+        .skip(moved_in_first)
+        .map(|file| file.relative_path.as_str())
+        .collect()
 }
 
 /// 手順 2 の 1 組: Z001・Z002・Z005 の全部が読めて completed の取込みの file と同じ hash なら、

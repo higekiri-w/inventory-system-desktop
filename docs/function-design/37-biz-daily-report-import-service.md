@@ -739,7 +739,7 @@ enum RegisterSdTidyFailure { // 画面の固定の文を選ぶだけ（55 UI-07-
 3. 組を (相対 folder, 日, 接尾字) の順に 1 組ずつ:
    a. 組の各 file を IO-10 `save_pos_source_copy(app_data_dir, relative_path, bytes)`（手順 2 で読んだ bytes。同じ bytes があれば書かない）。1 本でも `Err` なら、この組と以後の組を移さず `Some(PcCopy)`。
    b. IO-11 `move_register_sd_group_to_backup(root, 組)`（29 §29.9）。組の中の順は Z004 を先に、続けて Z001・Z002・Z005。`moved` の各 file は診断ログに元と先の相対 path を残す（INFO。中身は残さない）。`error` が `Some(Io | Verify)` なら以後の組を移さず `Some(SdWrite)`、ほかの `Some` なら以後の組を移さず `Some(Other)`。
-4. 全部移せたか移す組が 0 なら `None`。止めたときは、移した本数と残した本数と最初の失敗を診断 WARN に残す。IO-11 が止めたときは、その組の移せなかった file（`moved` の後ろの file）の相対 path も同じ WARN に残す（D-149 (6)。中身は残さない）。
+4. 全部移せたか移す組が 0 なら `None`。止めたとき（手順 3a の写しの失敗でも、3b の IO-11 の失敗でも）は、移した本数と残した本数と最初の失敗を診断 WARN に残し、同じ WARN の `not_moved` に、止めた時点でまだ移っていない片付けの対象の全部（止めた組の残り〈3b なら `moved` の後ろの file、3a ならその組の全部〉と、以後の組の全 file）の元の相対 path を残す（D-149 (6)、packet の Recovery。その file は元の場所にあり、移す先の名前は決まっていないので書かない。中身は残さない）。
 
 **BIZ-08-D11（取り込んだ精算の Z を読取りの中で、組ごとに移す）**:
 
@@ -771,3 +771,4 @@ enum RegisterSdTidyFailure { // 画面の固定の文を選ぶだけ（55 UI-07-
 | 2026-11-02 | xz-bkup-move（Plan Review round 1 の是正、D-149） | §37.12 手順 2・3 と BIZ-08-D11 を、同じ精算の名前の組の Z001・Z002・Z005 の全部が hash で当たるときだけ組ごと移す形に直した（組の中は Z004 を先に、IO-11 の組の関数へ渡す）。§37.9 に足すものの `app_data_dir` を `Option` にし、得られなければ片付けを飛ばして `Some(Other)` にした。§37.10 の (b) の答えの行を合わせた。 |
 | 2026-11-02 | xz-bkup-move（実装、D-149） | §37.12 の「§37.9 に足すもの」を §37.9 の本文（シグネチャの `app_data_dir`、`DailyReportSdScan.tidy_failure`、手順 2a）へ移して消し、§37.10 の (b) の答えの行と §37.12 の proposed の注記を外した。 |
 | 2026-11-11 | xz-bkup-move（Final Review の是正、PR #228） | §37.8 の非目的・BIZ-08-D3 の理由・BIZ-08-D5 の決定と理由・BIZ-08-D10 の決定の、SD を動かさない前提の文を、片付け（§37.12、D-149）のある今の振舞いに直した。§37.12 手順 4 に、止めたときの WARN に移せなかった file の相対 path を残すことを足した。 |
+| 2026-11-11 | xz-bkup-move（Final Review の closure の是正、PR #228） | §37.12 手順 4 の WARN の `not_moved` を、止めた組の残りだけでなく、止めた時点でまだ移っていない片付けの対象の全部（以後の組の全 file を含む。写しの失敗でも同じ）の元の相対 path にした。 |

@@ -2,7 +2,8 @@
 //!
 //! docs/function-design/29-io-daily-report-parser.md §29.9 に基づく実装。
 //! 同じ精算の名前の Z の組を、CV17 の取込みと同じ形の名前で、組に共通の 1 つの連番を付けて移す。
-//! 既存の file を置き換えず（`move_no_replace`）、bytes を書かず改名だけにする（IO-11-D1）。
+//! 移す先の folder が無ければ作り、file は既存の file を置き換えず（`move_no_replace`）、bytes を書かない改名で移す
+//! （IO-11-D1）。連番の空きと再開は、移す先の名前を IO-09 の分類（`classify_z`）で見て決める。
 //! この module が使う file system の API と crate の中の名前は許可の列だけで（IO-11-D3）、
 //! test `test_req401_module_uses_only_allowed_fs_api` が source を検査する。
 
@@ -57,6 +58,17 @@ struct Checked<'a> {
     item: &'a RegisterSdMoveItem,
     parts: Vec<&'a str>,
     series: u16,
+    /// 組の全部で同じ
+    settlement: SettlementName,
+}
+
+/// 精算の名前（folder の年・月と、IO-09 の分類の日・接尾字）
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SettlementName {
+    year: i32,
+    month: u32,
+    day: u8,
+    suffix: char,
 }
 
 /// 29 §29.9.2
@@ -78,7 +90,7 @@ fn move_group(
     // 手順 1: 名前と組の形（SD に書かない）
     let checked = check_group(group)?;
     let first = &checked[0];
-    let (year, month, template) = (first.parts[1], first.parts[2], first.parts[3]);
+    let (year, month) = (first.parts[1], first.parts[2]);
 
     // 手順 2: 組の各 file の実体が root の下の通常の file
     let root_real = fs::canonicalize(&root.path).map_err(|error| io_error("", &error))?;
@@ -108,9 +120,9 @@ fn move_group(
     let month_relative = format!("{year_relative}\\{month_name}");
 
     // 手順 4: 組に共通の連番
-    let taken = existing_names(&month_real, &month_relative)?;
+    let taken = taken_sequences(&month_real, &month_relative, first.settlement)?;
     let in_group: Vec<u16> = checked.iter().map(|file| file.series).collect();
-    let sequence = choose_sequence(&taken, template, &in_group)?;
+    let sequence = choose_sequence(&taken, &in_group)?;
 
     // 手順 5: 渡された順に 1 本ずつ移し、確かめてから次へ（IO-11-D2）
     for (file, source) in checked.iter().zip(&sources) {
@@ -155,7 +167,6 @@ fn check_group(group: &[RegisterSdMoveItem]) -> Result<Vec<Checked<'_>>, Registe
         return Err(RegisterSdMoveError::NameRule);
     }
     let mut out: Vec<Checked> = Vec::with_capacity(checked.len());
-    let mut key: Option<(String, u8, char)> = None;
     for (item, parts) in checked {
         let [area, year, month, name] = parts.as_slice() else {
             return Err(RegisterSdMoveError::NameRule);
@@ -186,20 +197,23 @@ fn check_group(group: &[RegisterSdMoveItem]) -> Result<Vec<Checked<'_>>, Registe
         if !MOVED_SERIES.contains(&series) || out.iter().any(|file| file.series == series) {
             return Err(RegisterSdMoveError::NameRule);
         }
-        let this = (
-            format!("{area}\\{year}\\{month}").to_ascii_uppercase(),
+        let settlement = SettlementName {
+            year: year_number as i32,
+            month: month_number,
             day,
             suffix,
-        );
-        match &key {
-            None => key = Some(this),
-            Some(first) if *first == this => {}
-            Some(_) => return Err(RegisterSdMoveError::NameRule),
+        };
+        if out
+            .first()
+            .is_some_and(|first| first.settlement != settlement)
+        {
+            return Err(RegisterSdMoveError::NameRule);
         }
         out.push(Checked {
             item,
             parts,
             series,
+            settlement,
         });
     }
     Ok(out)
@@ -255,28 +269,47 @@ fn ensure_dir(
     Ok((real, found))
 }
 
-/// 移す先の folder の名前（大文字にそろえる）を 1 回の `read_dir` で読む
-fn existing_names(dir: &Path, relative: &str) -> Result<Vec<String>, RegisterSdMoveError> {
-    let mut names = Vec::new();
+/// 移す先の folder の entry を 1 回の `read_dir` で読み、IO-09 の分類（`classify_z`）で組と同じ日・接尾字の
+/// Z になる名前の (系列, 連番) を返す。綴りが違っても IO-09 が同じ Z と読む名前は同じ名前として数える
+/// （移した file を IO-09 が組に戻すときの見方と揃える。29 §29.9.3 手順 4）
+fn taken_sequences(
+    dir: &Path,
+    relative: &str,
+    settlement: SettlementName,
+) -> Result<Vec<(u16, u16)>, RegisterSdMoveError> {
+    let mut taken = Vec::new();
     for entry in fs::read_dir(dir).map_err(|error| io_error(relative, &error))? {
         let entry = entry.map_err(|error| io_error(relative, &error))?;
-        if let Some(name) = entry.file_name().to_str() {
-            names.push(name.to_ascii_uppercase());
+        let name = entry.file_name();
+        // UTF-16 にならない名前は IO-09 も読まない（規則に合わない）
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if let (
+            RegisterSdEntryKind::Z {
+                series,
+                day,
+                suffix,
+                backup_seq: Some(sequence),
+            },
+            _,
+        ) = classify_z(
+            name,
+            RegisterSdArea::Backup,
+            settlement.year,
+            settlement.month,
+        ) {
+            if (day, suffix) == (settlement.day, settlement.suffix) {
+                taken.push((series, sequence));
+            }
         }
     }
-    Ok(names)
+    Ok(taken)
 }
 
-/// 29 §29.9.3 手順 4: 組に共通の連番を選ぶ。`template` は組の 1 本の元の名前（日・接尾字は組で同じ）
-fn choose_sequence(
-    taken: &[String],
-    template: &str,
-    in_group: &[u16],
-) -> Result<u16, RegisterSdMoveError> {
-    let present = |series: u16, sequence: u16| {
-        let name = with_sequence(&series_name(template, series), sequence).to_ascii_uppercase();
-        taken.contains(&name)
-    };
+/// 29 §29.9.3 手順 4: 組に共通の連番を選ぶ。`taken` は移す先に在る、組と同じ日・接尾字の (系列, 連番)
+fn choose_sequence(taken: &[(u16, u16)], in_group: &[u16]) -> Result<u16, RegisterSdMoveError> {
+    let present = |series: u16, sequence: u16| taken.contains(&(series, sequence));
     let others: Vec<u16> = MOVED_SERIES
         .iter()
         .copied()
@@ -303,11 +336,6 @@ fn choose_sequence(
     (1..=9999)
         .find(|&n| MOVED_SERIES.iter().all(|&series| !present(series, n)))
         .ok_or(RegisterSdMoveError::NoFreeSequence)
-}
-
-/// `Z001_06 .CSV` の系列を替えた名前（`Z` と 3 桁の後ろは同じ）
-fn series_name(template: &str, series: u16) -> String {
-    format!("Z{series:03}{}", &template[4..])
 }
 
 /// 拡張子の前に `_` と 4 桁の連番を足す（`Z001_06 .CSV` → `Z001_06 _0001.CSV`）
@@ -469,6 +497,52 @@ mod tests {
     }
 
     #[test]
+    fn test_req401_taken_sequence_is_seen_by_io09_classification() {
+        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (b)（PR #228 の closure 797 の P2）: 連番の空きは、移す先の名前を
+        // IO-09 の分類（`classify_z`）で見る。綴りが違っても IO-09 が同じ日・接尾字・系列・連番の Z と読む名前
+        // （`(?i)` が S と同じに読む U+017F の `.CſV`、小文字）が在れば、その連番は使わず `_0002` に揃える。
+        // 移す名前は元の綴りのまま
+        for taken in ["Z002_06 _0001.CſV", "z002_06 _0001.csv"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = make_root(dir.path());
+            let taken = format!("XZ_BKUP\\2026\\10\\{taken}");
+            put(&root, &taken, b"other");
+            let group = put_group(&root, &[4, 1, 2, 5], "06 .CSV");
+            let result = move_register_sd_group_to_backup(&root, &group);
+            assert_eq!(result.error, None, "{taken}");
+            assert_eq!(
+                result.moved,
+                [
+                    "XZ_BKUP\\2026\\10\\Z004_06 _0002.CSV",
+                    "XZ_BKUP\\2026\\10\\Z001_06 _0002.CSV",
+                    "XZ_BKUP\\2026\\10\\Z002_06 _0002.CSV",
+                    "XZ_BKUP\\2026\\10\\Z005_06 _0002.CSV",
+                ],
+                "{taken}"
+            );
+            assert_eq!(tree(&root)[&taken], b"other");
+        }
+
+        // 別の日・別の接尾字の Z は、同じ連番でも占有にしない（組は `_0001`）
+        let dir = tempfile::tempdir().unwrap();
+        let root = make_root(dir.path());
+        put(&root, "XZ_BKUP\\2026\\10\\Z001_05 _0001.CSV", b"other day");
+        put(
+            &root,
+            "XZ_BKUP\\2026\\10\\Z001_06A_0001.CSV",
+            b"other suffix",
+        );
+        let group = put_group(&root, &[4, 1, 2, 5], "06 .CSV");
+        let result = move_register_sd_group_to_backup(&root, &group);
+        assert_eq!(result.error, None);
+        assert!(
+            result.moved.iter().all(|path| path.ends_with("_0001.CSV")),
+            "{:?}",
+            result.moved
+        );
+    }
+
+    #[test]
     fn test_req401_group_shares_sequence_in_asymmetric_tree() {
         // REQ-401 / IO-11 手順 4 (b): `Z001_06 _0001.CSV` だけがある先でも、組は 1 つの連番 `_0002` に揃う
         let dir = tempfile::tempdir().unwrap();
@@ -526,19 +600,42 @@ mod tests {
     }
 
     #[test]
+    fn test_req401_resumed_group_is_seen_by_io09_classification() {
+        // REQ-401 / IO-11-D1 §29.9.3 手順 4 (a)（PR #228 の closure 797 の P2）: 前の片付けの続きも IO-09 の分類で
+        // 見る。前に移した Z004・Z001 の `_0002` を、残りの先頭（Z002）の綴りが `.CſV` でも見つけて揃える。
+        // 別の `Z001_06 _0001.CSV` があるので、先頭の綴りから作った名前で見ると残りは `_0001` へ行く
+        let dir = tempfile::tempdir().unwrap();
+        let root = make_root(dir.path());
+        put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0001.CSV", b"other");
+        put(&root, "XZ_BKUP\\2026\\10\\Z004_06 _0002.CSV", b"moved");
+        put(&root, "XZ_BKUP\\2026\\10\\Z001_06 _0002.CSV", b"moved");
+        let rest = [
+            put_group(&root, &[2], "06 .CſV"),
+            put_group(&root, &[5], "06 .CSV"),
+        ]
+        .concat();
+        let result = move_register_sd_group_to_backup(&root, &rest);
+        assert_eq!(result.error, None);
+        assert_eq!(
+            result.moved,
+            [
+                "XZ_BKUP\\2026\\10\\Z002_06 _0002.CſV",
+                "XZ_BKUP\\2026\\10\\Z005_06 _0002.CSV",
+            ]
+        );
+    }
+
+    #[test]
     fn test_req401_no_free_sequence_when_all_taken() {
         // REQ-401 / IO-11 手順 4: 0001〜9999 のどの連番も 4 系列のどれかの名前で埋まっていれば NoFreeSequence。
-        // 9999 本の tree を作らず、移す先の名前の列（`existing_names` が返す形）を直接渡す
-        let taken: Vec<String> = (1..=9999).map(|n| format!("Z001_06 _{n:04}.CSV")).collect();
+        // 9999 本の tree を作らず、移す先に在る (系列, 連番) の列（`taken_sequences` が返す形）を直接渡す
+        let taken: Vec<(u16, u16)> = (1..=9999).map(|n| (1, n)).collect();
         assert_eq!(
-            choose_sequence(&taken, "Z004_06 .CSV", &[4, 1, 2, 5]),
+            choose_sequence(&taken, &[4, 1, 2, 5]),
             Err(RegisterSdMoveError::NoFreeSequence)
         );
         // 最後の連番だけが空いていれば 9999 を選ぶ
-        assert_eq!(
-            choose_sequence(&taken[..9998], "Z004_06 .CSV", &[4, 1, 2, 5]),
-            Ok(9999)
-        );
+        assert_eq!(choose_sequence(&taken[..9998], &[4, 1, 2, 5]), Ok(9999));
     }
 
     #[test]
