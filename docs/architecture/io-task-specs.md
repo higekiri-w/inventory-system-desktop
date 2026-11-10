@@ -297,7 +297,7 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 ### IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す
 
-**タスク要求**: レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ-08 が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前（拡張子の前に `_nnnn`）で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す。既存の file を置き換えず、bytes を書かず改名だけにする。1 本ずつ移して確かめ、失敗したら組の残りを移さない。DB を呼ばない。業務ロジックなし（function-design は [29 §29.9](../function-design/29-io-daily-report-parser.md#299-io-11-レジの-sd-の-xz-の-z-を-xz_bkup-へ移すd-149)）
+**タスク要求**: レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ-08 が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前（拡張子の前に `_nnnn`）で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す。移す先の folder が無ければ作り、file は既存の file を置き換えず、bytes を書かない改名で移す。1 本ずつ移して確かめ、失敗したら組の残りを移さない。DB を呼ばない。業務ロジックなし（function-design は [29 §29.9](../function-design/29-io-daily-report-parser.md#299-io-11-レジの-sd-の-xz-の-z-を-xz_bkup-へ移すd-149)）
 
 **理由**（D-149）: CV17 の取込みと同じ形で移せば、レジから見た SD の状態は CV17 を毎日使ったときと同じになり、店は CV17 の毎日の Z の取込みをやめられる。読むだけの module（IO-09）に書込みの API を足さず、別の module に置く（IO-09-D3）。どの組を・いつ・どの順で移すかは BIZ-08-D11（37 §37.12）
 
