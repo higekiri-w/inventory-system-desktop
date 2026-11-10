@@ -631,7 +631,7 @@ Fill after implementation.
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-- 実装: [PR #128](https://github.com/kosei-w90607/inventory-system-desktop/pull/128)。S1〜S16 を Writer（Opus 5.5 subagent、発注 153）が 3 commit で実装した（checker と fixture test、文書の縮約と 2 つの削除、D-098）。AC1〜AC20 を満たし、MU1〜MU13 を実注入して red を確かめた。PR5 の所有 file には触れていない。
+- 実装: [PR #128](https://github.com/higekiri-w/inventory-system-desktop/pull/128)。S1〜S16 を Writer（Opus 5.5 subagent、発注 153）が 3 commit で実装した（checker と fixture test、文書の縮約と 2 つの削除、D-098）。AC1〜AC20 を満たし、MU1〜MU13 を実注入して red を確かめた。PR5 の所有 file には触れていない。
 - Coordinator の裁定: G3 = 認める（2026-09-30。S15 の 3 file は PR5 の所有表にも無く衝突しない）。
 - packet の逐語から離れた所: template の「R3/R4 の部分」は見出しを増やさず、`## Contract Ledger` の先頭の 1 行で示した。並走の PR5 の packet を新しい checker で確かめるとき、Matrix への link のため Matrix も一緒に一時的に置いた（発注書の手順の不足。Scope・AC は変えていない）。
 - base 同期: origin/main を単段 merge で取り込んだ（衝突なし。main 側は `docs/backlog.md`・`docs/project-memory.md` だけ）。

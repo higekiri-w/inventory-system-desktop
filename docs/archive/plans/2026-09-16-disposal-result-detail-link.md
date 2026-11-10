@@ -264,7 +264,7 @@ Required for R3/R4.
 
 ## Implementation Results
 
-[PR #71](https://github.com/kosei-w90607/inventory-system-desktop/pull/71) で実装し squash merge 済み（`949a5c4c`、2026-09-16）。Writer = Sonnet subagent（Codex 発注書 59 は run 1〜3 とも packet 記述誤りで実装前に fail-closed、GA1〜GA3）。実装 `e307b53a`、docs `0c49b5af`。Final Review = Sonnet pass A（Contract Audit、finding 0）/ Opus pass B（P3 3 → closeout で是正）。owner L3 round 1 PASS（Coordinator session で報告、helper manual record）。介入 1 / 予算 3、Codex relay 3 / 上限 3
+[PR #71](https://github.com/higekiri-w/inventory-system-desktop/pull/71) で実装し squash merge 済み（`949a5c4c`、2026-09-16）。Writer = Sonnet subagent（Codex 発注書 59 は run 1〜3 とも packet 記述誤りで実装前に fail-closed、GA1〜GA3）。実装 `e307b53a`、docs `0c49b5af`。Final Review = Sonnet pass A（Contract Audit、finding 0）/ Opus pass B（P3 3 → closeout で是正）。owner L3 round 1 PASS（Coordinator session で報告、helper manual record）。介入 1 / 予算 3、Codex relay 3 / 上限 3
 
 ## Review Response
 
@@ -307,6 +307,6 @@ Required for R3/R4.
 
 ### Final Review round 1（2026-09-16、head `0c49b5af`）
 
-- pass A（Sonnet）: AC oracle 再実測一致、mutant 1 本を実注入して kill を確認、finding 0（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/71#issuecomment-5694394631)）
-- pass B（Opus）: P3 3 件 = (1) 64 `:31` `:64` の導線列挙に「詳細を見る」未追加、(2) `:120` の二重記述（「保存結果と最近の廃棄・破損一覧の」が `:119` と重複）、(3) packet の test 本数転記（Evidence Ownership、本数を固定値で書かず PR body / CI 出力を正とすべき）→ いずれも accept、本 closeout で是正（[comment](https://github.com/kosei-w90607/inventory-system-desktop/pull/71#issuecomment-5694443932)）
+- pass A（Sonnet）: AC oracle 再実測一致、mutant 1 本を実注入して kill を確認、finding 0（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/71#issuecomment-5694394631)）
+- pass B（Opus）: P3 3 件 = (1) 64 `:31` `:64` の導線列挙に「詳細を見る」未追加、(2) `:120` の二重記述（「保存結果と最近の廃棄・破損一覧の」が `:119` と重複）、(3) packet の test 本数転記（Evidence Ownership、本数を固定値で書かず PR body / CI 出力を正とすべき）→ いずれも accept、本 closeout で是正（[comment](https://github.com/higekiri-w/inventory-system-desktop/pull/71#issuecomment-5694443932)）
 - 裁定: pass B の指摘 3 件を全件 accept。64 の UI-05-D11 決定列 / state 表に「詳細を見る」を追加、§64.5 の二重記述を整理、本 packet の AC6 と起票時実測の test 本数を「対象 test file 全 PASS（本数は PR body / CI 出力を正とする）」へ改めた（いずれも本 closeout commit）。review = pass、manual = pass（owner L3 round 1）

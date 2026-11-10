@@ -935,7 +935,7 @@ Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Owner
 - library の行（S1-017〜S1-020・S1-041・S1-079・S2-009〜S2-011）は、引用を足した hit の時点の lock の版を、`K` の綴りで同じ行に書いた。
 - S3-014 の `:70` の target は、手順 1 の「同じ文が語で名指す file」でなく、書かれた時点の文書自身（backlog がその中にあった時点の `docs/Plans.md`）にした（手順の書き方からの外れ。Final Review の closure の P3 で closeout に記した）。
 
-AC-S5-5 の loop の出力: PR の comment（Coordinator が投稿）— 目次と `CHECK` の一覧 https://github.com/kosei-w90607/inventory-system-desktop/pull/183#issuecomment-6309869869 、全文は続く 13 本、Final Review の是正で変わった S3-014・S3-024 の塊の差し替え https://github.com/kosei-w90607/inventory-system-desktop/pull/183#issuecomment-6311300061
+AC-S5-5 の loop の出力: PR の comment（Coordinator が投稿）— 目次と `CHECK` の一覧 https://github.com/higekiri-w/inventory-system-desktop/pull/183#issuecomment-6309869869 、全文は続く 13 本、Final Review の是正で変わった S3-014・S3-024 の塊の差し替え https://github.com/higekiri-w/inventory-system-desktop/pull/183#issuecomment-6311300061
 
 AC-S5-2 の抜き取り（35 行。各行の最初の引用。抜き取りに当たった library の S2-009 は S2-013 で代えた。S1-015・S1-080 は S1-016・S1-081 で、S1-020 は S1-021 で代えた）:
 

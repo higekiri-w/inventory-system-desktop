@@ -276,7 +276,7 @@ round 1 の P3 F4（`docs/ARCHITECTURE.md` §4 の宅急便部門の項を外す
 closeout（2026-10-24）:
 
 - 結果: 新しく作る DB で部門 12（宅急便）の `code_prefix` が正本どおり NULL になり、宅急便の部門で JAN を空にした商品登録が BIZ で止まり何も書かないことと、21 部門の初期データの全列を master-tables の表と比べる test で固定した。migration は足さず（MNT-03-D21）、直す前に作った開発・試験 DB は作り直しで揃う（D-123）。画面・command・wire の型は変えない。
-- review・CI・merge: Plan Review round 1（fresh Opus 5.5 と Codex）は両者 approve。Final Review の broad は Claude 側 Fable 5（owner の決定 2026-10-24 で当面 Fable 5.1 でなく 5）が approve（P3 1）。PR #192 の merge の後に `origin/main` を単段 merge で同期し（PR の差分は同期の前と同じ）、同期の closure（fresh Opus 5.5）が approve（相互作用なし）。hosted CI は緑で、helper 経由で squash merge した。PR: [#195](https://github.com/kosei-w90607/inventory-system-desktop/pull/195)
+- review・CI・merge: Plan Review round 1（fresh Opus 5.5 と Codex）は両者 approve。Final Review の broad は Claude 側 Fable 5（owner の決定 2026-10-24 で当面 Fable 5.1 でなく 5）が approve（P3 1）。PR #192 の merge の後に `origin/main` を単段 merge で同期し（PR の差分は同期の前と同じ）、同期の closure（fresh Opus 5.5）が approve（相互作用なし）。hosted CI は緑で、helper 経由で squash merge した。PR: [#195](https://github.com/higekiri-w/inventory-system-desktop/pull/195)
 - 後続: round 1 の P3 F4（`docs/ARCHITECTURE.md` §4 の宅急便部門の項の整理）は `docs/backlog.md` に 1 項目として置いた。初回の導入の前に残す DB が無いことを確かめる手順は MSI の lane（PR #191）の runbook へ申し送り済み。backlog の起源の項目（「部門 12（宅急便）の初期データの `code_prefix` を正本の NULL に合わせる」）は closeout で完了として外した。
 
 ## Review Response

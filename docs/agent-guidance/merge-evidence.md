@@ -7,7 +7,7 @@ Contract ID: SPEC-MERGE-EVIDENCE
 
 目的は、検証した版を確実にマージしながら、AIとownerが証跡の転記・読み直し・状態記録に費やす手間を減らすこと。モデルの思考と独立レビューは、設計判断と欠陥検出に使う。SHAを短く表示するだけでは、記録更新でcommitが増え、再検証と説明が連鎖する原因を除けない。
 
-[PR #52](https://github.com/kosei-w90607/inventory-system-desktop/pull/52)では、実装・独立reviewを終えた内容に対してhuman-confirmとReadyのstate-only commitを追加し、Ready HEADでRust/frontendを含むfullを再実行した。これは当時の規定に従った処理である。D-033はprivate Freeでrequired checksを利用できなかった事情、D-035は自分のSHAを書き込む自己参照問題への対応だった。現在はpublicで、GitHubによる強制を選べる。2026-09-14にownerは「GitHubで強制し、docs・後処理は軽いPR経路」を選択した。
+[PR #52](https://github.com/higekiri-w/inventory-system-desktop/pull/52)では、実装・独立reviewを終えた内容に対してhuman-confirmとReadyのstate-only commitを追加し、Ready HEADでRust/frontendを含むfullを再実行した。これは当時の規定に従った処理である。D-033はprivate Freeでrequired checksを利用できなかった事情、D-035は自分のSHAを書き込む自己参照問題への対応だった。現在はpublicで、GitHubによる強制を選べる。2026-09-14にownerは「GitHubで強制し、docs・後処理は軽いPR経路」を選択した。
 
 成功は、通常のReady/mergeでSHAの手転記と実装後の状態記録commitを不要にし、必要な検証結果を短い機械判定で確認できること。Plan Gate、非Writerによる独立review、ownerのReady/merge判断、Windows L3・R4の保護は維持する。CI未検証版をGitHubが通すこと、helper経由の正規mergeで未了review/manual/R4を通すこと、必要jobのskipを成功扱いすること、記録を作ること自体が目的になることを失敗とする。token削減量は未実測で、異なるreview roundを比較して効率改善を主張しない。
 
@@ -67,7 +67,7 @@ native拒否のprobeは、ownerに具体的対象を示したうえで`ci-probe/
 
 ### 実応答の既定項目との互換性（MG-D1a）
 
-GitHubのruleset detailは、送信payloadにない既定parameterを返す。[検証用PR #57](https://github.com/kosei-w90607/inventory-system-desktop/pull/57) / [#58](https://github.com/kosei-w90607/inventory-system-desktop/pull/58)の試験ではnativeの拒否・正常mergeが成立した一方、`pull_request.parameters`に追加された次の項目でhelperの全体比較が不一致になった。
+GitHubのruleset detailは、送信payloadにない既定parameterを返す。[検証用PR #57](https://github.com/higekiri-w/inventory-system-desktop/pull/57) / [#58](https://github.com/higekiri-w/inventory-system-desktop/pull/58)の試験ではnativeの拒否・正常mergeが成立した一方、`pull_request.parameters`に追加された次の項目でhelperの全体比較が不一致になった。
 
 | 応答だけに存在する項目 | 許容する値・型 |
 |---|---|
@@ -108,6 +108,8 @@ Closure = {head: SHA, base: SHA, audit: Audit} | {head: SHA, base: SHA, sync_fro
 ```
 
 `sync_from`の形のclosureは、helperが同期だけの条件とcodeに触れない条件で記録したもの（後述の「base同期だけでheadが変わる場合」）で、独立監査を表さない。
+
+`repo`は`scripts/pr-gate.py`の`REPO`（GitHubの今の名前）。2026-11-09のGitHubのuser名の変更より前に書いたrecordの旧名`kosei-w90607/inventory-system-desktop`は、recordを読むときだけ受け、helperが次にそのrecordを書くときに今の名前で書き直す。origin・PRのbase/headのrepo・CIの`head_repository`の照合では旧名を受けない（D-150）。
 
 初回のbroad監査はpacketのFinal Review Minimum以上の独立auditを必要とする。auditsは監査の実施記録で、各監査でfindingが出たことを隠さない。現在版の全findingが裁定・解消された場合だけreview.outcomeをpassにする。run_refは重複不可の公開可能な識別子であり、モデルのsession識別子ではない。packet の review を not-required にはできず、Broad.plan_commitは承認されたPlan Commitと一致するfull SHAを必須としnullを拒否する。schemaのplan_commit=nullは packet なしの道（R0〜R2）だけに許す。R0/R1の不要reviewはbroad/closureともnull、R2 は差分の review 1 本の broad を持つ。
 

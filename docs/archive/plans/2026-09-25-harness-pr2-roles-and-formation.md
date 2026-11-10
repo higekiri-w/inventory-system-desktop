@@ -407,7 +407,7 @@ Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Owner
 
 - Writer（Opus 5.5 subagent）が S1〜S5・S7 を実装した（S6 の Plans.md 登録行は起票 commit、backlog は本 closeout）。MANUAL に `## 座組` の表と独立性の項 (a)〜(e)・§3.3 の 2 文を足し、§3.1・§3.2・§3.4・§5.5・§5.7 を削除、DEV_WORKFLOW の 6 か所・agent-guidance 3 file・review packet・plan-packet template の 2 行を直し、decision-log に D-092 を追記した。AC1〜AC12 と検査は PASS。
 - Final Review の是正 1 件（Codex の P3 と Coordinator の指摘 C-1〈P2〉が同じ点）: owner 方針 2026-09-14「総 token で効率を判断」が PR2 + PR3 で tracked から消えるため、MANUAL `## 座組` の表の下の注記に「effort の選び方」（owner 2026-09-14）を置き、model-notes の `## Effort の選定` からその注記を指すようにした。S1 は注記を (1)〜(4) の 4 項目と列挙し、S3 は方針を「座組表の effort 列が引き継ぐ」と書くが、実物は注記 (5) が方針を持つ（列は値だけを持つため）。packet 本文の書換えは broad を無効化するため行わず、ここに記録する。
-- CI: Merge gate success（https://github.com/kosei-w90607/inventory-system-desktop/actions/runs/36332090301）。Ready・merge は owner 指示（2026-09-28）で helper 経由、[PR #113](https://github.com/kosei-w90607/inventory-system-desktop/pull/113)。
+- CI: Merge gate success（https://github.com/higekiri-w/inventory-system-desktop/actions/runs/36332090301）。Ready・merge は owner 指示（2026-09-28）で helper 経由、[PR #113](https://github.com/higekiri-w/inventory-system-desktop/pull/113)。
 
 ## Review Response
 

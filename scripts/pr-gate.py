@@ -13,7 +13,11 @@ import sys
 import tempfile
 from urllib.parse import quote
 
-REPO = 'kosei-w90607/inventory-system-desktop'
+REPO = 'higekiri-w/inventory-system-desktop'
+# ponytail: D-150 (2). The repository's name before the GitHub rename (TD-598). Only validate_record's `repo`
+# check reads it; every record the helper writes is built with repo=REPO, so the next write renames it. The origin,
+# PR, CI, author and writer checks accept REPO/OWNER only. Remove it when D-150's Revisit condition holds.
+LEGACY_REPO = 'kosei-w90607/inventory-system-desktop'
 OWNER = REPO.split('/')[0]
 MARKER = '<!-- inventory-workflow-v1 -->'
 POLICY = '.github/merge-gate-ruleset.json'
@@ -136,7 +140,7 @@ def audit(value):
 
 def validate_record(value, pr):
     keys(value, {'version', 'repo', 'pr', 'head', 'base', 'review', 'manual', 'r4'})
-    require(type(value['version']) is int and value['version'] == 1 and value['repo'] == REPO
+    require(type(value['version']) is int and value['version'] == 1 and value['repo'] in (REPO, LEGACY_REPO)
             and type(value['pr']) is int and value['pr'] == pr, 'record belongs to another repo/PR', 2)
     sha(value['head']); sha(value['base'])
     review = value['review']

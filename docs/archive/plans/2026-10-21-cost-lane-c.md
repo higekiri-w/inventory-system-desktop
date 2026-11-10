@@ -489,7 +489,7 @@ L3（Human Gate `manual`。owner は 2026-10-21 から数日は手が使いに�
 
 ## Implementation Results
 
-初回実装（[PR #184](https://github.com/kosei-w90607/inventory-system-desktop/pull/184)）。Scope の S1〜S7 を 2 段の Writer の run で実装した。
+初回実装（[PR #184](https://github.com/higekiri-w/inventory-system-desktop/pull/184)）。Scope の S1〜S7 を 2 段の Writer の run で実装した。
 
 - S1: vB は版 10（`src-tauri/src/db/schema_v10.rs`）。手順 2 の止まりの文、6 列の改名、`products` の作り直し（CHECK 10 個、§19 の写しの 3 列・`tax_rate` の CHECK・外部キー・index を保つ）、検証と COMMIT の失敗の巻き戻し。Matrix の B1〜B8・B10 と R1〜R4。既存の migration の test は T1・T4 のとおり移した。
 - S2〜S4・S6（Rust）: 列名と内部・wire の型を `_centi` に、上限を `MAX_COST_PRICE_CENTI` に、`cost_line_centi` の `* 100` を外し、商品 CSV の `原価` を `parse_hundredths`（`parse_meters_to_cm` を改名）で読む。`ProductStockUnit` から `Roll`・`Cm` を外し、商品 CSV の `巻`・`roll`・`cm` の行の error に `retired_stock_unit_hint` の直し方を添える。bindings を再生成。
@@ -497,7 +497,7 @@ L3（Human Gate `manual`。owner は 2026-10-21 から数日は手が使いに�
 - S7: 正本の同期（共通規則・22 §16・master-tables ほか、`proposed・未実装` の注記を現行の記述に）、ERD、traceability の再生成。
 - 計画からの外れと、AC の書き漏れ（AC5 の分類に U1 の enum の test が無い）は PR の本文に書いた。
 - 結果: 原価を 1/100 円の列（`*_centi`）で持ち、商品フォーム・入庫・廃棄・価格改定で小数 2 桁の円を入力し、半角の `¥` で表示し、巻・cm を単位から外した。起点の migration vB（版 10）は商品か原価の記録がある DB で何も変えずに止まり、開発・試験 DB は 22 §16 の作り直しで空から始める。原価は税抜（D-128）。
-- review・CI・merge（closeout、2026-10-21）: Final Review は broad 3 本（Codex 482〈Astra〉、Claude 側 Fable 5.1、fresh Opus の深掘り）がどれも approve（P3 だけ）で、P3 の是正（E1〜E5 のうち E1〜E4）と main（PR #183・#186）の取込みの base 同期の後、closure 2 本（Codex 486〈Sol〉、Claude 側 Fable 5.1）がどちらも approve（P0）。L3-1〜L3-4 は PASS（owner、Windows native、repo 外の回答台帳 TD-370）。helper の専用 record に broad・closure・manual を記録し、Ready の後の run の `Merge gate` は pass で、owner の Ready・merge の承認（TD-371）の後に helper 経由で squash merge した。PR: [#184](https://github.com/kosei-w90607/inventory-system-desktop/pull/184)
+- review・CI・merge（closeout、2026-10-21）: Final Review は broad 3 本（Codex 482〈Astra〉、Claude 側 Fable 5.1、fresh Opus の深掘り）がどれも approve（P3 だけ）で、P3 の是正（E1〜E5 のうち E1〜E4）と main（PR #183・#186）の取込みの base 同期の後、closure 2 本（Codex 486〈Sol〉、Claude 側 Fable 5.1）がどちらも approve（P0）。L3-1〜L3-4 は PASS（owner、Windows native、repo 外の回答台帳 TD-370）。helper の専用 record に broad・closure・manual を記録し、Ready の後の run の `Merge gate` は pass で、owner の Ready・merge の承認（TD-371）の後に helper 経由で squash merge した。PR: [#184](https://github.com/higekiri-w/inventory-system-desktop/pull/184)
 - 自動 test に任せた所: 商品 CSV の preview の行の error の文、原価の上限の error、廃棄の候補の一覧の原価の見た目は L3 で見ていない（PR の本文の残りの危険）。
 - 後続: `docs/backlog.md` に、原価の形式の error の文を 1 つの定数にする項目（Final Review の E5）。
 
