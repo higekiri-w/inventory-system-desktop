@@ -346,8 +346,8 @@ Fill after implementation.
 
 ### Final Review（2026-09-26、互いに独立）
 
-- broad Codex 側（GPT-6 Astra）on `f6914e22`: approve、P1 0 / P2 0 / P3 1（Plans.md の登録行の古い文言）。AC1〜AC10・local-ci full PASS、mutant 8/8 red。[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/108#pullrequestreview-5320720846)
+- broad Codex 側（GPT-6 Astra）on `f6914e22`: approve、P1 0 / P2 0 / P3 1（Plans.md の登録行の古い文言）。AC1〜AC10・local-ci full PASS、mutant 8/8 red。[review](https://github.com/higekiri-w/inventory-system-desktop/pull/108#pullrequestreview-5320720846)
 - broad Claude 側（Fable 5.1、fresh、read-only）on `f6914e22`: approve、P1 0 / P2 0 / P3 1（同じ）。python の Decimal の oracle と整数式を fuzz 20,000 件で不一致 0、pcs だけの総額 = 旧式も 20,000 件で不一致 0、mutant 8/8 red。
 - 裁定: P3 accept → main 同期の後の `08a5cde4` で是正。あわせて遷移記録の key の重複（helper が `duplicate packet fields` で packet を読めない）を解消し、Gated Amendment 1 として登録（`3eb982ca`）。
-- closure Codex 側（GPT-6 Astra）on `3eb982ca`: approve、P1/P2/P3 = 0。実装の差分は main 側と一致、packet は指定の 3 点だけ、P3 は解消。[review](https://github.com/kosei-w90607/inventory-system-desktop/pull/108#pullrequestreview-5320804744)
+- closure Codex 側（GPT-6 Astra）on `3eb982ca`: approve、P1/P2/P3 = 0。実装の差分は main 側と一致、packet は指定の 3 点だけ、P3 は解消。[review](https://github.com/higekiri-w/inventory-system-desktop/pull/108#pullrequestreview-5320804744)
 - helper の record: review broad 2 本（pass）。owner の指示（2026-09-26「Codex 通してレビューも通ってるならマージや締めまで済ませて OK」）で helper `ready` → hosted CI 成功 → helper `merge`。

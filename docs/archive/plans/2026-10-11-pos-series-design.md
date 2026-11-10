@@ -401,7 +401,7 @@ Test Design Matrix: [2026-10-11-pos-series-design](test-matrices/2026-10-11-pos-
 - 結果: 実測の後に行われた精算を、資料の置き場の全数読取りの順で見分ける規則（時点証拠 ADR SPEC-STK-TIME-D10。判定は外部前提の確認が済むまで有効にしない）と、EJ の区間の対応づけの骨・欠け・「前回」の候補（D5a）を設計正本に置き、D-116 に記録した。番号印字は採らない（repo 外の回答台帳 TD-224）。区間の終端の対応づけを確定する条件の細部は日次の EJ 取込みの lane の設計へ送った（TD-230）。本 lane は docs だけで、code・migration・bindings は変えていない（runtime は後続の lane）。
 - 既存の保護: 実装は変えていないので、店の動作は今のまま（棚卸しは停止のまま、Z004 の在庫連動は今の運用）。D10・D5a は proposed・未実装。
 - 未検証: Contract Probe の外部前提のうち未観測のもの（保存が異常終了した精算の資料の残り方、P2、P10）は、D10 を有効にする lane の owner-operated gate に置いた。
-- review・CI・merge（closeout、2026-10-15）: Plan Review は round 3（上限）までで、round 3 で Codex 側に P1 が残り、plan-gate での事実の訂正（Z004 と精算票を結ぶ観測を、同じ精算の Z001 の精算回数を介した番号まで広げた）と再確認の後、owner の承認で plan-approved（TD-255）。Final Review は broad 3 回（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は success で、owner の Ready・merge の承認（TD-257）の後に helper 経由の squash merge。PR: [#159](https://github.com/kosei-w90607/inventory-system-desktop/pull/159)
+- review・CI・merge（closeout、2026-10-15）: Plan Review は round 3（上限）までで、round 3 で Codex 側に P1 が残り、plan-gate での事実の訂正（Z004 と精算票を結ぶ観測を、同じ精算の Z001 の精算回数を介した番号まで広げた）と再確認の後、owner の承認で plan-approved（TD-255）。Final Review は broad 3 回（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は success で、owner の Ready・merge の承認（TD-257）の後に helper 経由の squash merge。PR: [#159](https://github.com/higekiri-w/inventory-system-desktop/pull/159)
 - 後続: runtime の依存は ADR の「㉘ への引継ぎ」の表。Final Review broad 3 の P3 と後続の lane への申し送りは `docs/backlog.md` の「実測とPOS系列の対応を取得・保存する」の項目の「㉘ ④ と日次の EJ 取込みへの申し送り」と、その下の正本の文の整理の follow-up。次は owner の方針（TD-258）で、棚卸しの時点証拠と POS の取込みの領域の設計の見直しを先に行い、日次の EJ 取込みの lane の起票はその後。
 
 ## Review Response

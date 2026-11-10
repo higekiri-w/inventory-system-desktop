@@ -166,7 +166,7 @@ ERの物理関係と全カラム、現行画面の到達・戻り、在庫・日
 
 A-1ではtest-onlyのモデルと操作列を追加した。通常suiteと正常対照はPASS、明示診断は数量の不一致によりFAIL（非0）であり、入力不足・fixtureエラーではない。カウント後の移動が消える既知経路に加え、POS販売→カウント→確定→遅いCSVで二重減算する経路を確認した。独立モデルは、在庫と台帳の同時誤り、および総計が一致する売上sourceの取り違えも検出した。具体的な反例と実行方法は `docs/diagrams/cross-feature-verification.md` に記録。runtime修正は未実施で、通常のRust gateとSonnet / Opusの最終レビューを進めた。
 
-[PR #69](https://github.com/kosei-w90607/inventory-system-desktop/pull/69) で実装し squash merge 済み（`183af827`、2026-09-16）。Coordinator / Writer = Astra（D-087、codex-only）。Plan Review = Sonnet PASS、A-1 は Opus 指摘全採用 + Sonnet 限定確認 PASS。Final Review = Sonnet PASS / Opus P2 2・P3 4 → 全採用 / Sonnet closure PASS（`ee72ceea`）。merge phase は Fable が代行: 監査 3 本を PR comment に転記して helper record、`origin/main`（wave 11 #70〜#73）単段 merge `a3e44edc`、closure（Sonnet fresh）で P2 1 件〈図面の廃棄保存結果リンクが #71 と矛盾〉→ `6eba236f` で是正、Ready → CI pass → helper merge。Human Gate は ready,merge（manual 非対象）。
+[PR #69](https://github.com/higekiri-w/inventory-system-desktop/pull/69) で実装し squash merge 済み（`183af827`、2026-09-16）。Coordinator / Writer = Astra（D-087、codex-only）。Plan Review = Sonnet PASS、A-1 は Opus 指摘全採用 + Sonnet 限定確認 PASS。Final Review = Sonnet PASS / Opus P2 2・P3 4 → 全採用 / Sonnet closure PASS（`ee72ceea`）。merge phase は Fable が代行: 監査 3 本を PR comment に転記して helper record、`origin/main`（wave 11 #70〜#73）単段 merge `a3e44edc`、closure（Sonnet fresh）で P2 1 件〈図面の廃棄保存結果リンクが #71 と矛盾〉→ `6eba236f` で是正、Ready → CI pass → helper merge。Human Gate は ready,merge（manual 非対象）。
 
 ## Review Response
 
@@ -201,8 +201,8 @@ A-1 Final Review: SonnetはPASS、Opusは索引とREQ帰属のP2および説明�
 
 ### merge phase（2026-09-16、Fable 代行）
 
-- Final Review pass A（Sonnet、broad、Astra session で実施、転記）: PASS（P1/P2/P3 なし）。https://github.com/kosei-w90607/inventory-system-desktop/pull/69#issuecomment-5695998506
-- Final Review pass B（Opus、broad、Astra session で実施、転記）: CHANGES_REQUESTED（P1 0 / P2 2 / P3 4）→ 全件採用して是正済み。https://github.com/kosei-w90607/inventory-system-desktop/pull/69#issuecomment-5695998796
-- Final Review closure（Sonnet、Astra session で実施、転記、head `ee72ceea`）: PASS。https://github.com/kosei-w90607/inventory-system-desktop/pull/69#issuecomment-5695999081
-- closure（Sonnet fresh context、base 同期後、head `6eba236f`）: `a3e44edc` = `ee72ceea` + `origin/main`（wave 11 の #70〜#73）の単段 merge で #69 側 file への手編集なし、意味的衝突・conflict marker なし。P2 1 件（`docs/diagrams/current-system.md` L107 / L140 が「廃棄は保存結果から直接リンクなし」のままで #71 の link と矛盾）→ `6eba236f` で 2 行是正し再確認 pass。review = pass（broad 2 @ `ee72ceea` + closure @ `6eba236f`）、manual / R4 = not-required（Human Gate は ready,merge）。https://github.com/kosei-w90607/inventory-system-desktop/pull/69#issuecomment-5696084118
+- Final Review pass A（Sonnet、broad、Astra session で実施、転記）: PASS（P1/P2/P3 なし）。https://github.com/higekiri-w/inventory-system-desktop/pull/69#issuecomment-5695998506
+- Final Review pass B（Opus、broad、Astra session で実施、転記）: CHANGES_REQUESTED（P1 0 / P2 2 / P3 4）→ 全件採用して是正済み。https://github.com/higekiri-w/inventory-system-desktop/pull/69#issuecomment-5695998796
+- Final Review closure（Sonnet、Astra session で実施、転記、head `ee72ceea`）: PASS。https://github.com/higekiri-w/inventory-system-desktop/pull/69#issuecomment-5695999081
+- closure（Sonnet fresh context、base 同期後、head `6eba236f`）: `a3e44edc` = `ee72ceea` + `origin/main`（wave 11 の #70〜#73）の単段 merge で #69 側 file への手編集なし、意味的衝突・conflict marker なし。P2 1 件（`docs/diagrams/current-system.md` L107 / L140 が「廃棄は保存結果から直接リンクなし」のままで #71 の link と矛盾）→ `6eba236f` で 2 行是正し再確認 pass。review = pass（broad 2 @ `ee72ceea` + closure @ `6eba236f`）、manual / R4 = not-required（Human Gate は ready,merge）。https://github.com/higekiri-w/inventory-system-desktop/pull/69#issuecomment-5696084118
 - 以後 Ready → CI pass → helper merge（squash `183af827`）。

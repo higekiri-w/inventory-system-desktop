@@ -259,7 +259,7 @@ Fill after implementation.
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
-実装は Codex 発注 relay 1 往復で完了。Scope どおり `navigation.ts`（2 項目 active 化 + `search`/`activeMatch` field）、`SidebarLink.tsx`（`ActiveMatchSidebarLink` 分岐、`useLinkProps` で SPA 遷移維持、route 文字列ハードコードなし）、テスト 3 file（REQ-101/REQ-302 到達・排他 active 正逆・stockout/複合 param・pending 0 回帰、実 navigation 配線経由）、`stock/index.tsx` コメント是正、traceability 再生成。レビュー起因の実装手戻りなし。L1/L3/hosted CI 証跡は PR body 参照: https://github.com/kosei-w90607/inventory-system-public/pull/9
+実装は Codex 発注 relay 1 往復で完了。Scope どおり `navigation.ts`（2 項目 active 化 + `search`/`activeMatch` field）、`SidebarLink.tsx`（`ActiveMatchSidebarLink` 分岐、`useLinkProps` で SPA 遷移維持、route 文字列ハードコードなし）、テスト 3 file（REQ-101/REQ-302 到達・排他 active 正逆・stockout/複合 param・pending 0 回帰、実 navigation 配線経由）、`stock/index.tsx` コメント是正、traceability 再生成。レビュー起因の実装手戻りなし。L1/L3/hosted CI 証跡は PR body 参照: https://github.com/higekiri-w/inventory-system-public/pull/9
 
 ## Review Response
 

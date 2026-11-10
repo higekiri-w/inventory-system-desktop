@@ -329,7 +329,7 @@ Contract ID: SPEC-DSR17-SIDEBAR-SCROLL-EXCLUSION-2026-09-02
 - SP1〜SP4 と既存 regression を実装・確認した。SP4 は sessionStorage access を事前に失敗させる precondition が成立し、実 `scrollRestorationCache === null` 経路を採用した（fallback 注入は不使用）。
 - Mutation X1〜X5 は Coordinator 裁定により Writer 側未実施（安全審査により注入不可）。Coordinator + Final Reviewer の clean tree 独立再実測へ委ねる。
 - DSR-17 Why / (c) の scroll container 表現を route content 限定へ訂正し、(j) の allowlist prune 契約と更新履歴を反映した。
-- Draft PR: [#29](https://github.com/kosei-w90607/inventory-system-desktop/pull/29)
+- Draft PR: [#29](https://github.com/higekiri-w/inventory-system-desktop/pull/29)
 
 ## Review Response
 

@@ -4,6 +4,7 @@
 // 設計: docs/function-design/66-ui-stock-movements.md §66.3
 
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 export const MOVEMENT_TYPE_OPTIONS = [
   { value: "all", label: "すべて" },
@@ -39,7 +40,7 @@ export const stockMovementsSearchSchema = z.object({
     .catch(undefined),
   type: z.enum(MOVEMENT_TYPES).optional().catch(undefined),
   page: z.coerce.number().int().positive().optional().catch(undefined),
-  returnTo: z.string().max(500).optional().catch(undefined),
+  returnTo: utf16String({ max: 500 }).optional().catch(undefined),
 });
 
 export type StockMovementsSearch = z.output<typeof stockMovementsSearchSchema>;

@@ -305,7 +305,7 @@ R3 の外部前提。実データは `~/downloads/inventory-field-check/approved
 ## Implementation Results
 
 - 実装の要旨（closeout、2026-10-06）: 日報の parser は Z001 の総売の行と Z005 の個数を小数 2 桁までの 100 倍の整数（`quantity_hundredths`）で読み、件数は整数のまま。ヘッダより前の精算回数を読めたファイルが 2 本以上で値が違えば `settlement_mismatch` で止め、BIZ-08 は BIZ-08-D2 の文を出す。支払・総売・純売の行の鍵はラベルだけで決める。migration v7 は 2 表の `quantity` を `quantity_hundredths` に改名して既存値を 100 倍し（範囲検査、件数・型・÷100 の合計・余りの検証、失敗は rollback）、日次の集約の加算は溢れたら `DbError` で止まる。wire は単位の数（`number | null`）のままで bindings の差分は無く、traceability と ERD を更新した（D-104）。
-- review・CI・merge: Final Review broad は互いに独立の 2 本がともに approve。Amendments の SHA の書式の是正と main の取込みの後、Claude 側の broad を取り直して approve で記録した。AC9（実データ、Coordinator、repo 外）は 2026-09-29・09-30 の束が取り込め、別の精算の混在の束が `settlement_mismatch` で止まり、9 月の他の束は取り込めるまま。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-05）。manual は not-required。検証の実測値は PR の body が持つ。PR: [#140](https://github.com/kosei-w90607/inventory-system-desktop/pull/140)（Writer = Opus 5.5 subagent）
+- review・CI・merge: Final Review broad は互いに独立の 2 本がともに approve。Amendments の SHA の書式の是正と main の取込みの後、Claude 側の broad を取り直して approve で記録した。AC9（実データ、Coordinator、repo 外）は 2026-09-29・09-30 の束が取り込め、別の精算の混在の束が `settlement_mismatch` で止まり、9 月の他の束は取り込めるまま。Draft の run は success で、helper 経由の squash merge（owner の Ready・merge、2026-10-05）。manual は not-required。検証の実測値は PR の body が持つ。PR: [#140](https://github.com/higekiri-w/inventory-system-desktop/pull/140)（Writer = Opus 5.5 subagent）
 
 ### Gated Amendment 1（2026-10-04、Coordinator）
 
