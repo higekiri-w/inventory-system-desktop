@@ -115,7 +115,7 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
   - TD-632 は owner の確かめの前の案。owner が別の形を選べば、計画の固定の前なら packet を直し、固定の後なら Gated Amendment にする。
   - 同期の後に承認を保つ判定（TD-633・TD-635）と Fable の lane の判定は、helper が owner の承認・Writer の model を照合しない。Coordinator が、S3 の lane ごとの helper の record が通ったこと（同期だけ・code に触れない判定）と、PR の comment の `writer-fable` の記録を見て行う。目視の要らない R0/R1 は helper が同期の判定を出さない（`scripts/pr-gate.py` の `nonci` は record が無く minimum・manual・r4 が 0 のとき確かめずに戻り、R0/R1 の `--kind review` は拒む。closure round 2 の 2 本の実測）ので、同期で承認が切れる。
 - 絶対保証の例外と抜け道: 常設の委任は「lane の外で見つけた」「R0」「目視: 不要」「規則の文書（`workflow=true`）に触れない」の 4 つを全部満たす PR だけ。R0 の判定は人の判断で、helper は PR body の Risk の行と `--risk`・`--manual` の照合だけを確かめる（Risk の取り違えは機械では止まらない）。取り違えの抜け道は、R0 の意味（意味を変えない docs の直し）が `docs/DEV_WORKFLOW.md` Risk Tiers に固定されていること、helper の packet なしの道が classifier の `unknown=true`・workflow の実行 code（`workflow=true` かつ `rust=true`）・migration・依存に触れる R0/R1 を止めること（D-145 (8)）、`workflow=true` の判定は classifier の出力で機械に確かめられることで狭める。owner への後の報告は委任の記録として残す。
-- 判定: ready。変更は座組表の 4 行と §3.3 の 1 項、AGENTS.md の 1 項目、DEV_WORKFLOW の 2 か所、D-152、agent の定義 3 つ、claude-hooks の検査 1 つ、path の 4 か所に留まる（§3.3 は Gated Amendment 1 で `.codex/**` の lane へ）。
+- 判定: ready。変更は座組表の 4 行と §3.3 の 1 項、AGENTS.md の 1 項目、DEV_WORKFLOW の 2 か所、D-152、agent の定義 3 つ、claude-hooks の検査 1 つ、path の 4 か所に留まる（DEV_SETUP §3.3 は Gated Amendment 1 で `.codex/**` の lane へ）。
 
 ## Contract Ledger
 

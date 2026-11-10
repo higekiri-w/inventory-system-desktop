@@ -87,9 +87,8 @@ Tauri 2 on Linux は日本語 IME のインライン入力が未対応（[tauri#
 - [x] WSL2 側でクローン
 
 ```bash
-cd ~
-git clone git@github.com:{username}/inventory-system.git
-cd inventory-system
+git clone https://github.com/higekiri-w/inventory-system-desktop.git /home/alice/projects/inventory-system-desktop
+cd /home/alice/projects/inventory-system-desktop
 ```
 
 ### 3.2 Git hook セットアップ
@@ -239,7 +238,7 @@ cargo install tauri-cli --version "^2"
 - [x] `rustc --version` → 1.83 以上
 - [x] `node --version` → v24.18.0（`.node-version` / CI 整合）
 - [x] プロジェクトディレクトリで `cargo tauri dev` → GUI ウィンドウが表示される
-- [x] Claude Code の作業ディレクトリは WSL2 上の `/home/{user}/inventory-system-public` に固定（プロジェクト外保存禁止、CLAUDE.md 「やってはいけないこと」参照）
+- [x] Claude Code の作業ディレクトリは WSL2 上の `/home/alice/projects/inventory-system-desktop` に固定（プロジェクト外保存禁止。repo 固有の成果物は作業 checkout に保持する: CLAUDE.md「再開とmemory」）
 
 > fresh checkout / 環境再構築（`npm ci --ignore-scripts`）直後は、frontend gate（typecheck / lint / test）実行前に `npm run generate:routes` を明示実行する。`.npmrc` の `ignore-scripts=true` が `pretypecheck` / `prelint` / `pretest` の `tsr generate` 実行を抑止するため、routeTree 未生成のままだと typecheck / lint が fail する（2026-08-26 実測）。
 
@@ -249,10 +248,16 @@ Tauri 2 on Linux IME 制約のため、Phase 2 (UI-00 ホーム画面以降) の
 
 #### L3 利用者デモのコード同期手順（merge 前の feature ブランチを Windows native clone へ取り込む）
 
-Phase 2 以降の L3 利用者デモ（8-0 gate）は WSL2 とは別の Windows 側 clone `C:\Users\Owner\projects\inventory-system-public` で実施する（IME インライン入力のため）。デモ前に GitHub 経由で feature ブランチを取り込む（PowerShell、merge 前なので feature ブランチを触る・main ではない）:
+Phase 2 以降の L3 利用者デモ（8-0 gate）は WSL2 とは別の Windows 側 clone `C:\Users\Alice\projects\inventory-system-desktop` で実施する（IME インライン入力のため）。clone がまだ無ければ、初回だけ PowerShell で今の repo から作る:
 
 ```powershell
-cd C:\Users\Owner\projects\inventory-system-public
+git clone https://github.com/higekiri-w/inventory-system-desktop.git C:\Users\Alice\projects\inventory-system-desktop
+```
+
+デモ前に GitHub 経由で feature ブランチを取り込む（PowerShell、merge 前なので feature ブランチを触る・main ではない）:
+
+```powershell
+cd C:\Users\Alice\projects\inventory-system-desktop
 git remote get-url origin                # public repo（inventory-system-desktop）を指しているか必ず確認
 git fetch origin
 git restore package-lock.json            # ローカル変更で出る、捨ててOK（reset --hard で origin 版に揃う）
@@ -261,8 +266,6 @@ git reset --hard origin/<feature-branch> # git log -1 で期待 SHA と一致確
 npm ci --ignore-scripts                  # 環境再構築の標準（D-030 常設ガード、install script 実行なし）
 npm run tauri dev                        # ウィンドウ起動 = 取り込み成功
 ```
-
-origin が旧 private repo（`inventory-system`）のままだと `git fetch` は成功するのに feature ブランチが見つからず取り込みが止まる。旧 private のままなら public repo へ張り替える: `git remote set-url origin https://github.com/higekiri-w/inventory-system-desktop.git`。
 
 **毎回ハマる落とし穴（判断は固定）**:
 
