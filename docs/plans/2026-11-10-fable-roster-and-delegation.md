@@ -2,7 +2,7 @@
 
 wave に属さない単独の lane。座組表（`docs/AGENT_OPERATING_MANUAL.md` の `## 座組` と §3.3）、Claude 側の subagent の定義（`.claude/agents/`）とその検査（`scripts/tests/claude-hooks.test.sh`）、`AGENTS.md` の Decision and Approval Boundaries、`docs/DEV_WORKFLOW.md` の Risk ごとの最小の流れの 1 セルと承認依頼の 1 項目、`docs/decision-log.md`、旧環境の path（`docs/DEV_SETUP_CHECKLIST.md`・`docs/msi-distribution-runbook.md`）を変える。製品の runtime（`src/**`・`src-tauri/**`）・helper（`scripts/pr-gate.py`）・CI の job・classifier は変えない。
 
-出所: owner の決定（どれも repo 外の回答台帳、2026-11-10）。TD-620（座組は B。Fable 5.2 は難所のピンチヒッター役。Final の Claude 側と相談役を Fable 5.2 に、難所の lane の Writer を Fable 5.2 に、その lane の Final の Claude 側は fresh Opus 5.5 + Codex。TD-410 の「当面 Fable 5」を改める）、TD-627（Fable の Writer を出す条件と範囲）、TD-628（Ready の承認の範囲）と TD-633（同期だけで head が変わったときは承認を保つ）・TD-635（helper が同期だけの判定を出さない目視の要らない R0/R1 は同期で切れる）、TD-630（docs の直しの手続き）と TD-634（規則の文書の R0 は常設の委任から除く）、TD-616（承認を求めるときに merge で入るものを添える）、TD-603・TD-629・TD-631（Windows の user のフォルダは `C:\Users\Alice`、L3 用の clone は今の名前から新しく作る、場所は `C:\Users\Alice\projects\inventory-system-desktop`）。TD-633・TD-634 は計画の review round 1 の Opus の P2 から、TD-635 は closure round 2 の 2 本の P2 から owner に諮って決めた。TD-632（Fable が Writer の lane で Codex が使えない間の Final）は owner の問いに Coordinator が答えた案で、PR の承認のときに owner が確かめる。
+出所: owner の決定（どれも repo 外の回答台帳、2026-11-10）。TD-620（座組は B。Fable 5.2 は難所のピンチヒッター役。Final の Claude 側と相談役を Fable 5.2 に、難所の lane の Writer を Fable 5.2 に、その lane の Final の Claude 側は fresh Opus 5.5 + Codex。TD-410 の「当面 Fable 5」を改める）、TD-627（Fable の Writer を出す条件と範囲）、TD-628（Ready の承認の範囲）と TD-633（同期だけで head が変わったときは承認を保つ）・TD-635（helper が同期だけの判定を出さない目視の要らない R0/R1 は同期で切れる）、TD-630（docs の直しの手続き）と TD-634（規則の文書の R0 は常設の委任から除く）、TD-616（承認を求めるときに merge で入るものを添える）、TD-603・TD-629・TD-631（Windows の user のフォルダは `C:\Users\Alice`、L3 用の clone は今の名前から新しく作る、場所は `C:\Users\Alice\projects\inventory-system-desktop`）。TD-633・TD-634 は計画の review round 1 の Opus の P2 から、TD-635 は closure round 2 の 2 本の P2 から owner に諮って決めた。TD-632（Fable が Writer の lane で Codex が使えない間の Final）は owner の問いに Coordinator が答えた案で、PR の承認のときに owner が確かめる。TD-637（§3.3 は `.codex/**` の lane へ）は実装の Writer が止まった報告から owner に諮って決め、Gated Amendment 1 にした。
 
 decision-log の番号: 本 lane は D-152 を予約する（main は D-151 まで。open な 8 本の branch が持つ D は D-143・D-148・D-149。`git grep -h -o -E '## D-1[4-9][0-9]' origin/agent/<8 本> -- docs/decision-log.md docs/plans` で確かめた、2026-11-10）。
 
@@ -43,6 +43,7 @@ Goal Invariant:
 - `.codex/**` の旧い path と Windows の Codex Desktop の項目（別の R3 の lane、TD-607〜615）。
 - merge 済みの packet（`docs/plans/` の既存の file）・`docs/archive/**`・`docs/research/**`・`docs/backlog.md` と `docs/decision-log.md` の過去の記録の中の「Fable 5」「Fable 5.1」（その時点の事実で、遡って直さない）。座組表の確認日の行の 2026-10-24（TD-410）の項目も履歴として残す。
 - `docs/TOOLING_SKILL_COMMANDS.md` の冒頭の旧 path（調べた時点の対象を書いた記録）。`docs/DEV_SETUP_CHECKLIST.md` §3.1 の済みの項目（private repo の作成の記録）の文。
+- `docs/DEV_SETUP_CHECKLIST.md` §3.3 の旧い sanitize 後の path と、それを固定する `scripts/tests/codex-safe-wrappers.test.sh` の T13（`.codex/**` の lane で一緒に直す。Gated Amendment 1、TD-637）。この PR は safe wrapper の file に触れない。
 - 手元の `.local/codex-orders/`・`.local/checklists/` の agent の名（merge の後に手元で直す。下の AC11）。
 - 店の PC の古い clone の作り直し（次の訪店の項目、TD-629）。
 - helper・classifier・CI の job の変更、Final Review Minimum の導き方の変更。helper に owner の承認や Writer の model を機械で照合させること、目視の要らない R0/R1 の同期だけの判定を helper に足すこと（TD-635 で同期で切れるとした）。
@@ -80,7 +81,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
   - `docs/DEV_SETUP_CHECKLIST.md` §4.6: clone を `C:\Users\Alice\projects\inventory-system-desktop` にし、取り込みの手順の前に初回の clone の command（`git clone https://github.com/higekiri-w/inventory-system-desktop.git C:\Users\Alice\projects\inventory-system-desktop`）を足す。旧 private repo の origin を張り替える段落は消す（新しく今の名前から clone するので当たらない。D-127）。
   - 同 §4.5 の作業ディレクトリの行（`/home/{user}/inventory-system-public`）を `/home/alice/projects/inventory-system-desktop` にし、同じ行の「CLAUDE.md 『やってはいけないこと』参照」（今の CLAUDE.md にその節は無い）を CLAUDE.md の「再開とmemory」（repo 固有の成果物は作業 checkout に保持する）への参照にする。
   - 同 §3.1 の clone の command block（`git clone git@github.com:{username}/inventory-system.git`・`cd inventory-system`）を、今の repo を `/home/alice/projects/inventory-system-desktop` に clone する command にする（済みの項目の文は非目的のとおり残す）。
-  - 同 §3.3 の sanitize 後の path（`-home-kosei-projects-inventory-system-public`）を `-home-alice-projects-inventory-system-desktop` にする（例の文と検証の command も合わせる）。
+  - 同 §3.3 は変えない（Gated Amendment 1、TD-637）。§3.3 の sanitize 後の path（`-home-kosei-projects-inventory-system-public`）は、`scripts/tests/codex-safe-wrappers.test.sh` の T13 が「DEV_SETUP の 130〜160 行と 236〜244 行にこの文字列がある」ことを確かめる（実装の Writer が `run-workflow-tests.sh` の `FAIL: T13 live DEV_SETUP sections do not use the public namespace` で見つけた）。safe wrapper の test は `.codex/**` の lane（TD-607）の範囲なので、§3.3 はその lane で T13 と一緒に直す。§3.1・§4.5 の行の増減で T12・T13 の固定の行の範囲（130〜160・236〜244）がずれないこと（§3.3 の当たりが 130〜160 の中に残ること）を確かめる。
   - `docs/msi-distribution-runbook.md` 流れ 1 の clone の path を `C:\Users\Alice\projects\inventory-system-desktop` にする。
 - S7 `scripts/tests/claude-hooks.test.sh`: `validate_contract` の検査の列（`expect_rejected` が呼ぶ関数）に、`.claude/agents/writer.md` と `.claude/agents/writer-fable.md` が両方あれば frontmatter を除いた本文が同じことを確かめる検査を足す（失敗定義 5 つ目を merge の後も守る。計画の review round 1 の Opus の P3）。fixture（`make_fixture`）に `writer-fable.md` が無ければ検査は当たらない形でよい。陽性の対照として、2 本を本文が同じで置いた fixture で `validate_contract` が通ることを確かめ、その fixture から `writer-fable.md` の本文の 1 行だけを変えた mutant を `expect_rejected` で拒む。D-147 の comment（`the ponytail plugin stays off … (AGENTS.md and writer.md carry the rule instead)`）を `writer.md` と `writer-fable.md` に合わせる。既存の検査と mutant は消さず弱めない。
 - S8 本 packet。
@@ -98,7 +99,7 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
 - AC5: `AGENTS.md` の Decision and Approval Boundaries が S3 の点（Ready の承認は同じ head の merge まで・helper が同期だけと判定した同期では保ち、lane ごとの判定の出どころを持つ・目視の要らない R0/R1 は同期で切れる・それ以外の head の変化で切れる・`r4` は別 / follow-up の docs の PR は名指した内容に結び Risk の review は省かない / lane の外の目視の要らない R0 で規則の文書に触れないものの常設の委任・main への直接の push はしない / 委任の範囲の正本はこの項目）を持つ。`git diff -U0 origin/main -- AGENTS.md | grep '^@@'` の行の範囲が、`grep -n '^## ' AGENTS.md` で引いた Decision and Approval Boundaries の節の行の範囲の中だけ。
 - AC6: `git diff -U0 origin/main -- docs/DEV_WORKFLOW.md | grep '^@@'` の hunk が、Risk ごとの最小の流れの表の R0・R1 の行と、承認依頼の節の 1 つ目の項目の 2 か所だけ。
 - AC7: `docs/decision-log.md` の末尾に D-152 があり、Compatibility と Revisit に S5 の項目を書く。
-- AC8: `git grep -n -E 'inventory-system-public|C:\\Users\\Owner\\projects|-home-kosei-|\{username\}/inventory-system\.git|cd inventory-system$|やってはいけないこと' -- docs/DEV_SETUP_CHECKLIST.md docs/msi-distribution-runbook.md` が 0 件。§4.6 に初回の clone の command がある。`git grep -n -F 'C:\Users\Alice\projects\inventory-system-desktop' -- docs/DEV_SETUP_CHECKLIST.md docs/msi-distribution-runbook.md` が両方に当たる。
+- AC8: `git grep -n -E 'inventory-system-public|C:\\Users\\Owner\\projects|-home-kosei-|\{username\}/inventory-system\.git|cd inventory-system$|やってはいけないこと|旧 private repo' -- docs/DEV_SETUP_CHECKLIST.md docs/msi-distribution-runbook.md` の当たりが §3.3 の節（`### 3.3` の見出しの行から次の `###` か `##` の見出しの前の行まで。`grep -n '^##' docs/DEV_SETUP_CHECKLIST.md` で範囲を引く）の行だけ（Gated Amendment 1。§3.3 は `.codex/**` の lane で直す）。`bash scripts/tests/codex-safe-wrappers.test.sh` が PASS（T12・T13 を含む）。§4.6 に初回の clone の command がある。`git grep -n -F 'C:\Users\Alice\projects\inventory-system-desktop' -- docs/DEV_SETUP_CHECKLIST.md docs/msi-distribution-runbook.md` が両方に当たる。
 - AC9: `bash scripts/doc-consistency-check.sh` と `bash scripts/doc-consistency-check.sh --target plan` が ERROR なし。`bash scripts/tests/classify-changes.test.sh` が PASS。`bash scripts/tests/claude-hooks.test.sh` が PASS（WSL に ruby 3.3.8 を入れた後、2026-11-10 に main の版で PASS を確かめた。TD-636）と `bash scripts/tests/run-workflow-tests.sh` が PASS。hosted の `Merge gate` が成功。既存の test を消さず弱めない。
 - AC10: S7 の陽性の対照（本文が同じ 2 本の fixture）が `validate_contract` を通り、そこから `writer-fable.md` の本文の 1 行だけを変えた mutant を `expect_rejected` が拒む。実装の報告に、S7 の検査の関数を一時に空にした tree で `claude-hooks.test.sh` が red になること（mutant が受け入れられる）を書く。
 - AC11（merge の後、main の同期の直後で、次の発注の前）: 本体の checkout を main に進め、`claude --version` が 2.1.321 以上であることと、`subagent_type: consult-fable` を 1 回起動して実効の model（`claude-fable-5-2`）と effort（high）を `/tasks` か run の metadata で確かめ、結果を handoff に書く。取れなければ未実測と書き、Goal の 1 つ目を検証済みとしない。手元の `.local/codex-orders/MODEL-SELECTION.md`・`.local/codex-orders/templates/`・`.local/checklists/README.md` の旧い agent の名を直す（tracked でない。直すまで旧い名で発注しない）。
@@ -114,7 +115,7 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
   - TD-632 は owner の確かめの前の案。owner が別の形を選べば、計画の固定の前なら packet を直し、固定の後なら Gated Amendment にする。
   - 同期の後に承認を保つ判定（TD-633・TD-635）と Fable の lane の判定は、helper が owner の承認・Writer の model を照合しない。Coordinator が、S3 の lane ごとの helper の record が通ったこと（同期だけ・code に触れない判定）と、PR の comment の `writer-fable` の記録を見て行う。目視の要らない R0/R1 は helper が同期の判定を出さない（`scripts/pr-gate.py` の `nonci` は record が無く minimum・manual・r4 が 0 のとき確かめずに戻り、R0/R1 の `--kind review` は拒む。closure round 2 の 2 本の実測）ので、同期で承認が切れる。
 - 絶対保証の例外と抜け道: 常設の委任は「lane の外で見つけた」「R0」「目視: 不要」「規則の文書（`workflow=true`）に触れない」の 4 つを全部満たす PR だけ。R0 の判定は人の判断で、helper は PR body の Risk の行と `--risk`・`--manual` の照合だけを確かめる（Risk の取り違えは機械では止まらない）。取り違えの抜け道は、R0 の意味（意味を変えない docs の直し）が `docs/DEV_WORKFLOW.md` Risk Tiers に固定されていること、helper の packet なしの道が classifier の `unknown=true`・workflow の実行 code（`workflow=true` かつ `rust=true`）・migration・依存に触れる R0/R1 を止めること（D-145 (8)）、`workflow=true` の判定は classifier の出力で機械に確かめられることで狭める。owner への後の報告は委任の記録として残す。
-- 判定: ready。変更は座組表の 4 行と §3.3 の 1 項、AGENTS.md の 1 項目、DEV_WORKFLOW の 2 か所、D-152、agent の定義 3 つ、claude-hooks の検査 1 つ、path の 5 か所に留まる。
+- 判定: ready。変更は座組表の 4 行と §3.3 の 1 項、AGENTS.md の 1 項目、DEV_WORKFLOW の 2 か所、D-152、agent の定義 3 つ、claude-hooks の検査 1 つ、path の 4 か所に留まる（§3.3 は Gated Amendment 1 で `.codex/**` の lane へ）。
 
 ## Contract Ledger
 
@@ -128,7 +129,7 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
 | 委任の範囲（Ready・merge・同期・docs・R0） | AGENTS.md Decision and Approval Boundaries、D-145 (14)、D-098、merge-evidence の MG-D13 の A | S3・S4・S5 | 非対象（文書。AC5・AC6 の hunk の範囲） | 非対象 |
 | 承認の求め方（merge で入るもの） | DEV_WORKFLOW 承認依頼、TD-616 | S4 | 非対象（文書。AC6） | 非対象 |
 | merge は helper 経由・直接 UI merge の禁止 | AGENTS.md Working Rules、merge-evidence | 変えない（常設の委任も helper の `ready`・`merge` を通る） | 非対象 | 非対象 |
-| 旧環境の path（Windows の clone・WSL の checkout・memory） | DEV_SETUP_CHECKLIST §3.1・§3.3・§4.5・§4.6、msi-distribution-runbook 流れ 1 | S6 | AC8 の git grep | 次の Windows の L3 で owner が clone を作る |
+| 旧環境の path（Windows の clone・WSL の checkout） | DEV_SETUP_CHECKLIST §3.1・§4.5・§4.6、msi-distribution-runbook 流れ 1（§3.3 は `.codex/**` の lane、TD-637） | S6 | AC8 の git grep、`codex-safe-wrappers.test.sh` の T12・T13 | 次の Windows の L3 で owner が clone を作る |
 
 ## Test Plan
 
@@ -138,7 +139,7 @@ Non-scope: 上の非目的のとおり。`docs/agent-guidance/merge-evidence.md`
 | Writer の本文の写し | Fable の Writer だけ D-147 の梯子が違う、後の PR が片方だけを直す | shell test の検査と mutant（S7）・CLI（diff） | `scripts/tests/claude-hooks.test.sh` の S7 の検査、AC2 | `writer-fable.md` の本文の 1 行を変える、ownership の文を足す |
 | `.claude/agents/` の分類 | 新しい定義が full の gate から外れる | 既存の shell test | `scripts/tests/classify-changes.test.sh` | classifier の `.claude/agents/*` の分類を外す（今の mutant の case） |
 | 旧い名と ID の sweep、名前と file 名 | 旧い agent の名・`claude-fable-5` の生きた指示が残る、`name:` が file 名と違う | CLI（git grep） | AC1・AC3・AC4 | MANUAL か `.claude/agents/` に旧い名か ID を 1 つ残す、rename の後の file に `name: reviewer-fable5` を残す |
-| 旧環境の path | 旧い path・旧い repo の名・死んだ参照が残る | CLI（git grep） | AC8 | §4.6・§3.1・§4.5・§3.3・runbook のどれかに旧い形を残す |
+| 旧環境の path | 旧い path・旧い repo の名・死んだ参照が残る | CLI（git grep） | AC8 | §4.6・§3.1・§4.5・runbook のどれかに旧い形を残す、§3.3 の行を T13 の行の範囲の外へずらす |
 | docs の検査 | link 切れ・packet の形の誤り | 既存の検査 | `bash scripts/doc-consistency-check.sh`・`--target plan` | packet の節を欠く、MANUAL の link を壊す |
 | 実効の model と effort | 定義が効かず session の model・effort で動く | 手での確かめ（merge の後） | AC11 | `model:` の ID を誤る、定義が読まれない、Claude Code の版が下限より古い |
 </content>
