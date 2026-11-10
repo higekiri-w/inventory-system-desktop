@@ -255,7 +255,7 @@ R3 の Contract Probe（`DEV_WORKFLOW.md:63`）は、外部の前提に頼る計
 - 結果: MSI を作る・初回に入れる・更新の前に backup を取る・更新する・前の版へ戻す管理者の手順書 `docs/msi-distribution-runbook.md` を置き、`docs/PROJECT_HANDOFF.md` の案内から辿れるようにした。手順書は既存の契約（MNT-03-D11、22 §16 の回復、71・68 の backup）を引いて並べ、正本に無い店の DB の安全の判断（流れ 5 の場面と表、アプリが起動しないときの保全と前進、更新を始めない条件、起動の後の照合、保管の規則、初回の導入の条件〈TD-311〉、予行演習の退避と復帰）を足し、引く正本との組を Contract Ledger に置いた。実機の MSI の振舞いは M1〜M9 の未確認として手順書に書き、予行演習（backlog）へ送った。code・設定（`src-tauri/tauri.conf.json`）・設計正本は変えていない。
 - 既存の保護: アプリの振舞いと設定は変えていない。
 - 未検証: M1〜M8（開発用の Windows での予行演習）と M9（店の PC）。製品名と upgrade code の固定は後続の設定の lane で、owner への Q1（製品名）はその lane で聞く。
-- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）の後に owner の決定で確認の round を 2 回行い（TD-315・TD-316）、2 回目の確認の残りを owner の決定（TD-318）で直して plan-approved。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#170](https://github.com/kosei-w90607/inventory-system-desktop/pull/170)
+- review・CI・merge（closeout、2026-10-18）: Plan Review は round 3（天井）の後に owner の決定で確認の round を 2 回行い（TD-315・TD-316）、2 回目の確認の残りを owner の決定（TD-318）で直して plan-approved。Final Review は broad 1 回と是正の後の closure（下の Review Response の Closeout の段落）。helper の record は review = pass。hosted の `Merge gate` は Ready の後の run で success で、owner の Ready・merge の承認の後に helper 経由の squash merge。PR: [#170](https://github.com/higekiri-w/inventory-system-desktop/pull/170)
 - 後続: `docs/backlog.md` の「MSI 配布手順 docs 化」の残りの 2 項目（製品名と upgrade code の固定、予行演習）と、v8 より後の migration を足す lane の義務（Final Review の是正で backlog に入った）。
 
 ## Review Response

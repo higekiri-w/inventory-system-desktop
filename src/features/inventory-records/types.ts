@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utf16String } from "@/lib/utf16-string";
 
 export const INVENTORY_RECORD_TYPE_OPTIONS = [
   { value: "all", label: "すべて" },
@@ -40,7 +41,7 @@ export const inventoryRecordsSearchSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional()
     .catch(undefined),
-  q: z.string().max(100).optional().catch(undefined),
+  q: utf16String({ max: 100 }).optional().catch(undefined),
   recordId: z.coerce.number().int().positive().optional().catch(undefined),
   departmentId: z.coerce.number().int().positive().optional().catch(undefined),
   status: z.enum(INVENTORY_RECORD_STATUSES).optional().catch(undefined),

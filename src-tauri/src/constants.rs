@@ -47,8 +47,9 @@ pub const CSV_IMPORT_LINE_LIMIT: usize = 10_000;
 // --- 商品マスタ ---
 /// 商品コードの長さ上限（BIZ-01-D5）。
 ///
-/// UTF-16 code unit で数える。frontend の route search（`selected` / `q`）の
-/// zod `.max(100)` と同じ数え方で、登録できる商品コードは在庫照会でも選べる。
+/// UTF-16 code unit で数える。frontend の route search（`selected` / `q`）も
+/// `src/lib/utf16-string.ts` の `utf16String` で同じ数え方をする（D-151）ので、
+/// 登録できる商品コードは在庫照会でも選べる。
 pub const PRODUCT_CODE_MAX_LEN: usize = 100;
 
 // --- 入力の上限と安全な整数の範囲（10-common-rules.md SPEC-UNIT-D11 の続き (a)） ---

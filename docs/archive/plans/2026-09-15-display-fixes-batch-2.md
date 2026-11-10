@@ -258,7 +258,7 @@ not applicable（wire 非接触）。
 
 ## Implementation Results
 
-[PR #64](https://github.com/kosei-w90607/inventory-system-desktop/pull/64) で実装し squash merge 済み（`f2ef9e52`、2026-09-16）。Draft PR head の遷移: `8d0ae264`（Final Review round 1）→ GA3 是正 `1f5d6193`（発注書 56）→ Sonnet closure（Findings Freeze）→ owner L3 round 1 → base 同期 `beb95bd2`（㉑ squash 後の main 取込み）→ 独立監査 2 本（Sonnet / Opus）→ owner L3 round 2 → Ready → hosted CI pass → merge。owner 介入 2 / 予算 3（L3 ×2）。relay 4 / 上限 4（発注書 51 ×2 run / 53 / 56）。専用 record に review pass（broad: Sonnet `#issuecomment-5683251444` / Opus `#issuecomment-5683311573`）と manual pass（L3 round 1 + 2、`#issuecomment-5683220516`）を記録。
+[PR #64](https://github.com/higekiri-w/inventory-system-desktop/pull/64) で実装し squash merge 済み（`f2ef9e52`、2026-09-16）。Draft PR head の遷移: `8d0ae264`（Final Review round 1）→ GA3 是正 `1f5d6193`（発注書 56）→ Sonnet closure（Findings Freeze）→ owner L3 round 1 → base 同期 `beb95bd2`（㉑ squash 後の main 取込み）→ 独立監査 2 本（Sonnet / Opus）→ owner L3 round 2 → Ready → hosted CI pass → merge。owner 介入 2 / 予算 3（L3 ×2）。relay 4 / 上限 4（発注書 51 ×2 run / 53 / 56）。専用 record に review pass（broad: Sonnet `#issuecomment-5683251444` / Opus `#issuecomment-5683311573`）と manual pass（L3 round 1 + 2、`#issuecomment-5683220516`）を記録。
 
 ## Review Response
 

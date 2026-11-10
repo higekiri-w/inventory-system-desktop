@@ -117,7 +117,7 @@ MG-D1aで実装に必要な条件を定義済み、採用はPlan Gate待ち。PR
 ## Contract Probe
 
 - `.local/merge-evidence/activation-20260914/probe/reproduce-rules.py`を`python3`で実行 → `REPRODUCED: captured GitHub response -> main ruleset drift: rules`、既定項目だけ除いたcontrol → `CONTROL PASS`。main用name/refの置換を含むlocal replayで、production適用の証拠ではない。
-- native拒否・成功・cleanupは[PR #57](https://github.com/kosei-w90607/inventory-system-desktop/pull/57) / [PR #58](https://github.com/kosei-w90607/inventory-system-desktop/pull/58)とlocal `probe/RESULT.md` / `result.json`に保存済み。policy不変更の本修正で同じnative負例を再実行しない。liveの設定応答は本番適用のread-backで再照合する。
+- native拒否・成功・cleanupは[PR #57](https://github.com/higekiri-w/inventory-system-desktop/pull/57) / [PR #58](https://github.com/higekiri-w/inventory-system-desktop/pull/58)とlocal `probe/RESULT.md` / `result.json`に保存済み。policy不変更の本修正で同じnative負例を再実行しない。liveの設定応答は本番適用のread-backで再照合する。
 
 ## Contract Coverage Ledger
 
@@ -209,7 +209,7 @@ SonnetのP3（内外の局所変数`params`の改名）は、挙動に影響し�
 
 ### 公開と承認済みのReady準備
 
-ownerが「締めまで進めていい」と明示指示し、公開・Ready、mergeと機械的closeout、準備済み本番rulesetの有効化/read-backを承認した。介入は公開・Ready、merge/closeout、本番有効化の各判断を分けて予算内に記録し、同じ承認を再要求しない。P3反映案と局所変数名整理の後続保持も、この候補の採用として記録する。承認原文と範囲はlocal-only `.local/merge-rules-compatibility/finish-authorization.json`、公開可能な要約は[PR #59](https://github.com/kosei-w90607/inventory-system-desktop/pull/59)本文。
+ownerが「締めまで進めていい」と明示指示し、公開・Ready、mergeと機械的closeout、準備済み本番rulesetの有効化/read-backを承認した。介入は公開・Ready、merge/closeout、本番有効化の各判断を分けて予算内に記録し、同じ承認を再要求しない。P3反映案と局所変数名整理の後続保持も、この候補の採用として記録する。承認原文と範囲はlocal-only `.local/merge-rules-compatibility/finish-authorization.json`、公開可能な要約は[PR #59](https://github.com/higekiri-w/inventory-system-desktop/pull/59)本文。
 
 PRをDraftで公開し、候補`17ca1ad7d9a44a49117a1d4ba24c36e300498cf5`のCLEAN full・独立監査・P3整理・owner裁定を本文へ記録した。PR head/base/本文を実物照合済み。Reviewed Content HEADは実監査対象を保持し、P3後もhelper本体と送信policyが不変であることを確認した。
 
@@ -218,8 +218,8 @@ PRをDraftで公開し、候補`17ca1ad7d9a44a49117a1d4ba24c36e300498cf5`のCLEA
 
 ### 修正mergeと機械的closeout
 
-[PR #59](https://github.com/kosei-w90607/inventory-system-desktop/pull/59)をsquash mergeした。merge commitは`4e33153ccc10a42a1ea0adf7dd7f19632da96139`、実時刻はGitHubのmerge記録を参照する。Ready対象のCLEAN L1、PR head、successful hosted headShaの一致と、全必要job/GitHub ActionsのMerge gate成功はPR本文へ記録した。local mainはmerge結果と同じtreeへ同期済み。
+[PR #59](https://github.com/higekiri-w/inventory-system-desktop/pull/59)をsquash mergeした。merge commitは`4e33153ccc10a42a1ea0adf7dd7f19632da96139`、実時刻はGitHubのmerge記録を参照する。Ready対象のCLEAN L1、PR head、successful hosted headShaの一致と、全必要job/GitHub ActionsのMerge gate成功はPR本文へ記録した。local mainはmerge結果と同じtreeへ同期済み。
 
 このcloseoutはpacket/Matrixの移送・相対link・Plansだけを同期するR0のdocs-only PR。製品、CI、helper、送信policyを変更しない。docs/実PK5とMerge gateの成功を同じHEADで確認してからmergeする。自身の追加closeoutは作らない。
 
-ownerは締めまでの操作を承認済み。本番main rulesetは修正とこのcloseoutの完了後に適用し、有効化/read-backの事実は[PR #59](https://github.com/kosei-w90607/inventory-system-desktop/pull/59)の専用記録・ignored evidence・helper statusを正本にする。現在のarchiveは修正計画の完了を表し、未取得の本番適用結果を先取りしない。残る局所変数名整理と旧bootstrapのP3は着手条件付き後続保持を維持する。workflow effectivenessのdogfoodは新mode有効化後の最初のR2+ PR。
+ownerは締めまでの操作を承認済み。本番main rulesetは修正とこのcloseoutの完了後に適用し、有効化/read-backの事実は[PR #59](https://github.com/higekiri-w/inventory-system-desktop/pull/59)の専用記録・ignored evidence・helper statusを正本にする。現在のarchiveは修正計画の完了を表し、未取得の本番適用結果を先取りしない。残る局所変数名整理と旧bootstrapのP3は着手条件付き後続保持を維持する。workflow effectivenessのdogfoodは新mode有効化後の最初のR2+ PR。

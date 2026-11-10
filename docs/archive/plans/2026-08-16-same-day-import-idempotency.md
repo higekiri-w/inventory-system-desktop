@@ -106,7 +106,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。
 - DB: `docs/db-design/pos-tables.md` §11 / §12b〜12e / B-1 / B-2、`src-tauri/src/db/schema_v1.rs`、`schema_v4.rs`（schema 実査のみ）
 - Screen / UI: `docs/function-design/55-ui-csv-import.md`、`56-ui-daily-sales.md`、`57-ui-monthly-sales.md`、`docs/design-system/01-decision-rules.md`、`02-component-catalog.md`
 - Decision log / ADR: `docs/decision-log.md` D-023 / D-025 / D-052 / D-070、candidate D-071
-- Primary field evidence: GitHub issue #76 の 2026-08-15 実機バッチ comment `https://github.com/kosei-w90607/inventory-system-public/issues/76#issuecomment-5301473247`
+- Primary field evidence: GitHub issue #76 の 2026-08-15 実機バッチ comment `https://github.com/higekiri-w/inventory-system-public/issues/76#issuecomment-5301473247`
 
 ## Required Design Artifacts
 

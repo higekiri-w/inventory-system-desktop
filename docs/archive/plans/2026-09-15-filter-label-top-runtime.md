@@ -320,7 +320,7 @@ Contract ID: SPEC-FILTER-LABEL-RT-1
 
 ## Implementation Results
 
-[PR #63](https://github.com/kosei-w90607/inventory-system-desktop/pull/63) で実装し squash merge 済み（`bb1862a5`、2026-09-16）。Draft PR head の遷移: `57d4d4b3`（初回 broad）→ GA1 是正 `2e6e1d7c` → owner L3 round 1 → GA3 是正 `eebab51b` → L3 round 2 → fresh broad → GA4 是正 `24f100b2` → L3 round 3 → Ready → hosted CI pass → merge。owner 介入 3 / 予算 4（L3 ×3。Ready / merge は 2026-09-16 の包括指示）。relay 4 / 上限 4（発注書 49 / 52 / 54 / 55）。専用 record（`inventory-workflow-v1`、PR #63 comment 5677564499）に review pass（broad: Sonnet `#issuecomment-5681732910` / Opus `#issuecomment-5681723093`）と manual pass（L3 round 1〜3、`#issuecomment-5682176786`）を記録。
+[PR #63](https://github.com/higekiri-w/inventory-system-desktop/pull/63) で実装し squash merge 済み（`bb1862a5`、2026-09-16）。Draft PR head の遷移: `57d4d4b3`（初回 broad）→ GA1 是正 `2e6e1d7c` → owner L3 round 1 → GA3 是正 `eebab51b` → L3 round 2 → fresh broad → GA4 是正 `24f100b2` → L3 round 3 → Ready → hosted CI pass → merge。owner 介入 3 / 予算 4（L3 ×3。Ready / merge は 2026-09-16 の包括指示）。relay 4 / 上限 4（発注書 49 / 52 / 54 / 55）。専用 record（`inventory-workflow-v1`、PR #63 comment 5677564499）に review pass（broad: Sonnet `#issuecomment-5681732910` / Opus `#issuecomment-5681723093`）と manual pass（L3 round 1〜3、`#issuecomment-5682176786`）を記録。
 
 ## Review Response
 
@@ -364,7 +364,7 @@ Contract ID: SPEC-FILTER-LABEL-RT-1
 
 - pass A Sonnet: P1 0 / P2 0 / P3 1（PageHeader「3 variant」pre-existing）。AC1〜AC12 自走一致、mutant 10/10 kill。Freeze 可
 - pass B Opus: P1 0 / P2 1 / P3 8。AC 自走一致、mutant 8/8 kill、merge-tree（㉒ `56f1662c`）の衝突は `docs/Plans.md` のみ。Freeze 可
-- pass C Codex（review 50、[PR review](https://github.com/kosei-w90607/inventory-system-desktop/pull/63#pullrequestreview-5207788126)）: P1 / P2 / P3 0。AC 全 PASS、mutant 10/10、commands 78。Freeze 可
+- pass C Codex（review 50、[PR review](https://github.com/higekiri-w/inventory-system-desktop/pull/63#pullrequestreview-5207788126)）: P1 / P2 / P3 0。AC 全 PASS、mutant 10/10、commands 78。Freeze 可
 - 裁定（Coordinator、Gated Amendment 1 = 本 commit + 登録 commit、是正は Codex 発注書 52）:
   - Opus P2-1（`DailySalesPage.tsx:82` toolbar が `items-center`、D-RT8 census 漏れ）= accept → S2a / D-RT8 / AC6 / AC-L3-1
   - Opus P3-1（catalog 裸「本 PR」2 箇所）/ P3-2（`:54` の旧構造の現在形記述 + `:31-43`）= accept → S12 / AC9

@@ -348,7 +348,7 @@ R2 のため簡略。Contract ID: SPEC-FILTERLABEL-D-1 — catalog ⑨ / ① / �
 
 ## Implementation Results
 
-Codex Writer（medium、2026-09-10〜11、発注書 37 → 是正 38 / 41 / 43）: catalog ⑨ の使用トークン段落を「すべてのフィルタ入力」の上置き Label 規範へ拡張（Checkbox は label 内包 + 縦中央、tab / mode 切替の SegmentedControl は Label なし、toolbar 内は `<span id>` + `aria-labelledby`）、`DepartmentFilter` の internal 構造 block を追加、① にセクション見出し variation（見出し行 + 説明行の 2 段、見出し `min-w-0 flex-1`）を新設し `PageHeader` (c) も同型へ改稿（runtime 反映は後続 lane）、⑤ アクセシビリティに 1 文、mockup-g（state-1〜4）と reference README を追加。owner Human Gate 3 件は mockup-g で回答・確定文化。PR: https://github.com/kosei-w90607/inventory-system-desktop/pull/51
+Codex Writer（medium、2026-09-10〜11、発注書 37 → 是正 38 / 41 / 43）: catalog ⑨ の使用トークン段落を「すべてのフィルタ入力」の上置き Label 規範へ拡張（Checkbox は label 内包 + 縦中央、tab / mode 切替の SegmentedControl は Label なし、toolbar 内は `<span id>` + `aria-labelledby`）、`DepartmentFilter` の internal 構造 block を追加、① にセクション見出し variation（見出し行 + 説明行の 2 段、見出し `min-w-0 flex-1`）を新設し `PageHeader` (c) も同型へ改稿（runtime 反映は後続 lane）、⑤ アクセシビリティに 1 文、mockup-g（state-1〜4）と reference README を追加。owner Human Gate 3 件は mockup-g で回答・確定文化。PR: https://github.com/higekiri-w/inventory-system-desktop/pull/51
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

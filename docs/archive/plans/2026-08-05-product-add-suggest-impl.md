@@ -276,7 +276,7 @@ Contract ID: SPEC-SUGGEST（正本 = catalog ⑮、本 packet は転記しない
 - 共通 `ProductAddSuggest` / `useProductAddSuggest` を新設し、取引 4 画面 + 棚卸しへ既存 handler / lock source を保ったまま配線した。
 - S1〜S20 / W1〜W12 と mutation X1〜X20 を実走し、初回 survivor で判明した検索語・composing change・silent error の test oracle を補強した。補助 review-only で検出した保存 event 同期呼出しの tautology も、公開 controller API の呼出し・command 前順序を弁別する oracle へ是正した。
 - gated Amendment 1 は `StocktakePage.test.tsx` T3 の部門 combobox query 名前付き化 1 行だけを適用し、assert 内容と他の既存画面 test を維持した。
-- Draft PR: [#65](https://github.com/kosei-w90607/inventory-system-public/pull/65)
+- Draft PR: [#65](https://github.com/higekiri-w/inventory-system-public/pull/65)
 
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 

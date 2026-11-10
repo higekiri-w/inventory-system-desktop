@@ -214,7 +214,7 @@ Contract ID: SPEC-WF-WAVE-2026-07-27
 
 ## Implementation Results
 
-D-055 と gated Amendment 1 を docs、PK4 / PK5 checker、常設 fixture に反映し、anchor / guard、mutation、L1 full、独立 Double Audit を完了した。Draft PR: https://github.com/kosei-w90607/inventory-system-public/pull/27
+D-055 と gated Amendment 1 を docs、PK4 / PK5 checker、常設 fixture に反映し、anchor / guard、mutation、L1 full、独立 Double Audit を完了した。Draft PR: https://github.com/higekiri-w/inventory-system-public/pull/27
 
 Exact-HEAD SHA と test count は D-035/D-038 に従い PR body を正本とする。
 

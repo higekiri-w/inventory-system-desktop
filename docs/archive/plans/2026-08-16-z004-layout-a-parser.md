@@ -271,7 +271,7 @@ Contract ID: SPEC-Z4A-D1〜D7
 ## Implementation Results
 
 - 従来 shape の中間強度検査と layout A の位置アンカー付きヘッダ走査を分離し、ラベル優先の精算日抽出、原因別文言、走査上限、後方互換の出力契約を実装した。synthetic layout A tests と mutation 実注入で SPEC-Z4A-D1〜D6 を拘束し、既存従来 shape tests / ParseResult 型 / BIZ・CMD・UI は非改変を維持した。
-- Draft PR: https://github.com/kosei-w90607/inventory-system-public/pull/81
+- Draft PR: https://github.com/higekiri-w/inventory-system-public/pull/81
 
 ## Review Response
 
