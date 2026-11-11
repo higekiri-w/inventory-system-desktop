@@ -35,7 +35,7 @@
 
 | 領域 | データソース | 表示意味 |
 |---|---|---|
-| 公式部門集計 | `MonthlySalesReport.official_department_totals`（daily_report_department_lines） | 日報取込み済み日のZ005部門別売上合計 |
+| 公式部門集計 | `MonthlySalesReport.official_department_totals`（daily_report_department_lines） | 「取り込んだ日」（`official_report_dates`、UI-09b-D11）に並ぶ日の Z005 部門別売上の合計 |
 | 商品ランキング | `MonthlySalesReport.items` when mode=by_product（sale_records） | Z004商品別CSVまたは手動販売出庫から得た商品別ランキング |
 | 商品別由来の部門集計 | `MonthlySalesReport.items` when mode=by_department（sale_records） | 商品別明細が存在する範囲の部門集計 |
 
@@ -553,3 +553,4 @@ UI-09b-D11 で足した test（ケースの正本は [packet](../plans/2026-11-0
 | 2026-10-08 | 単位の拡張 design lane | §57.6 compute-summary に単位の拡張の後（proposed・未実装、D-113 / SPEC-UNIT-D3、owner の決定 TD-203）を追加: `count_points`・`length_cm` の 2 本の集計（TD-206・TD-207）、商品別の m。 |
 | 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | UI-09b-D11（未実装）を足した: 公式部門集計の節に取り込んだ日と取り込んでいない日を文字で出す（owner の決定 TD-578 の O3。表示の形は packet の O1〜O5 で、owner の答え〈2026-11-03、repo 外の回答台帳 TD-588〉: O1〜O5 とも a）。UI-09b-D10 の「将来「取込み済み日数」を表示する場合は」を `official_report_dates` を使う今の契約に置き換えた。§57.2 の `MonthlySalesReport` の snippet に欠けていた `official_department_totals` と新しい `official_report_dates` を足した。計画の review round 1 の是正で、UI-09b-D11 に日次から月次への戻り（日次の `TabsHeader` の `月次` の link が表示中の日の月を search `month` で渡す）を足し、§57.6 の今日より後の文の条件を `isCurrentMonth`（今月だけ）にした。closure round 2 の是正で、owner の決定 TD-593（TD-588 の O2 を改める）により今月の「取り込んでいない日」を前日までにし（今日も数えない。§57.6 の境を `date < today` に）、今月の文を `今日と、今日より後の日は数えていません。` にした。冒頭の表の「monthly-sales 内閉鎖」に、今日の日付だけは daily-sales の `useTodayDate` を読むことを足した。 |
 | 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | UI-09b-D11・§57.2 の `official_report_dates` と足した file の表・§57.6 `compute-report-days`・§57.9 の test を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |
+| 2026-11-11 | 月次の画面に取り込んだ日を出す（Final Review の是正） | REQ-401 再設計後の表示領域の表の「公式部門集計」の表示意味を UI-09b-D11 の説明文の語にした（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |

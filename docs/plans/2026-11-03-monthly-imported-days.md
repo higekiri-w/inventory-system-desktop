@@ -214,10 +214,11 @@ Non-scope: `src/lib/invalidation-contract.ts`・`src/test/invalidation-oracle.ts
 | D-052・State（invalidate → refetch） | 取込み・取消の後も日の一覧が古い | component（page） | P3: 初回の resolve で `["2026-05-02"]` → `queryClient.invalidateQueries({ queryKey: queryKeys.monthlySalesRoot() })` → 2 回目の resolve で `["2026-05-02","2026-05-03"]` → `取り込んだ日（2日分）` | 一覧を初回の値で memo して固定する、別の query key に置く |
 | §57.8・State（failure → retry） | 取得の失敗で古い一覧や空の一覧が出る、再試行で戻らない | component（page） | P4: 1 回目 error → Alert だけで一覧が無い → `再試行` → 成功で一覧 | error の枝に一覧を描く |
 | State（revisit・月の切替え） | 月を変えても前の月の日が残る | component（page） | P5: 2026-05 の一覧 → `onSearchChange` で 2026-04 の search で rerender → 2026-04 の resolve の日だけ | 一覧の month を search でなく固定値から作る |
+| UI-09b-D11（O2、page の今日の結線、TD-593） | page が `useTodayDate` の今日でなく別の値を `computeReportDays` に渡し、今月の今日と今日より後の日が並ぶ | component（page、Date だけの偽の時計） | P6 `MonthlySalesPage.test.tsx`: `vi.useFakeTimers({ toFake: ["Date"] })`・`vi.setSystemTime(new Date(2026, 4, 3, 12))`、月 2026-05・`official_department_totals: []`・`official_report_dates: ["2026-05-01"]` → `取り込んでいない日（1日分）`、一覧の項目は `2日（土）` だけ、`今日と、今日より後の日は数えていません。` が在る | page の today を固定の値にする、`computeReportDays` に今日でない日（年末）を渡す |
 
 状態の遷移: initial（Skeleton、一覧なし）→ success（一覧）→ invalidate → refetch（新しい一覧、P3）／failure（Alert だけ）→ retry → success（P4）／revisit（月の切替え、P5）。restart（翌日の起動）は同じ DB と `useTodayDate` の取り直しで、U2 の today を変えた計算と同じ（新しい test は足さない）。
 
-mutation の注入（Contract Audit で実装に注入して red を確かめる）: IO の `DISTINCT` を外す（I1。`ORDER BY` を外す mutation は red にならないので使わない）、`TabsHeader` の `月次` の link から search を外す（T1）、日次で `month` を今日から作る（D1・D2）、`isCurrentMonth` を「日を除いたか」に替える（U3・C3）、今日の境の `<` を `<=` にする（U2・C3）、`status = 'completed'` を外す（I1・B1）、BIZ で日を `sale_records` から読む（B2）、UI の今日と今日より後の除外を消す（U2）、曜日の計算を UTC にする（U5、TZ が JST の環境では red にならないことがあるので、表のずらしの mutation を併せて使う）、P3 の一覧を初回の値で固定する。
+mutation の注入（Contract Audit で実装に注入して red を確かめる）: IO の `DISTINCT` を外す（I1。`ORDER BY` を外す mutation は red にならないので使わない）、`TabsHeader` の `月次` の link から search を外す（T1）、日次で `month` を今日から作る（D1・D2）、`isCurrentMonth` を「日を除いたか」に替える（U3・C3）、今日の境の `<` を `<=` にする（U2・C3）、`status = 'completed'` を外す（I1・B1）、BIZ で日を `sale_records` から読む（B2）、UI の今日と今日より後の除外を消す（U2）、曜日の計算を UTC にする（U5、TZ が JST の環境では red にならないことがあるので、表のずらしの mutation を併せて使う）、P3 の一覧を初回の値で固定する、page の today を固定の値（`"2000-01-01"`）にする・`computeReportDays` に年末を渡す（P6）。
 
 ## L3
 
@@ -227,5 +228,6 @@ mutation の注入（Contract Audit で実装に注入して red を確かめる
 - L3-2 / 月次売上 / A・B1・B2 を取り込んだ後に 2026-03 を開く / `取り込んだ日（2日分）` に `23日（月）、24日（火）`、`取り込んでいない日（29日分）` に `1日（日）` から `22日（日）` と `25日（水）` から `31日（火）` が日本語の文字で並び、`店を開けなかった日も含みます。` の文がある。色だけで分けていない。行が画面の幅で折り返しても日が切れず読める（Windows の既定の字の大きさ）。「営業日」の語が無い。
 - L3-3 / 同じ画面 / `23日（月）` を押す / 日次売上の 2026-03-23 が開き、`部門別集計（Z005）` が出る。その画面の `月次` の tab を押すと、月を選び直さずに 2026-03 の月次売上が開き、同じ一覧が出る。日次で `翌日` を押して 2026-03-24 にしてから `月次` を押しても 2026-03 が開く。
 - L3-4 / 同じ画面 / `売上データ取込みを開く` を押す / `売上データ取込み` の画面の `日報取込み` の tab が開く。
+- L3-5 / 月次売上 / L3-1 の後に、2026-02 の 1 日から 28 日までの日報を全部取り込んだ後に 2026-02 を開く（28 日分の合成の束は tracked の fixture に無いので、Coordinator が L3 の依頼で合成の束か取り込んだ後の開発用の DB を渡す） / `取り込んだ日（28日分）` の後に `取り込んでいない日（0日分）` と `なし` が出て、その下の `店を開けなかった日も含みます。` の文と並べて読んでも意味が取りやすい（`なし` の直後の文が浮いて見えない）。`売上データ取込みを開く` が無い。Windows の既定の字の大きさで、`なし` と文が本文の一覧より小さい補足の字に見える（発注 781 の裁定 2、PR #236 の comment issuecomment-6608079577）。
 
-今月の今日と今日より後の日の扱い（O2、TD-593）は今月の日付の fixture が要るので L3 に置かず、U2・U2b・U3・C3 で見る。L3-1〜L3-4 は過去の月（2026-02・2026-03）なので、TD-593 で期待は変わらない。取消・復元の後の追従は自動 test（B1・P3）と、関門 12 の受入の手順書の手順 5・6 で見る。
+今月の今日と今日より後の日の扱い（O2、TD-593）は今月の日付の fixture が要るので L3 に置かず、U2・U2b・U3・C3 と page の結線の P6 で見る。L3-1〜L3-5 は過去の月（2026-02・2026-03）なので、TD-593 で期待は変わらない。取消・復元の後の追従は自動 test（B1・P3）と、関門 12 の受入の手順書の手順 5・6 で見る。

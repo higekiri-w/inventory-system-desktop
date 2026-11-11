@@ -365,7 +365,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **集計契約**:
 - 商品別日次は同日の `is_voided=0` 全行を `product_code + source` で加算し、manual/autoを混ぜない
 - 公式日報日次は同日の全completed parentを加算する。親・明細のoptional値はいずれかNULLなら集約結果もNULLとし、単一parent IDではなく `source_import_count` を返す（Z001 の行は全 active import を読むが加算せず、取込みごとに ID つきで返す、D-096）
-- 月次は同日複数parentを加算し、将来のcoverage日数は `COUNT(DISTINCT report_date)` とする。公式日報seriesと商品別seriesは互いに加算しない
+- 月次は同日複数parentを加算する。月の取り込んだ日は `official_report_dates`（[34 §19.4](../function-design/34-biz-sales-service.md) 手順 6。completed の取込みのある日の distinct report date）で、import の件数で数えない。公式日報seriesと商品別seriesは互いに加算しない
 
 ---
 
@@ -374,6 +374,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 | 日付 | PR | 内容 |
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D1〜D8: Z004/日報の追加取込み、TX内snapshot再検証、per-import rollback、additive readを正本化。 |
+| 2026-11-11 | PR #236 | 集計契約の「将来のcoverage日数」を、月の取り込んだ日を返す今の契約（`official_report_dates`、34 §19.4 手順 6）を引く文に置き換えた。 |
 
 ---
 
