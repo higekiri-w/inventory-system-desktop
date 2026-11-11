@@ -8,7 +8,7 @@ wave に属さない単独の lane。導入の前の関門の 12（[Plans](../Pl
 
 - Risk: R4
 - Plan Commit: 147a8d629527dd8f13422c27471478340da695a5
-- Amendments: none
+- Amendments: 714e75275cee00c15010c7d2a6b7cbaad4a8460a
 
 ## Risk
 
