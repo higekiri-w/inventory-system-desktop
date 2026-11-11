@@ -6,13 +6,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CheckCircle2, Loader2, Undo2 } from "lucide-react";
+import { CheckCircle2, FileText, Undo2 } from "lucide-react";
+import { EmptyState } from "@/components/patterns/EmptyState";
 import { PageHeader } from "@/components/patterns/PageHeader";
 import { PageShell } from "@/components/patterns/PageShell";
-import { Pagination } from "@/components/patterns/Pagination";
+import { Pagination, PaginationSummary } from "@/components/patterns/Pagination";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -72,10 +74,12 @@ export function DailyReportImportRecordsPage({
       />
 
       {listQuery.isPending ? (
-        <p role="status" className="flex items-center gap-2 text-sm">
-          <Loader2 className="size-4 animate-spin text-ongoing" aria-hidden="true" />
-          日報の取込みの記録を読み込んでいます…
-        </p>
+        // 隣の一覧の画面（入出庫履歴・操作ログ）と同じ Skeleton（catalog ⑥）
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
       ) : listQuery.isError ? (
         <Alert variant="destructive">
           <AlertTitle>日報の取込みの記録を読み込めませんでした</AlertTitle>
@@ -93,22 +97,31 @@ export function DailyReportImportRecordsPage({
           </AlertDescription>
         </Alert>
       ) : listQuery.data.total_count === 0 ? (
-        <p className="text-sm">日報の取込みの記録はまだありません。</p>
+        <EmptyState icon={FileText} title="日報の取込みの記録はまだありません。" />
       ) : listQuery.data.items.length === 0 ? (
         // search の page が最後のページを越えた。記録が無いと読ませない
-        <div className="space-y-3">
-          <p className="text-sm">このページには記録がありません。</p>
-          <Button
-            variant="outline"
-            onClick={() => {
-              onPageChange(1);
-            }}
-          >
-            1 ページ目を開く
-          </Button>
-        </div>
+        <EmptyState
+          icon={FileText}
+          title="このページには記録がありません。"
+          action={
+            <Button
+              variant="outline"
+              onClick={() => {
+                onPageChange(1);
+              }}
+            >
+              1 ページ目を開く
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-3">
+          {/* DSR-22・catalog ⑩: 1 ページ以内でも上に件数と現在位置を出す */}
+          <PaginationSummary
+            page={listQuery.data.page}
+            perPage={listQuery.data.per_page}
+            totalCount={listQuery.data.total_count}
+          />
           <Table>
             <TableHeader>
               <TableRow>
@@ -206,6 +219,8 @@ function DailyReportImportRecordRow({
             isRollingBack={isRollingBack}
             disabled={disabled}
             size="sm"
+            // 同じ名前の button が行の数だけ並ぶので、行を名指す（対象日は対象日の列と同じ書き方）
+            targetLabel={`取込みID ${String(row.id)}（${row.report_date}）`}
           />
         )}
       </TableCell>

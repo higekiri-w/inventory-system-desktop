@@ -35,6 +35,11 @@ export interface DailyReportRollbackConfirmDialogProps {
   /** ほかの取消の応答を待つ間など、入口を押せないとき */
   disabled?: boolean;
   size?: "default" | "sm";
+  /**
+   * 入口の button の accessible name で取り消す取込みを名指す（例「取込みID 11（2026-03-21）」→
+   * 「取込みID 11（2026-03-21）を取り消す」）。同じ button が並ぶ記録の一覧の行だけが渡す
+   */
+  targetLabel?: string;
 }
 
 export function DailyReportRollbackConfirmDialog({
@@ -47,13 +52,21 @@ export function DailyReportRollbackConfirmDialog({
   isRollingBack,
   disabled = false,
   size = "default",
+  targetLabel,
 }: DailyReportRollbackConfirmDialogProps) {
+  const visibleLabel = isRollingBack ? "取り消し中…" : "取り消す";
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="outline" size={size} disabled={isRollingBack || disabled}>
+        <Button
+          variant="outline"
+          size={size}
+          disabled={isRollingBack || disabled}
+          // 見える文を名前に含める（label in name）
+          aria-label={targetLabel === undefined ? undefined : `${targetLabel}を${visibleLabel}`}
+        >
           {isRollingBack && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
-          {isRollingBack ? "取り消し中…" : "取り消す"}
+          {visibleLabel}
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent>

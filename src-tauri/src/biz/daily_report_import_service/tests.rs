@@ -2183,24 +2183,39 @@ fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
         false,
     );
     rollback_daily_report_import(&mut conn, sd).unwrap();
+    // 同じ対象日の 2 行に ID の順と逆の取込み日時を置き、取込み日時の段を ID の段と見分ける
+    for (id, imported_at) in [
+        (sd, "2026-03-21T18:00:00"),
+        (manual_same_day, "2026-03-21T09:00:00"),
+    ] {
+        conn.execute(
+            "UPDATE daily_report_imports SET imported_at = ?1 WHERE id = ?2",
+            rusqlite::params![imported_at, id],
+        )
+        .unwrap();
+    }
+    assert!(sd < manual_same_day);
 
     let rows = list_all(&conn);
     let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-    assert_eq!(ids, [manual_same_day, sd, other_day]);
+    // 対象日の降順 → 同じ日は取込み日時の降順（ID の降順なら manual_same_day が先）
+    assert_eq!(ids, [sd, manual_same_day, other_day]);
+    assert_eq!(rows[0].imported_at, "2026-03-21T18:00:00");
+    assert_eq!(rows[1].imported_at, "2026-03-21T09:00:00");
     assert_eq!(
-        rows[1].source_filenames,
+        rows[0].source_filenames,
         ["Z001_21 .CSV", "Z002_21 .CSV", "Z005_21 .CSV"]
     );
     assert_eq!(
-        rows[0].source_filenames,
+        rows[1].source_filenames,
         ["Z001_260321.CSV", "Z002_260321.CSV", "Z005_260321.CSV"]
     );
-    assert_eq!(rows[1].status, "rolled_back");
-    assert!(rows[1].rolled_back_at.is_some());
-    assert_eq!(rows[0].status, "completed");
-    assert_eq!(rows[0].rolled_back_at, None);
-    assert_eq!(rows[0].report_date, "2026-03-21");
-    assert_eq!(rows[0].gross_amount, Some(13000));
+    assert_eq!(rows[0].status, "rolled_back");
+    assert!(rows[0].rolled_back_at.is_some());
+    assert_eq!(rows[1].status, "completed");
+    assert_eq!(rows[1].rolled_back_at, None);
+    assert_eq!(rows[1].report_date, "2026-03-21");
+    assert_eq!(rows[1].gross_amount, Some(13000));
     assert_eq!(rows[2].report_date, "2026-03-20");
 }
 

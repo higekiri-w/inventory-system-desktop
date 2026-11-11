@@ -2,7 +2,7 @@
 // 実の route tree で `/csv-import/daily-reports` を開く（route の validateSearch を通る）。入力はすべて合成
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -134,6 +134,11 @@ function rowOf(id: number) {
   return row;
 }
 
+/** 一覧の行の「取り消す」の名前（行を名指す。対象日は対象日の列と同じ書き方） */
+function rollbackName(id: number, reportDate = "2026-03-21") {
+  return `取込みID ${String(id)}（${reportDate}）を取り消す`;
+}
+
 async function openTable() {
   await screen.findByRole("table");
 }
@@ -158,6 +163,8 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
       "href",
       "/csv-import",
     );
+    // DSR-22・catalog ⑩: 1 ページ以内でも一覧の上に件数と現在位置を出す
+    expect(screen.getByText("全 3 件のうち 1〜3 件を表示（1 / 1 ページ）")).toBeInTheDocument();
     const headers = within(screen.getByRole("table"))
       .getAllByRole("columnheader")
       .map((cell) => cell.textContent);
@@ -193,11 +200,13 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     for (const id of [12, 11]) {
       const label = within(rowOf(id)).getByText("取込み済み");
       expect(label.querySelector("svg")).not.toBeNull();
-      expect(within(rowOf(id)).getByRole("button", { name: "取り消す" })).toBeEnabled();
+      expect(within(rowOf(id)).getByRole("button", { name: rollbackName(id) })).toBeEnabled();
     }
+    // 名前だけで行を特定できる（同じ名前の button が並ばない）
+    expect(rowOf(11)).toContainElement(screen.getByRole("button", { name: rollbackName(11) }));
     const rolledBack = within(rowOf(10)).getByText("取消済み");
     expect(rolledBack.querySelector("svg")).not.toBeNull();
-    expect(within(rowOf(10)).queryByRole("button", { name: "取り消す" })).not.toBeInTheDocument();
+    expect(within(rowOf(10)).queryByRole("button", { name: /取り消/ })).not.toBeInTheDocument();
   });
 
   it("U2: 行の取り消すは確認を経て、その行の ID だけで 1 回呼ぶ（キャンセルでは呼ばない）", async () => {
@@ -207,7 +216,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     renderRoute("/csv-import/daily-reports");
     await openTable();
 
-    await user.click(within(rowOf(11)).getByRole("button", { name: "取り消す" }));
+    await user.click(within(rowOf(11)).getByRole("button", { name: rollbackName(11) }));
     let dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("日報取込みを取り消しますか？")).toBeInTheDocument();
     expect(within(dialog).getByText(DESCRIPTION)).toBeInTheDocument();
@@ -224,7 +233,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     await user.click(within(dialog).getByRole("button", { name: "キャンセル" }));
     expect(mockRollback).not.toHaveBeenCalled();
 
-    await user.click(within(rowOf(11)).getByRole("button", { name: "取り消す" }));
+    await user.click(within(rowOf(11)).getByRole("button", { name: rollbackName(11) }));
     dialog = await screen.findByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
     await waitFor(() => {
@@ -247,7 +256,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     const { invalidateSpy } = renderRoute("/csv-import/daily-reports");
     await openTable();
 
-    await user.click(within(rowOf(11)).getByRole("button", { name: "取り消す" }));
+    await user.click(within(rowOf(11)).getByRole("button", { name: rollbackName(11) }));
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取り消す" }),
     );
@@ -255,7 +264,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     await waitFor(() => {
       expect(within(rowOf(11)).getByText("取消済み")).toBeInTheDocument();
     });
-    expect(within(rowOf(11)).queryByRole("button", { name: "取り消す" })).not.toBeInTheDocument();
+    expect(within(rowOf(11)).queryByRole("button", { name: /取り消/ })).not.toBeInTheDocument();
     expect(within(rowOf(12)).getByText("取込み済み")).toBeInTheDocument();
     expect(toast.success).toHaveBeenCalledWith("日報取込みを取り消しました", { duration: 8000 });
     expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.dailyReportImport());
@@ -269,7 +278,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     await openTable();
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      await user.click(within(rowOf(11)).getByRole("button", { name: "取り消す" }));
+      await user.click(within(rowOf(11)).getByRole("button", { name: rollbackName(11) }));
       await user.click(
         within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取り消す" }),
       );
@@ -278,7 +287,7 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
       });
       expect(within(rowOf(11)).getByText("取込み済み")).toBeInTheDocument();
       await waitFor(() => {
-        expect(within(rowOf(11)).getByRole("button", { name: "取り消す" })).toBeEnabled();
+        expect(within(rowOf(11)).getByRole("button", { name: rollbackName(11) })).toBeEnabled();
       });
     }
     expect(toast.error).toHaveBeenCalledWith("取り消しに失敗しました。もう一度お試しください");
@@ -291,19 +300,41 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     mockList.mockResolvedValue(page([ROW_101, ROW_102]));
     const pending = deferred<RollbackResponse>();
     mockRollback.mockReturnValueOnce(pending.promise);
-    renderRoute("/csv-import/daily-reports");
+    const { router } = renderRoute("/csv-import/daily-reports");
     await openTable();
 
-    await user.click(within(rowOf(11)).getByRole("button", { name: "取り消す" }));
+    await user.click(within(rowOf(11)).getByRole("button", { name: rollbackName(11) }));
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", { name: "取り消す" }),
     );
-    expect(await within(rowOf(11)).findByRole("button", { name: "取り消し中…" })).toBeDisabled();
-    expect(within(rowOf(12)).getByRole("button", { name: "取り消す" })).toBeDisabled();
+    expect(
+      await within(rowOf(11)).findByRole("button", {
+        name: "取込みID 11（2026-03-21）を取り消し中…",
+      }),
+    ).toBeDisabled();
+    expect(within(rowOf(12)).getByRole("button", { name: rollbackName(12) })).toBeDisabled();
+
+    // §55.7: 応答を待つ間は実の route tree でも画面を離れない（止められた navigate は解決しないので、
+    // 短い時間と競わせる。止めを外すと navigate が解決して pathname が変わる）
+    await act(async () => {
+      await Promise.race([
+        router.navigate({ to: "/csv-import" }),
+        new Promise((resolve) => setTimeout(resolve, 100)),
+      ]);
+    });
+    expect(router.state.location.pathname).toBe("/csv-import/daily-reports");
 
     pending.resolve({ status: "error", error: FAILED });
     await waitFor(() => {
-      expect(within(rowOf(12)).getByRole("button", { name: "取り消す" })).toBeEnabled();
+      expect(within(rowOf(12)).getByRole("button", { name: rollbackName(12) })).toBeEnabled();
+    });
+    expect(router.state.location.pathname).toBe("/csv-import/daily-reports");
+    // 応答の後は移れる
+    await act(async () => {
+      await router.navigate({ to: "/csv-import" });
+    });
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/csv-import");
     });
   });
 
@@ -312,7 +343,12 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     const loading = deferred<ListResponse>();
     mockList.mockReturnValueOnce(loading.promise);
     const { unmount } = renderRoute("/csv-import/daily-reports");
-    expect(await screen.findByText("日報の取込みの記録を読み込んでいます…")).toBeInTheDocument();
+    // 読込み中は隣の一覧の画面と同じ Skeleton（catalog ⑥）で、表も空の文も出さない
+    await waitFor(() => {
+      expect(document.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
+    });
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("日報の取込みの記録はまだありません。")).not.toBeInTheDocument();
     loading.resolve(page([], 0));
     expect(await screen.findByText("日報の取込みの記録はまだありません。")).toBeInTheDocument();
     unmount();

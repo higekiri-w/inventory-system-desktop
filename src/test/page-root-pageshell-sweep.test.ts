@@ -64,7 +64,7 @@ describe("SC2b: no feature page file declares a p-6 root className outside PageS
     expect(hits.sort()).toEqual([...ALLOWED_NON_ROOT_HITS].sort());
   });
 
-  it("28 file / 43 箇所が PageShell を import して page root に使う", () => {
+  it("29 file / 44 箇所が PageShell を import して page root に使う", () => {
     const pageFiles = collectPageFiles(FEATURES_ROOT);
     const pageShellOccurrencePattern = /<PageShell\b/g;
     let totalOccurrences = 0;
