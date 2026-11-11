@@ -245,9 +245,10 @@ fn production_observe(_step: &'static str) {
     });
 }
 
-fn with_production_env<T>(run: impl FnOnce(&Env) -> T) -> T {
+/// 本番の入口の `Env`。媒体を探す入口は `production_roots()` を、媒体を使わない入口（やめる）は空の列を渡す
+fn with_production_env<T>(roots: Vec<PathBuf>, run: impl FnOnce(&Env) -> T) -> T {
     let env = Env {
-        roots: production_roots(),
+        roots,
         now: chrono::Local::now().naive_local(),
         ops: &StdRestoreFileOps,
         observe: &production_observe,
@@ -288,7 +289,9 @@ pub fn prepare_offsite_medium(
     selected: &Path,
 ) -> Result<OffsiteMediumView, OffsiteError> {
     let _mode = ErrorModeGuard::new();
-    with_production_env(|env| prepare_with(env, app_data_dir, backup_dir, selected))
+    with_production_env(production_roots(), |env| {
+        prepare_with(env, app_data_dir, backup_dir, selected)
+    })
 }
 
 /// 用意した媒体が見えていれば、まだ写していない最新の backup を写して確かめる（§71.11.4）
@@ -297,7 +300,9 @@ pub fn check_offsite_backup(
     backup_dir: &Path,
 ) -> Result<OffsiteCheckResult, OffsiteError> {
     let _mode = ErrorModeGuard::new();
-    with_production_env(|env| check_with(env, app_data_dir, backup_dir))
+    with_production_env(production_roots(), |env| {
+        check_with(env, app_data_dir, backup_dir)
+    })
 }
 
 /// 画面とホームが出す状態を返す。書かない・lock を取らない（§71.11.5）
@@ -316,12 +321,14 @@ pub fn reset_offsite_state(
     backup_dir: &Path,
 ) -> Result<OffsiteCheckResult, OffsiteError> {
     let _mode = ErrorModeGuard::new();
-    with_production_env(|env| reset_with(env, app_data_dir, backup_dir))
+    with_production_env(production_roots(), |env| {
+        reset_with(env, app_data_dir, backup_dir)
+    })
 }
 
-/// PC の外の控えをやめる（§71.11.5b）
+/// PC の外の控えをやめる（§71.11.5b）。媒体を探さず・読み書きしないので、drive を列挙しない
 pub fn stop_offsite_backup(app_data_dir: &Path) -> Result<(), OffsiteError> {
-    with_production_env(|env| stop_with(env, app_data_dir))
+    with_production_env(Vec::new(), |env| stop_with(env, app_data_dir))
 }
 
 /// 保存先に選ぼうとする folder を確かめる。書かない・lock を取らない（§71.11.5c）
@@ -351,14 +358,16 @@ fn prepare_with(
     {
         return Err(OffsiteError::NotRemovable);
     }
-    // 3. レジの SD（MNT-01-D10。書く先の祖先は root だけ）
-    if let Some(sd_folder) = register_sd_folder_on(&root) {
-        return Err(OffsiteError::RegisterSd { sd_folder });
-    }
     let pinned_root = pin_to_volume(&root).map_err(|error| {
         tracing::warn!(root = %root.display(), error = %error, "媒体の root を固定できません");
         OffsiteError::Io
     })?;
+    // 3. レジの SD（MNT-01-D10。書く先の祖先は root だけ）。返す folder は drive 文字の形
+    if is_register_sd(&root, &pinned_root.actual) {
+        return Err(OffsiteError::RegisterSd {
+            sd_folder: register_sd_folder(&root),
+        });
+    }
     let dir = pinned_root.actual.join(OFFSITE_DIR_NAME);
     let marker_path = dir.join(MARKER_FILE);
     // 3a. 状態を読む（目印を書く前に止める）
@@ -369,8 +378,8 @@ fn prepare_with(
             return Err(OffsiteError::StateUnreadable)
         }
     };
-    // 3b. reparse point を追わない
-    for path in [&dir, &marker_path] {
+    // 3b. reparse point を追わない（目印の作業名も。手順 4 の書込みは作業名を辿って開く）
+    for path in [&dir, &marker_path, &json_temp_path(&marker_path)] {
         if is_reparse(path).map_err(warn_io("reparse point の判定に失敗"))? {
             return Err(OffsiteError::Redirected);
         }
@@ -881,12 +890,12 @@ struct Medium {
 fn find_media(roots: &[PathBuf]) -> Vec<Medium> {
     let mut media = Vec::new();
     for root in roots {
-        if register_sd_folder_on(root).is_some() {
-            continue;
-        }
         let Ok(pinned) = pin_to_volume(root) else {
             continue;
         };
+        if is_register_sd(root, &pinned.actual) {
+            continue;
+        }
         let dir = pinned.actual.join(OFFSITE_DIR_NAME);
         let marker_path = dir.join(MARKER_FILE);
         if is_reparse(&dir).ok() != Some(false) || is_reparse(&marker_path).ok() != Some(false) {
@@ -989,11 +998,18 @@ fn same_root(a: &Path, b: &Path) -> bool {
     a == b
 }
 
-/// root の直下のレジの SD の folder（MNT-01-D10）
-fn register_sd_folder_on(root: &Path) -> Option<PathBuf> {
+/// root の直下のレジの SD の folder の path（MNT-01-D10）
+fn register_sd_folder(root: &Path) -> PathBuf {
     let [casio, model] = REGISTER_SD_FOLDER;
-    let folder = root.join(casio).join(model);
-    folder.is_dir().then_some(folder)
+    root.join(casio).join(model)
+}
+
+/// drive 文字の root か、それを固定した実体の root に、レジの SD の folder がある。
+/// 判定と固定の間に drive 文字の割当てが替わっても、読み書きする volume の側で見る
+fn is_register_sd(root: &Path, pinned: &Path) -> bool {
+    [root, pinned]
+        .iter()
+        .any(|root| register_sd_folder(root).is_dir())
 }
 
 /// reparse point（junction・symbolic link・mounted folder）か。無ければ false
@@ -1763,6 +1779,42 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn test_prepare_offsite_req901_d8_redirected_marker_temp_is_refused() {
+        // REQ-901 / MNT-01-D8 / 71 §71.11.2 手順 3b・§71.11.3: 目印の作業名の reparse point を追わない
+        // （媒体の外の file を目印の JSON で書き換えない・作らない）
+        use std::os::unix::fs::symlink;
+        for dangling in [false, true] {
+            let fx = Fx::new();
+            let target = fx.base.join("outside-target");
+            if !dangling {
+                std::fs::write(&target, b"outside bytes").unwrap();
+            }
+            std::fs::create_dir_all(fx.medium()).unwrap();
+            symlink(&target, fx.medium().join("offsite-medium.json.tmp")).unwrap();
+            let before = snapshot(&fx.base);
+
+            let result = prepare_with(&std_env(&fx.roots()), &fx.app, &fx.local, &fx.root);
+            assert_eq!(
+                result,
+                Err(OffsiteError::Redirected),
+                "dangling = {dangling}"
+            );
+            if dangling {
+                assert!(!target.exists(), "dangling link の転送先を作らない");
+            } else {
+                assert_eq!(std::fs::read(&target).unwrap(), b"outside bytes");
+            }
+            assert!(
+                std::fs::symlink_metadata(fx.medium().join(MARKER_FILE)).is_err(),
+                "dangling = {dangling}: 目印を書かない"
+            );
+            assert!(!fx.state_file().exists(), "dangling = {dangling}");
+            assert_eq!(snapshot(&fx.base), before, "dangling = {dangling}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_prepare_offsite_req901_d11_backup_dir_same_folder_is_refused() {
         // REQ-901 / MNT-01-D11 / 71 §71.11.2 手順 3c: 同じ実体の folder なら書かずに止める
         use std::os::unix::fs::symlink;
@@ -1980,6 +2032,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_offsite_req901_d8_poisoned_lock_does_not_stop_entrances() {
+        // REQ-901 / MNT-01-D8 / 71 §71.11.4 の排他: lock を持った thread の panic（poison）の後も、
+        // 確認・用意・作り直し・やめるの入口が結果を返す
+        struct ClearPoison;
+        impl Drop for ClearPoison {
+            fn drop(&mut self) {
+                // 後始末: process 全体の lock を、ほかの test のために poison の無い状態へ戻す
+                OFFSITE_LOCK.clear_poison();
+            }
+        }
+        let fx = Fx::new();
+        put_backup(&fx.local, &today_name());
+        let _cleanup = ClearPoison;
+
+        // 本番と同じ入口で lock を取った直後に panic させる（panic の message は test の出力に出る）
+        let panicked = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let observe = |step: &'static str| {
+                        if step == "lock_acquired" {
+                            panic!("lock を持ったままの panic（test の注入）");
+                        }
+                    };
+                    let env = Env {
+                        roots: fx.roots(),
+                        now: now(),
+                        ops: &StdRestoreFileOps,
+                        observe: &observe,
+                    };
+                    check_with(&env, &fx.app, &fx.local)
+                })
+                .join()
+        });
+        assert!(panicked.is_err(), "注入した panic が起きていない");
+        assert!(OFFSITE_LOCK.is_poisoned(), "lock が poison されていない");
+
+        let env = std_env(&fx.roots());
+        assert_eq!(
+            prepare_with(&env, &fx.app, &fx.local, &fx.root).map(|view| view.label),
+            Ok("控え 1".to_string())
+        );
+        assert_eq!(
+            check_with(&env, &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::UpToDate)
+        );
+        std::fs::write(fx.state_file(), b"{ broken json").unwrap();
+        assert_eq!(
+            reset_with(&env, &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::UpToDate)
+        );
+        assert_eq!(stop_with(&env, &fx.app), Ok(()));
     }
 
     // ---- 写し（§71.11.4） -------------------------------------------------------
@@ -2322,10 +2428,11 @@ mod tests {
                     );
                 }
             };
+            let ops = TestOps::new();
             let env = Env {
                 roots: fx.roots(),
                 now: now(),
-                ops: &StdRestoreFileOps,
+                ops: &ops,
                 observe: &observe,
             };
             assert_eq!(
@@ -2342,7 +2449,72 @@ mod tests {
                 fx.state().last_failure.map(|failure| failure.kind),
                 Some(OffsiteFailureKind::Io)
             );
+            // どの時点の確かめ直しが止めたかを操作の記録で分ける（後段の確かめ直しに拾わせない）
+            let called = |op: &str| ops.events().iter().any(|event| event.starts_with(op));
+            if point == "before_copy" {
+                assert!(
+                    !called("copy_new "),
+                    "作業名へ写す前に止める: {:?}",
+                    ops.events()
+                );
+            } else {
+                assert!(called("copy_new "), "{:?}", ops.events());
+                assert!(
+                    !called("publish_no_replace "),
+                    "公開の前に止める: {:?}",
+                    ops.events()
+                );
+            }
         }
+
+        // 掃除の直前（手順 4g）: 公開の後に入れ替わった媒体の古い写しを 1 本も消さない
+        let fx = Fx::new();
+        fx.prepare();
+        let name = today_name();
+        put_backup(&fx.local, &name);
+        let base_day = today() - chrono::Duration::days(40);
+        let old: Vec<String> = (0..31)
+            .map(|offset| name_on(base_day + chrono::Duration::days(offset), "120000"))
+            .collect();
+        for old_name in &old {
+            std::fs::write(fx.medium().join(old_name), b"old copy").unwrap();
+        }
+        let observe = |step: &'static str| {
+            if step == "before_cleanup" {
+                write_marker(
+                    &fx.root,
+                    &serde_json::json!({"format": 1, "medium_id": "swapped", "label": "控え 1", "prepared_at": "2026-10-01 09:00:00"}),
+                );
+            }
+        };
+        let ops = TestOps::new();
+        let env = Env {
+            roots: fx.roots(),
+            now: now(),
+            ops: &ops,
+            observe: &observe,
+        };
+        assert_eq!(check_with(&env, &fx.app, &fx.local), Err(OffsiteError::Io));
+        for old_name in &old {
+            assert_eq!(
+                std::fs::read(fx.medium().join(old_name)).unwrap(),
+                b"old copy",
+                "{old_name}"
+            );
+        }
+        assert!(
+            !ops.events()
+                .iter()
+                .any(|event| event.starts_with("remove_file ")),
+            "{:?}",
+            ops.events()
+        );
+        let state = fx.state();
+        assert_eq!(state.last_success, None, "成功の記録を書かない");
+        assert_eq!(
+            state.last_failure.map(|failure| failure.kind),
+            Some(OffsiteFailureKind::Io)
+        );
     }
 
     #[cfg(unix)]
@@ -2421,6 +2593,38 @@ mod tests {
             } else {
                 assert_eq!(std::fs::read(&target).unwrap(), b"target bytes");
             }
+        }
+
+        // (3) 掃除（手順 4g）: 規約の名前の link を写しに数えず・消さず、本物の 30 本を残す。
+        // link の名前が最も古い case（数えると link が消える）と最も新しい case（数えると本物が 1 本消える）
+        for link_days in [-60, 60] {
+            let fx = Fx::new();
+            fx.prepare();
+            put_backup(&fx.local, &name);
+            let real: Vec<String> = (1..=29)
+                .map(|offset| name_on(today() - chrono::Duration::days(offset), "120000"))
+                .collect();
+            for real_name in &real {
+                std::fs::write(fx.medium().join(real_name), b"old copy").unwrap();
+            }
+            let target = fx.base.join("link-target.db");
+            std::fs::write(&target, b"target bytes").unwrap();
+            let link_name = name_on(today() + chrono::Duration::days(link_days), "120000");
+            symlink(&target, fx.medium().join(&link_name)).unwrap();
+
+            assert!(
+                matches!(fx.check(), Ok(OffsiteCheckResult::Copied { .. })),
+                "{link_days}"
+            );
+            let mut expected = real.clone();
+            expected.extend([name.clone(), link_name.clone(), MARKER_FILE.to_string()]);
+            expected.sort();
+            assert_eq!(names(&fx.medium()), expected, "{link_days}");
+            assert!(std::fs::symlink_metadata(fx.medium().join(&link_name))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(std::fs::read(&target).unwrap(), b"target bytes");
         }
     }
 
