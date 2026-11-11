@@ -410,4 +410,32 @@ describe("ManualSalePage stale direct search (UI-04-D19 / REQ-203)", () => {
     expect(second.idempotency_key).not.toBe(first.idempotency_key);
     expect(JSON.stringify(second.items)).toContain("NEW-001");
   });
+
+  it("REQ-203 UI-04-D19 MS2 a search after a PLU confirmation without a token is added", async () => {
+    const user = userEvent.setup();
+    mockCreate.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        sale_id: null,
+        created: false,
+        idempotent_replay: false,
+        plu_warnings: ["MS-001: この商品はレジで打てます（PLU登録済み）"],
+        stock_warnings: [],
+        needs_confirmation: true,
+        confirmation_token: null,
+      },
+    });
+    renderPage();
+    await addFirstProduct(user);
+    await user.click(saveButton());
+    expect(await screen.findByText(/確認トークンを取得できませんでした/)).toBeInTheDocument();
+
+    const fresh = holdSearch("NEW-001");
+    await searchFor(user, "NEW-001");
+    fresh.resolve(
+      searchResult([makeMockProductWithRelations({ product_code: "NEW-001", name: NEW_NAME })]),
+    );
+    expect(await screen.findByText(NEW_NAME)).toBeInTheDocument();
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
 });

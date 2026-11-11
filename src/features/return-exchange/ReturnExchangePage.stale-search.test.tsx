@@ -281,6 +281,27 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     expect(screen.queryByText(LATE_NAME)).toBeNull();
   });
 
+  it("REQ-202 UI-03-D24 S6 a new search is added after the save is rejected by frontend validation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await addFirstProduct(user);
+    await user.click(screen.getByLabelText("種別"));
+    await user.click(await screen.findByRole("option", { name: "交換" }));
+
+    await user.click(saveButton());
+    expect(
+      await screen.findByText("交換では戻り明細と渡し明細がそれぞれ必要です"),
+    ).toBeInTheDocument();
+
+    const fresh = holdSearch("NEW-001");
+    await searchFor(user, "NEW-001");
+    fresh.resolve(
+      searchResult([makeMockProductWithRelations({ product_code: "NEW-001", name: NEW_NAME })]),
+    );
+    expect(await screen.findByText(NEW_NAME)).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it("REQ-202 UI-03-D24 S7 late multi-candidate response after reset shows nothing", async () => {
     const user = userEvent.setup();
     renderPage();

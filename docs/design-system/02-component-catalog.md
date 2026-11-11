@@ -977,7 +977,7 @@ tone family は感情で分ける: 緑 = 終わったことを伝えるプラス
 
 **採用の背景（variant B）**: 純 autocomplete 型（Enter 追加廃止）は、スキャナ Enter が候補 async 読込み前に届くため退行となり不採用（owner 方針 2026-08-04）。`cmdk` 等の新規 npm 依存は供給網防御（D-030）下の設計判断として不採用。安全性は下記 D2/D4 の software contract により supported sequence「バーコード文字列 + Enter」の範囲で timing 非依存に成立し、スキャナ物理挙動（方向キー有無・keystroke 間隔）への無条件保証は主張しない。
 
-**契約（SPEC-SUGGEST-D1〜D12、凍結正本。D11 は 2026-08-09 gated Amendment 3〈PR #65 初回 L3 の IME blocker〉で追加、D12 は 2026-08-11 JAN 専用欄正規化 change で追加。D1〜D10 本文不変。ただし D4・D10 の lock source の記述は 2026-11-03 に導入の前の関門 13 の lane〈`docs/plans/2026-11-03-stale-direct-search-guard.md`〉で取引 4 画面の form lock ref に改めた）**:
+**契約（SPEC-SUGGEST-D1〜D12、凍結正本。D11 は 2026-08-09 gated Amendment 3〈PR #65 初回 L3 の IME blocker〉で追加、D12 は 2026-08-11 JAN 専用欄正規化 change で追加。D1〜D10 本文不変。ただし D4・D10 は 2026-11-03 に導入の前の関門 13〈PR #237、`docs/plans/2026-11-03-stale-direct-search-guard.md`〉で、lock source の記述を取引 4 画面の form lock ref に改め、D4 に直接検索の世代の所掌の 1 文を足した）**:
 
 - D1（二層構造・不干渉）: live 候補プレビューは表示専用の追加層である。既存 Enter commit 経路（検索実行・0/1/複数分岐・行追加・focus 復帰・IME guard）のロジックは変更しない。suggest 層の失敗（fetch error 含む）は commit 経路へ波及せず、候補非表示に縮退する。
 - D2（Enter 分岐）: 候補リストに active 候補（aria-activedescendant が指す行）が存在する場合のみ Enter は候補確定として動作する。active 候補は ↓/↑ キー操作によってのみ生成される（表示直後の自動 active 化・先頭行自動選択は禁止）。active 候補なしの Enter は常に既存 commit 経路を実行する。候補リストの内容が更新された場合（debounce 再 fetch による差し替え）、直前の active 候補は必ず解除し持ち越さない（更新直後の Enter が意図しない行を確定することを防ぐ）。新しいリストで active を得るには再度 ↓/↑ の操作を要する。さらに、入力値が変化した onChange event の時点で active 候補を同期的に解除する。同時に表示中のリストを close し、新しいリストは現在入力値に対する最新結果の採用後にのみ open する（旧リストの表示維持・click 操作は行わない — pointer 経路の stale 確定を構造的に排除）。この同期解除 + close により、Enter commit 経路の到達はスキャナ timing・debounce 残量に依存しない。

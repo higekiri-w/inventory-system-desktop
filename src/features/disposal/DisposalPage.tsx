@@ -663,10 +663,10 @@ export function DisposalPage() {
             type="button"
             disabled={!canSubmit}
             onClick={() => {
-              productSuggest.invalidateAndClose();
-              setSaveError(null);
               isFormLockedRef.current = true;
               searchGenerationRef.current += 1;
+              productSuggest.invalidateAndClose();
+              setSaveError(null);
               createMutation.mutate();
             }}
           >

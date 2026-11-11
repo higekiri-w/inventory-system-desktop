@@ -313,10 +313,10 @@ export function ManualSalePage() {
   }
 
   function submitCurrentForm() {
-    productSuggest.invalidateAndClose();
-    setSaveError(null);
     isFormLockedRef.current = true;
     searchGenerationRef.current += 1;
+    productSuggest.invalidateAndClose();
+    setSaveError(null);
     createMutation.mutate(confirmation?.token ?? null);
   }
 
