@@ -516,6 +516,14 @@ D-127 の今回の sweep: L3-b5 の行・合成状態の差替え・退避物の
 - 計画からの小さな差: 媒体の取外し可能の判定（§71.11.2 手順 2）は、`GetDriveTypeW` を 2 度書かず、共有した取外し可能な root の列に選んだ path の root が在るかで見る（test は root の列の注入で差し替える）。68 §68.6 の hook 名の一覧（`usePrepareOffsiteMedium` 等）は作らず、Scope のとおり page の中に置いた。
 - Windows でしか通らない code（`removable_drive_roots`・`GetFileAttributesW` の reparse point の判定・drive の root の取り出し・ASCII の大文字小文字を区別しない比較）は Linux の CI と手元の `cargo check` では compile されない。L3（b1〜b4・b6・b7）が初めて通す。
 
+是正（発注 824、2026-11-11）の要旨。Final Review（発注 810）の報告と裁定は [PR #194 の comment](https://github.com/higekiri-w/inventory-system-desktop/pull/194#issuecomment-6798097930)。計画の節は変えていない。
+
+- MNT（P2・P3）: 用意の手順 3b の reparse point の判定に目印の作業名（`offsite-medium.json.tmp`）を足した（link を辿って媒体の外の file を目印の JSON で書き換える経路を閉じた）。`stop_offsite_backup` は drive を列挙しない（root の列が空の `Env`）。用意と探す規則のレジの SD の判定は、root を固定した後に、drive 文字の root と固定した実体の root の両方で見る（返す `sd_folder` は drive 文字の形のまま）。
+- MNT の test（P2）: 目印の作業名の link（外の file・dangling）、入れ替わりの 3 つの時点を file 操作の記録で区別する assert と掃除の直前の case（古い写し 31 本）、規約の名前の link と掃除（本物 30 本）、lock の poison の後の 4 つの入口。Matrix の該当の行は足した・直した。
+- 画面（P2・P3）: 用意・作り直し・やめるの command の promise を `useAutoBackupCheck` の module に登録し、控えを選んだ時点の `suspendAutoBackupCheckAndWait()` が共通の確認の回と一緒にその完了も待つ（画面を離れて戻っても、媒体の掃除の最中に確かめ・復元へ進めない。待つ間の表示は既存の「控えを確かめています」）。記録を読めないとき、card は差してある媒体の行を出さない。test は flow（離脱と再訪）・hook・component・文の選び方・ホームに足した。
+- 正本: 71 §71.10 の D-114 の表・§71.11.1〜§71.11.3・§71.11.5b、68 UI-11b-D14・D15・§68.6・§68.7。
+- Scope の文と違えた点: Scope の呼出し側の表は「(b) は `useAutoBackupCheck` に export を足さない」と書くが、画面をまたぐ待ちのために `trackOffsiteOperation` を 1 つ足した。module を `vi.mock` で置き換える 2 つの test（`OtherRecordDetailRoutes.test.tsx`・`app-router.test.tsx`）は用意・作り直し・やめるを実行しないので変えていない。裁定の 6 番は用意を名指すが、同じ判定を持つ探す規則（`find_media`）も同じ helper に揃えた（reviewer の指摘は両方の位置を挙げている）。
+
 Do not transcribe exact-HEAD SHA or test counts here (D-035/D-038 Evidence Ownership). Record a qualitative summary and the PR link only.
 
 ## Review Response
