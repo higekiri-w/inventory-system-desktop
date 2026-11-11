@@ -111,6 +111,8 @@ function StatefulPage({ initial }: { initial: MonthlySalesSearch }) {
 }
 
 beforeEach(() => {
+  // 途中で落ちた test の mockResolvedValueOnce・mockImplementation の残りを後の test へ持ち越さない
+  mockGetMonthlySales.mockReset();
   mockGetMonthlySales.mockResolvedValue({ status: "ok", data: buildReport() });
 });
 
@@ -385,6 +387,35 @@ describe("MonthlySalesPage REQ-502 UI-09b-D11 取り込んだ日の状態", () =
     expect(
       await screen.findByRole("heading", { name: "取り込んだ日（1日分）" }),
     ).toBeInTheDocument();
+  });
+
+  it("P6: 今月は page の今日より前の日だけを取り込んでいない日に並べる（TD-593）", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 4, 3, 12));
+    try {
+      mockGetMonthlySales.mockResolvedValue({
+        status: "ok",
+        data: {
+          ...buildReport(),
+          official_department_totals: [],
+          official_report_dates: ["2026-05-01"],
+        },
+      });
+      renderPage({ month: "2026-05", mode: "by_product" });
+
+      expect(
+        await screen.findByRole("heading", { name: "取り込んでいない日（1日分）" }),
+      ).toBeInTheDocument();
+      const notImported = screen.getByRole("list", { name: "取り込んでいない日" });
+      expect(
+        within(notImported)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(["2日（土）"]);
+      expect(screen.getByText("今日と、今日より後の日は数えていません。")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("P5: 月を切り替えると、その月の日だけが並ぶ", async () => {

@@ -33,6 +33,9 @@ describe("OfficialReportDays (REQ-502 UI-09b-D11)", () => {
     const importedList = screen.getByRole("list", { name: "取り込んだ日" });
     const importedItems = within(importedList).getAllByRole("listitem");
     expect(importedItems.map((item) => item.textContent)).toEqual(["23日（月）、", "24日（火）"]);
+    // 見出しと日の一覧は本文の大きさ、label の中では折り返さない（04 原則 1、L3-2）
+    expect(importedList.closest(".text-sm")).toBeNull();
+    expect(importedItems[0]).toHaveClass("whitespace-nowrap");
     expect(within(importedList).getByRole("link", { name: "23日（月）" })).toHaveAttribute(
       "href",
       "/reports/daily?date=2026-03-23",
@@ -44,7 +47,10 @@ describe("OfficialReportDays (REQ-502 UI-09b-D11)", () => {
     expect(notImportedItems[0]).toHaveTextContent("1日（日）");
     expect(within(notImportedList).queryByRole("link")).toBeNull();
 
-    expect(screen.getByText("店を開けなかった日も含みます。")).toBeInTheDocument();
+    expect(screen.getByText("店を開けなかった日も含みます。")).toHaveClass(
+      "text-sm",
+      "text-muted-foreground",
+    );
     expect(screen.getByRole("link", { name: "売上データ取込みを開く" })).toHaveAttribute(
       "href",
       "/csv-import?tab=daily-report",
