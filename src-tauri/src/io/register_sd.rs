@@ -315,6 +315,7 @@ pub(crate) fn split_relative_path(relative_path: &str) -> Option<Vec<&str>> {
             || *part == ".."
             || part.contains(':')
             || part.contains('/')
+            // 多重の防御: `\\` で分けて `/`・`:` を拒んだ後の要素では真にならない（外しても拒否は変わらない）
             || Path::new(part).has_root()
     }) {
         return None;
