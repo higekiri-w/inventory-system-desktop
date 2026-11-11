@@ -194,7 +194,7 @@ Non-scope: `src/components/patterns/useProductAddSuggest.ts`・`ProductAddSugges
 
 「Would fail if」の「実測」は計画の review round 1（入庫に計画の形を一時に入れ、mutation を注入した Opus の実測。6 files / 55 tests PASS の版から）で、それ以外は未実測の見込み（Contract Audit で注入して確かめる）。直接検索の応答は「成功・失敗の側の照らし（世代と lock）」と「`addProduct` の lock ref の検査」の 2 つで守り、保存の開始と `resetForm` の 2 か所で世代を進めるので、1 か所だけ外しても red にならない test がある（下の各行に書いた）。
 
-保存の event の先頭の lock（保存の click から pending の render までの窓）は jsdom の test で観測できない（round 1 の実測: create の mock の時点で検索欄が既に disabled）。この lock は AC4 の構造の検査で見張る。観測できないのは pending の render より先かどうかの順だけで、lock が立つこと自体は廃棄の `DisposalPage.suggest.test.tsx` の W16 の後半の形（保存中の compositionend で検索が始まらない）で観測できるので、入庫・手動販売の `*.suggest.test.tsx` にも 1 本ずつ置く（`UI-02-D19 W16`・`UI-04-D19 W16`。保存の event の `isFormLockedRef.current = true` を消すと red。Final round 1 の是正で足した。返品交換は RX3 が拾う）。
+保存の event の lock が pending の render より先に立つ順（保存の click から pending の render までの窓）は jsdom の test で観測できない（round 1 の実測: create の mock の時点で検索欄が既に disabled）。この順は AC4 の構造の検査で見張る。lock が立つこと自体は廃棄の `DisposalPage.suggest.test.tsx` の W16 の後半の形（保存中の compositionend で検索が始まらない）で観測できるので、入庫・手動販売の `*.suggest.test.tsx` にも 1 本ずつ置く（`UI-02-D19 W16`・`UI-04-D19 W16`。保存の event の `isFormLockedRef.current = true` を消すと red。Final round 1 の是正で足した。返品交換は RX3 が拾う）。
 
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
