@@ -67,6 +67,7 @@ export function OffsiteBackupPanel({
 }: OffsiteBackupPanelProps) {
   const [confirmStopOpen, setConfirmStopOpen] = useState(false);
   const cause = status ? offsiteCauseText(status, "card") : null;
+  const attachedText = status ? offsiteAttachedText(status) : null;
 
   return (
     <Card>
@@ -100,7 +101,7 @@ export function OffsiteBackupPanel({
             ) : null}
             {status.prepared ? (
               <div className="space-y-1 text-sm text-muted-foreground">
-                <p>{offsiteAttachedText(status)}</p>
+                {attachedText ? <p>{attachedText}</p> : null}
                 {status.attached.map((medium) => (
                   <p key={medium.drive_root} className="text-xs break-all">
                     {medium.label}: {medium.drive_root}

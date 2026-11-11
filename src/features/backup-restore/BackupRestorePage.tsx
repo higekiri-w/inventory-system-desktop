@@ -59,6 +59,7 @@ import {
   releaseAutoBackupCheckAfterRestore,
   resumeAutoBackupCheck,
   suspendAutoBackupCheckAndWait,
+  trackOffsiteOperation,
 } from "./useAutoBackupCheck";
 import { open } from "@tauri-apps/plugin-dialog";
 import { formatBackupDate } from "./offsite-status-text";
@@ -186,7 +187,8 @@ const initialRestoreState: RestoreState = {
 
 /**
  * UI-11b-D14・§68.4: 「PC の外の控え」の card の 3 つの操作（§68.7 の offsite_preparing / offsite_resetting /
- * offsite_stopping）。成功・失敗とも status を取り直し（作り直しは一覧も）、card は取り直した status で決める（§68.10）
+ * offsite_stopping）。成功・失敗とも status を取り直し（作り直しは一覧も）、card は取り直した status で決める（§68.10）。
+ * 実行中かは画面の state（action）で持つが、離脱で消えるので、command の promise は module に登録する（§68.7）
  */
 function useOffsiteActions() {
   const queryClient = useQueryClient();
@@ -197,7 +199,7 @@ function useOffsiteActions() {
     setAction(kind);
     setMessage(null);
     try {
-      setMessage({ tone: "success", text: await operation() });
+      setMessage({ tone: "success", text: await trackOffsiteOperation(operation()) });
     } catch (error) {
       setMessage({ tone: "error", text: describeError(error) });
     } finally {

@@ -375,6 +375,27 @@ describe("PC の外の控えの知らせ (REQ-901 / UI-00-D12)", () => {
     expect(await screen.findByText(/昨日の売上/)).toBeInTheDocument();
   });
 
+  it("REQ-901 / UI-00-D12: 取得が成功の後に失敗へ変わったら、前の status の知らせを出し続けない", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    stale({});
+    const offsite = deferredOffsite();
+    mockCheckOffsite.mockReturnValueOnce(offsite.promise);
+    renderPage({ withAutoCheck: true });
+    const text = "PC の外の控えが 5 日写せていません。USB メモリが差してあるか確かめてください。";
+    expect(await screen.findByText(text)).toBeInTheDocument();
+
+    // 確認の結果の invalidate で取り直した status が失敗する（query は前の data を持ったまま isError）
+    mockGetOffsiteStatus.mockResolvedValue({ status: "error", error: syntheticError });
+    offsite.resolve({ status: "ok", data: { kind: "up_to_date" } });
+    await waitFor(() => {
+      expect(mockToastError).toHaveBeenCalledWith("PC の外の控えの状態を取得できませんでした", {
+        id: "offsite-status-error",
+      });
+    });
+    expect(screen.queryByText(text)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "バックアップ画面へ" })).not.toBeInTheDocument();
+  });
+
   it.each([
     [
       "5 日前",

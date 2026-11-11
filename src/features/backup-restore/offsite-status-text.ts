@@ -54,8 +54,9 @@ export function offsiteStateLine(status: OffsiteBackupStatus): string {
   return `最後に PC の外へ写した控え: ${formatBackupDate(status.last_success_at)}（${label}確かめ済み）`;
 }
 
-/** 差してある媒体の副情報 */
-export function offsiteAttachedText(status: OffsiteBackupStatus): string {
+/** 差してある媒体の副情報。記録を読めないときは状態と照合できず、差してあるか分からないので出さない */
+export function offsiteAttachedText(status: OffsiteBackupStatus): string | null {
+  if (status.last_failure_kind === "state_unreadable") return null;
   if (status.attached.length === 0) return "用意した USB メモリが差さっていません";
   return `差してある控え: ${status.attached.map((medium) => medium.label).join("、")}`;
 }

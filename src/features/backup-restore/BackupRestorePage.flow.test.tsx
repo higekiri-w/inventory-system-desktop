@@ -1091,6 +1091,61 @@ describe("§68.7 の無効化 (REQ-901 / UI-11b-D14・D15)", () => {
     expect(within(row).getByRole("button", { name: "この控えに戻す" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "控えを選んで確かめる" })).toBeEnabled();
   });
+
+  it.each([
+    { operation: "用意", entry: "一覧の行" },
+    { operation: "作り直し", entry: "file の入口" },
+  ] as const)(
+    "REQ-901 / §68.7: $operation の実行中に画面を離れて戻り、$entry で控えを選んでも、完了まで inspectBackup を呼ばない",
+    async ({ operation, entry }) => {
+      const user = userEvent.setup();
+      const pendingPrepare = deferred<Awaited<ReturnType<typeof commands.prepareOffsiteMedium>>>();
+      const pendingReset = deferred<Awaited<ReturnType<typeof commands.resetOffsiteState>>>();
+      if (operation === "用意") {
+        mockPrepareOffsite.mockReturnValueOnce(pendingPrepare.promise);
+        mockOpen.mockResolvedValueOnce("E:\\");
+      } else {
+        mockGetOffsiteStatus.mockResolvedValue(ok(unreadableStatus()));
+        mockResetOffsite.mockReturnValueOnce(pendingReset.promise);
+      }
+      const { router } = renderApp("/settings/backup");
+      await screen.findByText(BACKUP_DATE_LABEL);
+      await user.click(
+        await screen.findByRole("button", {
+          name: operation === "用意" ? "この USB メモリを控えの保存先にする" : "記録を作り直す",
+        }),
+      );
+      await waitFor(() => {
+        expect(operation === "用意" ? mockPrepareOffsite : mockResetOffsite).toHaveBeenCalledTimes(
+          1,
+        );
+      });
+
+      // 画面の state（offsite_preparing / offsite_resetting）は離脱で消え、再訪した画面は前の実行中を知らない
+      await leavePage(router);
+      await revisitPage(router);
+      if (entry === "一覧の行") {
+        await selectRow(user, BACKUP_DATE_LABEL);
+      } else {
+        mockOpen.mockResolvedValueOnce(FILE_PATH);
+        await user.click(screen.getByRole("button", { name: "控えを選んで確かめる" }));
+      }
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      // 実行中の操作（媒体の掃除を含む）が終わるまで、確かめの表示のまま待つ
+      expect(mockInspectBackup).not.toHaveBeenCalled();
+      expect(screen.getByText("控えを確かめています")).toBeInTheDocument();
+
+      if (operation === "用意") {
+        pendingPrepare.resolve(ok({ label: "控え 2", drive_root: "E:\\", newest_copy: null }));
+      } else {
+        pendingReset.resolve(ok({ kind: "up_to_date" as const }));
+      }
+      expect(await screen.findByText("この控えは戻せます")).toBeInTheDocument();
+      expect(mockInspectBackup).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("保存先を選ぶ (REQ-901 / UI-11b-F3・§68.4 の backup_path 変更)", () => {

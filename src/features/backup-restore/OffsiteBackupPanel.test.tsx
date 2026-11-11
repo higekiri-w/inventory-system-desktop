@@ -101,6 +101,24 @@ describe("OffsiteBackupPanel (REQ-901 / UI-11b-D14)", () => {
     expect(screen.getByRole("button", { name: "PC の外の控えをやめる" })).toBeInTheDocument();
   });
 
+  it("REQ-901 / UI-11b-D14: 記録を読めないときは差してある媒体の行を出さない（状態と照合できない）", () => {
+    renderPanel({
+      status: status({
+        last_success_at: null,
+        last_success_label: null,
+        days_since_last_success: null,
+        stale: true,
+        last_failure_kind: "state_unreadable",
+      }),
+    });
+    expect(screen.queryByText("用意した USB メモリが差さっていません")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^差してある控え/)).not.toBeInTheDocument();
+    // last_failure_kind の固定の文は今までどおり出す
+    expect(
+      screen.getByText("PC の外の控えの記録を読めませんでした。「記録を作り直す」を押してください"),
+    ).toBeInTheDocument();
+  });
+
   it("REQ-901 / UI-11b-D14: 取得失敗は card を残して文と再読込を出す", () => {
     const props = renderPanel({ status: undefined, isError: true });
     expect(screen.getByText("PC の外の控え")).toBeInTheDocument();

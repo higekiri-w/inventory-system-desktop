@@ -27,6 +27,9 @@ let fatalHold = false;
 let generation = 0;
 // 実行中の回（checkAutoBackup から checkOffsiteBackup まで。hook が unmount されても、回が終わるまで残る）。
 let inFlight: Promise<void> | null = null;
+// 実行中の用意・作り直し・やめる（68 §68.7）。バックアップ画面の state（offsite_*）は離脱で消えるので、
+// 再訪した画面の確かめの前の待ちが見られるよう module に持つ。終わった操作は外れる。
+const offsiteOperations = new Set<Promise<void>>();
 
 function isHeld(): boolean {
   return selectionHold || restoringCount > 0 || fatalHold;
@@ -39,12 +42,27 @@ export function suspendAutoBackupCheck(): void {
 }
 
 /**
- * UI-11b-D15: 控えを選んだ時点で呼ぶ。選択の理由を立て、実行中の回（PC の外の控えの確認を含む）の完了を待つ。
- * 実行中の回が無ければすぐ解決する（hook が unmount されていても、回が残れば待つ）。
+ * UI-11b-D15: 控えを選んだ時点で呼ぶ。選択の理由を立て、実行中の回（PC の外の控えの確認を含む）と、
+ * 実行中の用意・作り直し・やめる（§68.7）の完了を待つ。どれも無ければすぐ解決する
+ * （hook や操作を始めた画面が unmount されていても、残っていれば待つ）。
  */
 export async function suspendAutoBackupCheckAndWait(): Promise<void> {
   suspendAutoBackupCheck();
-  if (inFlight !== null) await inFlight;
+  await Promise.all([inFlight, ...offsiteOperations]);
+}
+
+/**
+ * §68.7: 用意・作り直し・やめるの command の promise を登録する（BackupRestorePage の card の操作）。
+ * 成否に依らず、終わるまで控えの確かめを待たせる（用意・作り直しは媒体の古い写しを掃除する）。
+ */
+export function trackOffsiteOperation<T>(operation: Promise<T>): Promise<T> {
+  const settled = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  offsiteOperations.add(settled);
+  void settled.then(() => offsiteOperations.delete(settled));
+  return operation;
 }
 
 /** 画面の unmount と復元の card の「閉じる」が呼ぶ。選択の理由だけを外す（復元の理由は残す）。 */
@@ -65,12 +83,13 @@ export function releaseAutoBackupCheckAfterRestore(fatal: boolean): void {
   if (fatal) fatalHold = true;
 }
 
-/** test だけが使う。module の停止の理由と実行中の回を初期値へ戻す（世代番号は戻さない）。 */
+/** test だけが使う。module の停止の理由と実行中の回・操作を初期値へ戻す（世代番号は戻さない）。 */
 export function resetAutoBackupCheckForTests(): void {
   selectionHold = false;
   restoringCount = 0;
   fatalHold = false;
   inFlight = null;
+  offsiteOperations.clear();
 }
 
 export function useAutoBackupCheck(): void {

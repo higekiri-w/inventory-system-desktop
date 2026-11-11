@@ -60,6 +60,21 @@ describe("offsiteCauseText (REQ-901 / UI-11b-D14・UI-00-D12)", () => {
     );
   });
 
+  it("REQ-901 / UI-11b-D14: (1) は (2) より先（記録を読めず、PC の中の backup も古い）", () => {
+    // 読めない記録でも MNT は local_backup_old を返す（71 §71.11.5）ので、この組は実際に起きる
+    const both = status({
+      ...never,
+      last_failure_kind: "state_unreadable",
+      local_backup_old: true,
+    });
+    expect(offsiteCauseText(both, "card")).toBe(
+      "PC の外の控えの記録を読めません。USB メモリを差して「記録を作り直す」を押すか、使わないなら「PC の外の控えをやめる」を押してください。",
+    );
+    expect(offsiteCauseText(both, "home")).toBe(
+      "PC の外の控えの記録を読めません。USB メモリを差してバックアップ画面の「記録を作り直す」を押すか、使わないならバックアップ画面の「PC の外の控えをやめる」を押してください。",
+    );
+  });
+
   it("REQ-901 / UI-11b-D14: (2) PC の中の backup が古い（(3) より先）", () => {
     const old = status({ local_backup_old: true, last_failure_kind: "source_unverified" });
     expect(offsiteCauseText(old, "card")).toBe(
@@ -118,6 +133,8 @@ describe("副情報 (REQ-901 / UI-11b-D14)", () => {
   it("REQ-901 / UI-11b-D14: 差してある媒体と、last_failure_kind の固定の文", () => {
     expect(offsiteAttachedText(status({ attached }))).toBe("差してある控え: 控え 2");
     expect(offsiteAttachedText(status())).toBe("用意した USB メモリが差さっていません");
+    // 記録を読めないときは状態と照合できないので、差してある・差さっていないのどちらも言わない
+    expect(offsiteAttachedText(status({ last_failure_kind: "state_unreadable" }))).toBeNull();
     const texts: [OffsiteFailureKind, string][] = [
       ["storage_full", "USB メモリの空きが足りません"],
       ["io", "PC の外の控えを写せませんでした"],
