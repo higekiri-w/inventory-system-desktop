@@ -347,6 +347,9 @@ describe("DailyReportImportRecordsPage UI-07-D19 REQ-401", () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
     });
+    // 支援技術にも読込み中が伝わる（Skeleton は見た目だけ）
+    expect(screen.getByRole("status")).toHaveTextContent("日報の取込みの記録を読み込んでいます…");
+    expect(screen.getByText("日報の取込みの記録を読み込んでいます…")).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.queryByText("日報の取込みの記録はまだありません。")).not.toBeInTheDocument();
     loading.resolve(page([], 0));

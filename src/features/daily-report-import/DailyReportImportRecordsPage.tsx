@@ -74,8 +74,10 @@ export function DailyReportImportRecordsPage({
       />
 
       {listQuery.isPending ? (
-        // 隣の一覧の画面（入出庫履歴・操作ログ）と同じ Skeleton（catalog ⑥）
-        <div className="space-y-2">
+        // 隣の一覧の画面（入出庫履歴・操作ログ）と同じ Skeleton（catalog ⑥）。Skeleton は見た目だけなので、
+        // 支援技術には status と画面外の文で読込み中を伝える
+        <div role="status" className="space-y-2">
+          <span className="sr-only">日報の取込みの記録を読み込んでいます…</span>
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
