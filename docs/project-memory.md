@@ -261,7 +261,7 @@ Keep it factual and stable.
 
 ### 未確認
 
-- Whether the daily/monthly report screens can fully replace the current Excel-print-binder record has not been accepted; this is planned as a go-live side-by-side check on one real day, not yet done — `docs/backlog.md`（日報画面のExcel印刷・バインダー代替受入判定 項） / `docs/function-design/56-ui-daily-sales.md`
+- 日報・月次の画面の導入前受入（導入の前の関門の 12。実際の日での公式集計・過去日到達・未取込み日の識別・修正と再取込み・backup/restore 後の再現の横並びの確認）は未実施。この受入は日報の紙と月の売上の紙のどちらも置き換えない（日報の紙の切替えは運用開始の後の照合の後で、月の売上の紙は今の作り方を続ける）— `docs/daily-monthly-acceptance-runbook.md` / `docs/function-design/56-ui-daily-sales.md` UI-09a-D13・UI-09a-D19 の (2) / `docs/function-design/57-ui-monthly-sales.md` UI-09b-D9
 - CSV export and print behavior have not been end-to-end verified in real use; owner's own characterization is "まともにテストしたことがない" / "印刷は中身を作っていない" — `docs/backlog.md`（CSV出力・印刷の実挙動確認 項）
 - Whether the store will want a network (UNC/NAS) backup destination is still open; current handling is low priority pending an explicit need — `docs/backlog.md`（バックアップ保存先のUNC/ネットワークパス対応 項）
 - 導入後、値上げのときに紙の前年リストを手で直す作業をやめるかは未確認。owner は、このアプリを渡すことがその作業の代わりになるはずと考えている — owner回答2026-09-23
