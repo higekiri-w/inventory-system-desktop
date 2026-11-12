@@ -142,7 +142,7 @@ Risk: R4
 | 手動の backup の写像（43 §43.6、(a)） | `cmd/settings_cmd.rs` の `create_backup_at` と `backup_dir_error` | §43.8.6 の作り直しの前の backup | 写像を二重に書かない（既存の `create_backup_at` を呼ぶ） | 43 §43.8.6 の行 |
 | invalidate を直接呼んでよい file（D-052-S1） | `src/lib/invalidation-contract.static.test.ts` の `ALLOWED_DIRECT_CALL_FILES`（`BackupRestorePage.tsx`・`useAutoBackupCheck.ts` を含む） | status の invalidate はこの 2 file から | 新しい file（`OffsiteBackupPanel.tsx`・`OffsiteBackupWarning.tsx`・`useOffsiteBackupStatus.ts`）から invalidate しない。許可の一覧を変えない | AC4 の static test |
 | CmdError の利用者向け表示（UI-ERR-D1） | `src/lib/describe-error.ts`、`src/lib/describe-error-adoption-sweep.test.ts` | card の失敗の文は `describeError` を通す | raw の message を直接出さない | AC4 の sweep test |
-| `vi.mock("@/lib/bindings")` の既定 | `RootLayout.test.tsx`（`commands: { checkAutoBackup }`）、`HomePage.test.tsx`、`BackupRestorePage.test.tsx`・`BackupRestorePage.flow.test.tsx`、`useAutoBackupCheck.test.tsx` | 新しい command の既定を足す（mount の 1 回の `checkOffsiteBackup`、ホームの `getOffsiteBackupStatus`） | hook の module を `vi.mock` で置き換える test（`OtherRecordDetailRoutes.test.tsx`・`app-router.test.tsx`）は (b) が export を足さないので変えない | AC4 |
+| `vi.mock("@/lib/bindings")` の既定 | `RootLayout.test.tsx`（`commands: { checkAutoBackup }`）、`HomePage.test.tsx`、`BackupRestorePage.test.tsx`・`BackupRestorePage.flow.test.tsx`、`useAutoBackupCheck.test.tsx` | 新しい command の既定を足す（mount の 1 回の `checkOffsiteBackup`、ホームの `getOffsiteBackupStatus`） | hook の module を `vi.mock` で置き換える test（`OtherRecordDetailRoutes.test.tsx`・`app-router.test.tsx`）は用意・作り直し・やめるを実行せず、(b) が足した export（`trackOffsiteOperation`）に触れる経路を通らないので変えない | AC4 |
 
 ## Negative Paths
 

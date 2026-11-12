@@ -540,7 +540,7 @@ describe("PC の外の控えの確認 (REQ-901 / UI-11b-D16)", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(waiting.settled).toBe(true);
 
-    // 終わった操作は残らない（次の選択を待たせない）
+    // 終わった操作は次の選択を待たせない
     const idle = trackSettled(suspendAutoBackupCheckAndWait());
     await vi.advanceTimersByTimeAsync(0);
     expect(idle.settled).toBe(true);
