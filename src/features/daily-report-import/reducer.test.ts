@@ -98,6 +98,7 @@ const scan: DailyReportSdScan = {
   volume_label: "E:",
   scanned_from: "2026-02-20",
   skipped_unknown_count: 0,
+  tidy_failure: null,
   candidates: [
     {
       candidate_key: "key-a",

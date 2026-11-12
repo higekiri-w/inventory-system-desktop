@@ -159,6 +159,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "io::daily_report_parser",
             "io::register_sd",
             "io::pos_source_copy",
+            "io::register_sd_move",
         ],
     );
 

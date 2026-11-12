@@ -32,6 +32,7 @@ import type {
   DailyReportSdCandidate,
   DailyReportSdCandidateStatus,
   DailyReportSdScan,
+  RegisterSdTidyFailure,
 } from "@/lib/bindings";
 import { describeError } from "@/lib/describe-error";
 import {
@@ -170,6 +171,19 @@ const CANDIDATE_STATUS: Record<
   },
 };
 
+/**
+ * UI-07-D15 (7): 片付け（BIZ-08-D11）の失敗の固定の文。wire の enum だけで分け、message の文字列で分岐しない。
+ * 移せたことと本数は出さない（D-149 (5)、J4）
+ */
+const TIDY_FAILURE_TEXT: Record<RegisterSdTidyFailure, string> = {
+  SdWrite:
+    "取り込んだ分を SD の中で片付けられませんでした。SD の横のつまみが「LOCK」の側になっていないか確かめ、SD を差し直してから、もう一度「SD から読む」を押してください。同じ表示が続くときは、管理者に伝えてください。片付けができなくても、取込みとレジの精算には差し支えありません。",
+  PcCopy:
+    "取り込んだ分の控えを PC に保存できなかったため、SD の中の片付けをしませんでした。PC の空き容量が足りているか確かめてから、もう一度「SD から読む」を押してください。同じ表示が続くときは、管理者に伝えてください。取込みとレジの精算には差し支えありません。",
+  Other:
+    "取り込んだ分を SD の中で片付けられませんでした。もう一度「SD から読む」を押しても同じ表示なら、管理者に伝えてください。取込みとレジの精算には差し支えありません。",
+};
+
 /** UI-07-D15 (3) の一覧の上の文（状態の数だけで決める） */
 function scanSummary(scan: DailyReportSdScan): string | null {
   const count = (status: DailyReportSdCandidateStatus) =>
@@ -226,7 +240,8 @@ function DailyReportSourceStep({
         <CardContent className="space-y-4">
           <Button onClick={onScan} disabled={scanning}>
             {scanning && <Loader2 className="animate-spin text-ongoing" aria-hidden="true" />}
-            {scanning ? "SD を読んでいます…" : "SD から読む"}
+            {/* UI-07-D15 (2): 読取りの中で SD に書く（BIZ-08-D11）ので、抜かないことを読取りの間に言う */}
+            {scanning ? "SD を読んでいます…終わるまで SD を抜かないでください" : "SD から読む"}
           </Button>
           <SelectionErrorMessage message={scanError} />
           {scanError !== null && (
@@ -237,9 +252,17 @@ function DailyReportSourceStep({
           {scan && (
             <div className="space-y-3">
               <p className="text-sm font-medium" role="status">
-                読み終わりました。いつもの取込みが済んでいれば、SD
-                はレジに戻してください（次の精算に要ります）。
+                読み終わりました。SD はレジに戻してください（次の精算に要ります）。
               </p>
+              {scan.tidy_failure !== null && (
+                <p
+                  className="flex items-start gap-2 text-sm font-medium text-warning-strong"
+                  role="status"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                  <span>{TIDY_FAILURE_TEXT[scan.tidy_failure]}</span>
+                </p>
+              )}
               {summary && <p className="text-sm">{summary}</p>}
               {scan.skipped_unknown_count > 0 && (
                 <p className="text-xs text-muted-foreground">

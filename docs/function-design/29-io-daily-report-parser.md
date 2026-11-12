@@ -347,7 +347,7 @@ fn list_register_sd_entries(root: &RegisterSdRoot, from: NaiveDate) -> Result<Re
 1. `XZ` が無ければ `MissingSalesArea`。`XZ_BKUP` は無くてよい（`backup_area_present = false`）。
 2. `XZ` と `XZ_BKUP` のそれぞれで、4 桁の年・2 桁の月（01〜12）の名前の folder のうち (年, 月) が `from` の (年, 月) 以上のものだけに入り、その中の file を Z の規則で分類する。それ以外の名前の folder には入らない。
 3. `XZ` と `XZ_BKUP` の直下の file を EJ の規則で分類する。`XZ` 直下の EJ（伸び続ける file、SD-09）は `from` によらず返す。
-4. 名前の規則（大文字小文字を区別しない。FAT は区別せず、SD 上は大文字の `EJ`、説明書は `Ej`）:
+4. 名前の規則（ASCII の大文字小文字を区別しない。FAT は区別せず、SD 上は大文字の `EJ`、説明書は `Ej`。畳み込みと数字は ASCII だけで、正規表現は `(?i-u)` で書く。ASCII でない文字を含む名前は `Unknown`。レジが書く名前は ASCII で、Unicode の畳み込み〈`ſ` と `S`、`K`〈U+212A〉と `K`〉や Unicode の数字〈全角の `１`〉を受けると、IO-11 が移した file を IO-09 が組に戻せない・`Unknown` と読む名前ができる。PR #228 の Gated Amendment 1、TD-649）:
    - Z: `^Z(\d{3})_(\d{2})([ A-Z])(_(\d{4}))?\.CSV$`。`XZ` では連番なし、`XZ_BKUP` では連番ありだけを Z とする（逆は `Unknown`）。日付は folder の年・月と名前の日で、暦日として不正なら `Unknown`。
    - EJ: `^EJ(\d{2})(\d{2})(\d{2})(_(\d{4}))?\.TXT$`。`XZ` では連番なし、`XZ_BKUP` では連番ありだけを EJ とする。日付は 20yy 年。
    - どれにも当たらない file は `Unknown` として返す（名前と size だけ。中身を読まない）。SD-07 の旧い folder の未知の file はこれに当たる。
@@ -373,7 +373,7 @@ fn read_register_sd_file(root: &RegisterSdRoot, relative_path: &str, max_bytes: 
 3. 形を測る: CP932 の strict decode の成否、先頭の UTF-8 BOM、改行が CRLF だけか、最後が CRLF か。測るだけで、直さない・捨てない。
 4. `RegisterSdFile` を返す。
 
-**IO-09-D3（SD を書き換えない）**: `io::register_sd` は SD への書込み・作成・改名・移動・削除・属性の変更・時刻の変更を行う関数を持たない。そのため、この module が使ってよい file system の API を次の許可の列に限る（列にない API は使わない。禁止の語を数える形にしない）: `std::fs::File::open`（読取り専用で開く）、`std::fs::read_dir`、`std::fs::metadata`、`std::fs::canonicalize`（実体の path を得るだけで、file system を変えない。IO-09-D5）、型の `std::fs::{File, ReadDir, DirEntry, Metadata, FileType}`、`std::io::Read` の読取りの method（`read`・`read_to_end`・`take`）、`File::metadata`・`DirEntry::{path, file_name, file_type, metadata}`・`Metadata::{is_file, is_dir, len}`、`std::path` の文字列の操作と `Path::is_dir`・`Path::is_file`（中で `metadata` を読むだけ）、Windows の `windows_sys` の `GetLogicalDrives`・`GetDriveTypeW`（と定数 `DRIVE_REMOVABLE`）と、thread の error mode の `SetThreadErrorMode`（と定数 `SEM_FAILCRITICALERRORS`、引数の型 `THREAD_ERROR_MODE`。§29.7.4 手順 1。file system を変えない。ほかの型〈`BOOL`・`PCWSTR`〉は名指しせず推論で書く）。使わないものの例（許可の列にないので使えない）: `OpenOptions`、`File::create`・`File::create_new`、`fs::write`・`fs::copy`・`fs::rename`・`fs::hard_link`・`fs::soft_link`・`create_dir*`・`remove_*`・`fs::set_permissions`、`File` の `set_len`・`set_modified`・`set_times`・`set_permissions`、`std::io::Write`、`windows_sys` の上の 3 関数以外。runtime の lane が source の検査 test（Matrix の `register_sd::module_uses_only_allowed_fs_api`）で、`src-tauri/src/io/register_sd.rs` の `std::fs` / `fs::` / `File::` / `OpenOptions` / `std::io::Write` / `windows_sys` の出現が許可の列の中だけかを確かめる（`use std::fs::*` と、`std` の項目を `as` で改名する形〈`use std::fs as f`・`use std::{fs as f}`・`use std::fs::{self as f}`・`use std::fs::File as F` など〉も許可の列の外として red。`crate::`・`super::` で始まる path〈`use` の group の中の項目を含む〉は、`super::` の folder 名の定数〈§29.7.4 手順 1〉だけを許し、それ以外〈`super::pos_source_copy`・`super::image_manager`・`crate::db`・`crate::mnt` など〉を red にする。この module から別の module を呼べば、許可の列の外の API を使うのと同じになりうる。書く module を名前で並べる形は、書く module が増えるたびに漏れるので採らない）。file は読取り専用で開き、読んだら閉じる。Windows が読取りで FAT の最終アクセス日を変える・`System Volume Information` を作ることはアプリでは止められないが、店は CV17 の取込みのために毎日この PC で同じ SD を書込み可能なまま差してきており（SD-25）、新しい種類の副作用は増えない。(a) の段階（IO-09 と SD 直読みの runtime の lane）では、CV17 と同じく `XZ` から `XZ_BKUP` へ移す案は採らない（owner 決定 2026-10-06、D-111。この段階では SD は動かさない。移す操作は D-111 (1) の (b) の後続の lane が別の module で作る）。動かさない前提（Z・EJ が `XZ` に残っても精算が続く）は、Z の名前が日付と同じ日の精算ごとの接尾字で決まり別の日の Z とぶつからないこと（SD-02・SD-08）と、EJ が約 1 か月 `XZ` に残っても精算が続いた店の実績（SD-09、repo 外の回答台帳 TD-139）で受け入れた。取込み済みを `XZ_BKUP` へ移す操作（D-111 (1) の (b)、後続の lane）ができるまで店は CV17 の取込みを今の運用のまま続けるので（D-111 の運用の制約）、Z が `XZ` に何日も溜まる状態は生じない。`XZ` の file が数千本になったときのレジの振舞いは (b) の lane の前提（D-111 の Revisit）。読んだ原本の写しは PC 側のアプリの folder に書き（§29.8、IO-10）、書く module を `io::register_sd` と分けて、この module に書込みの API が無いことを保つ。
+**IO-09-D3（`io::register_sd` は SD を書き換えない）**: `io::register_sd` は SD への書込み・作成・改名・移動・削除・属性の変更・時刻の変更を行う関数を持たない。そのため、この module が使ってよい file system の API を次の許可の列に限る（列にない API は使わない。禁止の語を数える形にしない）: `std::fs::File::open`（読取り専用で開く）、`std::fs::read_dir`、`std::fs::metadata`、`std::fs::canonicalize`（実体の path を得るだけで、file system を変えない。IO-09-D5）、型の `std::fs::{File, ReadDir, DirEntry, Metadata, FileType}`、`std::io::Read` の読取りの method（`read`・`read_to_end`・`take`）、`File::metadata`・`DirEntry::{path, file_name, file_type, metadata}`・`Metadata::{is_file, is_dir, len}`、`std::path` の文字列の操作と `Path::is_dir`・`Path::is_file`（中で `metadata` を読むだけ）、Windows の `windows_sys` の `GetLogicalDrives`・`GetDriveTypeW`（と定数 `DRIVE_REMOVABLE`）と、thread の error mode の `SetThreadErrorMode`（と定数 `SEM_FAILCRITICALERRORS`、引数の型 `THREAD_ERROR_MODE`。§29.7.4 手順 1。file system を変えない。ほかの型〈`BOOL`・`PCWSTR`〉は名指しせず推論で書く）。使わないものの例（許可の列にないので使えない）: `OpenOptions`、`File::create`・`File::create_new`、`fs::write`・`fs::copy`・`fs::rename`・`fs::hard_link`・`fs::soft_link`・`create_dir*`・`remove_*`・`fs::set_permissions`、`File` の `set_len`・`set_modified`・`set_times`・`set_permissions`、`std::io::Write`、`windows_sys` の上の 3 関数以外。runtime の lane が source の検査 test（Matrix の `register_sd::module_uses_only_allowed_fs_api`）で、`src-tauri/src/io/register_sd.rs` の `std::fs` / `fs::` / `File::` / `OpenOptions` / `std::io::Write` / `windows_sys` の出現が許可の列の中だけかを確かめる（`use std::fs::*` と、`std` の項目を `as` で改名する形〈`use std::fs as f`・`use std::{fs as f}`・`use std::fs::{self as f}`・`use std::fs::File as F` など〉も許可の列の外として red。`crate::`・`super::` で始まる path〈`use` の group の中の項目を含む〉は、`super::` の folder 名の定数〈§29.7.4 手順 1〉だけを許し、それ以外〈`super::pos_source_copy`・`super::image_manager`・`crate::db`・`crate::mnt` など〉を red にする。この module から別の module を呼べば、許可の列の外の API を使うのと同じになりうる。書く module を名前で並べる形は、書く module が増えるたびに漏れるので採らない）。file は読取り専用で開き、読んだら閉じる。Windows が読取りで FAT の最終アクセス日を変える・`System Volume Information` を作ることはアプリでは止められないが、店は CV17 の取込みのために毎日この PC で同じ SD を書込み可能なまま差してきており（SD-25）、新しい種類の副作用は増えない。この制約は `io::register_sd` に限る。SD の上の file を動かす操作（取り込んだ精算の Z を `XZ` から `XZ_BKUP` へ移す、D-149）は別の module `io::register_sd_move`（§29.9、IO-11）に置き、いつ・どの file を移すかは BIZ-08-D11（37 §37.12）が決める。取り込んだ精算の Z は次の「SD から読む」で移るので、`XZ` に Z が溜まり続けない（移さずに残る file の範囲は D-149 の Guarantee range。`XZ` の file が数千本になったときのレジの振舞いは確かめていない、D-149 の Why）。EJ は EJ の取込み（D-121 の (A)）まで移さず、店が月末に CV17 で取り込む（D-149 (2)・(7)。EJ が約 1 か月 `XZ` に残っても精算が続いた店の実績で受け入れた。SD-09、repo 外の回答台帳 TD-139）。読んだ原本の写しは PC 側のアプリの folder に書く（§29.8、IO-10）。書く module と移す module を `io::register_sd` と分けて、この module に書込みの API が無いことを保つ。
 
 **IO-09-D4（形は測って BIZ が止める）**: SD-24 の符号化・改行・BOM は「状態」なので IO は決め打ちにせず測って返し、外れた file を取込みの候補にしないのは BIZ（BIZ-08-D3）が決める。行数・列数は各 parser の構造の検査（IO-07 の `invalid_format`、IO-02、IO-08）に任せ、固定の行数を IO で求めない（Z004 の 5,000 枠も含め、レジの設定で変わりうる）。
 
@@ -414,7 +414,7 @@ fn read_register_sd_file(root: &RegisterSdRoot, relative_path: &str, max_bytes: 
 
 #### 29.8.1 目的と置き場所
 
-`pos_source_copy`（module `io::pos_source_copy`）は、SD から読んで取り込んだ file の生バイトを、PC 側のアプリのデータ folder に写しとして書く IO 層の関数である。CV17 の取込みをやめると PC 側に原本の写しが無くなる（CV17 は `EcrDatas` に写しを置いていた）ための代わり（owner 決定 2026-10-06）。SD には書かない（書く先はアプリのデータ folder だけ）。どの file をいつ書くか・失敗したらどうするかは BIZ（日報は BIZ-08-D5）が決める。本節も §29.7.1 と同じ理由で IO-07 の文書に置き、`design_compliance_test.rs` の map の `29-io-daily-report-parser.md` の行に `io::pos_source_copy` を登録している。
+`pos_source_copy`（module `io::pos_source_copy`）は、SD から読んだ file（取り込む束と、SD の中で `XZ_BKUP` へ移す組）の生バイトを、PC 側のアプリのデータ folder に写しとして書く IO 層の関数である。CV17 の取込みをやめると PC 側に原本の写しが無くなる（CV17 は `EcrDatas` に写しを置いていた）ための代わり（owner 決定 2026-10-06）。SD には書かない（書く先はアプリのデータ folder だけ）。どの file をいつ書くか・失敗したらどうするかは BIZ（取り込む日報の束は BIZ-08-D5、移す組は移す前に書く BIZ-08-D11〈37 §37.12 手順 3a〉）が決める。本節も §29.7.1 と同じ理由で IO-07 の文書に置き、`design_compliance_test.rs` の map の `29-io-daily-report-parser.md` の行に `io::pos_source_copy` を登録している。
 
 置き場所は既存の規則に合わせ、アプリのデータ folder（`app_data_dir`。DB の `inventory.db` と同じ folder、[71](71-mnt-backup.md) §71.7）の下の相対 path にする。レシート画像の `images/receipts/`（[28](28-io-image-manager.md) IO-06）と同じく、DB には app_data_dir からの相対 path を残す。
 
@@ -450,3 +450,70 @@ fn save_pos_source_copy(
 
 - 書けない（容量不足・権限・パス長）ときは `std::io::Error` を返す。BIZ が取込みを止める（BIZ-08-D5）。一時 file が残った場合は次回の書込みで別の一時名を使い、最終の名前の file だけを写しとみなす。
 - 採らなかった案: hash だけの名前で置く（店の人や開発者が日付・系列で探せない。CV17 の写しは名前で探せた）、同じ path を上書きする（前の精算の写しが消える）、scan の時にすべて書く（取り込まない束・形の外れた file まで残り、どれが取込みの原本か分からなくなる）、DB に bytes を入れる（DB と backup が大きくなり、日報の行の正本と原本の証拠が混ざる）。
+
+### 29.9 IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す（D-149）
+
+#### 29.9.1 目的と置き場所
+
+`register_sd_move`（module `io::register_sd_move`）は、レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す IO 層の関数である。どの組を移すかと、組の中の順は BIZ-08（37 §37.12、BIZ-08-D11）が決める。DB を呼ばない。D-111 (1) の (b) で、IO-09-D3 のとおり `io::register_sd` に書込みの API を足さず別の module に置く（`register_sd.rs` の許可の列の検査〈`test_req401_module_uses_only_allowed_fs_api`〉はそのまま効く）。§29.7.1 と同じ理由で本書に置き、`src-tauri/tests/design_compliance_test.rs` の `build_doc_to_modules_map()` の `29-io-daily-report-parser.md` の行に `io::register_sd_move` を登録している。
+
+IO-09 から使うもの（`pub(crate)` の読むだけの helper で、IO-09-D3 の許可の列を変えない。名前は IO-11-D3）: 相対 path の要素の検査（§29.7.6 手順 1。関数 `split_relative_path`。`read_register_sd_file` と IO-11 が同じ関数を呼ぶ）と実体の path の root の下の確かめ（`inside_root`、IO-09-D5）、thread の error mode の guard（`ErrorModeGuard`、§29.7.4 手順 1）、Z の名前の規則（`classify_z`、§29.7.5 手順 4）。置き換えない移動は 71 §71.4.1 の操作を `crate::io` の 1 つの関数 `move_no_replace(source, destination)`（`src-tauri/src/io/mod.rs`）に置き、MNT の `StdRestoreFileOps::publish_no_replace`（`mnt/restore.rs`）はそれを呼ぶだけにする（IO から MNT は参照しない向き、§29.7.4 手順 1。操作と flags は 71 §71.4.1 のまま。flags の source の検査 test〈`mnt/restore.rs` の `test_publish_no_replace_req901_d7_windows_flags_exclude_replace_existing`〉は IO の関数の本体と、MNT が IO を呼ぶだけであることを見る）。IO-11 は `inside_root` の `InvalidPath` と `Io` を IO-09 の error の型を使わずに分けるため、先に `std::fs::canonicalize` で解いて（解けなければ `Io`）から `inside_root` で比べる。
+
+#### 29.9.2 型とシグネチャ
+
+```rust
+fn move_register_sd_group_to_backup(
+    root: &RegisterSdRoot,
+    group: &[RegisterSdMoveItem], // 同じ精算の名前の Z の組（1〜4 本）。この順で移す
+) -> RegisterSdGroupMove
+
+struct RegisterSdMoveItem {
+    relative_path: String, // IO-09 の RegisterSdEntry.relative_path（`XZ\yyyy\mm\Znnn_dda.CSV`）
+    expected_len: u64,     // BIZ が読んだ bytes の長さ（移した後の確かめ）
+}
+
+struct RegisterSdGroupMove {
+    moved: Vec<String>,                 // 移した先の root からの相対 path（`XZ_BKUP\yyyy\mm\Znnn_dda_nnnn.CSV`）、移した順
+    error: Option<RegisterSdMoveError>, // 止めた理由。None = 組の全部を移した
+}
+
+enum RegisterSdMoveError {
+    InvalidPath,                                            // §29.7.6 手順 1 の検査、または実体の path が root の外（IO-09-D5）
+    NameRule,                                               // 組の形が違う（`XZ\yyyy\mm\` の連番の無い Z001・Z002・Z004・Z005 でない、folder・日・接尾字が揃わない、系列が重なる、0 本か 5 本以上）
+    NoFreeSequence,                                         // 手順 4 の連番が 0001〜9999 に無い
+    Io { relative_path: String, kind: std::io::ErrorKind }, // 作る・移す・確かめる途中の失敗（書込み禁止・抜いた・同時に同じ名前ができた〈AlreadyExists〉を含む）
+    Verify { relative_path: String },                       // 移動は成功と返ったが、移した先の size が違うか元の名前が残る
+}
+```
+
+#### 29.9.3 処理ステップ
+
+1. guard を作る（§29.7.4 手順 1）。組の各 `relative_path` を §29.7.6 手順 1 の検査（切り出した関数）に通し（通らなければ `InvalidPath`）、要素が `XZ`（大文字小文字を区別しない）・4 桁の年・2 桁の月・Z の名前の 4 つで、名前が §29.7.5 手順 4 の Z の規則に連番なしで当たり、系列が Z001・Z002・Z004・Z005 のどれかであることを確かめる。組の全部が同じ folder・同じ日・同じ接尾字で、系列が重ならず、1〜4 本であることも確かめる。どれかが違えば `NameRule`。EJ・`Unknown`・`XZ_BKUP` の file とほかの系列は移さない（EJ は (A) の後に足す。D-149 (2)）。手順 1〜4 では組の file を動かさないので、ここまでのどこで止まっても 1 本も移さない（手順 1・2・4 は SD に書かない。SD に書くのは手順 3 の folder の作成と手順 5 の改名だけ）。
+2. 組の各 file の実体の path を解き、root の下で通常の file であることを確かめる（IO-09-D5。外なら `InvalidPath`、解けなければ `Io`）。
+3. 移す先の folder `XZ_BKUP\yyyy\mm` を root の下に用意する: 各段（`XZ_BKUP`・年・月）を、在れば実体の path を解いて root の下の directory であることを確かめ（外なら `InvalidPath`、directory でなければ `Io`〈`kind` は `InvalidInput`〉）、無ければ `std::fs::create_dir` で作ってから同じく確かめる。既存の段の名前の大文字小文字はそのまま使う（`xz_bkup` があればそれを使う）。作った folder は失敗しても消さない（空の folder は IO-09 の列挙に影響しない）。
+4. 組に共通の連番 `nnnn` を 1 つ決める。移す名前は、各 file の元の名前（元の綴りのまま）の拡張子の前に `_` と 4 桁の連番を足したもの（`Z001_06 .CSV` → `Z001_06 _0001.CSV`、接尾字の空白も残す）。下の (a)・(b) で名前が「在る」「無い」は、綴りの文字列でなく IO-09 の分類で見る: 移す先の folder の entry を 1 回 `read_dir` で読み、各 entry の名前を `classify_z`（§29.7.5 手順 4 の `XZ_BKUP` の Z の規則）に通し、組と同じ日・接尾字の Z に分類された entry の (系列, 連番) を在る名前とする。綴りが違っても IO-09 が同じ日・接尾字・系列・連番の Z と読む名前（ASCII の大文字小文字の違い）は同じ名前として扱う。scan は移した file を IO-09 の分類の (folder, 日, 接尾字, 連番) で束に戻すので、空きと再開の判定をその見方に揃える（綴りの文字列で比べると、IO-09 が同じ Z と読む別の綴りの名前を見落とし、途中で止まった後の読み直しで組が 2 つの連番に割れる。PR #228 の Final Review の closure の P2）:
+   - (a) 前の片付けの続き: 移す先に、組と同じ日・接尾字で組に無い系列（4 系列のうち組に無いもの）の `_m` の名前が 1 本以上在り、組の全部の名前の `_m` が移す先に無い m を候補にする。候補の中で組に無い系列の `_m` の名前が全部在る m（前の片付けで組の残りを移した連番）があれば、その最大の m。無いときだけ候補の最大の m（別に大きい連番の単独の同じ名前があっても、残りは前に移した連番へ揃う。PR #228 の計画の review の closure の P3-A）。
+   - (b) 無ければ、4 系列（組に無い系列を含む）の同じ日・接尾字の `_n` の名前が移す先に 1 本も無い最小の n（組に無い系列の名前も空けるのは、組の途中で止まったときに、移した分と残りが (a) で同じ連番に揃うため）。
+   - どちらも 0001〜9999 に無ければ `NoFreeSequence`。CV17 の連番の振り方には合わせない（repo の資料に無い。名前が §29.7.5 の `XZ_BKUP` の Z の規則に当たり、組が 1 つの連番に揃い、同じ folder で一意であれば足りる。D-149 の Guarantee range）。
+5. 組の file を渡された順に 1 本ずつ: `move_no_replace(元, 先)`（71 §71.4.1。同じ volume の中なので bytes を写さない改名。置き換えの flag を付けないので、手順 4 の後に同じ名前ができていれば `AlreadyExists` で失敗し、既存の file を変えない。失敗は `Io`）、続けて確かめる: 先の `metadata` が通常の file で `len() == expected_len`、元の path の `try_exists` が `false`。違えば `Verify`、読めなければ `Io`。失敗したら残りを移さずに止める。
+6. 移した先の相対 path と、止めた理由を返す。
+
+**IO-11-D1（CV17 と同じ形で、組を 1 つの連番に揃え、置き換えずに移す）**: 移した後の名前と置き場所は CV17 の取込みの後と同じ形（SD-02）にする。IO-09 の分類（§29.7.5 手順 4）と BIZ-08 の scan（§37.9）は、移した file を CV17 が移した file と同じに読む。37 §37.11 手順 2 の伸びうるかの判定（連番の有無）も同じ形に依る。scan は `XZ_BKUP` の束を連番ごとに組むので、組の連番を file ごとに選ぶと、移す先の埋まり方が系列ごとに違うとき束が割れて「ファイルがそろっていません」になる。そのため組に共通の連番を選び、途中で止まった組の残りは手順 4 (a) で同じ連番に揃える。IO-09 が同じ Z と読む 2 つの名前は ASCII の大文字小文字だけが違う名前で（§29.7.5 手順 4）、その 2 本は FAT（店の SD）と既定の NTFS では同じ folder に並ばないので、組の判定（同じ系列は組に 1 本）はそれに頼る。大文字小文字を区別する file system の上の同じ系列の重複は保証しない（片付けは取外し可能な drive を自動で見つけたときだけ。PR #228 の Gated Amendment 1 の review）。既存の file は置き換えない（CV17 か前の片付けが置いた file を消さない）。file を移す操作は bytes を書かない改名だけにする（途中で抜いても bytes の欠けた file を作らない。SD に書くのは、この改名と手順 3 の folder の作成だけ）。抜く前に改名が SD に届いているかは、この関数でなく、取外し可能な drive の書込みの方針（Windows の「クイック削除」なら書込みは遅らせずに届く。店の PC は packet の F3 で確かめる）と、読取りの間の「終わるまで SD を抜かないでください」（55 UI-07-D15 (2)）に依る。`move_no_replace` の `MOVEFILE_WRITE_THROUGH` は 71 §71.4.1 の操作のまま付くが、MoveFileExW の資料はこの flag の書き切りの保証を copy and delete の移動についてだけ書き、同じ volume の中の改名については書かないので、根拠にしない。FAT の改名が途中で止まる危険は CV17 の取込みと同じ種類（D-149 の Guarantee range）。
+
+**IO-11-D2（1 本ずつ確かめてから次へ、失敗で止める）**: 組の中でも 1 本ずつ移し、移した後に手順 5 で確かめてから次へ進む。失敗したら組の残りを移さない。次の組へ進むかは BIZ が決める（BIZ-08-D11 は失敗で残りを止める）。組の中の順は BIZ が渡す（BIZ-08-D11 は Z004 を先にする）。
+
+**IO-11-D3（使う file system の API と crate の中の名前）**: `register_sd_move.rs` が使う file system の API は、IO-09-D3 の許可の列に、`std::fs::create_dir` と `Path::try_exists` を足したものだけにする。消す（`remove_*`）・写す（`fs::copy`・`File::create`・`OpenOptions`・`std::io::Write`）・置き換える（`std::fs::rename`）・属性と時刻を変える API は使わない。`crate::`・`super::` で始まる path は次の名前だけを許す: `super::register_sd` の `RegisterSdRoot`・`RegisterSdArea`・`RegisterSdEntryKind`・`ErrorModeGuard`・`classify_z`・`inside_root`・`split_relative_path`（切り出した相対 path の要素の検査）と、`crate::io::move_no_replace`（`super::move_no_replace` と書いても同じ物として許す）。この列に無い名前（例: `super::pos_source_copy`・`crate::db`・`crate::mnt`・`crate::biz`）は全部許可の列の外。`register_sd.rs` と同じ形の source の検査 test（`register_sd_move.rs` の `test_req401_module_uses_only_allowed_fs_api`）が確かめる（`move_no_replace` の本体〈Windows 以外の test だけの `hard_link` と `remove_file`〉は `crate::io` の側にあり、この module の検査の外。flags の検査は 71 §71.4.1 の test が持つ）。
+
+#### 29.9.4 採らなかった案
+
+| 案 | 採らない理由 |
+|---|---|
+| `std::fs::rename` | Windows で既存の同じ名前を置き換える（71 §71.4.1） |
+| 写してから元を消す | SD に bytes を書き、途中で抜くと欠けた file ができうる。消す API を SD に向ける |
+| 確かめてから rename する（存在の確認と移動を分ける） | 間に同じ名前ができると置き換える。1 つの呼出しで失敗させる |
+| 連番を file ごとに選ぶ（1 本ずつの関数） | 移す先の埋まり方が系列ごとに違うと組の連番が割れ、scan が「ファイルがそろっていません」にする |
+| CV17 の連番に合わせる | 振り方が repo の資料に無い。合わせても同時に使う期間の衝突は無くならず、置き換えない移動が守る |
+| 書き切りを `MOVEFILE_WRITE_THROUGH` に任せる | MoveFileExW の資料はこの flag の保証を copy and delete の移動についてだけ書き、同じ volume の改名の書き切りを保証しない |
+| `io::register_sd` に足す | IO-09-D3（読むだけの module の許可の列）を崩す |
+| MNT の `publish_no_replace` を IO から呼ぶ | IO から MNT を参照しない（§29.7.4 手順 1） |
+| 同じ操作を IO に別に書く | 置き換えない移動の flags を 2 か所で持つ（D-147 の根本で 1 か所） |
