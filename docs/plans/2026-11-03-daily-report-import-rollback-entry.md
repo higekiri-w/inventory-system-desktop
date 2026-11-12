@@ -6,7 +6,7 @@ wave に属さない単独の lane。導入の前の関門 12 の前提 A（owne
 
 - Risk: R3
 - Plan Commit: b5136eb28ba47fda49ba91f5ea15f286b5b64fb5
-- Amendments: none
+- Amendments: 5034bb97b16589822ed626a4f2fd566a65847749
 
 ## Risk
 
