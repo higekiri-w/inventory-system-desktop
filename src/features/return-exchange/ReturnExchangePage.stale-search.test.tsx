@@ -147,7 +147,7 @@ async function settle() {
   });
 }
 
-// UI-03-D23: 既定の選択が無いので保存の前に選ぶ。在庫の反映は result panel の行の文言だけで、
+// UI-03-D23: 既定の選択が無いので保存の前に選ぶ。選ぶ値で変わるのは result panel の行の文言と在庫系の invalidation だけで、
 // この file の assert（result panel の有無・create の回数・payload の明細）に影響しない
 async function chooseRegisterMethod(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText(READ_AT_REGISTER));
