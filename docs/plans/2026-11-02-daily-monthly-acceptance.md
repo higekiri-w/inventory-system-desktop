@@ -175,7 +175,10 @@ Non-scope: `src/**`・`src-tauri/**`・`scripts/**`・`.github/**`、`docs/ACCEP
 
 ## Data Safety
 
-- 店の SD の写し（`XZ`・`XZ_BKUP` の全 file）と受入の data folder（取り込んだ記録の DB・アプリが残す SD の写し〈IO-10〉・backup）は店の実データ。置き場は、管理者の USB メモリの root でない日付の付いた folder（その USB は店の PC と開発用の Windows でだけ開く）と、開発用の Windows の repo の checkout（ignored の `.local/` を含む）と cloud の同期の外の、drive の直下でない日付の付いた folder だけ。AI の agent（Claude・Codex）への発注・報告・handoff に path・値を書かない。agent に読ませる作業をしない（agent は開発用の Windows の file を読めるので、場所でなく渡し方で守る。Design Readiness の絶対保証の例外）。
+- 店の実データは 2 種類で、置き場を分ける（Gated Amendment 2）。
+  - 管理者が作る SD の写し（`CASIO` の下の全 file。`XZ`・`XZ_BKUP` ほか）: 置き場は、管理者の USB メモリの root でない日付の付いた folder（その USB は店の PC と開発用の Windows でだけ開く）と、開発用の Windows の repo の checkout（ignored の `.local/` を含む）と cloud の同期の外の、drive の直下でない日付の付いた folder だけ。
+  - アプリが作る物（受入の data folder〈取り込んだ記録の DB・アプリが残す SD の写し〈IO-10〉・backup〉と WebView の保存の folder）: 置き場はアプリの固定の場所（受入の間は `%APPDATA%\com.inventory-system.desktop` と `%LOCALAPPDATA%\com.inventory-system.desktop`）と、終わった後に片付けの手順（msi-distribution-runbook.md の「予行演習の準備と片付け」の「終わった後」）で同じ `%APPDATA%`・`%LOCALAPPDATA%` の中に別名で残す folder だけ。日付の付いた folder の規則は掛からない。backup の保存先を受入の data folder の外へ変えず、この場所から他（SD の写しの置き場・USB メモリ・repo・cloud を含む）へ写さない・移さない。
+  - 両方に共通: repo（ignored の `.local/` を含む）・cloud の同期・AI の agent へ出さない。AI の agent（Claude・Codex）への発注・報告・handoff に path・値を書かない。agent に読ませる作業をしない（agent は開発用の Windows の file を読めるので、場所でなく渡し方で守る。Design Readiness の絶対保証の例外）。
 - 綴りの紙: 紙かそのコピーを店から借りて（比べる日と (5) の日の 2 日分。2 回以上精算した日も並べるならその日の分も）開発用の Windows の前で並べ、返す（TD-580・TD-650）。借りている間は USB メモリと同じく管理者が手元に保管し、コピー・スキャン・写真を作らない。
 - 画面の値を別の画面や紙へ運ぶために、画面の写し・写真・書き写し（紙・file とも）を使わない（比べるのは画面と借りた紙の間だけ。Gated Amendment 1）。
 - repo に入れないもの: 店の売上の値（金額・件数）、レジの SD の file と写し、綴りの紙・そのコピー・画面の写し、実の JAN・商品名・店の file 名の実例。手順書の金額の例は「合成の値」と書いた例の枠の中だけに置く。
