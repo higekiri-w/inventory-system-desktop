@@ -153,7 +153,7 @@
 
 ### 保留（要望・実需・顕在化待ち）
 
-- **`@typescript-eslint/typescript-estree` の下の `minimatch` の `overrides` を外す条件**（出所: Plan Packet `docs/plans/2026-11-12-minimatch-override.md`。`minimatch` の moderate の脆弱性〈Dependabot alert 30、GHSA-g3hv-75wg-m249〉はその lane〈PR #245〉の `overrides` で済み）: `package.json` の `overrides`（key は `@typescript-eslint/typescript-estree@8.58.2`。その下の `minimatch` 11.0.4 と `@isaacs/nonrecursive-glob-match` 1.0.3 の exact）は親が 8.58.2 の間の橋。外す条件: `typescript-eslint` を上げる lane で `overrides` の block を消す。key が親の版を限るので親を上げれば効かなくなり、上げた先がまだ影響の範囲なら `npm audit` が red になる。
+- **`@typescript-eslint/typescript-estree` の下の `minimatch` の `overrides` を外す条件**（出所: Plan Packet `docs/plans/2026-11-12-minimatch-override.md`。`minimatch` の moderate の脆弱性〈Dependabot alert 30、GHSA-g3hv-75wg-m249〉はその lane〈PR #245〉の `overrides` で済み）: `package.json` の `overrides`（key は `@typescript-eslint/typescript-estree@8.58.2`。その下の `minimatch` 11.0.4 と `@isaacs/nonrecursive-glob-match` 1.0.3 の exact）は親が 8.58.2 の間の橋。外す条件: `typescript-eslint` を上げる lane で `overrides` の block を消す。key が親の版を限るので親を上げれば効かなくなり、上げた先がまだ影響の範囲なら素の `npm audit`（`--audit-level` なし）が exit 1 になる（moderate なので、D-030 の PR 前の `npm audit --audit-level=high` と CI の audit の step では red にならない）。上げる前に `npm view @typescript-eslint/typescript-estree@<上げる先> dependencies.minimatch` が `^11.0.1` 以上かを見る。
 
 - **棚卸しの画面の `returnTo` に長さの上限が無い**（出所: 依存の脆弱性の lane〈PR #240〉の Final Review の Claude 側の P3、2026-11-09）: `src/routes/stocktake/index.tsx` の `returnTo` は `z.string().optional().catch(undefined)` で上限が無く、記録の詳細の route などの `returnTo` の 7 か所（`utf16String({ max: 500 })`）と揃っていない。main にあった形のままで、DSR-15 の検証（`src/lib/return-to.ts` の `returnToLinkProps`）は別に効いている。揃えるなら route の search の契約の変更（R3）で、66 の UI-06c-D9 の着地の記述と合わせる。
 
