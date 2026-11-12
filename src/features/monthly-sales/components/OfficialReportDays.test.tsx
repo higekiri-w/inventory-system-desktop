@@ -23,17 +23,18 @@ describe("OfficialReportDays (REQ-502 UI-09b-D11)", () => {
   it("C1: 見出しの数・取り込んだ日の link・取り込んでいない日・休業日の文・直し方の link", async () => {
     renderDays("2026-03", ["2026-03-23", "2026-03-24"], "2026-11-03");
 
+    // 見出しは h3 の 18px（00-foundations の typography、`text-lg`）
     expect(
-      await screen.findByRole("heading", { name: "取り込んだ日（2日分）" }),
-    ).toBeInTheDocument();
+      await screen.findByRole("heading", { level: 3, name: "取り込んだ日（2日分）" }),
+    ).toHaveClass("text-lg", "font-semibold");
     expect(
-      screen.getByRole("heading", { name: "取り込んでいない日（29日分）" }),
-    ).toBeInTheDocument();
+      screen.getByRole("heading", { level: 3, name: "取り込んでいない日（29日分）" }),
+    ).toHaveClass("text-lg", "font-semibold");
 
     const importedList = screen.getByRole("list", { name: "取り込んだ日" });
     const importedItems = within(importedList).getAllByRole("listitem");
     expect(importedItems.map((item) => item.textContent)).toEqual(["23日（月）、", "24日（火）"]);
-    // 見出しと日の一覧は本文の大きさ、label の中では折り返さない（04 原則 1、L3-2）
+    // 日の一覧は本文の大きさ、label の中では折り返さない（04 原則 1、L3-2）
     expect(importedList.closest(".text-sm")).toBeNull();
     expect(importedItems[0]).toHaveClass("whitespace-nowrap");
     expect(within(importedList).getByRole("link", { name: "23日（月）" })).toHaveAttribute(
