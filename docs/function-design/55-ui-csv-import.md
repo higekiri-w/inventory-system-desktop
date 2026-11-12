@@ -574,7 +574,7 @@ memory `tauri2-linux-ime-limitation.md` 準拠、Phase 2 以降 Windows native �
 - 読込みの状態: 読込み中は隣の一覧の画面（入出庫履歴）と同じ Skeleton（catalog ⑥）で、囲みを `role="status"` にし、画面外（`sr-only`）の文「日報の取込みの記録を読み込んでいます…」で支援技術に読込み中を伝える。0 件と範囲外のページは `EmptyState`（catalog ⑥）。「日報の取込みの記録はまだありません。」は `total_count === 0` のときだけ出す。`total_count` が 1 以上で、開いたページの行が 0（search の `page` が最後のページを越えた）のときは、「このページには記録がありません。」と 1 ページ目への導線「1 ページ目を開く」（search `page` を 1 に）を出し、記録が無いと読ませない。失敗は Alert（失敗を空の一覧に見せない）に CMD の message（`describeError`。例: 37 §37.6 の「既存日報のファイル情報を読み取れません」）と「再試行」を出す（再試行で直らない失敗でも、原因の文がその画面で読める）。
 - SD の一覧の「同じ精算を取込み済み」の行（O3・TD-592）: UI-07-D15 (3) のとおり、状態の label に並べて「精算 {n}」、行の下に「取り込み直すときは、前の取込みを取り消してから読み直してください。」と「日報の取込みの記録を開く」を出す。「精算 {n}」は記録の一覧の精算回数の列と同じ数なので、使い手は同じ対象日で同じ精算回数の行を「前の取込み」として選べる（owner の決定 2026-11-03、repo 外の回答台帳 TD-592。出所は lane の計画の review の closure 775 の P3〈AI の review〉。精算回数の列〈TD-590〉だけでは D4 の場面の画面の情報と結び付かなかった）。この行は BIZ-08-D4 と同じ状況（同じ対象日・同じ精算回数で bytes の違う束）で、直し方をその場で名指す（AGENTS.md の「使い手に押しつけない」）。棄却: 変えない（タブの上の導線だけ。行が直し方を名指さず、全件がこの状態なら一覧の上は「新しい精算はありません」になる）。
 - 理由: 誤りに気づいたときに、取り込んだ同じ画面の家族から取り消して正しい束を取り込み直せる（D-127）。結果の画面と同じ確認・同じ取消の後の処理にするのは、同じ操作の確認の中身を入口で変えないため（04-backbone の「同じ操作は同じ顔と挙動」。Z004 の UI-07-D18 と同じ形）。
-- 受入: 56 UI-09a-D13 の「修正・再取込み後の表示」は、この画面からの取消と取り込み直しで確かめる（受入の手順書の行は、この決定を実装する lane の merge の commit で書き足す）。
+- 受入: 56 UI-09a-D13 の「修正・再取込み後の表示」は、この画面からの取消と取り込み直しで確かめる（[受入の手順書](../daily-monthly-acceptance-runbook.md) の手順 5 の 1〜4 で確かめる）。
 
 ---
 
@@ -604,3 +604,4 @@ memory `tauri2-linux-ime-limitation.md` 準拠、Phase 2 以降 Windows native �
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正） | UI-07-D15 (3) と §55.12 の O3 に、SD の一覧の「同じ精算を取込み済み」の行の「精算 {n}」（`null` とほかの状態の行には出さない）を足した（owner の決定 TD-592。出所は closure 775 の P3〈AI の review〉）。 |
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §55.12（UI-07-D19）・§55.0 の手順 6・UI-07-D15 (3)・§55.1 の module の表・§55.7・§55.9 の proposed・未実装の注記を外して実装の記述にした。§55.1 の `useDailyReportImportFlow.ts` の行を `useMutation × 4` と共有の取消の hook に、UI-07-D15 (6) と §55.7 の取消の止めの置き場を共有の hook に直した。 |
 | 2026-11-11 | daily-report-import-rollback-entry（Final Review round 1 の是正、PR #235） | §55.12 の一覧に上の件数と現在位置（`PaginationSummary`、DSR-22）、行の「取り消す」の行を名指す accessible name、読込み中の Skeleton（`role="status"` と画面外の読込み中の文を保つ）と 0 件・範囲外のページの `EmptyState`（catalog ⑥）を足した。§55.7 の日報取込みタブの `isBlocking` を「2 つの `useBlocker` の条件の和」に直した。 |
+| 2026-11-13 | daily-report-import-rollback-entry（受入の手順書の書き足し、PR #235） | §55.12（UI-07-D19）の受入の項の括弧を、済んだ書き足しの義務から、受入の手順書の手順 5 の 1〜4 を引く形に置き換えた。 |
