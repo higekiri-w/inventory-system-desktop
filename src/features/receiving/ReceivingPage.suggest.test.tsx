@@ -193,4 +193,32 @@ describe("ReceivingPage ProductAddSuggest (UI-02-D14)", () => {
       expect.objectContaining({ keyword: "１２３４５", per_page: 10 }),
     );
   });
+  it("UI-02-D19 W16: 保存eventでlockした後のcompositionendは検索を始めない", async () => {
+    const user = userEvent.setup();
+    mockSearchProducts.mockResolvedValueOnce(
+      searchResult([makeMockProductWithRelations({ product_code: "RC-K1", name: "保存対象" })], 10),
+    );
+    renderPage();
+    await user.type(await screen.findByLabelText("入庫商品検索"), "RC-K1{Enter}");
+    await screen.findByText("保存対象");
+
+    mockCreateReceiving.mockReturnValue(
+      new Promise(() => {
+        // lock 中の compositionend を観測するため、意図的に未解決のままにする。
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "入庫を保存" }));
+    await waitFor(() => {
+      expect(mockCreateReceiving).toHaveBeenCalledOnce();
+    });
+    mockSearchProducts.mockClear();
+
+    const lockedInput = screen.getByLabelText("入庫商品検索");
+    fireEvent.compositionEnd(lockedInput, {
+      target: { value: "５６７８９" },
+    });
+
+    expect(lockedInput).toHaveValue("５６７８９");
+    expect(mockSearchProducts).not.toHaveBeenCalled();
+  });
 });
