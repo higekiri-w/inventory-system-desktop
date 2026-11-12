@@ -2182,11 +2182,19 @@ fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
         bundle("2026-03-20", "0007", "14000"),
         false,
     );
+    let same_time = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0008", "15000"),
+        true,
+    );
     rollback_daily_report_import(&mut conn, sd).unwrap();
-    // 同じ対象日の 2 行に ID の順と逆の取込み日時を置き、取込み日時の段を ID の段と見分ける
+    // 同じ対象日の行に ID の順と逆の取込み日時を置き、取込み日時の段を ID の段と見分ける。
+    // same_time は manual_same_day と同じ日時にし、最後の ID の段を見る
     for (id, imported_at) in [
         (sd, "2026-03-21T18:00:00"),
         (manual_same_day, "2026-03-21T09:00:00"),
+        (same_time, "2026-03-21T09:00:00"),
     ] {
         conn.execute(
             "UPDATE daily_report_imports SET imported_at = ?1 WHERE id = ?2",
@@ -2194,29 +2202,32 @@ fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
         )
         .unwrap();
     }
-    assert!(sd < manual_same_day);
+    assert!(sd < manual_same_day && manual_same_day < same_time);
 
     let rows = list_all(&conn);
     let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
     // 対象日の降順 → 同じ日は取込み日時の降順（ID の降順なら manual_same_day が先）
-    assert_eq!(ids, [sd, manual_same_day, other_day]);
+    // → 同じ日時は ID の降順（same_time が manual_same_day の前）
+    assert_eq!(ids, [sd, same_time, manual_same_day, other_day]);
     assert_eq!(rows[0].imported_at, "2026-03-21T18:00:00");
     assert_eq!(rows[1].imported_at, "2026-03-21T09:00:00");
+    assert_eq!(rows[2].imported_at, "2026-03-21T09:00:00");
     assert_eq!(
         rows[0].source_filenames,
         ["Z001_21 .CSV", "Z002_21 .CSV", "Z005_21 .CSV"]
     );
     assert_eq!(
-        rows[1].source_filenames,
+        rows[2].source_filenames,
         ["Z001_260321.CSV", "Z002_260321.CSV", "Z005_260321.CSV"]
     );
     assert_eq!(rows[0].status, "rolled_back");
     assert!(rows[0].rolled_back_at.is_some());
-    assert_eq!(rows[1].status, "completed");
-    assert_eq!(rows[1].rolled_back_at, None);
-    assert_eq!(rows[1].report_date, "2026-03-21");
-    assert_eq!(rows[1].gross_amount, Some(13000));
-    assert_eq!(rows[2].report_date, "2026-03-20");
+    assert_eq!(rows[2].status, "completed");
+    assert_eq!(rows[2].rolled_back_at, None);
+    assert_eq!(rows[2].report_date, "2026-03-21");
+    assert_eq!(rows[2].gross_amount, Some(13000));
+    assert_eq!(rows[1].gross_amount, Some(15000));
+    assert_eq!(rows[3].report_date, "2026-03-20");
 }
 
 #[test]
