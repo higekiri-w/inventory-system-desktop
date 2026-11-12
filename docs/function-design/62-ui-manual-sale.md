@@ -35,9 +35,10 @@
 | REQ-203 / cache | UI-04-D13 | 保存成功時の invalidation は [D-052](../decision-log.md) C6 と `src/lib/invalidation-contract.ts` を正本とする。 | 手動販売で変わる売上・在庫・履歴 consumer を一貫して stale 化し、画面側の key 列挙を廃止する。 |
 | REQ-203 / UI-04 | UI-04-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品数量加算、validation、PLU警告確認フロー、保存結果、日次売上への遷移、日次売上の「手動」Badge 可読性、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、PLU警告文言、連続入力、フォーカス戻し、手動 Badge の可読性は CI だけでは判断しづらい。PR #99 で手動 Badge は UI-04 実装時 L3 へ持ち越している。 |
 | REQ-203 / REQ-206 / UI-04 | UI-04-D15 | 手動販売出庫にも保存直後確認用の recent list を置く。表示は直近数件の業務日付、記録ID、代表商品、明細数、状態、記録日時、詳細導線とし、`すべての履歴を見る` は `/inventory/records?recordType=manual_sale` へ遷移する。 | UI-02/03/05 と同じ「保存直後の確認」体験にそろえる。作成画面内で検索・取消・訂正まで扱う案は、入力作業を重くし、調査責務を `入出庫履歴` と重複させるため採用しない。 |
-| REQ-203 / product add suggest | UI-04-D16 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-04-D4）とフォーカス戻し（UI-04-D5）は不変。lock source は既存 `isFormLocked` 派生 state、候補確定は既存の複数件候補テーブル選択と同一 handler。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
+| REQ-203 / product add suggest | UI-04-D16 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-04-D4）とフォーカス戻し（UI-04-D5）は不変。lock source は UI-04-D19 の form lock ref（suggest 層は同じ ref を `isLocked()` として読み、保存 event の中で `invalidateAndClose()` を同期で呼ぶ。新しい lock は作らない）、候補確定は既存の複数件候補テーブル選択と同一 handler。 | UI-02-D14 と同一の variant B 判断（純 autocomplete 型はスキャナ退行のため不採用）。契約正本は catalog ⑮。 |
 | REQ-203 / REQ-206 / return | UI-04-D17 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/manual-sale` URL を `returnTo` として手動販売詳細へ送る（DSR-18）。 | 詳細確認後に手動販売作業画面へ戻れるようにする。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では手動販売画面の producer だけを固定する。 |
 | REQ-203 / D-113 | UI-04-D18 | 明細の数量欄は商品の単位で受ける（m の商品は m で小数 2 桁まで。[共通規則](10-common-rules.md) SPEC-UNIT-D3。wire は在庫の数量の整数〈長さは cm〉。上限は `9999999`）。UI-04-D7 の「数量は整数」は個数の商品に限る。商品を追加したときの数量の初期値は価格の基準数量ぶん（個数の商品 `1`、m の商品 `1`〈1 m〉）、販売金額の初期値は SPEC-UNIT-D7 の `売価 × 数量 ÷ 基準数量`（円未満は四捨五入、`決定（owner、D-113 J4）`）。利用者が金額欄を編集するまでは、数量を変えるたびに金額をこの式で求め直す（長さの商品〈`m`〉だけ。個数の商品は数量を変えても金額を変えず、再追加で売価を足す〈UI-04-D6〉）。数量が入力の error の間、長さの商品の未編集の金額欄は空にする。金額欄を編集した後は、数量を変えても金額を変えない。同じ商品の再追加は数量に基準数量ぶん（個数 1、長さ 1 m）を足し、金額は長さの商品で未編集なら式で求め直し、それ以外（個数の商品、金額を編集した長さの商品）は売価を足す（UI-04-D6 のまま）。金額の計算は TS の twin（SPEC-UNIT-D9）。 | 長さの商品で数量 1 = 1 cm に 1 m あたりの売価を付けると 100 倍になる（既知の不整合、Backlog）。長さの商品は数量を必ず直すので、金額が初期値のまま残ると気づかずに違う金額を保存しやすい。不採用: 金額を常に式で上書きする（割引・端数の手修正が消える）。数量を変えても金額を変えない形を長さの商品にも残す（金額の直し忘れ）。 |
+| REQ-203 / async result gate | UI-04-D19 | 商品追加欄の直接検索（UI-04-D4 の Enter・SPEC-SUGGEST-D11 の数字確定・検索ボタン）の応答の採否は、[61](61-ui-receiving.md) UI-02-D19 と同じ form lock ref と検索の世代 ref で決める。lock ref は render 中に同期せず、保存 event（「手動販売を保存」と「確認して保存」）の先頭で lock、validation・command の失敗の event、`needs_confirmation` の応答（`confirmation_token` が null の失敗を含む）、reset event（リセット・「続けて手動販売」）で unlock、保存成功の後は lock のまま。世代 ref は保存 event の先頭と reset event で進め、`needs_confirmation` の応答では進めない。直接検索は始めた時点の世代を持ち、応答を、成功・失敗と 0 件・1 件・複数件のどれでも、世代が変わったか lock 中なら捨てる。明細へ足す handler（直接検索の 1 件・複数件の候補の選択・live 候補の確定）は lock ref を読む。PLU 確認待ち（`confirming_plu`）の間に始めた検索は採り、明細が変わるので UI-04-D9 のとおり token を破棄して key を新しくする。 | 検索を始めた render の `isFormLocked` だけを見ると、保存中・保存成功の後・リセットや「続けて手動販売」の後に届いた応答を採る。保存成功の後に採ると result panel が消えて lock が外れ、新しい key で、前の明細に遅れた商品を足した手動販売（売上と在庫の減算）がもう 1 本できる（2026-11-03 の調べ、vitest の probe で 2 回の create と別の key を確かめた）。保存の前に始めた検索の応答が PLU 確認待ちの間に届くと、応答を採る `updateValues` が検索を始めた render の `confirmation`（null）を見て token を破棄せずに明細を足し、警告と「確認して保存」が残ったまま、押すと BIZ が `確認トークンが不正です` で止める（UI-04-D9 と合わない。同じ probe）。保存の開始で世代を進めるのはこの経路を閉じるため。lock ref を世代と別に持つ理由は UI-02-D19 と同じ（保存の click から pending の render までの窓を閉じる。UI-05-D15 の型）。UI-04-D11（保存中は商品追加をさせない）と §62.5 の「保存成功後はフォーム本文を操作不可にする」の是正。不採用は UI-02-D19 と同じ。 |
 
 ## 62.2 Component / Route 構成
 
@@ -67,6 +68,8 @@ src/
 | `submitting` | createManualSale 実行中 | form disabled、spinner + 「手動販売を記録しています」 | `submit_succeeded` / `submit_failed` / `needs_confirmation` |
 | `result` | 保存完了 | result panel（保存した商品の一覧と行ごとの在庫を見る）、続けて手動販売、日次売上へ | `reset_for_next` / navigation |
 | `submit_error` | 保存失敗 | Alert + 入力保持 + 再実行 | `submit_same_request` / `edit_as_new_attempt` |
+
+商品検索の応答の採否は UI-04-D19 に従う。`submit` / `confirm_submit` の event は mutation 呼出しより先に form lock ref を lock して検索の世代を進め、validation・command の失敗と `needs_confirmation` では unlock する（世代は戻さない）。success は `result` と同じく lock を維持し、リセットと `reset_for_next` で unlock して世代を進める。世代が変わる前に始めた `searching_product` の応答（`product_found` / `product_candidates` / `product_not_found` / `search_failed` のどれも）は捨てる。
 
 フォーム state は `saleDate`, `reason`, `note`, `rows`, `idempotencyKey`, `confirmationToken` を持つ。`rows` は `productCode`, `productName`, `departmentName`, `stockUnit`, `currentStockQuantity`, `unitPrice`, `quantity`, `amount` を持つ UI 内部型とし、command payload には `product_code`, `quantity`, `amount` だけを送る。
 
@@ -139,6 +142,7 @@ UI-04 実装 PR では以下を generated binding に出す。
 - BIZ validation error: form state を保持する。入力を修正して再送する場合は新しい `idempotencyKey` を採番し、同じ key で異なる fingerprint を送らない。
 - internal error: 入力と `idempotencyKey` を保持し、同内容のまま同じ伝票として再試行できるようにする。入力を編集して再送する場合は新しい `idempotencyKey` を採番する。
 - idempotent replay: result panel に「同じ内容の再送として処理済み」と表示し、二重登録ではないことを示す。
+- 保存の開始（「確認して保存」を含む）・リセット・「続けて手動販売」の前に始めた商品検索の応答: 成功・失敗と件数によらず、明細・候補・案内の文に出さない。result panel と PLU 確認待ちの表示を変えず、次の保存の payload に載せない（UI-04-D19）。保存の失敗・確認待ちの後は検索欄の文字が残り、operator は同じ検索をし直せる。
 
 ## 62.7 Cache / Navigation
 
@@ -176,11 +180,14 @@ UI-04 実装 PR では以下を generated binding に出す。
 - UI-04-D15: recent list に `すべての履歴を見る` と `詳細を見る` が表示され、保存成功後に recent list が更新される。取得失敗時も入力フォームは継続できる。
 - UI-04-D17: 保存結果と recent list の「詳細を見る」が、現在の手動販売画面 URL を `returnTo` として送る。
 - UI-04-D18: m の商品を追加すると数量 `1`・金額 = 売価、数量を `1.3` にすると金額が `売価 × 130 ÷ 100` の丸め、金額を編集した後は数量を変えても金額が変わらない。個数の商品の再追加は UI-04-D6 のまま。payload の数量は cm の整数。
+- UI-04-D19: 保存中・保存成功の後（「続けて手動販売」の前）・「続けて手動販売」の後・リセットの後・保存の失敗の後・PLU 確認待ちの間に届いた、それより前に始めた検索の応答（成功の 1 件・複数件・0 件、失敗）を反映しない。保存成功の後に届いても result panel が残り、create は 1 回だけ。確認待ちの間に届いても警告と token が残り、「確認して保存」が同じ明細・同じ key・同じ token を送る。確認待ちの間に始めた検索は反映し、token を破棄する（UI-04-D9）。保存 event の先頭で lock ref と世代を `mutate` より前に更新する（jsdom の test で観測できないので、code の順の構造の検査で見る）。
 
 ## 62.10 変更履歴
 
 | 日付 | 版 | 内容 |
 |---|---|---|
+| 2026-11-11 | 導入の前の関門 13 の実装（`docs/plans/2026-11-03-stale-direct-search-guard.md`、PR #237） | UI-04-D19・UI-04-D16 を実装した（`ManualSalePage.tsx` の form lock ref と検索の世代 ref、`needs_confirmation` での unlock、suggest の `isLocked` を lock ref に）。§62.3・§62.6・§62.9 の「未実装」を外した。test は `ManualSalePage.stale-search.test.tsx`。 |
+| 2026-11-03 | 導入の前の関門 13 の起票（plan-first、`docs/plans/2026-11-03-stale-direct-search-guard.md`） | UI-04-D19 を追加（未実装）: 直接検索の応答を form lock ref と検索の世代で採否する（PLU 確認待ちでは unlock し、世代は戻さない）。UI-04-D16 の lock source を UI-04-D19 の lock ref に改めた（未実装）。§62.3・§62.6・§62.9 を合わせた。2026-11-04 の計画の review round 1 で、lock ref を残す理由と §62.9 の保存 event の lock の確かめ方（構造の検査）を直した。 |
 | 2026-10-08 | 単位の拡張 design lane | UI-04-D18 の金額の初期値の丸めを owner の決定（四捨五入、D-113 J4、TD-195）に改めた。 |
 | 2026-10-07 | 単位の拡張 design lane | UI-04-D18 を追加（proposed・未実装、D-113）: 数量を商品の単位で受け、金額の初期値を `売価 × 数量 ÷ 基準数量` にし、金額を編集するまで数量に合わせて求め直す。 |
 | 2026-08-30 | PR #20 / DSR-18 | UI-04-D17 を追加し、保存結果 / recent list の詳細導線に手動販売画面への `returnTo` 送信契約を設定。 |
