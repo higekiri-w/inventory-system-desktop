@@ -334,7 +334,7 @@ adjacent-contract sweep: 31 §12.2（`apply_stock_change` の引数と前提）�
 | U4: 79 UI-16-D4 | 片側 0 行で保存できる | component | どちらかの表が 0 行で保存ボタンが disabled、理由の文が出る | disabled の条件を片側だけにする |
 | U5: 79 UI-16-D4 | 数量の検証と単位 | unit（`transfer-request.ts`） | 0・負・形の誤り・上限越えを止め、`m` の商品の `1.5` を `150` で送る、個数の商品の小数を止める | 換算の純関数を通さない |
 | U6: 79 UI-16-D6 | key の扱い | component | 失敗の後の同内容の再試行で key を再利用し、成功・リセット・編集の後は新しい key | 再試行のたびに key を作る |
-| U7: 79 UI-16-D7 | 保存中の検索の結果 | component | 保存中は 2 つの追加欄が disabled、保存 event と競合して完了した検索の結果を反映しない。2 つの欄で、保存の click と同じ tick（pending の render の前）の Enter は検索を始めない | 保存 event の先頭で lock を立てない、検索の入口が lock を片方の欄だけで読む・render の `isFormLocked` で読む |
+| U7: 79 UI-16-D7 | 保存中の検索の結果 | component | 保存中は 2 つの追加欄が disabled、保存 event と競合して完了した検索の結果を反映しない。2 つの欄で、保存の click と同じ tick（pending の render の前）の Enter は検索を始めず、同じ tick の候補の選択（候補の「追加」）は明細にも保存の payload にも入らず、中身を変えていない再保存の明細と `idempotency_key` が 1 回目と同じ | 保存 event の先頭で lock を立てない、検索の入口が lock を片方の欄だけで読む・render の `isFormLocked` で読む、`addProduct` の先頭の lock ref の guard を外す |
 | U8: 79 UI-16-D8 | 保存結果の欠け | component | record_id、減らした・増やした一覧（数量と単位）、warning、replay が読め、ページ先頭へスクロールする | 一覧の片方を出さない |
 | U9: 79 UI-16-D9 | recent list | component | `listInventoryRecords` を `record_type: "transfer_record"`・page 1・per_page 10 で呼び、空・失敗・成功を出す、「すべての履歴を見る」が `/inventory/records?recordType=transfer_record` | 種別を渡さない |
 | U10: 79 UI-16-D10、D-052 | invalidation の過不足 | integration（`invalidation-contract.meta.test.ts`） | 保存成功の実呼出しの集合が独立に写した C24 の oracle と完全一致（順は問わない、重複を検出）。起票の時は C23 で、Scope・AC8・Contract Ledger の「C23」は承認の時の記録として残す（main との同期で #212 の D-141 が C23 を先に取ったので C24 に振り直した。owner 判断 TD-562） | `disposals.root()` を含める、`stocktake.recheckList()` を落とす |

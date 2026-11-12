@@ -381,6 +381,54 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     },
   );
 
+  // 同じ窓の「候補の選択」。候補の「追加」ボタンも保存の前の render のままで押せるので、止めるのは
+  // addProduct の先頭の lock ref だけ。足されると、保存を押した後に選んだ商品が明細と、その保存の
+  // payload に入る（1 回目の payload を保存の前の明細と比べて見る）。
+  it.each([
+    ["減らす商品", OUT_SEARCH],
+    ["増やす商品", IN_SEARCH],
+  ])(
+    "U7 / UI-16-D7: %sの欄で保存の click と同じ tick（pending の render の前）の候補の選択は明細にも保存の payload にも足さず、再保存は同じ明細・同じ key",
+    async (side, label) => {
+      const user = userEvent.setup();
+      const candidates = [
+        makeMockProductWithRelations({ product_code: "TR-C1", name: "候補の商品 1" }),
+        makeMockProductWithRelations({ product_code: "TR-C2", name: "候補の商品 2" }),
+      ];
+      const baseItems = [
+        { product_code: "TR-M1", direction: "out", quantity: 100 },
+        { product_code: "TR-01", direction: "in", quantity: 1 },
+      ];
+      mockCreateTransfer.mockResolvedValue(internalError);
+      renderWithClient(<StockTransferPage />);
+      await fillBothSides(user);
+      mockSearchProducts.mockResolvedValueOnce(searchResult(candidates));
+      await user.type(screen.getByLabelText(label), "候補{enter}");
+      expect(await screen.findByText(`候補から${side}を選んでください`)).toBeInTheDocument();
+
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: SAVE }));
+        fireEvent.click(screen.getAllByRole("button", { name: `${side}に追加` })[0]);
+      });
+
+      expect(await screen.findByText("保存に失敗しました")).toBeInTheDocument();
+      expect(mockCreateTransfer).toHaveBeenCalledTimes(1);
+      expect(screen.queryByLabelText("TR-C1 の数量")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("TR-M1 の数量")).toHaveValue(1);
+      expect(screen.getByLabelText("TR-01 の数量")).toHaveValue(1);
+
+      await user.click(screen.getByRole("button", { name: SAVE }));
+      await waitFor(() => {
+        expect(mockCreateTransfer).toHaveBeenCalledTimes(2);
+      });
+      const [first] = mockCreateTransfer.mock.calls[0] as [TransferCreateRequest];
+      const [second] = mockCreateTransfer.mock.calls[1] as [TransferCreateRequest];
+      expect(first.items).toEqual(baseItems);
+      expect(second.items).toEqual(baseItems);
+      expect(second.idempotency_key).toBe(first.idempotency_key);
+    },
+  );
+
   it.each([
     ["減らす商品", OUT_SEARCH],
     ["増やす商品", IN_SEARCH],
