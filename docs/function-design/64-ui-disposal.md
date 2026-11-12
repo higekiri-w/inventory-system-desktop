@@ -34,7 +34,7 @@
 | REQ-204 / list | UI-05-D12 | 画面下部に最近の廃棄・破損記録を `listDisposals(1, 10, null, null)` で表示する。詳細表示・編集・取消は初回実装では扱わない。 | CMD-05 の一覧契約を UI から疎通確認でき、直近記録の保存結果も確認しやすい。詳細/取消は在庫復元が絡むため別設計にする。 |
 | REQ-204 / cache | UI-05-D13 | 保存成功時の invalidation は [D-052](../decision-log.md) C7 と `src/lib/invalidation-contract.ts` を正本とする。 | 廃棄で変わる在庫・履歴 consumer を一貫して stale 化し、画面側の key 列挙を廃止する。 |
 | REQ-204 / UI-05 | UI-05-D14 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、商品検索/スキャン相当 Enter 追加、同一商品+種別+理由の数量加算、種別/理由/原価 validation、保存中 disable、保存結果、recent list、在庫を見る導線（D-138 の後。今の build は在庫照会へ戻る導線）。 | 新規 operator-facing screen であり、ロス理由の入力、連続入力、フォーカス戻し、保存結果の可読性は CI だけでは判断しづらい。 |
-| REQ-204 / async result gate | UI-05-D15 | 非同期商品検索結果の採否に使う form lock ref は render 中に同期せず、保存eventの先頭でlock、validation / command失敗eventとreset eventでunlock、保存成功後はlock維持とする。商品候補の選択eventと検索完了callbackはこのrefを読む。 | render-phase ref更新は未commit renderのlockを残し得る。effect同期だけでは保存eventからcommit/effectまでに検索結果が解決するraceを閉じないためevent境界を採用する。保存clickからpending renderまでの極小窓で従来は結果が反映され得たのに対し、本方式は保存開始時点から破棄する。この可視差はUI-05-D10の「保存中は商品追加をlock」に合わせる是正だが、Plan Gateのowner裁定対象とする。 |
+| REQ-204 / async result gate | UI-05-D15 | 非同期商品検索結果の採否に使う form lock ref は render 中に同期せず、保存eventの先頭でlock、validation / command失敗eventとreset event（リセット・「続けて廃棄・破損」）でunlock、保存成功後はlock維持とする。商品候補の選択eventと検索完了callbackはこのrefを読む。加えて検索の世代 ref を持ち、保存eventの先頭と reset event で進める。直接検索（UI-05-D5 の Enter・SPEC-SUGGEST-D11 の数字確定・検索ボタン）は始めた時点の世代を持ち、応答を、成功・失敗と 0 件・1 件・複数件のどれでも、世代が変わったか lock 中なら捨てる（明細・候補の一覧・案内の文のどれにも反映しない）。 | render-phase ref更新は未commit renderのlockを残し得る。effect同期だけでは保存eventからcommit/effectまでに検索結果が解決するraceを閉じないためevent境界を採用する。保存clickからpending renderまでの極小窓で従来は結果が反映され得たのに対し、本方式は保存開始時点から破棄する。この可視差はUI-05-D10の「保存中は商品追加をlock」に合わせる是正だが、Plan Gateのowner裁定対象とする。世代を足す理由（2026-11-03）: lock だけでは、reset event で unlock した後に届いた古い応答（「続けて廃棄・破損」の後の新しいフォームに前の検索の商品が入り、次の保存に載る）と、保存の失敗で unlock した後に届いた保存の前の検索の応答を採り、「保存開始時点から破棄する」が成り立たない（2026-11-03 の調べ、vitest の probe で再現）。保存の失敗の後は検索欄の文字が残るので、operator は Enter で同じ検索をし直せる。世代を足した後も lock ref を残すのは、世代と render の disabled が覆わない、保存の click から pending の render までの窓（その間に始まる検索・候補の選択）を閉じるため（この窓は jsdom の test で観測できず、保存の event の先頭の代入の順を構造の検査で見る）。不採用: 応答の検索語や form の中身を照らして採否を決める（同じ語の再検索・同じ中身の form を見分けられない）。 |
 | REQ-204 / product add suggest | UI-05-D16 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-05-D5）とフォーカス戻し（UI-05-D6）は不変。lock source は UI-05-D15 の lock ref（suggest 層は同 ref を `isLocked()` として読み、保存 event 内で `invalidateAndClose()` を同期呼出しする。新規 lock は作らない）。候補確定は既存の複数件候補テーブル選択と同一 handler。 | UI-02-D14 と同一の variant B 判断 + 本画面固有の async lock 整合（catalog ⑮ D4/D10）。契約正本は catalog ⑮。 |
 | REQ-204 / REQ-206 / return | UI-05-D17 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/disposal` URL を `returnTo` として廃棄・破損詳細へ送る（DSR-18）。 | 詳細確認後に廃棄・破損作業画面へ戻れるようにする。保存直後の確認導線を入庫・返品・交換と対称にする（owner L3 所感 2026-08-31 / 2026-09-11）。廃棄だけ保存結果に link を出さない業務理由は source docs に無い。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では廃棄・破損画面の producer だけを固定する。 |
 
@@ -73,6 +73,9 @@ src/
 商品検索結果の async gate は UI-05-D15 に従う。`submit` event は mutation 呼出しより先に
 gate を lock し、validation / command failure では入力を保持したまま unlock する。
 success は result state と同じく lock を維持し、`reset_for_next` で unlock する。
+`submit` event とリセット・`reset_for_next` は検索の世代も進め、それより前に始めた
+`searching_product` の応答（`product_found` / `product_candidates` / `product_not_found` /
+`search_failed` のどれも）を捨てる（UI-05-D15）。
 
 ## 64.4 Command / DTO Contract
 
@@ -130,7 +133,8 @@ UI-05 実装 PR では以下を generated binding に出す。
 - BIZ validation error: form state を保持する。入力を修正して再送する場合は新しい `idempotencyKey` を採番し、同じ key で異なる fingerprint を送らない。
 - internal error: 入力と `idempotencyKey` を保持し、同内容のまま同じ伝票として再試行できるようにする。入力を編集して再送する場合は新しい `idempotencyKey` を採番する。
 - idempotent replay: result panel に「同じ内容の再送として処理済み」と表示し、二重登録ではないことを示す。
-- 保存eventと競合して完了した商品検索: 保存event先頭で同期したlockを確認して候補・message・行を反映しない。保存失敗後はunlockし、operatorが同じ検索を再実行できる。
+- 保存eventと競合して完了した商品検索: 保存event先頭で同期したlockを確認して候補・message・行を反映しない。保存失敗後はunlockし、operatorが同じ検索を再実行できる。保存を押す前に始めた検索の応答が保存の失敗の後に届いても、世代が進んでいるので反映しない（UI-05-D15）。
+- リセット・「続けて廃棄・破損」の前に始めた商品検索の応答: 成功・失敗と件数によらず、新しいフォームに行・候補・案内の文を出さない（UI-05-D15 の世代）。
 
 ## 64.7 Cache / Navigation
 
@@ -163,13 +167,15 @@ UI-05 実装 PR では以下を generated binding に出す。
 - UI-05-D12: 最近の廃棄・破損一覧を取得し、空/取得失敗/成功を表示できる。
 - UI-05-D13: 保存成功時の実呼出し集合が D-052-C7 の独立 test oracle と完全一致する。
 - UI-05-D14: Windows native L3 で連続入力、フォーカス戻し、日本語表示、種別/理由/原価 validation、保存結果を確認する。
-- UI-05-D15: 保存eventがpending renderより先にasync gateをlockし、同eventと競合して完了した検索結果を反映しない。validation / command失敗とresetではunlockする。
+- UI-05-D15: 保存eventと競合して完了した、保存の前に始めた検索結果を反映しない（世代を足した後は、保存の開始の世代と lock の両方が守る退行の確認。保存eventが pending render より先に lock すること自体は jsdom の test で観測できず、保存の event の先頭の代入の順を構造の検査で見る）。validation / command失敗とresetではunlockする。リセット・「続けて廃棄・破損」・保存の失敗の後に届いた、それより前に始めた検索の応答（成功の 1 件・複数件・0 件、失敗）を反映せず、次の保存の payload に載せない。その後に始めた検索は反映する。
 - UI-05-D17: 保存結果と recent list の「詳細を見る」が現在の廃棄・破損画面 URL を `returnTo` として送る。
 
 ## 64.10 変更履歴
 
 | 日付 | 版 | 内容 |
 |---|---|---|
+| 2026-11-11 | 導入の前の関門 13 の実装（`docs/plans/2026-11-03-stale-direct-search-guard.md`、PR #237） | UI-05-D15 の検索の世代を実装した（`DisposalPage.tsx` の検索の世代 ref。保存 event と reset event で進め、直接検索の成功・失敗の応答で照らす）。§64.3・§64.6・§64.9 の「未実装」を外した。test は `DisposalPage.stale-search.test.tsx`。 |
+| 2026-11-03 | 導入の前の関門 13 の起票（plan-first、`docs/plans/2026-11-03-stale-direct-search-guard.md`） | UI-05-D15 に検索の世代（保存 event の先頭と reset event で進め、直接検索の成功・失敗の応答の両方で照らす）を足した（未実装）。§64.3・§64.6・§64.9 を合わせた。2026-11-04 の計画の review round 1 で、lock ref を残す理由と、§64.9 の UI-05-D15 の既存の test の今の役割（保存の event での破棄の退行の確認。lock の順は構造の検査）を直した。 |
 | 2026-09-16 | ㉕ | UI-05-D17 を改訂し、保存結果にも詳細 link（`returnTo` 送信）を追加。入庫・返品・交換と対称化。 |
 | 2026-09-16 | ㉕ closeout | UI-05-D11 の導線列挙と state 表に「詳細を見る」を追加、§64.5 の二重記述を整理 |
 | 2026-08-30 | PR #20 / DSR-18 | UI-05-D17 を追加し、recent list の詳細導線に廃棄・破損画面への `returnTo` 送信契約を設定。保存結果は詳細 link なしの現行契約を維持。 |

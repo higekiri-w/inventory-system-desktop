@@ -33,11 +33,12 @@
 | REQ-201 / list | UI-02-D11 | 画面下部に最近の入庫記録を `listReceivings(1, 10, null, null)` で表示する。詳細表示・編集・削除は初回実装では扱わない。 | CMD-02 の一覧契約を UI から疎通確認でき、直近伝票の保存結果も確認しやすい。詳細/取消は業務影響が大きく別設計にする。 |
 | REQ-201 / cache | UI-02-D12 | 保存成功時の invalidation は [D-052](../decision-log.md) C4 と `src/lib/invalidation-contract.ts` を正本とする。 | 入庫で変わる在庫・履歴とその consumer を table.column 導出で一貫して stale 化し、画面側の key 列挙を廃止する。 |
 | REQ-201 / UI-02 | UI-02-D13 | Windows native L3 は owner 目視確認を必須にする。確認対象は navigation、取引先候補、商品検索/スキャン相当 Enter 追加、同一商品数量加算、cm 表示、validation、保存中 disable、結果表示、recent list、在庫を見る（D-138 の後。今の build は在庫照会）/商品登録導線。 | 新規 operator-facing screen であり、連続入力・日本語商品名・フォーカス戻しは CI だけでは判断しづらい。 |
-| REQ-201 / product add suggest | UI-02-D14 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-02-D4）とフォーカス戻し（UI-02-D5）は不変。lock source は既存 `isFormLocked` 派生 state、候補確定は既存の複数件候補テーブル選択と同一 handler。 | variant B。純 autocomplete 型（Enter 追加廃止）はスキャナ Enter が候補 async 読込み前に届くため退行・不採用（owner 方針 2026-08-04）。契約正本は catalog ⑮ に一元化し、画面 doc には画面固有の結線のみ置く（5 画面複製 drift 防止）。 |
+| REQ-201 / product add suggest | UI-02-D14 | 商品追加欄に live 候補プレビュー（catalog ⑮ ProductAddSuggest / SPEC-SUGGEST-D1〜D11）を追加する。Enter commit 経路（UI-02-D4）とフォーカス戻し（UI-02-D5）は不変。lock source は UI-02-D19 の form lock ref（suggest 層は同じ ref を `isLocked()` として読み、保存 event の中で `invalidateAndClose()` を同期で呼ぶ。新しい lock は作らない）、候補確定は既存の複数件候補テーブル選択と同一 handler。 | variant B。純 autocomplete 型（Enter 追加廃止）はスキャナ Enter が候補 async 読込み前に届くため退行・不採用（owner 方針 2026-08-04）。契約正本は catalog ⑮ に一元化し、画面 doc には画面固有の結線のみ置く（5 画面複製 drift 防止）。 |
 | REQ-209 / SPEC-PRV-D8 | UI-02-D15 | 保存成功時に `ReceivingCreateResult.cost_diffs` があれば原価差分ダイアログを開き、入庫記録が保存済みであることを明示したうえで、商品ごとに「マスタ原価をこの実原価に更新する」か見送る。承諾時は `revise_product_price` を新売価 = 現売価据え置き、新原価 = 入庫実原価で呼ぶ。見送り時は入庫記録を残したまま、商品マスタの原価を変更しない。 | 手芸用品以外は入庫伝票が価格改定の唯一の導線。自動上書きは約定値引きを恒久化する恐れがあるため、商品ごとの確認を必須にする。見送りは無記録とし、差分が残れば次回入庫で再提示する。 |
 | REQ-201 / REQ-206 / return | UI-02-D16 | 保存結果と recent list の「詳細を見る」は、search state を含む現在の `/inventory/receiving` URL を `returnTo` として入庫記録詳細へ送る（DSR-18）。 | 詳細確認後に入庫作業画面へ戻れるようにする。送信・検証・fallback の横断規範は DSR-18 を正とし、本書では入庫画面の producer だけを固定する。 |
 | REQ-201 / scope | UI-02-D17 | 取り寄せ（客注）の品が届いたときは入庫に記録しない（owner の決定、repo 外の回答台帳 TD-350、2026-10-20）。アプリの検査・画面の文言は足さず、決まりを本書に置く。 | [project-memory](../project-memory.md) の Store Premises Facts の棚卸しの項: 取り寄せは先払いで、受注の時点で JAN が分からないことがあるのでレジで部門キーで打ち、先払いの取り寄せ品はお渡し待ちの間に棚卸しになっても数えない。店の在庫として数えない品を入庫に記録すると、在庫数に入ってしまう。 |
 | REQ-201 / REQ-301 / navigation | UI-02-D18 | search の `productCode`（商品コードの string、1〜100 文字）で開いたら、その商品を `getStockDetail(productCode)`（完全一致）で読み、廃番でなければ商品追加欄から 1 件を追加したときと同じ明細を 1 行入れる（数量 1、原価はマスタの原価）。入れた後は URL から `productCode` を外す（`replace`。F5 で 2 行目を入れない）。この `replace` は明細を入れるのと同じ event の中か前に行い、入れた後の再描画を待つ別の effect に分けない（入力が変わると離脱の guard〈`src/hooks/useUnsavedChangesWarning.ts:15` の `shouldBlockFn: () => isDirty`、`src/features/receiving/ReceivingPage.tsx:204` で結線〉が同じ route の search の `replace` も止め、開いた直後に破棄の確認が出て URL に `productCode` が残るため）。見つからない・廃番なら明細を入れず、商品追加欄の下に「商品コード {code} の商品は入庫に追加できません（見つからないか廃番です）」を出す。商品と在庫の画面の行の詳細の「入庫記録」が使う（[58](58-ui-stock-inquiry.md) §58.7。詳細は廃番の商品にこの導線を出さない）（D-138、proposed・未実装）。 | 届いた商品を在庫を見た画面からそのまま入庫へ進め、商品を入れ直させない（Fluent 2 *Relevant*）。商品コードの部分一致の検索（Enter の経路）でなく完全一致で読み、似たコードの商品を入れない。捨てた案: 事前入力しない（今の build。入れ直しの手間が残る）、Enter の経路を再生する（部分一致で候補が出ることがある）。 |
+| REQ-201 / async result gate | UI-02-D19 | 商品追加欄の直接検索（UI-02-D4 の Enter・SPEC-SUGGEST-D11 の数字確定・検索ボタン）の応答の採否は、[64](64-ui-disposal.md) UI-05-D15 と同じ形の form lock ref と検索の世代 ref で決める。lock ref は render 中に同期せず、保存 event の先頭で lock、validation・command の失敗の event と reset event（リセット・「続けて入庫」）で unlock、保存成功の後は lock のまま。世代 ref は保存 event の先頭と reset event で進める。直接検索は始めた時点の世代を持ち、応答を、成功・失敗と 0 件・1 件・複数件のどれでも、世代が変わったか lock 中なら捨てる（明細・候補の一覧・案内の文のどれにも反映しない）。明細へ足す handler（直接検索の 1 件・複数件の候補の選択・live 候補の確定）は lock ref を読む。商品を非同期に読んで明細へ足す別の経路（UI-02-D18 の `getStockDetail`、D-138 で未実装）も、実装するときはこの gate に従う。 | 検索を始めた render の `isFormLocked` だけを見ると、保存中・保存成功の後（result panel の表示中）・リセットや「続けて入庫」の後に届いた応答を採る。保存成功の後に採ると result panel が消えて lock が外れ、保存成功で新しくなった key で、前の明細に遅れた商品を足した入庫の記録がもう 1 本できる（2026-11-03 の調べ、vitest の probe で 2 回の create と別の key を確かめた）。UI-02-D9（保存中は商品追加をさせない）と §61.5 の「保存成功後はフォーム本文を操作不可にする」の是正。保存の開始でも世代を進めるので、保存を押す前に始めた検索は保存の結果によらず捨てる（保存の失敗の後は検索欄の文字が残り、Enter で同じ検索をし直せる）。応答を採る `updateValues` が検索を始めた render の `failedSignature` を見て key の更新を誤る経路も、この捨て方で閉じる。lock ref を世代と別に持つのは、世代と render の disabled が覆わない、保存の click から pending の render までの窓（その間に始まる検索・候補の選択）を閉じるため（UI-05-D15 の型。この窓は jsdom の test で観測できず、保存の event の先頭の代入の順を構造の検査で見る）。不採用: 応答の検索語や form の中身を照らす（同じ語の再検索・同じ中身の form を見分けられない）、5 画面の共有 hook に括り出す（gate は数行で、どの event で世代を進めるかの結線の test は hook にしても画面ごとに要る。catalog ⑮ D9 の「commit 経路のコードの共通化・移動は行わない」とも合う）。 |
 
 ## 61.2 Component / Route 構成
 
@@ -76,6 +77,8 @@ src/
 | `submitting` | createReceiving 実行中 | form disabled、spinner + 「入庫を記録しています」 | `submit_succeeded` / `submit_failed` |
 | `result` | 保存完了 | result panel（保存した商品の一覧と行ごとの在庫を見る）、続けて入庫 | `reset_for_next` / navigation |
 | `submit_error` | 保存失敗 | Alert + 入力保持 + 再実行 | `submit_same_request` / `edit_as_new_attempt` |
+
+商品検索の応答の採否は UI-02-D19 に従う。`submit` event は mutation 呼出しより先に form lock ref を lock して検索の世代を進め、validation・command の失敗では入力を保持したまま unlock する。success は `result` と同じく lock を維持し、リセットと `reset_for_next` で unlock して世代を進める。世代が変わる前に始めた `searching_product` の応答（`product_found` / `product_candidates` / `product_not_found` / `search_failed` のどれも）は捨てる。
 
 フォーム state は `receivingDate`, `supplierId`, `note`, `rows`, `idempotencyKey` を持つ。`rows` は `productCode`, `productName`, `stockUnit`, `currentStockQuantity`, `quantity`, `costPrice` を持つ UI 内部型とし、command payload には `product_code`, `quantity`, `cost_price_centi` だけを送る。`submit_error` 後に同内容を再送する場合は `idempotencyKey` を保持し、入力を編集して再送する場合は新しい `idempotencyKey` を採番する。
 
@@ -134,6 +137,7 @@ UI-02 実装 PR では以下を generated binding に出す。
 - internal error: 入力と `idempotencyKey` を保持し、同内容のまま同じ伝票として再試行できるようにする。入力を編集して再送する場合は新しい `idempotencyKey` を採番する。
 - idempotent replay: result panel に「同じ内容の再送として処理済み」と表示し、二重登録ではないことを示す。
 - 原価差分更新失敗: 入庫保存の成功表示は維持し、該当商品の差分行だけ再試行可能にする。見送りは記録せず閉じられ、次回入庫で差分が残れば再提示される。
+- 保存の開始・リセット・「続けて入庫」の前に始めた商品検索の応答: 成功・失敗と件数によらず、明細・候補・案内の文に出さない。result panel を消さず、次の保存の payload に載せない（UI-02-D19）。保存の失敗の後は検索欄の文字が残り、operator は同じ検索をし直せる。
 
 ## 61.7 Cache / Navigation
 
@@ -169,11 +173,14 @@ UI-02 実装 PR では以下を generated binding に出す。
 - UI-02-D13: Windows native L3 で連続入力、フォーカス戻し、日本語表示、保存結果を確認する。
 - UI-02-D15: 保存完了時だけ原価差分ダイアログが出て、空配列 / idempotent replay では出ない。説明文から「入庫は保存済み」「更新時は商品マスタ原価が今回の実原価へ変わる」「見送り時は入庫記録を残して商品マスタ原価を変えない」の 3 点を読め、複数商品は一意見出しで識別できる。「マスタ原価をこの実原価に更新する」が `reviseProductPrice` を現売価据え置き・入庫実原価で呼び、見送りは無記録である。
 - UI-02-D16: 保存結果と recent list の「詳細を見る」が、現在の入庫画面 URL を `returnTo` として送る。
+- UI-02-D19: 保存中・保存成功の後（「続けて入庫」の前）・「続けて入庫」の後・リセットの後・保存の失敗の後に届いた、それより前に始めた検索の応答（成功の 1 件・複数件・0 件、失敗）を反映しない。保存成功の後に届いても result panel が残り、create は 1 回だけ。その後に始めた検索は反映する。保存 event の先頭で lock ref と世代を `mutate` より前に更新する（jsdom の test で観測できないので、code の順の構造の検査で見る）。
 
 ## 61.10 変更履歴
 
 | 日付 | 版 | 内容 |
 |---|---|---|
+| 2026-11-11 | 導入の前の関門 13 の実装（`docs/plans/2026-11-03-stale-direct-search-guard.md`、PR #237） | UI-02-D19・UI-02-D14 を実装した（`ReceivingPage.tsx` の form lock ref と検索の世代 ref、suggest の `isLocked` を lock ref に）。§61.3・§61.6・§61.9 の「未実装」を外した。test は `ReceivingPage.stale-search.test.tsx`。 |
+| 2026-11-03 | 導入の前の関門 13 の起票（plan-first、`docs/plans/2026-11-03-stale-direct-search-guard.md`） | UI-02-D19 を追加（未実装）: 直接検索の応答を form lock ref と検索の世代で採否する。UI-02-D14 の lock source を UI-02-D19 の lock ref に改めた（未実装）。§61.3・§61.6・§61.9 を合わせた。2026-11-04 の計画の review round 1 で、lock ref を残す理由と §61.9 の保存 event の lock の確かめ方（構造の検査）を直した。 |
 | 2026-10-23 | docs の小口（[Plan Packet](../archive/plans/2026-10-23-docs-small-batch.md) の S5） | UI-02-D17 を追加: 取り寄せ（客注）の品を入庫に記録しない決まり（TD-350）。 |
 | 2026-09-10 | PR #50 | 取引先ピッカー runtime を反映。検索・追加後の自動選択と指定なしへの復帰を実装。 |
 | 2026-09-10 | PR #49 / DSR-24 | owner Human Gate round 1（2026-09-10）に基づき、UI-02-D3 の defer を解除し、取引先欄へ picker dialog と追加導線を適用。§61.9 に picker dialog の検索・追加・自動選択で閉じるテスト観点を追加。 |
