@@ -334,7 +334,7 @@ adjacent-contract sweep: 31 §12.2（`apply_stock_change` の引数と前提）�
 | U4: 79 UI-16-D4 | 片側 0 行で保存できる | component | どちらかの表が 0 行で保存ボタンが disabled、理由の文が出る | disabled の条件を片側だけにする |
 | U5: 79 UI-16-D4 | 数量の検証と単位 | unit（`transfer-request.ts`） | 0・負・形の誤り・上限越えを止め、`m` の商品の `1.5` を `150` で送る、個数の商品の小数を止める | 換算の純関数を通さない |
 | U6: 79 UI-16-D6 | key の扱い | component | 失敗の後の同内容の再試行で key を再利用し、成功・リセット・編集の後は新しい key | 再試行のたびに key を作る |
-| U7: 79 UI-16-D7 | 保存中の検索の結果 | component | 保存中は 2 つの追加欄が disabled、保存 event と競合して完了した検索の結果を反映しない | lock を片方の欄だけで読む |
+| U7: 79 UI-16-D7 | 保存中の検索の結果 | component | 保存中は 2 つの追加欄が disabled、保存 event と競合して完了した検索の結果を反映しない。2 つの欄で、保存の click と同じ tick（pending の render の前）の Enter は検索を始めない | 保存 event の先頭で lock を立てない、検索の入口が lock を片方の欄だけで読む・render の `isFormLocked` で読む |
 | U8: 79 UI-16-D8 | 保存結果の欠け | component | record_id、減らした・増やした一覧（数量と単位）、warning、replay が読め、ページ先頭へスクロールする | 一覧の片方を出さない |
 | U9: 79 UI-16-D9 | recent list | component | `listInventoryRecords` を `record_type: "transfer_record"`・page 1・per_page 10 で呼び、空・失敗・成功を出す、「すべての履歴を見る」が `/inventory/records?recordType=transfer_record` | 種別を渡さない |
 | U10: 79 UI-16-D10、D-052 | invalidation の過不足 | integration（`invalidation-contract.meta.test.ts`） | 保存成功の実呼出しの集合が独立に写した C24 の oracle と完全一致（順は問わない、重複を検出）。起票の時は C23 で、Scope・AC8・Contract Ledger の「C23」は承認の時の記録として残す（main との同期で #212 の D-141 が C23 を先に取ったので C24 に振り直した。owner 判断 TD-562） | `disposals.root()` を含める、`stocktake.recheckList()` を落とす |
@@ -346,8 +346,8 @@ adjacent-contract sweep: 31 §12.2（`apply_stock_change` の引数と前提）�
 | U16: 74 UI-11c-D7 | 関連記録の link | component（`OperationLogsPage.test.tsx`） | detail_json の `record_type: "transfer_record"`・`record_id: 7` で `/inventory/transfer/records/7` へ進む link | 許可リストに足さない |
 | U17: 79 UI-16-D7・§79.10 | 前のフォームで始まった検索の応答の採用 | component | 2 つの欄 ×「リセット」・「続けて詰め替え・切り分け」の前に始まった直接の検索が、成功で完了しても明細に入らず、失敗で完了しても新しいフォームに失敗の文が出ない（#216 broad round 2 の Codex F1） | 検索の応答の採否を lock だけで決める、失敗の分岐で世代を照らさない |
 | U18: 79 §79.6 | 0 件・検索失敗の案内の欠け | component | 0 件はその欄の近くに「該当する商品がありません」・商品登録への導線（`/products/new`）・未保存の入力が残らない警告、検索失敗は `describeError` の文、どちらも既存の行を保つ（#216 broad round 2 の Fable P3） | 導線・警告を出さない、失敗の文を出さない |
-| U19: 79 UI-16-D7、64 UI-05-D15 | 保存失敗後に完了した検索の応答の破棄 | component | 2 つの欄 × validation・command の失敗で、検索を保留 → 保存 → onError で unlock → 検索成功の順に進め、商品が該当側の明細に入る | 保存開始で検索の世代を進める |
-| U7（保存成功後）: 79 UI-16-D7、64 UI-05-D15 | 保存結果への検索の応答の混入 | component | 2 つの欄で保存成功後に検索が成功しても商品は追加されず、保存結果と lock を保つ | 保存成功で lock を解除する |
+| U19: 79 UI-16-D6・D7、64 UI-05-D15 | 保存の前に始めた検索の応答が、保存の失敗の後に届いて明細と次の保存に入る | component | 2 つの欄 × validation・command の失敗で、検索を保留 → 保存 → onError で unlock → 検索成功の順に進め、商品が明細に入らず検索欄の文字が残る。command の失敗では、中身を変えていない再保存の明細と `idempotency_key` が 1 回目と同じ。失敗の後に始めた検索は該当側の明細に入り、その後の保存は遅れた商品を載せず、command の失敗の後は新しい key（owner の決定 TD-655、2026-11-12。PR #216 の closure 832 の P2） | 保存開始で検索の世代を進めない |
+| U7（保存成功後）: 79 UI-16-D7、64 UI-05-D15 | 保存結果への検索の応答の混入 | component | 2 つの欄で保存成功後に検索が成功しても商品は追加されず、保存結果と lock を保つ（保存成功の後の数字確定は検索を始めない） | 保存成功で lock を解除する |
 | T1: 既存の movement・記録の一覧・在庫変動履歴・migration の test（`rg -n -e 'fn test_list_inventory_records' -e 'fn test_list_movements' -e 'fn test_v11' src-tauri/src` で数える。2026-10-29 に `1c925027` で 40 行） | 振替を足して既存の種類の振舞いが変わる | 既存（Rust） | 既存の test を期待を変えずに PASS。最新の版を期待する test は `app_max_version()` と比べる形（22 §21 の「テスト」） | 既存の種類の値・順・件数を変える |
 | T2: `search.test.ts` の 2 つの `toEqual`、`StockMovementsPage.test.tsx` の `REMAINING_MOVEMENT_TYPE_OPTIONS`、`operation-type-labels.test.ts`、`invalidation-contract.meta.test.ts` の entry の一覧、`unsaved-changes-guard-sweep.test.ts` の画面の一覧、`navigation.test.ts` | 振替の 1 項目の足し漏れ・ほかの項目の順の変化 | 既存（frontend） | 振替の 1 項目を正本の位置に足す（ほかの項目と順は変えない） | 項目を足さない、ほかの項目の順を変える |
 | T3: `inventory_repo.rs` の `as_str` の test、`finite_enum_contract_tests.rs` | 新しい値の parse・as_str の欠け | 既存（Rust） | 新しい値の 1 行を足す | arm を足さない |
