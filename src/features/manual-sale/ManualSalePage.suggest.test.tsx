@@ -170,4 +170,32 @@ describe("ManualSalePage ProductAddSuggest (UI-04-D16)", () => {
       expect.objectContaining({ keyword: "２３４５６", per_page: 10 }),
     );
   });
+  it("UI-04-D19 W16: 保存eventでlockした後のcompositionendは検索を始めない", async () => {
+    const user = userEvent.setup();
+    mockSearchProducts.mockResolvedValueOnce(
+      result([makeMockProductWithRelations({ product_code: "MS-K1", name: "保存対象" })], 10),
+    );
+    renderPage();
+    await user.type(await screen.findByLabelText("手動販売商品検索"), "MS-K1{Enter}");
+    await screen.findByText("保存対象");
+
+    mockCreateManualSale.mockReturnValue(
+      new Promise(() => {
+        // lock 中の compositionend を観測するため、意図的に未解決のままにする。
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "手動販売を保存" }));
+    await waitFor(() => {
+      expect(mockCreateManualSale).toHaveBeenCalledOnce();
+    });
+    mockSearchProducts.mockClear();
+
+    const lockedInput = screen.getByLabelText("手動販売商品検索");
+    fireEvent.compositionEnd(lockedInput, {
+      target: { value: "５６７８９" },
+    });
+
+    expect(lockedInput).toHaveValue("５６７８９");
+    expect(mockSearchProducts).not.toHaveBeenCalled();
+  });
 });
