@@ -125,8 +125,8 @@ export function StockTransferPage() {
   };
   // UI-16-D7: 2 つの商品追加欄が同じ lock を読む
   const isFormLockedRef = useRef(false);
-  // UI-16-D7: リセット・「続けて」で世代を進め、lock 解除後も前のフォームの検索を採らない。
-  // 保存開始では進めず、失敗後の応答は lock 解除に従って採る（UI-05-D15）。
+  // UI-16-D7: 保存 event の先頭・リセット・「続けて」で世代を進め、それより前に始めた直接検索の応答は、
+  // 保存の失敗で unlock した後に届いても採らない（64 UI-05-D15 と同じ。owner の決定 TD-655）。
   // 両欄で共有し、検索開始では進めない（連続スキャンで前の商品を落とさない）。
   const searchGenerationRef = useRef(0);
   const [initialValues, setInitialValues] = useState<TransferFormValues>(createEmptyForm);
@@ -273,9 +273,9 @@ export function StockTransferPage() {
 
   async function handleProductSearch(direction: TransferDirection, keywordOverride?: string) {
     const keyword = (keywordOverride ?? search[direction].text).trim();
-    if (keyword === "" || isFormLocked) return;
+    // 保存の click から pending の render までは isFormLocked がまだ false なので、lock は ref で読む（U7）
+    if (keyword === "" || isFormLockedRef.current) return;
     const generation = searchGenerationRef.current;
-    // 保存の click の直後で、まだ isFormLocked が描画に届く前に始まった検索は lock の ref で止める（U7）
     const isStale = () => generation !== searchGenerationRef.current || isFormLockedRef.current;
     updateSearch(direction, { message: null, candidates: [] });
     try {
@@ -654,6 +654,7 @@ export function StockTransferPage() {
             disabled={!canSubmit}
             onClick={() => {
               isFormLockedRef.current = true;
+              searchGenerationRef.current += 1;
               suggests.out.invalidateAndClose();
               suggests.in.invalidateAndClose();
               setSaveError(null);

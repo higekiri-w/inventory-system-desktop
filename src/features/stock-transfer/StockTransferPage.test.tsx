@@ -352,6 +352,35 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     expect(screen.queryByText("TR-LATE")).not.toBeInTheDocument();
   });
 
+  // 保存 event の先頭の lock ref の見張り。保存の前に始めた検索は世代も捨てるので、lock だけが守るのは
+  // 保存の click から pending の render までに始まる検索。1 つの act の中では click の後の render が
+  // 挟まらず、Enter の handler は保存の前の render（isFormLocked が false）の closure で走る。
+  it.each([
+    ["減らす商品", OUT_SEARCH],
+    ["増やす商品", IN_SEARCH],
+  ])(
+    "U7 / UI-16-D7: %sの欄で保存の click と同じ tick（pending の render の前）の Enter は検索を始めない",
+    async (_side, label) => {
+      const user = userEvent.setup();
+      mockCreateTransfer.mockResolvedValue(internalError);
+      renderWithClient(<StockTransferPage />);
+      await fillBothSides(user);
+      await user.type(screen.getByLabelText(label), "TR-LATE");
+      mockSearchProducts.mockClear();
+
+      act(() => {
+        fireEvent.click(screen.getByRole("button", { name: SAVE }));
+        fireEvent.keyDown(screen.getByLabelText(label), { key: "Enter" });
+      });
+
+      expect(await screen.findByText("保存に失敗しました")).toBeInTheDocument();
+      expect(mockCreateTransfer).toHaveBeenCalledTimes(1);
+      expect(mockSearchProducts).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+      expect(screen.getByLabelText(label)).toHaveValue("TR-LATE");
+    },
+  );
+
   it.each([
     ["減らす商品", OUT_SEARCH],
     ["増やす商品", IN_SEARCH],
@@ -375,19 +404,38 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     expect(screen.queryByText("TR-LATE")).not.toBeInTheDocument();
     expect(screen.getByLabelText(label)).toBeDisabled();
     expect(screen.getByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
+
+    // 保存成功の後も lock ref を保つ。保存の前に始めた検索は世代も捨てるので、lock だけが止める
+    // 数字確定（compositionend）が検索を始めないことで見る。
+    const searchCalls = mockSearchProducts.mock.calls.length;
+    fireEvent.compositionEnd(screen.getByLabelText(label), { target: { value: "４５６７８" } });
+    expect(mockSearchProducts).toHaveBeenCalledTimes(searchCalls);
+    expect(screen.getByText(/詰め替え・切り分けを記録しました/)).toBeInTheDocument();
   });
 
+  // owner の決定（TD-655、2026-11-12）と 79 UI-16-D7: 保存 event の先頭で検索の世代を進めるので、
+  // 保存の前に始めた直接検索の応答は、保存の失敗で unlock した後に届いても採らない（64 UI-05-D15 と同じ）。
+  // 採ると、検索を始めた render の failedSignature を見る updateValues が key を新しくせず、
+  // 次の保存が同じ key で違う明細を送る（PR #216 の closure 832 の P2）。
   it.each([
-    ["減らす商品", "validation", OUT_SEARCH, "減らす商品（元）"],
-    ["増やす商品", "validation", IN_SEARCH, "増やす商品（先）"],
-    ["減らす商品", "command", OUT_SEARCH, "減らす商品（元）"],
-    ["増やす商品", "command", IN_SEARCH, "増やす商品（先）"],
-  ])(
-    "U19 / UI-16-D7・UI-05-D15: %sの検索を保留 → 保存 → %s失敗の onError で unlock → 検索成功で明細に追加する",
-    async (_side, failure, label, tableName) => {
+    ["減らす商品", "validation", OUT_SEARCH, "減らす商品（元）", "out"],
+    ["増やす商品", "validation", IN_SEARCH, "増やす商品（先）", "in"],
+    ["減らす商品", "command", OUT_SEARCH, "減らす商品（元）", "out"],
+    ["増やす商品", "command", IN_SEARCH, "増やす商品（先）", "in"],
+  ] as const)(
+    "U19 / UI-16-D6・D7・UI-05-D15: %sの検索を保留 → 保存 → %s失敗で unlock → 検索成功の応答は捨てて次の保存に載せず、その後に始めた検索は採る",
+    async (_side, failure, label, tableName, direction) => {
       const user = userEvent.setup();
       const deferredSearch = createDeferred<Awaited<ReturnType<typeof commands.searchProducts>>>();
       const late = makeMockProductWithRelations({ product_code: "TR-LATE", name: "保留の商品" });
+      const fresh = makeMockProductWithRelations({
+        product_code: "TR-NEW",
+        name: "失敗の後に読んだ商品",
+      });
+      const baseItems = [
+        { product_code: "TR-M1", direction: "out", quantity: 100 },
+        { product_code: "TR-01", direction: "in", quantity: 1 },
+      ];
       mockCreateTransfer.mockResolvedValue(internalError);
       renderWithClient(<StockTransferPage />);
       await fillBothSides(user);
@@ -414,18 +462,62 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
       await waitFor(() => {
         expect(screen.getByLabelText(label)).toBeEnabled();
       });
-      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
 
       await act(async () => {
         deferredSearch.resolve(searchResult([late]));
         await deferredSearch.promise;
       });
-      expect(
-        within(screen.getByRole("table", { name: tableName })).getByLabelText("TR-LATE の数量"),
-      ).toHaveValue(1);
-      expect(screen.getByLabelText(label)).toHaveValue("");
+      // (a) 遅れた商品は明細に入らない。検索欄の文字は残り、同じ検索をし直せる。
+      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+      expect(screen.queryByText("TR-LATE")).not.toBeInTheDocument();
+      expect(screen.getByLabelText(label)).toHaveValue("TR-LATE");
       expect(screen.getByLabelText("TR-M1 の数量")).toBeInTheDocument();
       expect(screen.getByLabelText("TR-01 の数量")).toBeInTheDocument();
+
+      if (failure === "command") {
+        // (b) 中身を変えていない再保存は 1 回目と同じ明細・同じ key（UI-16-D6）。
+        await user.click(screen.getByRole("button", { name: SAVE }));
+        await waitFor(() => {
+          expect(mockCreateTransfer).toHaveBeenCalledTimes(2);
+        });
+        const [first] = mockCreateTransfer.mock.calls[0] as [TransferCreateRequest];
+        const [second] = mockCreateTransfer.mock.calls[1] as [TransferCreateRequest];
+        expect(first.items).toEqual(baseItems);
+        expect(second.items).toEqual(baseItems);
+        expect(second.idempotency_key).toBe(first.idempotency_key);
+        expect(await screen.findByText("保存に失敗しました")).toBeInTheDocument();
+        await waitFor(() => {
+          expect(screen.getByLabelText(label)).toBeEnabled();
+        });
+      }
+
+      // 失敗の後に始めた検索は採る。行が増えた後の保存は新しい key（UI-16-D6）。
+      mockSearchProducts.mockResolvedValueOnce(searchResult([fresh]));
+      await user.clear(screen.getByLabelText(label));
+      await user.type(screen.getByLabelText(label), "TR-NEW{enter}");
+      expect(
+        await within(screen.getByRole("table", { name: tableName })).findByLabelText(
+          "TR-NEW の数量",
+        ),
+      ).toHaveValue(1);
+      expect(screen.queryByLabelText("TR-LATE の数量")).not.toBeInTheDocument();
+
+      if (failure === "validation") {
+        fireEvent.change(screen.getByLabelText("TR-01 の数量"), { target: { value: "1" } });
+      }
+      const callsBefore = mockCreateTransfer.mock.calls.length;
+      await user.click(screen.getByRole("button", { name: SAVE }));
+      await waitFor(() => {
+        expect(mockCreateTransfer).toHaveBeenCalledTimes(callsBefore + 1);
+      });
+      const [last] = mockCreateTransfer.mock.calls[callsBefore] as [TransferCreateRequest];
+      const freshItem = { product_code: "TR-NEW", direction, quantity: 1 };
+      expect(last.items).toEqual(
+        direction === "out" ? [baseItems[0], freshItem, baseItems[1]] : [...baseItems, freshItem],
+      );
+      if (failure === "command") {
+        expect(last.idempotency_key).not.toBe(mockCreateTransfer.mock.calls[0][0].idempotency_key);
+      }
     },
   );
 
