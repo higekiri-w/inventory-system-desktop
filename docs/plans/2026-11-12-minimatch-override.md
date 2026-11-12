@@ -5,7 +5,7 @@ wave に属さない単独の lane。出所は owner の決定 TD-657（2026-11-
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: ee45e021658ca76218624bae86aa26b49efff9aa
 - Amendments: none
 
 ## Risk
