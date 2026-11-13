@@ -150,6 +150,7 @@
 - **日報の取込み画面の所感 4 点をデザイン刷新の入力にする**（起源: PR #145 の L3 の before で owner が挙げた所感、2026-10-06。小 lane にしない）: (1) 確定の成功の知らせが他の画面のように出ない。(2) 同じ日の追加の取込みの示唆。(3) 追加の確認の dialog で合計金額が 2 列に出る。(4)「追加で取り込む」の実行ボタンが赤（`docs/design-system/00-foundations.md` は赤を戻せない操作に限り、追加の取込みは取消で戻せる）。
 - ~~**PR #191 の L3 の owner の所感を次の design lane の候補にする**~~ → design lane「画面ごとの要素の見直し」（PR #202）で扱い、owner の採否（repo 外の回答台帳 TD-424・TD-425）で D-138 に決めた（起源は TD-413・TD-415。今の契約〈58 の旧契約 I〉は D-138 で置き換えた）。runtime は上の「商品と在庫の画面の統合の runtime」。
 - **日計（Z001）の行の取り分けが、親と行の query の ORDER BY の一致に黙って依存する**（起源: PR #145 の Final Review の P3、残りの行の guard）: `get_completed_daily_report_aggregate`（24 §14.21 手順 6）は親の並びで Z001 の行を先頭から親 id の一致で取り分けるので、親の query と行の query の ORDER BY（今は両方 `imported_at ASC, id ASC`）がずれると、取り分けられなかった行が黙って落ちる（`sales_repo.rs` の `summary_imports` の組み立て）。今の並びは一致していて mutant でも守られているが、取り分けた後に残りの行が無いことを確かめる guard は無い。
+  - 起票（2026-11-13、R3。packet `docs/plans/2026-11-13-z001-row-guard.md`、owner の着手の決定は repo 外の回答台帳 TD-671）: guard を足さず、行を親 id で取込みに分けて並びの一致の前提ごと消す（親に無い id の行は 24 §14.21a 手順 2 と同じく読まない）。
 
 ### 保留（要望・実需・顕在化待ち）
 
