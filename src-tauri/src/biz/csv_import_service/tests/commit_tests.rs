@@ -3,6 +3,7 @@ use crate::biz::csv_import_service::*;
 use crate::biz::BizError;
 use crate::db::test_support::setup_test_db;
 use crate::db::{product_repo, sales_repo};
+use crate::io::z004_parser::normalize_jan;
 
 fn write_surface(conn: &crate::db::DbConnection) -> [i64; 4] {
     [
@@ -829,5 +830,57 @@ fn test_commit_req401_reused_settlement_no_after_rollback_falls_back_to_dates() 
             ]
         ),
         other => panic!("StocktakeGuard を期待: {other:?}"),
+    }
+}
+
+// --- z004_moves_stock（D-148 (2)、31 §12.4 の置き換えの段）---
+
+#[test]
+fn test_z004_moves_stock_req401_single_linked_only() {
+    // REQ-401 / D-148 (2) / B7: 13 桁の JAN で、候補 0・1 連動・1 非連動・2 の 4 例。
+    // recheck_matches の旧い式（候補が 1 つ、かつ pos_stock_sync）と同じ値を返す
+    let (_dir, conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "B7-LINK", "4912345678901", 0, true);
+    create_test_product_with_jan(&conn, "B7-NOSYNC", "4912345678902", 0, false);
+    create_test_product_with_jan(&conn, "B7-SHARE-A", "4912345678903", 0, true);
+    create_test_product_with_jan(&conn, "B7-SHARE-B", "4912345678903", 0, true);
+
+    for (jan, expected) in [
+        ("4912345678900", false), // 候補 0
+        ("4912345678901", true),  // 1 商品・在庫連動
+        ("4912345678902", false), // 1 商品・在庫連動でない
+        ("4912345678903", false), // 共有 JAN（候補 2）
+    ] {
+        let candidates = product_repo::find_by_jan_code(&conn, jan).unwrap();
+        assert_eq!(z004_moves_stock(jan, &candidates), expected, "jan={jan}");
+    }
+}
+
+#[test]
+fn test_z004_moves_stock_req401_rejects_non_z004_jan_forms() {
+    // REQ-401 / D-148 (2) / B7b: 候補を 1 つの在庫連動に固定し、Z004 の行に当たらない JAN の形は false。
+    // 形の条件が受ける ⇔ normalize_jan(s, 1) == Ok(Some(s))（Z004 の照合に現れる値の形と同じ）
+    let (_dir, conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "B7B-LINK", "4901234567887", 0, true);
+    let candidates = product_repo::find_by_jan_code(&conn, "4901234567887").unwrap();
+    assert_eq!(candidates.len(), 1);
+
+    for (jan, expected) in [
+        ("49123456", false),       // JAN-8
+        ("490123456788", false),   // 12 桁
+        ("49012345678870", false), // 14 桁
+        ("490123456788A", false),  // 13 桁に英字
+        ("0000000000000", false),  // 13 桁の全桁ゼロ
+        (" 4901234567887", false), // 前に空白
+        ("4901234567887 ", false), // 後に空白
+        ("", false),               // 空
+        ("4901234567887", true),
+    ] {
+        assert_eq!(z004_moves_stock(jan, &candidates), expected, "jan={jan:?}");
+        assert_eq!(
+            normalize_jan(jan, 1) == Ok(Some(jan.to_string())),
+            expected,
+            "形の条件と normalize_jan の Ok(Some) の値が食い違う: jan={jan:?}"
+        );
     }
 }

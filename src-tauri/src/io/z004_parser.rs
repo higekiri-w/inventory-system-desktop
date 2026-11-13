@@ -502,7 +502,7 @@ fn is_layout_a_header_line(line: &str) -> bool {
 /// Z004のスキャニングコードをJANコード13桁に正規化する
 ///
 /// 23-io-z004-parser.md セクション13.5
-fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>, String> {
+pub(crate) fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>, String> {
     let trimmed = raw.trim();
 
     // 全桁ゼロ → Ok(None)（設計書13.5: 13桁/14桁ゼロが対象。売上の有無による

@@ -1,5 +1,6 @@
 //! 返品・交換記録（create_return）
 
+use crate::biz::csv_import_service::z004_moves_stock;
 use crate::biz::BizError;
 use crate::constants::MAX_LINE_QUANTITY;
 use crate::db::inventory_repo::{MovementType, ReferenceType};
@@ -10,7 +11,7 @@ use crate::db::system_repo;
 use crate::db::{DbConnection, DbError};
 use crate::io::image_manager;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use super::common::{
@@ -73,6 +74,8 @@ pub struct ReturnCreateResult {
     pub created: bool,
     pub idempotent_replay: bool,
     pub stock_warnings: Vec<String>,
+    /// この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送では記録の movement から作る。D-148 (3)）
+    pub stock_applied_product_codes: Vec<String>,
 }
 
 fn validate_return_request_shape(req: &ReturnCreateRequest) -> Result<(), BizError> {
@@ -113,8 +116,8 @@ fn validate_return_request_shape(req: &ReturnCreateRequest) -> Result<(), BizErr
             "交換では戻り明細と渡し明細がそれぞれ1件以上必要です".to_string(),
         ));
     }
-    // 業務日の形と暦の検査（31）。register_processed で在庫を動かすかが分かれる前なので、
-    // movement を作らないレジ処理済みの返品・交換も同じ検査を通る
+    // 業務日の形と暦の検査（31）。明細ごとに在庫を動かすかが分かれる前なので、
+    // movement を作らない明細（レジで読んで戻した在庫連動の商品）だけの記録も同じ検査を通る
     validate_business_date(&req.return_date)?;
 
     Ok(())
@@ -142,10 +145,50 @@ fn compute_return_fingerprint(req: &ReturnCreateRequest) -> String {
     compute_fingerprint(&header, &item_lines)
 }
 
+/// 冪等の再送の結果。この保存で在庫を動かした商品コードは、記録の movement（詳細の取得と同じ読取り）から作る
+fn replay_result(conn: &DbConnection, record_id: i64) -> Result<ReturnCreateResult, BizError> {
+    let codes: BTreeSet<String> = return_repo::get_return_record_detail(conn, record_id)?
+        .movements
+        .into_iter()
+        .map(|movement| movement.product_code)
+        .collect();
+    Ok(ReturnCreateResult {
+        record_id,
+        created: false,
+        idempotent_replay: true,
+        stock_warnings: vec![],
+        stock_applied_product_codes: codes.into_iter().collect(),
+    })
+}
+
+/// 明細の商品の在庫をこの保存で動かすか（D-148 (2)、31 §12.4）。
+///
+/// register_processed=false（レジでバーコードを読んでいない）→ 動かす。
+/// register_processed=true（レジで読んで戻した）→ Z004 の取込みの確定がその商品の在庫を動かすときだけ動かさない
+/// （判定は Z004 の確定と同じ `z004_moves_stock`。JAN は保存された値をそのまま渡し、ここで正規化しない）。
+fn applies_stock_on_save(
+    conn: &DbConnection,
+    register_processed: bool,
+    product_code: &str,
+) -> Result<bool, BizError> {
+    if !register_processed {
+        return Ok(true);
+    }
+    let product = product_repo::find_by_product_code(conn, product_code)?
+        .ok_or_else(|| BizError::NotFound(format!("商品が見つかりません: {product_code}")))?;
+    match product.product.jan_code.as_deref() {
+        Some(jan) => Ok(!z004_moves_stock(
+            jan,
+            &product_repo::find_by_jan_code(conn, jan)?,
+        )),
+        None => Ok(true),
+    }
+}
+
 /// 返品・交換記録を登録する
 ///
-/// register_processed=true → 在庫は動かさない（CSV取込みで自動反映）
-/// register_processed=false → direction に基づき在庫変動
+/// 明細ごとに、register_processed=false か、Z004 の取込みが在庫を動かさない商品なら、
+/// direction に基づきこの保存で在庫を動かす（D-148）
 ///
 /// 31-biz-inventory-service.md §12.4
 pub fn create_return(
@@ -176,12 +219,7 @@ pub fn create_return(
         return_repo::find_return_by_idempotency_key(conn, &normalized_key)?
     {
         if existing_fp == fingerprint {
-            return Ok(ReturnCreateResult {
-                record_id: existing_id,
-                created: false,
-                idempotent_replay: true,
-                stock_warnings: vec![],
-            });
+            return replay_result(conn, existing_id);
         } else {
             return Err(BizError::IdempotencyConflict(
                 "同じ冪等キーで異なる内容のリクエストです".to_string(),
@@ -227,12 +265,7 @@ pub fn create_return(
                     },
                 )?;
             if existing_fp == fingerprint {
-                return Ok(ReturnCreateResult {
-                    record_id: existing_id,
-                    created: false,
-                    idempotent_replay: true,
-                    stock_warnings: vec![],
-                });
+                return replay_result(&tx, existing_id);
             } else {
                 return Err(BizError::IdempotencyConflict(
                     "同じ冪等キーで異なる内容のリクエストです".to_string(),
@@ -243,6 +276,7 @@ pub fn create_return(
     };
 
     let mut stock_warnings_map: BTreeMap<String, String> = BTreeMap::new();
+    let mut stock_applied: BTreeSet<String> = BTreeSet::new();
     for item in &req.items {
         return_repo::insert_return_item(
             &tx,
@@ -254,8 +288,8 @@ pub fn create_return(
             },
         )?;
 
-        // register_processed=true → 在庫は動かさない（CSV取込みで自動反映）
-        if !req.register_processed {
+        // Z004 の取込みが在庫に戻す明細は動かさない（二重に戻さない）。それ以外はこの保存で動かす
+        if applies_stock_on_save(&tx, req.register_processed, &item.product_code)? {
             let qty = if item.direction == ReturnDirection::In {
                 item.quantity
             } else {
@@ -277,6 +311,7 @@ pub fn create_return(
                     negative_stock_warning_message(&item.product_code, &outcome),
                 );
             }
+            stock_applied.insert(item.product_code.clone());
         }
     }
 
@@ -308,6 +343,7 @@ pub fn create_return(
         created: true,
         idempotent_replay: false,
         stock_warnings,
+        stock_applied_product_codes: stock_applied.into_iter().collect(),
     })
 }
 
@@ -315,6 +351,7 @@ pub fn create_return(
 mod tests {
     use super::super::test_support::*;
     use super::*;
+    use crate::biz::csv_import_service::test_support::create_test_product_with_jan;
     use crate::db::product_repo;
     use std::fs;
 
@@ -442,32 +479,258 @@ mod tests {
         assert_eq!(detail["idempotency_key"], "ret-log-key");
     }
 
-    #[test]
-    fn test_create_return_req202_register_processed_no_stock_change() {
-        // REQ-202: 返品・交換記録 — register_processed=true → 在庫は動かさない
-        let (_dir, mut conn) = setup_test_db();
-        create_test_product(&conn, "RTN-002", 10);
+    /// 13 桁の数字の JAN を持ち、その JAN の商品が 1 つだけの在庫連動の商品（Z004 の取込みが在庫を動かす）
+    fn create_linked_jan_product(conn: &DbConnection, code: &str, jan: &str, stock: i64) {
+        create_test_product_with_jan(conn, code, jan, stock, true);
+    }
 
-        let mut req = make_return_req("ret-key-2", vec![return_item("RTN-002", "in", 3)]);
+    fn return_movement_count(conn: &DbConnection, code: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM inventory_movements WHERE product_code = ?1 AND reference_type = 'return_record'",
+            [code],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn register_processed_return(key: &str, items: Vec<ReturnItemInput>) -> ReturnCreateRequest {
+        let mut req = make_return_req(key, items);
         req.register_processed = true;
+        req
+    }
+
+    #[test]
+    fn test_create_return_req202_register_processed_linked_jan_no_stock_change() {
+        // REQ-202 / D-148 (2) / B1: 「読んで戻した」かつ Z004 が在庫を動かす商品は、この保存で在庫を動かさない
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "RTN-002", "4901234567887", 10);
+
+        let req = register_processed_return("ret-key-2", vec![return_item("RTN-002", "in", 3)]);
         let result = create_return(&mut conn, req).unwrap();
         assert!(result.created);
 
-        // 在庫不変
-        let p = product_repo::find_by_product_code(&conn, "RTN-002")
-            .unwrap()
-            .unwrap();
-        assert_eq!(p.product.stock_quantity, 10);
+        // 在庫不変・movement なし（Z004 と二重に戻らない）
+        assert_eq!(stock_of(&conn, "RTN-002"), 10);
+        assert_eq!(return_movement_count(&conn, "RTN-002"), 0);
+        assert!(result.stock_applied_product_codes.is_empty());
+    }
 
-        // inventory_movements にレコードなし
-        let mv_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM inventory_movements WHERE product_code = 'RTN-002' AND reference_type = 'return_record'",
-                [],
-                |r| r.get(0),
-            )
+    #[test]
+    fn test_create_return_req202_register_processed_without_jan_moves_stock() {
+        // REQ-202 / D-148 (2) / B2: JAN 無しの商品は Z004 の行に当たらないので、「読んで戻した」でもこの保存で動かす
+        let (_dir, mut conn) = setup_test_db();
+        create_test_product(&conn, "RTN-NOJAN", 10);
+
+        let req = register_processed_return("ret-nojan", vec![return_item("RTN-NOJAN", "in", 3)]);
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "RTN-NOJAN"), 13);
+        assert_eq!(return_movement_count(&conn, "RTN-NOJAN"), 1);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["RTN-NOJAN".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_register_processed_not_stock_linked_moves_stock() {
+        // REQ-202 / D-148 (2) / B3: pos_stock_sync=false の商品は Z004 が在庫を動かさないので、この保存で動かす
+        let (_dir, mut conn) = setup_test_db();
+        create_test_product_with_jan(&conn, "RTN-NOSYNC", "4901234567887", 10, false);
+
+        let req = register_processed_return("ret-nosync", vec![return_item("RTN-NOSYNC", "in", 2)]);
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "RTN-NOSYNC"), 12);
+        assert_eq!(return_movement_count(&conn, "RTN-NOSYNC"), 1);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["RTN-NOSYNC".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_register_processed_shared_jan_moves_stock() {
+        // REQ-202 / D-148 (2) / B4: 共有 JAN（候補 2）の商品は Z004 が在庫を動かさないので、この保存で動かす
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "RTN-SHARE-A", "4901234567887", 10);
+        create_linked_jan_product(&conn, "RTN-SHARE-B", "4901234567887", 10);
+
+        let req =
+            register_processed_return("ret-shared", vec![return_item("RTN-SHARE-A", "in", 1)]);
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "RTN-SHARE-A"), 11);
+        assert_eq!(stock_of(&conn, "RTN-SHARE-B"), 10);
+        assert_eq!(return_movement_count(&conn, "RTN-SHARE-A"), 1);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["RTN-SHARE-A".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_register_processed_exchange_mixed_lines() {
+        // REQ-202 / D-148 (2) / B5: 交換の明細ごとに判定し、渡しは在庫を減らす
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "MIX-IN-LINK", "4901234567887", 10);
+        create_test_product(&conn, "MIX-IN-NOJAN", 10);
+        create_linked_jan_product(&conn, "MIX-OUT-LINK", "4909876543214", 10);
+        create_test_product(&conn, "MIX-OUT-NOJAN", 10);
+
+        let mut req = register_processed_return(
+            "ret-mixed",
+            vec![
+                return_item("MIX-IN-LINK", "in", 1),
+                return_item("MIX-IN-NOJAN", "in", 2),
+                return_item("MIX-OUT-LINK", "out", 3),
+                return_item("MIX-OUT-NOJAN", "out", 4),
+            ],
+        );
+        req.return_type = ReturnExchangeType::Exchange;
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "MIX-IN-LINK"), 10);
+        assert_eq!(stock_of(&conn, "MIX-IN-NOJAN"), 12);
+        assert_eq!(stock_of(&conn, "MIX-OUT-LINK"), 10);
+        assert_eq!(stock_of(&conn, "MIX-OUT-NOJAN"), 6);
+        assert_eq!(return_movement_count(&conn, "MIX-IN-LINK"), 0);
+        assert_eq!(return_movement_count(&conn, "MIX-OUT-LINK"), 0);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["MIX-IN-NOJAN".to_string(), "MIX-OUT-NOJAN".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_register_processed_jan8_moves_stock() {
+        // REQ-202 / D-148 (2) / B8: JAN-8 は Z004 の照合の形（13 桁）でないので、候補が 1 つの在庫連動でもこの保存で動かす
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "RTN-JAN8", "49123456", 10);
+
+        let req = register_processed_return("ret-jan8", vec![return_item("RTN-JAN8", "in", 1)]);
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "RTN-JAN8"), 11);
+        assert_eq!(return_movement_count(&conn, "RTN-JAN8"), 1);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["RTN-JAN8".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_unprocessed_moves_every_line() {
+        // REQ-202 / D-148 (2): 「読んでいない」は Z004 が在庫を動かす商品の明細も含めて全明細で動かす
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "UNP-LINK", "4901234567887", 10);
+        create_test_product(&conn, "UNP-NOJAN", 10);
+
+        let req = make_return_req(
+            "ret-unprocessed",
+            vec![
+                return_item("UNP-NOJAN", "in", 1),
+                return_item("UNP-LINK", "in", 2),
+            ],
+        );
+        let result = create_return(&mut conn, req).unwrap();
+
+        assert_eq!(stock_of(&conn, "UNP-LINK"), 12);
+        assert_eq!(stock_of(&conn, "UNP-NOJAN"), 11);
+        assert_eq!(
+            result.stock_applied_product_codes,
+            vec!["UNP-LINK".to_string(), "UNP-NOJAN".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_create_return_req202_replay_returns_stock_applied_codes() {
+        // REQ-202 / D-148 (3) / B6: 冪等の再送も記録の movement から同じ列を返す（cache を古いまま残さない）
+        let (_dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "RPL-LINK", "4901234567887", 10);
+        create_test_product(&conn, "RPL-NOJAN-B", 10);
+        create_test_product(&conn, "RPL-NOJAN-A", 10);
+
+        let req = register_processed_return(
+            "ret-replay-codes",
+            vec![
+                return_item("RPL-NOJAN-B", "in", 1),
+                return_item("RPL-LINK", "in", 1),
+                return_item("RPL-NOJAN-A", "in", 1),
+            ],
+        );
+        let first = create_return(&mut conn, req.clone()).unwrap();
+        let replay = create_return(&mut conn, req).unwrap();
+
+        assert!(replay.idempotent_replay);
+        assert_eq!(
+            first.stock_applied_product_codes,
+            vec!["RPL-NOJAN-A".to_string(), "RPL-NOJAN-B".to_string()]
+        );
+        assert_eq!(
+            replay.stock_applied_product_codes,
+            first.stock_applied_product_codes
+        );
+        assert_eq!(stock_of(&conn, "RPL-NOJAN-A"), 11, "再送で二重に動かさない");
+    }
+
+    thread_local! {
+        /// DuplicateKey の経路の test で、busy handler の中から先に保存する別の接続と要求
+        static RACING_SAVE: std::cell::RefCell<Option<(DbConnection, ReturnCreateRequest)>> =
+            const { std::cell::RefCell::new(None) };
+        static RACING_RESULT: std::cell::RefCell<Option<ReturnCreateResult>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// TX の前の一致を通った後、ヘッダの INSERT が書込みの lock を待つ間に、別の接続が同じ要求を保存し終える
+    fn save_racing_return_while_busy(_attempt: i32) -> bool {
+        let Some((mut other, req)) = RACING_SAVE.with(|slot| slot.borrow_mut().take()) else {
+            return false;
+        };
+        other.execute_batch("ROLLBACK").unwrap();
+        let result = create_return(&mut other, req).unwrap();
+        RACING_RESULT.with(|slot| *slot.borrow_mut() = Some(result));
+        true
+    }
+
+    #[test]
+    fn test_create_return_req202_duplicate_key_replay_returns_stock_applied_codes() {
+        // REQ-202 / D-148 (3) / B6: TX の前の一致を外れ、INSERT の DuplicateKey の後に再送になる経路も、記録の movement から同じ列を返す
+        let (dir, mut conn) = setup_test_db();
+        create_linked_jan_product(&conn, "DUP-LINK", "4901234567887", 10);
+        create_test_product(&conn, "DUP-NOJAN", 10);
+        let req = register_processed_return(
+            "ret-duplicate-key-codes",
+            vec![
+                return_item("DUP-LINK", "in", 1),
+                return_item("DUP-NOJAN", "in", 1),
+            ],
+        );
+
+        // 別の接続が書込みの lock を持ち、こちらの TX の前の一致は記録を見ない
+        let other = crate::db::init_database(dir.path().join("test.db").to_str().unwrap()).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+        RACING_SAVE.with(|slot| *slot.borrow_mut() = Some((other, req.clone())));
+        conn.busy_handler(Some(save_racing_return_while_busy))
             .unwrap();
-        assert_eq!(mv_count, 0);
+
+        let replay = create_return(&mut conn, req).unwrap();
+        let first = RACING_RESULT
+            .with(|slot| slot.borrow_mut().take())
+            .expect("busy handler で別の接続が先に保存している");
+
+        assert!(first.created);
+        assert!(replay.idempotent_replay);
+        assert_eq!(replay.record_id, first.record_id);
+        assert_eq!(
+            first.stock_applied_product_codes,
+            vec!["DUP-NOJAN".to_string()]
+        );
+        assert_eq!(
+            replay.stock_applied_product_codes,
+            first.stock_applied_product_codes
+        );
+        assert_eq!(stock_of(&conn, "DUP-NOJAN"), 11, "再送で二重に動かさない");
     }
 
     #[test]
@@ -722,9 +985,10 @@ mod tests {
 
     #[test]
     fn test_create_return_req202_quantity_limit_applies_to_register_processed() {
-        // REQ-202 / X1: 在庫を動かさない明細（レジ処理済みの返品）も同じ上限の検査を通る
+        // REQ-202 / X1: 在庫を動かさない明細（レジでバーコードを読んで戻した在庫連動の商品）も同じ上限の検査を通る
         let (_dir, mut conn) = setup_test_db();
-        create_test_product(&conn, "LIM-RP", 7);
+        // D-148: 在庫を動かさない明細は Z004 が在庫を動かす商品（13 桁の JAN が 1 商品だけの在庫連動）
+        create_linked_jan_product(&conn, "LIM-RP", "4901234567887", 7);
         let before = write_surface(&conn, &RETURN_TABLES);
         let mut over =
             make_return_req("lim-rp-over", vec![return_item("LIM-RP", "in", 10_000_000)]);
@@ -824,7 +1088,7 @@ mod tests {
 
     #[test]
     fn test_create_return_req202_register_processed_rejects_noncanonical_date() {
-        // REQ-202 / Y1・31（movement を作らないレジ処理済みの返品も同じ検査）/ Matrix W7
+        // REQ-202 / Y1・31（register_processed=true〈レジでバーコードを読んで戻した〉の記録も同じ検査）/ Matrix W7
         let (_dir, mut conn) = setup_test_db();
         create_test_product(&conn, "W7-RT", 3);
         for (i, (date, message)) in [

@@ -54,10 +54,19 @@ const CONTINUE_LABEL = "続けて返品・交換";
 const FIRST_CODE = "RT-001";
 const LATE_NAME = "遅れて届いた商品";
 const NEW_NAME = "新しく読んだ商品";
+// UI-03-D23 の文言（63）
+const READ_AT_REGISTER = "レジでバーコードを読んで戻した";
 
+// READ_AT_REGISTER で在庫連動・13 桁 JAN の fixture の商品なので BIZ は在庫を動かさず codes は空（31 §12.4）
 const saveOk: CreateResponse = {
   status: "ok",
-  data: { record_id: 90, created: true, idempotent_replay: false, stock_warnings: [] },
+  data: {
+    record_id: 90,
+    created: true,
+    idempotent_replay: false,
+    stock_warnings: [],
+    stock_applied_product_codes: [],
+  },
 };
 const saveFailed: CreateResponse = {
   status: "error",
@@ -138,6 +147,12 @@ async function settle() {
   });
 }
 
+// UI-03-D23: 既定の選択が無いので保存の前に選ぶ。選ぶ値で変わるのは result panel の行の文言と在庫系の invalidation だけで、
+// この file の assert（result panel の有無・create の回数・payload の明細）に影響しない
+async function chooseRegisterMethod(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByLabelText(READ_AT_REGISTER));
+}
+
 function saveButton() {
   return screen.getByRole("button", { name: SAVE_LABEL });
 }
@@ -169,6 +184,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     const late = holdSearch("LATE-001");
     await searchFor(user, "LATE-001");
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     expect(await screen.findByText(RESULT_TITLE)).toBeInTheDocument();
     late.resolve(lateOk);
@@ -189,6 +205,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     const late = holdSearch("LATE-001");
     await searchFor(user, "LATE-001");
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -212,6 +229,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     const late = holdSearch("LATE-001");
     await searchFor(user, "LATE-001");
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     expect(await screen.findByText(RESULT_TITLE)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: CONTINUE_LABEL }));
@@ -220,6 +238,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     expect(screen.queryByText(LATE_NAME)).toBeNull();
 
     await addFirstProduct(user);
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledTimes(2);
@@ -266,6 +285,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     const late = holdSearch("LATE-001");
     await searchFor(user, "LATE-001");
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     expect(await screen.findByText("保存に失敗しました")).toBeInTheDocument();
     late.resolve(lateOk);
@@ -374,6 +394,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
     late.resolve(lateOk);
     expect(await screen.findByText(LATE_NAME)).toBeInTheDocument();
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -411,6 +432,7 @@ describe("ReturnExchangePage stale direct search (UI-03-D24 / REQ-202)", () => {
       dataTransfer: { files: [file] },
     });
 
+    await chooseRegisterMethod(user);
     await user.click(saveButton());
     expect(await screen.findByText(RESULT_TITLE)).toBeInTheDocument();
     bytes.resolve(new ArrayBuffer(7));

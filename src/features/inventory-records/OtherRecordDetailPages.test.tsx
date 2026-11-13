@@ -222,20 +222,39 @@ describe("other inventory record detail pages (REQ-201 / REQ-202 / REQ-203 / REQ
     },
   );
 
-  it("REQ-202: 返品・交換詳細にレジ戻し状態、レシート有無、方向付き明細を表示する", async () => {
+  it("REQ-202: 返品・交換詳細にレジでの戻し方、レシート有無、方向付き明細を表示する", async () => {
     mockGetReturnRecord.mockResolvedValue({ status: "ok", data: makeReturnDetail() });
 
     renderWithClient(<ReturnRecordDetailPage recordId={22} />);
 
     expect(await screen.findByRole("heading", { name: "返品・交換 #22" })).toBeInTheDocument();
     expect(screen.getByText("交換")).toBeInTheDocument();
-    expect(screen.getByText("レジ未処理（この保存で反映）")).toBeInTheDocument();
+    // UI-03-D23 (U6): 記録の値は false を「バーコードなし」で出す
+    expect(screen.getByText("レジでの戻し方")).toBeInTheDocument();
+    expect(screen.getByText("バーコードなし")).toBeInTheDocument();
     expect(screen.getByText("レシート画像")).toBeInTheDocument();
     expect(screen.getByText("添付あり")).toBeInTheDocument();
     const noteRegion = screen.getByRole("region", { name: "備考" });
     expect(within(noteRegion).getByText("サイズ交換")).toBeInTheDocument();
     expect(screen.getByText("戻り（在庫+）")).toBeInTheDocument();
     expect(screen.getByText("返品テスト商品")).toBeInTheDocument();
+  });
+
+  it("REQ-202 / UI-03-D23 (U6): バーコードで戻した記録で在庫変動が 0 件なら、Z004 の取込みで戻ることを示す", async () => {
+    const detail = makeReturnDetail();
+    detail.register_processed = true;
+    detail.movements = [];
+    mockGetReturnRecord.mockResolvedValue({ status: "ok", data: detail });
+
+    renderWithClient(<ReturnRecordDetailPage recordId={22} />);
+
+    expect(await screen.findByText("バーコードで戻した")).toBeInTheDocument();
+    expect(screen.getByText("関連する在庫変動がありません")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "レジでバーコードを読んで戻した記録で、どの商品も売上データ（Z004）の取込みで在庫に戻ります",
+      ),
+    ).toBeInTheDocument();
   });
 
   it.each([

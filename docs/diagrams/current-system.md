@@ -177,9 +177,9 @@ flowchart TB
   MANUAL[手動販売] -->|減算| CHANGE
   DISPOSAL[廃棄・破損] -->|減算| CHANGE
   Z4[商品別CSV / pos_stock_sync=true] -->|販売は減算・返品は加算| CHANGE
-  RETURN[返品・交換] --> REG{register_processed}
-  REG -->|false / 戻り加算・渡し減算| CHANGE
-  REG -->|true| KEEP[帳面記録のみ / 在庫は変更しない]
+  RETURN[返品・交換] --> REG{明細ごと: register_processed=true かつ Z004 が在庫を動かす商品（D-148）}
+  REG -->|いいえ / 戻り加算・渡し減算| CHANGE
+  REG -->|はい| KEEP[帳面記録のみ / 在庫は Z004 の取込みで戻る]
   INITIAL[商品登録時の初期在庫] -->|初期履歴 / 元記録参照なし| CHANGE
   ROLLBACK[商品別CSV rollback] --> VOID[対象importの売上・movementをvoid + その商品を記録から求め直す / 同一TX]
   DAILY[日報 rollback] --> LOGICAL[daily_report_importsをrolled_back / 在庫は変更しない]
