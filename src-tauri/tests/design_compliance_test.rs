@@ -44,6 +44,7 @@ const SKIP_DOCS: &[&str] = &[
     "76-ui-request-primitives.md",
     "77-ui-bulk-price-revision.md",
     "78-ui-supplier-management.md",
+    "79-ui-stock-transfer.md",
     // 自動生成のトレーサビリティマトリクス（generate_traceability bin が再生成、関数定義を持たない）
     "90-traceability.md",
 ];
@@ -132,6 +133,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "db::sales_repo",
             "db::stocktake_repo",
             "db::system_repo",
+            "db::transfer_repo",
         ],
     );
 
@@ -179,6 +181,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "biz::inventory_service::returns",
             "biz::inventory_service::manual_sale",
             "biz::inventory_service::disposal",
+            "biz::inventory_service::transfer",
             "biz::stock_ledger",
         ],
     );
@@ -297,6 +300,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "cmd::return_cmd",
             "cmd::manual_sale_cmd",
             "cmd::disposal_cmd",
+            "cmd::transfer_cmd",
             "cmd::inventory_cmd",
             "db::product_repo",
             "db::inventory_repo",

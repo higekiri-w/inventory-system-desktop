@@ -7,9 +7,10 @@
 - 求め直しの関数（新しい module `biz::stock_ledger`。シグネチャは下の「求め直しの関数のシグネチャ」）: `derive_stock`（読取りだけ。整合性の検査〈[36](36-biz-integrity-check.md)〉と完了の後の差〈[35](35-biz-stocktake-service.md)〉が使う）と、`recompute_stock`（`derive_stock` と同じ規則で求め、写し〈`stock_quantity`・`stock_recheck`・`stock_range_low`・`stock_range_high`〉を同じ TX で書く）。`DerivedStock` は `stock`（写しの値）、`range: Option<(i64, i64)>`（要再確認のときの最小と最大）、`recheck_reasons: Vec<RecheckReason>`（`undetermined_settlement` / `same_date_movement` / `conflicting_counts`。ADR D3 の理由 1〜3。(a) の enum は理由 2・3 の 2 つで、b1 が `undetermined_settlement` を足した）。中で、その商品の計数（`stock_counts`）と `is_voided=0` の movement と取り込み済みの精算の一覧（`csv_imports` の active の取込みID・`settlement_date`・`settlement_no`。取込みID は fresh な計数の判定の n を取込みのカーソルと比べて求めるのに使う。ADR D3）を読み、ADR D3 の窓の判定表で、効く計数・それに入っていない記録の和・決まらない記録・範囲を求める。写しを書くのは `recompute_stock` だけ（[21](21-io-inventory-repo.md) の `update_stock_quantity` を呼ぶのはこの関数 1 つ）。`phase=1` の movement（Z004）は、その `settlement_no` の精算として ADR D3 の判定表の「精算 k」の行で判定する（入出庫の行で判定しない）。
 - 求め直す商品は ADR の横断の表の「求め直す商品」の列（D2 の原理: 求め直しの入力が変わる TX は、その入力に依る全ての商品を求め直す）。Z004 の確定・取消は、計数を持つ全ての商品と、その取込みの売上か movement を持つ全ての商品を同じ TX で求め直す（[32](32-biz-csv-import-service.md)）。
 - 決まらない精算の行の判定（ADR D3 の理由 1）は、その精算の取込みに、その商品の有効な Z004 の movement があるか、`sale_records`（`csv_import_id` 付き、`is_voided=0`、`stock_linked=1`）にその商品の行が個数 ≠ 0 または金額 ≠ 0 であること。今の `pos_stock_sync` を見ない（連動を切っても、連動中に作った movement と行で理由と範囲が残る。ADR D8）。
-- `apply_stock_change` は「保存した数 + 差分」をやめ、movement を並びの鍵付きで INSERT してから、その商品を `recompute_stock` で求め直す。署名に並びの鍵（`business_date` と、Z004 のときだけ `settlement_no: Option<i64>`）を足す（(a)。b1 で Z004 の確定が `apply_stock_change` を使わなくなったので、`settlement_no` の引数は b1 で外し、呼ぶのは入出庫 4 業務だけ）。入庫・返品交換（レジ未処理）・手動販売・廃棄の 4 つの `create_*` は header の日付と `None` を渡し（`phase=0`。header の日付の意味は品が動いた日〈入庫は品が届いた日で、納品書の日付ではない〉で、ADR D3 の入出庫の窓はこの日付に依る）、Z004 の確定は `apply_stock_change` を行ごとに呼ばず（b1 で `src-tauri/src/biz/csv_import_service/commit.rs` の `execute_commit` の `apply_stock_change` の呼出しを置き換えた）、在庫連動の行の movement を全部、仮の `stock_after` で `insert_movement`（[21](21-io-inventory-repo.md)）に精算日と精算回数を渡して書き（`phase=1`、`reference_type='csv_import'`。tracking の CHECK で揃う）、全ての行を書いた後に、横断の表の商品をまとめて `recompute_stock` で求め直し、商品ごとにその TX で書いた movement の `stock_after` を `update_movement_stock_after` で写しの値にする（32）。`stock_after` は、同じ TX で求め直した写しの値を、その TX で書いた新しい movement に書く。順は、movement を仮の `stock_after`（NOT NULL のため）で INSERT し、`recompute_stock` の後に同じ TX でその TX の新しい movement の `stock_after` だけを UPDATE する（Z004 の同じ商品の複数の行も同じ値。後入力で前に入った記録があっても既存の movement は書き換えない）。在庫の上限の検査（`999999999`）は `recompute_stock` が写しを書く直前の 1 か所に置く（求めた値と範囲の両端に当てる）。
-- 入出庫 4 業務の `stock_after`: `apply_stock_change` は呼出しごとに、その呼出しが INSERT した movement（id で指す）の `stock_after` だけを、その直後の `recompute_stock` の写しの値で書く。同じ要求に同じ商品の明細が複数あれば、今と同じく明細の順の途中の値になる（計数が無い間は値が今と同じ。ADR SPEC-STK-CNT-D12 の (a)）。
-- 業務日の形と暦の検査（D-118 の runtime の (a) で足した `validate_business_date`。業務日を書く側の検査の唯一の置き場。移行が既存の記録の日付に当てる検査は [22 §19](22-mnt-migration.md) の手順 2）: `biz` の共有の関数 1 つで、(1) 形: 長さ 10 バイトの ASCII で、5・8 文字目が `-`、ほかの 8 文字が数字（`[0-9]{4}-[0-9]{2}-[0-9]{2}`）。合わなければ「日付の形式が不正です（YYYY-MM-DD）」。(2) 暦: 形の合う文字列を `chrono::NaiveDate::parse_from_str(_, "%Y-%m-%d")` で読み、読めなければ「存在しない日付です」。どちらも `ValidationFailed`（文は今の `sales_service.rs` の `validate_date` と同じ）。形を先に見るのは、chrono の `%Y-%m-%d` が `2026-4-7`・` 2026-04-07`・`+2026-04-07` を読み、`-0001-04-07`・`+10000-04-07` は読んで同じ文字列に書き戻すので、読めることも書き戻しの一致も 10 文字の形を保証しないため（形の合う文字列では、読めることと SQLite の `date(d) IS d` が一致し、読んだ日付の書き戻しは入力と同じ。packet の Contract Probe P6・P7）。入庫・返品交換・手動販売・廃棄の 4 つの `create_*` と `sales_service` の日付の検査がこの関数を使う。4 つの `create_*` は header の日付（`receiving_date`・`return_date`・`sale_date`・`disposal_date`）を、DB を見ない検証の段（冪等の再送の判定と TX より前。返品交換の今の `validate_return_request_shape` と同じ段）で確かめ、外れたら何も書かない。返品交換は `register_processed` で在庫を動かすかが分かれる前に確かめるので、movement を作らないレジ処理済みの返品・交換の保存も同じ検査を通る。窓の判定（ADR D3）は日付を文字列の大小で比べるので、形の違う日付を黙って通さない（DB の CHECK は形だけを見る。[tracking](../db-design/tracking-system-tables.md)）。初期在庫の movement の業務日は、商品を登録した TX の PC の今日（`chrono::Local` を `%Y-%m-%d` で書く）。
+- `apply_stock_change` は「保存した数 + 差分」をやめ、movement を並びの鍵付きで INSERT してから、その商品を `recompute_stock` で求め直す。署名に並びの鍵（`business_date` と、Z004 のときだけ `settlement_no: Option<i64>`）を足す（(a)。b1 で Z004 の確定が `apply_stock_change` を使わなくなったので、`settlement_no` の引数は b1 で外し、呼ぶのは入出庫の 5 業務〈振替を含む〉だけ）。入庫・返品交換（レジ未処理）・手動販売・廃棄・振替の 5 つの `create_*` は header の日付と `None` を渡し（`phase=0`。header の日付の意味は品が動いた日〈入庫は品が届いた日で、納品書の日付ではない〉で、ADR D3 の入出庫の窓はこの日付に依る）、Z004 の確定は `apply_stock_change` を行ごとに呼ばず（b1 で `src-tauri/src/biz/csv_import_service/commit.rs` の `execute_commit` の `apply_stock_change` の呼出しを置き換えた）、在庫連動の行の movement を全部、仮の `stock_after` で `insert_movement`（[21](21-io-inventory-repo.md)）に精算日と精算回数を渡して書き（`phase=1`、`reference_type='csv_import'`。tracking の CHECK で揃う）、全ての行を書いた後に、横断の表の商品をまとめて `recompute_stock` で求め直し、商品ごとにその TX で書いた movement の `stock_after` を `update_movement_stock_after` で写しの値にする（32）。`stock_after` は、同じ TX で求め直した写しの値を、その TX で書いた新しい movement に書く。順は、movement を仮の `stock_after`（NOT NULL のため）で INSERT し、`recompute_stock` の後に同じ TX でその TX の新しい movement の `stock_after` だけを UPDATE する（Z004 の同じ商品の複数の行も同じ値。後入力で前に入った記録があっても既存の movement は書き換えない）。在庫の上限の検査（`999999999`）は `recompute_stock` が写しを書く直前の 1 か所に置く（求めた値と範囲の両端に当てる）。
+- 振替（下の §12.6b の `create_transfer`、D-143）は入出庫の 5 つ目の業務で、上と同じ形で `apply_stock_change` を呼ぶ（header の日付 `transfer_date` と `None`、`phase=0`。日付の意味は品を詰め替え・切り分けた日）。
+- 入出庫の 5 業務の `stock_after`: `apply_stock_change` は呼出しごとに、その呼出しが INSERT した movement（id で指す）の `stock_after` だけを、その直後の `recompute_stock` の写しの値で書く。同じ要求に同じ商品の明細が複数あれば、今と同じく明細の順の途中の値になる（計数が無い間は値が今と同じ。ADR SPEC-STK-CNT-D12 の (a)）。
+- 業務日の形と暦の検査（D-118 の runtime の (a) で足した `validate_business_date`。業務日を書く側の検査の唯一の置き場。移行が既存の記録の日付に当てる検査は [22 §19](22-mnt-migration.md) の手順 2）: `biz` の共有の関数 1 つで、(1) 形: 長さ 10 バイトの ASCII で、5・8 文字目が `-`、ほかの 8 文字が数字（`[0-9]{4}-[0-9]{2}-[0-9]{2}`）。合わなければ「日付の形式が不正です（YYYY-MM-DD）」。(2) 暦: 形の合う文字列を `chrono::NaiveDate::parse_from_str(_, "%Y-%m-%d")` で読み、読めなければ「存在しない日付です」。どちらも `ValidationFailed`（文は今の `sales_service.rs` の `validate_date` と同じ）。形を先に見るのは、chrono の `%Y-%m-%d` が `2026-4-7`・` 2026-04-07`・`+2026-04-07` を読み、`-0001-04-07`・`+10000-04-07` は読んで同じ文字列に書き戻すので、読めることも書き戻しの一致も 10 文字の形を保証しないため（形の合う文字列では、読めることと SQLite の `date(d) IS d` が一致し、読んだ日付の書き戻しは入力と同じ。packet の Contract Probe P6・P7）。入庫・返品交換・手動販売・廃棄・振替の 5 つの `create_*` と `sales_service` の日付の検査がこの関数を使う。5 つの `create_*` は header の日付（`receiving_date`・`return_date`・`sale_date`・`disposal_date`・`transfer_date`）を、DB を見ない検証の段（冪等の再送の判定と TX より前。返品交換の今の `validate_return_request_shape` と同じ段）で確かめ、外れたら何も書かない。返品交換は `register_processed` で在庫を動かすかが分かれる前に確かめるので、movement を作らないレジ処理済みの返品・交換の保存も同じ検査を通る。窓の判定（ADR D3）は日付を文字列の大小で比べるので、形の違う日付を黙って通さない（DB の CHECK は形だけを見る。[tracking](../db-design/tracking-system-tables.md)）。初期在庫の movement の業務日は、商品を登録した TX の PC の今日（`chrono::Local` を `%Y-%m-%d` で書く）。
 - 求め直しは、計数・入出庫・初期在庫の窓（ADR D3 の判定表の「入出庫の movement」「初期在庫の movement」の行と「計数どうし」、要再確認の理由 2・3）と、b1 で足した精算の窓（「精算 k」の行・理由 1・取り込み済みの精算の一覧の読取り）を持つ。計数どうしの前後が循環して効く計数が決まらないときは、和へ倒さずに既存の `BizError::DatabaseError`（`DbError::QueryFailed` に「計数の前後を決められません」の文）で止まり、写しを書かない。循環しないことは既定の計数の日付が保存の日以前であることが前提で、その前提は計数の保存の検査（[35](35-biz-stocktake-service.md)）が守る。
 - 冪等な要求の再送は新しい movement を作らない（今のまま）。レジ処理済みの返品は movement を作らない（今のまま）。
 - list_inventory_records の棚卸し差異の集計は [65](65-inventory-record-traceability.md) の新契約に従う（計数は movement を作らない）。
@@ -38,7 +39,7 @@ src-tauri/src/
   biz/
     mod.rs                -- pub mod inventory_service を追加
     product_service.rs    -- 既存（BIZ-01）
-    inventory_service.rs  -- 在庫変動の業務ロジック（本セクション）
+    inventory_service.rs  -- 在庫変動の業務ロジック（本セクション。振替は inventory_service/transfer.rs、§12.6b、D-143）
 ```
 
 ### 12.2 apply_stock_change（共通在庫変動 — 内部関数）
@@ -315,6 +316,54 @@ fn create_disposal(conn: &mut DbConnection, req: DisposalCreateRequest) -> Resul
 
 ---
 
+### 12.6b create_transfer（振替〈詰め替え・切り分け〉の記録。D-143）
+
+**関数要求**: 1 つの振替の記録を登録し、減らす商品（元）の在庫を減らし、増やす商品（先）の在庫を増やす。両方を 1 つの TX で動かし、片方だけが動いた状態を残さない。原価は動かさない（D-143 (4)）。module は `biz::inventory_service::transfer`（`src-tauri/src/biz/inventory_service/transfer.rs`）。
+
+**シグネチャ**:
+```
+fn create_transfer(conn: &mut DbConnection, req: TransferCreateRequest) -> Result<TransferCreateResult, BizError>
+```
+
+**TransferCreateRequest構造体**:
+- idempotency_key: String
+- transfer_date: String（YYYY-MM-DD。詰め替え・切り分けた日）
+- items: Vec<TransferItemInput>
+
+**TransferItemInput構造体**:
+- product_code: String
+- direction: TransferDirection（`"out"` = 減らす / `"in"` = 増やす。generated enum、D-061）
+- quantity: i64（正の整数。その商品の在庫の数量の単位〈個数は 1 単位、長さは cm〉。SPEC-UNIT-D2）
+
+**TransferCreateResult構造体**（廃棄の `DisposalCreateResult` と同じ形）:
+- record_id: i64
+- created: bool
+- idempotent_replay: bool
+- stock_warnings: Vec<String>
+
+**処理ステップ**（検証は全て書く前。順は廃棄の §12.6 と同じで、振替だけの検査は手順 1 と 5 の 2 つ）:
+0. **冪等キーの検査**: trim して空なら `ValidationFailed("冪等性キーは必須です")`、255 文字を越えれば `ValidationFailed("冪等性キーは255文字以内です")`
+1. **明細の形の検査（DB を見ない）**: items が空なら `ValidationFailed("明細が1件以上必要です")`。減らす明細と増やす明細のどちらかが無ければ `ValidationFailed("減らす商品と増やす商品を1つ以上ずつ入れてください")`
+2. **業務日の検査**: `validate_business_date(&req.transfer_date)`（「業務日の形と暦の検査」）
+3. **request_fingerprint 計算**: ヘッダ行 `"{transfer_date}"`、item 行 `"{direction}|{product_code}|{quantity}"`（§12.8 の正規化。行は辞書順に並べる）
+4. **冪等性チェック**（同パターン。同じ key と同じ fingerprint は `idempotent_replay`、違えば `IdempotencyConflict`）
+5. **明細の検証（DB 参照あり。明細の番号は items の順の 1 から）**: quantity が 0 以下なら `明細{n}: 数量は1以上必要です`、`MAX_LINE_QUANTITY` を越えれば `明細{n}: 数量が大きすぎます`（[共通規則](10-common-rules.md) の「入力の上限と安全な整数の範囲」(a)）。同じ product_code が items に 2 回目に現れたら `明細{n}: 同じ商品が2回入っています（{product_code}）`（向きを問わない。減らす商品を同じ記録で増やすことはできない）。商品が無ければ `BizError::NotFound("商品が見つかりません: {product_code}")`
+6. **TX開始**
+7. insert_transfer_record → record_id（IO が冪等キーの重複を返したら、廃棄の §12.6 と同じく再送の判定へ回す）
+8. 各 item を items の順に: insert_transfer_item + apply_stock_change(transfer_date, 減らす明細は -quantity・増やす明細は +quantity, Transfer, TransferRecord, record_id, None)。在庫が負になった商品は `negative_stock_warning_message` を `stock_warnings` に足す（商品コードの昇順・重複なし。廃棄と同じ）
+9. **操作ログ**（operation_type=`"transfer_create"`、summary `詰め替え・切り分け記録作成（{明細の数}明細）`、detail_json は `record_type: "transfer_record"`・`record_id`・`out_count`・`in_count`・`warning_count`・`idempotency_key`）
+10. **COMMIT**
+
+**在庫の求め直しとの関係（D-118）**: 各明細の movement は `apply_stock_change` が業務日 `transfer_date`・phase 0 で書き、その商品を求め直す（上の「計数の置き場と在庫の求め直しの契約」の入出庫と同じ。ADR SPEC-STK-CNT-D3 の判定表の「入出庫の movement」の行）。求め直しは movement の種類で分けないので `biz::stock_ledger` は変えない。初期在庫の印（`reference_type IS NULL AND movement_type = 'receiving'`）に振替の movement は当たらない（`reference_type` が `transfer_record`）。
+
+**原価・金額**: 明細に原価を持たず、金額を求めない（円の合計の検査〈共通規則 (c)〉は当たらない）。商品の原価（`products.cost_price_centi`）を読まず書かない。
+
+**read**: `get_transfer_record(conn, record_id)` は §12.6a のとおり、IO の `get_transfer_record_detail`（[21](21-io-inventory-repo.md) §10.5a）の NotFound を `BizError::NotFound("詰め替え・切り分けの記録が見つかりません: {record_id}")` に変え、movements の `source` を補う（`resolve_movement_source` の `TransferRecord` は label `詰め替え・切り分け #{id}`・route `/inventory/transfer/records/{id}`）。
+
+**enum 契約化（D-061 / D-064）**: `direction` は generated enum `TransferDirection` で検査し、DB の CHECK（`transfer_items.direction`）と同じ値の集合を持つ。
+
+---
+
 ### 12.6a 業務記録詳細 read 関数
 
 **関数要求**: 入出庫履歴・在庫変動追跡の詳細画面用に、業務記録ヘッダ、明細、関連 `inventory_movements` を読み取り専用で返す。BIZ 層は IO 層の detail に対して `MovementRecord.source` を補完し、存在しない記録は `BizError::NotFound` に変換する。
@@ -325,6 +374,7 @@ fn get_receiving_record(conn: &DbConnection, record_id: i64) -> Result<Receiving
 fn get_return_record(conn: &DbConnection, record_id: i64) -> Result<ReturnRecordDetail, BizError>
 fn get_manual_sale_record(conn: &DbConnection, record_id: i64) -> Result<ManualSaleRecordDetail, BizError>
 fn get_disposal_record(conn: &DbConnection, record_id: i64) -> Result<DisposalRecordDetail, BizError>
+fn get_transfer_record(conn: &DbConnection, record_id: i64) -> Result<TransferRecordDetail, BizError>  // §12.6b、D-143
 ```
 
 **処理ステップ**:

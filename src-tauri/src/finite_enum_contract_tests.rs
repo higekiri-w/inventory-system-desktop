@@ -7,6 +7,7 @@ use crate::db::manual_sale_repo::ManualSaleReason;
 use crate::db::product_repo::{ProductStockUnit, ProductTaxRate};
 use crate::db::return_repo::{ReturnDirection, ReturnExchangeType};
 use crate::db::sales_repo::CsvImportStatus;
+use crate::db::transfer_repo::TransferDirection;
 
 /// `ProductStockUnit` の variant と wire の文字列の対（SPEC-UNIT-D1 の表の順）
 const PRODUCT_STOCK_UNIT_WIRE: [(ProductStockUnit, &str); 10] = [
@@ -136,6 +137,14 @@ fn test_request_response_enum_wire_roundtrip_req202_req203_req204_req401_req502(
         (MovementType::Return, "return"),
         (MovementType::Disposal, "disposal"),
         (MovementType::Stocktake, "stocktake"),
+        (MovementType::Transfer, "transfer"),
+    ] {
+        assert_roundtrip(value, wire);
+    }
+    // D-143 / Test Plan E1
+    for (value, wire) in [
+        (TransferDirection::Out, "out"),
+        (TransferDirection::In, "in"),
     ] {
         assert_roundtrip(value, wire);
     }
@@ -150,6 +159,7 @@ fn test_response_only_enum_wire_serialize_req303_req501() {
         (ReferenceType::ReturnRecord, "return_record"),
         (ReferenceType::DisposalRecord, "disposal_record"),
         (ReferenceType::Stocktake, "stocktake"),
+        (ReferenceType::TransferRecord, "transfer_record"),
     ] {
         assert_serialize(value, wire);
     }
@@ -255,6 +265,7 @@ fn test_request_enum_invalid_literals_are_rejected_req202_req203_req204_req303_r
     rejects!(ExportMode);
     rejects!(SalesMode);
     rejects!(MovementType);
+    rejects!(TransferDirection);
 
     #[derive(serde::Deserialize)]
     struct Query {
@@ -314,10 +325,118 @@ fn test_canonical_wire_matches_serde_req202_req203_req204_req303_req401() {
     parity!(MovementType::Return);
     parity!(MovementType::Disposal);
     parity!(MovementType::Stocktake);
+    parity!(MovementType::Transfer);
     parity!(ReferenceType::CsvImport);
     parity!(ReferenceType::ManualSale);
     parity!(ReferenceType::ReceivingRecord);
     parity!(ReferenceType::ReturnRecord);
     parity!(ReferenceType::DisposalRecord);
     parity!(ReferenceType::Stocktake);
+    parity!(ReferenceType::TransferRecord);
+    parity!(TransferDirection::Out);
+    parity!(TransferDirection::In);
+}
+
+/// 表の定義（`sqlite_master.sql`）の `{column} IN (...)` の値の一覧
+fn check_values(conn: &rusqlite::Connection, table: &str, column: &str) -> Vec<String> {
+    let sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let start = sql
+        .find(&format!("CHECK({column} IN ("))
+        .unwrap_or_else(|| panic!("{table}.{column} の CHECK が無い: {sql}"))
+        + format!("CHECK({column} IN (").len();
+    let end = start + sql[start..].find(')').unwrap();
+    sql[start..end]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_string())
+        .collect()
+}
+
+/// wildcard の無い match で次の variant を引く（variant を足すと compile error でここを直させる。
+/// `next_product_stock_unit` と同じ形。production に一覧の使い道が無いので列は test に置く。D-147）
+fn next_movement_type(value: MovementType) -> Option<MovementType> {
+    use MovementType as T;
+    match value {
+        T::SaleAuto => Some(T::SaleManual),
+        T::SaleManual => Some(T::Receiving),
+        T::Receiving => Some(T::Return),
+        T::Return => Some(T::Disposal),
+        T::Disposal => Some(T::Stocktake),
+        T::Stocktake => Some(T::Transfer),
+        T::Transfer => None,
+    }
+}
+
+fn next_reference_type(value: ReferenceType) -> Option<ReferenceType> {
+    use ReferenceType as T;
+    match value {
+        T::CsvImport => Some(T::ManualSale),
+        T::ManualSale => Some(T::ReceivingRecord),
+        T::ReceivingRecord => Some(T::ReturnRecord),
+        T::ReturnRecord => Some(T::DisposalRecord),
+        T::DisposalRecord => Some(T::Stocktake),
+        T::Stocktake => Some(T::TransferRecord),
+        T::TransferRecord => None,
+    }
+}
+
+fn next_transfer_direction(value: TransferDirection) -> Option<TransferDirection> {
+    use TransferDirection as T;
+    match value {
+        T::Out => Some(T::In),
+        T::In => None,
+    }
+}
+
+/// 先頭の variant から `next` をたどった全 variant の wire の値（並べ替え済み）
+fn all_wire<T: Copy>(
+    first: T,
+    next: fn(T) -> Option<T>,
+    as_str: fn(T) -> &'static str,
+) -> Vec<String> {
+    let mut values: Vec<String> = std::iter::successors(Some(first), |v| next(*v))
+        .map(|v| as_str(v).to_string())
+        .collect();
+    values.sort();
+    values
+}
+
+#[test]
+fn test_db_check_matches_enum_values_d143_e1() {
+    // D-061・D-064 / D-143 / Test Plan E1: 全 variant の wire の値の集合と DB の CHECK の値の集合が同じ。
+    // enum にだけ値を足すと next_* の match が compile error、CHECK にだけ足すと assert が落ちる
+    let conn = crate::db::init_database(":memory:").unwrap();
+    fn sorted(mut values: Vec<String>) -> Vec<String> {
+        values.sort();
+        values
+    }
+    assert_eq!(
+        sorted(check_values(&conn, "inventory_movements", "movement_type")),
+        all_wire(
+            MovementType::SaleAuto,
+            next_movement_type,
+            MovementType::as_str
+        )
+    );
+    assert_eq!(
+        sorted(check_values(&conn, "inventory_movements", "reference_type")),
+        all_wire(
+            ReferenceType::CsvImport,
+            next_reference_type,
+            ReferenceType::as_str
+        )
+    );
+    assert_eq!(
+        sorted(check_values(&conn, "transfer_items", "direction")),
+        all_wire(
+            TransferDirection::Out,
+            next_transfer_direction,
+            TransferDirection::as_str
+        )
+    );
 }

@@ -54,7 +54,7 @@ export function useOperationLogs(args: {
 | UI-11c-D4 | operation_type の候補は現在ページ/現在の filter 済み結果から生成しない。保持中ログ全体の distinct operation_type を返す**新規 CMD `list_log_operation_types` + IO `find_distinct_operation_types`** を新設する。日本語ラベルとカテゴリ分類は frontend 所有の静的 registry（`OPERATION_TYPE_LABELS`）が持ち、backend が返す値のうち registry 未収載の値は raw 表示にする。 | Owner Decision #3 + Plan Packet 明示要求（「新CMD/IO契約の設計を含む」）。frontend 静的リストのみだと DB 実態との drift を検出できない。backend 側が日本語ラベルを持つ案は、ラベルが表示専用の UI 関心事であり CMD 層を厚くする（棄却）。 |
 | UI-11c-D5 | Table は1行1ログとし、各行の明示的なnative button「詳細を表示」で detail をその場（同じ行の直下）に展開する。展開中の可視文言とaccessible nameは「詳細を閉じる」に変わる。Enter / Spaceはnative button契約で動作する。行全体clickは追加せず、同時に展開できる行は常に1件（新しい行を開くと前の展開行は閉じる）。 | キーボード・アクセシビリティ上の操作対象を明確にし、行内の関連記録リンクとのclick競合と誤展開を避ける。複数同時展開も棄却（ページが際限なく伸び、スクロール位置を見失うリスクが高い）。 |
 | UI-11c-D6 | detail_json は既知 field の日本語要約を優先表示し、生 JSON は既定で折りたたみの「技術情報」に隠す。null/空/不正 JSON/巨大 payload は要約なしで安全に案内する。HTML として解釈せず常に text として描画する。 | Owner Decision #4。既存 detail_json は operation_type ごとに自由形式（`db-design/tracking-system-tables.md` §18 設計意図）であり、per-type スキーマを作る工数は viewing MVP の scope を超える。既知 key 名の共通マップ + 未知 key の raw 表示に留める。 |
-| UI-11c-D7 | 関連業務記録リンクは、detail_json が `record_type`（`receiving_record` \| `return_record` \| `manual_sale` \| `disposal_record` のいずれか）とpositive safe integerの `record_id` を両方含む場合だけ表示する。それ以外（欠落・zero・negative・fractional・string・unsafe integer・未知 `record_type`）はリンクを出さず、summary 表示のみ継続する。入庫・返品交換・手動販売・廃棄の作成 producer は、許可リストに対応する `record_type` と当該業務記録 PK の `record_id` を detail_json に格納する（§74.9）。 | Missing UI item 7 は「任意の JSON key からの heuristic 推測」と文字列からの数値coercionを明示的に禁止する。既存 4 record_type は `InventoryRecordsSearch.recordType` / `65-inventory-record-traceability.md` §65.3 の実装済み detail route と一致させる。`csv_import` / `stocktake` は 2026-09-01 の producer 実効化 R3 では据置とし、初期 allow-list からの除外を維持する。それぞれの producer 側採用と registry 追加は別 follow-up で行う。 |
+| UI-11c-D7 | 関連業務記録リンクは、detail_json が `record_type`（`receiving_record` \| `return_record` \| `manual_sale` \| `disposal_record` \| `transfer_record`〈振替、D-143〉のいずれか）とpositive safe integerの `record_id` を両方含む場合だけ表示する。それ以外（欠落・zero・negative・fractional・string・unsafe integer・未知 `record_type`）はリンクを出さず、summary 表示のみ継続する。入庫・返品交換・手動販売・廃棄の作成 producer は、許可リストに対応する `record_type` と当該業務記録 PK の `record_id` を detail_json に格納する（§74.9）。 | Missing UI item 7 は「任意の JSON key からの heuristic 推測」と文字列からの数値coercionを明示的に禁止する。既存 4 record_type は `InventoryRecordsSearch.recordType` / `65-inventory-record-traceability.md` §65.3 の実装済み detail route と一致させる。`csv_import` / `stocktake` は 2026-09-01 の producer 実効化 R3 では据置とし、初期 allow-list からの除外を維持する。それぞれの producer 側採用と registry 追加は別 follow-up で行う。 |
 | UI-11c-D8 | pagination は既定 50 + `Select`（50 / 100 / 200）。URL search state は UI-11c-D1 の 4 キー限定を維持し perPage はローカル state（L3-D3）。範囲外 page（`items` 空 かつ `total_count > 0` かつ `page > 1`）は「このページには表示するログがありません」+「先頭ページに戻る」導線を出す。 | 表示件数を選べる一方、URL search schema は増やさない。範囲外 page 回復は既存2画面が持たない新規契約だが、Missing UI item 8 が明示要求するため追加する。 |
 | UI-11c-D9 | 空状態は「ログそのものが0件」と「filter に該当するログが0件」を区別する。既定 filter（today-29..today、operation_type 未指定）と一致した状態で0件なら前者、それ以外の filter が適用された状態で0件なら後者の文言にする。エラー時は destructive Alert + 「再試行」ボタンを出し、再試行は現在の filter を保持したまま同一 query を再実行する。 | Missing UI item 9。既存2画面は単一 EmptyState 文言・retry ボタンなしだが、操作ログはトラブル対応で使う画面のため取得失敗時の再試行を明示的に用意する（`DailySalesPage` / `MonthlySalesPage` / `ThresholdSettingsPage` / `StocktakePage` の再試行 Button パターンを再利用、§74.17）。「全体0件かどうか」を判定する専用 CMD は追加しない（既定 filter 自体が30日範囲を持つため真の「全体0件」判定には無期限 count が必要になり、viewing MVP の scope を超えるため見送り。既定 filter との一致判定で近似する）。 |
 | UI-11c-D10 | `queryKey` は `queryKeys.operationLogs.list(normalizedSearch)`、`staleTime: 0` / `gcTime: 5min` とし、自動ポーリングはしない。バックグラウンドの保持日数の cleanup は起動時1回のみのため、セッション中の total_count 変化は次回 fetch（filter 変更・page 変更・再訪・再試行）で自然に反映される。 | 事故調査という利用シーンでは表示時点の最新性を優先する（`UI-10 棚卸し進行中` の `staleTime: 0` と同じ判断）。ポーリングは新規複雑さの割に運用上の要求がない（単一 operator、トラブル発生後に開く画面）。 |
@@ -155,6 +155,7 @@ UI-11c は JST 暦日の inclusive/exclusive 境界と逆転範囲エラーを�
 | 入出庫 | `return_create` | 返品・交換記録 |
 | 入出庫 | `manual_sale_create` | 手動販売出庫記録 |
 | 入出庫 | `disposal_create` | 廃棄・破損記録 |
+| 入出庫 | `transfer_create` | 詰め替え・切り分け記録（D-143） |
 | 売上データ取込み | `csv_import` | 売上データ取込み |
 | 売上データ取込み | `csv_import_failed` | 売上データ取込み失敗 |
 | 売上データ取込み | `csv_import_parse_failed` | 売上データ解析失敗 |
@@ -244,7 +245,7 @@ OperationLogFilters + OperationLogTable（展開行1件） + Pagination
 
 - `detail_json` を JSON オブジェクトとしてパースできた場合のみ評価する。
 - 次の**両方**を満たす場合だけ「関連記録を見る」ボタンを表示する:
-  1. `record_type` が次の許可リストのいずれかである: `receiving_record` | `return_record` | `manual_sale` | `disposal_record`
+  1. `record_type` が次の許可リストのいずれかである: `receiving_record` | `return_record` | `manual_sale` | `disposal_record` | `transfer_record`（振替。producer の `create_transfer` が detail_json に同じ 2 field を書く。D-143）
   2. `record_id` がJavaScriptのpositive safe integerである（`typeof number`、`Number.isSafeInteger(record_id)`、`record_id > 0`）。numeric stringへのcoercionはしない
 - 許可リストは `InventoryRecordsSearch.recordType`（`src/features/inventory-records/types.ts`）と一致させる。`csv_import` と `stocktake` の詳細 route は実装済みだが、2026-09-01 の producer 実効化 R3 では両種を据置とし、許可リストからの除外を維持する。csv_import / stocktake producer への `record_type` 採用と許可リスト追加は、それぞれ別 follow-up で行う。
 - ルートマッピング（`65-inventory-record-traceability.md` §65.3 と同一）:
@@ -255,6 +256,7 @@ OperationLogFilters + OperationLogTable（展開行1件） + Pagination
 | `return_record` | `/inventory/return/records/$recordId` |
 | `manual_sale` | `/inventory/manual-sale/records/$recordId` |
 | `disposal_record` | `/inventory/disposal/records/$recordId` |
+| `transfer_record` | `/inventory/transfer/records/$recordId`（D-143。producer は `transfer.rs` の `create_transfer`） |
 
 - 「関連記録を見る」link は UI-11c-D16 / DSR-18 に従い、現在の `/settings/logs` と search state（`start_date` / `end_date` / `operation_type` / `page`）を直列化した `returnTo` を遷移先へ送る。詳細から戻ると同じ期間・種別・page を route search として復元する。link は展開行内の独立した操作であり、押下しても UI-11c-D5 の行展開 toggle を発火させない。
 - 条件を満たさない場合（フィールド欠落、`record_type` が許可リスト外、`record_id` が0以下や非数値）はリンクを一切出さず、`summary` / detail 要約の表示のみ継続する。これは JSON の任意 key からの heuristic 推測ではなく、事前合意された2 field 名 + 許可リストという明示 contract に対する厳密一致判定である。

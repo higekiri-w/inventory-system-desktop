@@ -195,6 +195,7 @@ describe("feature-owned finite search schemas", () => {
       { value: "sale_auto", label: "POS売上" },
       { value: "sale_manual", label: "手動販売" },
       { value: "disposal", label: "廃棄・破損" },
+      { value: "transfer", label: "詰め替え・切り分け" },
       { value: "stocktake", label: "棚卸し" },
     ]);
     expect(INVENTORY_RECORD_TYPE_OPTIONS).toEqual([
@@ -203,6 +204,7 @@ describe("feature-owned finite search schemas", () => {
       { value: "return_record", label: "返品・交換" },
       { value: "manual_sale", label: "手動販売出庫" },
       { value: "disposal_record", label: "廃棄・破損" },
+      { value: "transfer_record", label: "詰め替え・切り分け" },
       { value: "csv_import", label: "CSV取込み" },
       { value: "stocktake", label: "棚卸し" },
     ]);
@@ -303,13 +305,29 @@ describe("feature-owned finite search schemas", () => {
       name: "movement type",
       schema: stockMovementsSearchSchema,
       key: "type",
-      values: ["all", "receiving", "return", "sale_auto", "sale_manual", "disposal", "stocktake"],
+      values: [
+        "all",
+        "receiving",
+        "return",
+        "sale_auto",
+        "sale_manual",
+        "disposal",
+        "transfer",
+        "stocktake",
+      ],
     },
     {
       name: "record type",
       schema: inventoryRecordsSearchSchema,
       key: "recordType",
-      values: ["all", "receiving_record", "return_record", "manual_sale", "disposal_record"],
+      values: [
+        "all",
+        "receiving_record",
+        "return_record",
+        "manual_sale",
+        "disposal_record",
+        "transfer_record",
+      ],
     },
     {
       name: "record status",

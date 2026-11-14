@@ -127,6 +127,18 @@ export const commands = {
 	 */
 	getDisposalRecord: (recordId: number) => typedError<DisposalRecordDetail, CmdError>(__TAURI_INVOKE("get_disposal_record", { recordId })),
 	/**
+	 *  振替の記録を作成する
+	 *
+	 *  44-cmd-inventory.md §23.7a create_transfer
+	 */
+	createTransfer: (req: TransferCreateRequest) => typedError<TransferCreateResult, CmdError>(__TAURI_INVOKE("create_transfer", { req })),
+	/**
+	 *  振替の記録の詳細を返す
+	 *
+	 *  44-cmd-inventory.md §23.7a get_transfer_record
+	 */
+	getTransferRecord: (recordId: number) => typedError<TransferRecordDetail, CmdError>(__TAURI_INVOKE("get_transfer_record", { recordId })),
+	/**
 	 *  商品の在庫詳細を取得する（最終入庫日・最終販売日を含む）
 	 *
 	 *  44-cmd-inventory.md §23.8 get_stock_detail
@@ -1172,7 +1184,7 @@ export type MovementSourceLink = {
 };
 
 // 在庫変動種別（db-design/tracking-system-tables.md: inventory_movements.movement_type CHECK制約に対応）
-export type MovementType = "sale_auto" | "sale_manual" | "receiving" | "return" | "disposal" | "stocktake";
+export type MovementType = "sale_auto" | "sale_manual" | "receiving" | "return" | "disposal" | "stocktake" | "transfer";
 
 // レジ日報由来の部門別集計行
 export type OfficialDailyDepartmentLine = {
@@ -1587,7 +1599,7 @@ export type ReceivingRecordWithSupplier = {
 export type RecountReason = "undetermined_settlement" | "same_date_movement" | "conflicting_counts";
 
 // 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
-export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake";
+export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake" | "transfer_record";
 
 // §45.6a の応答
 export type RegisterSdScanResponse = {
@@ -1985,6 +1997,59 @@ export type SupplierWithUsage = {
 	name: string,
 	product_count: number,
 	receiving_record_count: number,
+};
+
+// 振替の記録のリクエスト（31 §12.6b）
+export type TransferCreateRequest = {
+	idempotency_key: string,
+	// YYYY-MM-DD（詰め替え・切り分けた日）
+	transfer_date: string,
+	items: TransferItemInput[],
+};
+
+// 振替の記録の結果（廃棄の `DisposalCreateResult` と同じ形）
+export type TransferCreateResult = {
+	record_id: number,
+	created: boolean,
+	idempotent_replay: boolean,
+	stock_warnings: string[],
+};
+
+// 振替の明細の向き（transfer_items.direction の CHECK と同じ値の集合。D-061・D-064）
+export type TransferDirection =
+// 減らす商品（元）
+"out" |
+// 増やす商品（先）
+"in";
+
+export type TransferItemInput = {
+	product_code: string,
+	direction: TransferDirection,
+	// 正の整数。その商品の在庫の数量の単位（個数は 1 単位、長さは cm。SPEC-UNIT-D2）
+	quantity: number,
+};
+
+// 振替の記録の詳細
+export type TransferRecordDetail = {
+	id: number,
+	transfer_date: string,
+	// 今は常に `"active"`（取消は持たない）
+	status: string,
+	created_at: string,
+	// 減らす明細を先、同じ向きの中は明細の id の順
+	items: TransferRecordDetailItem[],
+	movements: MovementRecord[],
+};
+
+// 振替の記録の詳細の明細行
+export type TransferRecordDetailItem = {
+	id: number,
+	product_code: string,
+	product_name: string,
+	department_name: string,
+	stock_unit: ProductStockUnit,
+	direction: TransferDirection,
+	quantity: number,
 };
 
 export type UpdateSettingRequest = {

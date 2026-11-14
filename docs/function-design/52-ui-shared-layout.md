@@ -79,6 +79,7 @@ SidebarLink の active 判定も TanStack Router の `<Link activeProps>` で表
 | UI-03 | 返品・交換 | `/inventory/return` | `src/routes/inventory/return.tsx` | 入出庫 | ○ | |
 | UI-04 | 手動販売出庫 | `/inventory/manual-sale` | `src/routes/inventory/manual-sale.tsx` | 入出庫 | ○ | |
 | UI-05 | 廃棄・破損 | `/inventory/disposal` | `src/routes/inventory/disposal.tsx` | 入出庫 | ○ | |
+| UI-16 | 詰め替え・切り分け | `/inventory/transfer` | `src/routes/inventory/transfer.tsx`（詳細: `/inventory/transfer/records/$recordId`、UI-16b） | 入出庫 | ○ | 廃棄・破損の次。D-143（[79](79-ui-stock-transfer.md)） |
 | UI-02b〜05b | 入出庫履歴 | `/inventory/records` | `src/routes/inventory/records.tsx` | 入出庫 | ○ | 入庫/返品・交換/手動販売/廃棄・破損/CSV取込み/棚卸しの追跡入口。記録詳細 route は[65-inventory-record-traceability.md](65-inventory-record-traceability.md)を正本とする |
 | UI-06b | 在庫少一覧 | `/stock`（deep-link、専用 route なし） | `src/routes/stock/index.tsx`（UI-06a と共用） | 入出庫 | ○ | 独立画面は廃止し、UI-06a `status=low_stock` フィルタへの deep-link に統合（D-047、UI-12-D1）。D-138 で項目名を「在庫切れ・在庫少」にし、先を `/products?status=low_stock` にする（proposed・未実装） |
 | UI-10 | 棚卸し | `/stocktake` | `src/routes/stocktake/index.tsx`（layout: `src/routes/stocktake.tsx`、詳細: `src/routes/stocktake.records.$stocktakeId.tsx`） | 入出庫 | ○ | 入出庫エリア末尾配置（年次作業、合意書 §7.4）。`/stocktake/records/$stocktakeId` はナビ非表示の記録詳細 |

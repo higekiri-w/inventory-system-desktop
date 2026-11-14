@@ -138,7 +138,7 @@ MovementSummary（StockWithRecheck + StockRecheckNotice）+ StockHistoryTable + 
 
 #### Filters
 
-種別の絞り込みの選択肢と label は変えない。「すべて」は movement と計数、「棚卸し」は棚卸しの movement と計数、ほかはその種類の movement だけ。日付の絞り込みは業務日の両端を含む（[44](44-cmd-inventory.md)）。
+種別の絞り込みの選択肢と label は b2 で変えていない。振替（D-143）の `transfer`: 詰め替え・切り分け は「廃棄・破損」の次にある（ほかの選択肢と順は変えていない）。「すべて」は movement と計数、「棚卸し」は棚卸しの movement と計数、ほかはその種類の movement だけ（振替もほかの種類と同じ）。日付の絞り込みは業務日の両端を含む（[44](44-cmd-inventory.md)）。
 
 - 日付範囲: `dateFrom` / `dateTo` の date input
 - 種別: Select
@@ -148,6 +148,7 @@ MovementSummary（StockWithRecheck + StockRecheckNotice）+ StockHistoryTable + 
   - `sale_auto`: POS売上
   - `sale_manual`: 手動販売
   - `disposal`: 廃棄・破損
+  - `transfer`: 詰め替え・切り分け（D-143）
   - `stocktake`: 棚卸し
 
 #### Table

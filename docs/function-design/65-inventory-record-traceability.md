@@ -14,7 +14,7 @@
 >
 > 入力ドキュメント: `docs/spec/requirements.md`、`docs/spec/requirements-coverage.md`、`docs/db-design/transaction-tables.md`、`docs/db-design/tracking-system-tables.md`、`docs/function-design/21-io-inventory-repo.md`、`docs/function-design/31-biz-inventory-service.md`、`docs/function-design/44-cmd-inventory.md`、`docs/function-design/55-ui-csv-import.md`、`docs/function-design/61-ui-receiving.md`、`docs/function-design/62-ui-manual-sale.md`、`docs/function-design/63-ui-return-exchange.md`、`docs/function-design/64-ui-disposal.md`、`docs/function-design/72-mnt-log-manager.md`、`docs/SCREEN_DESIGN.md`
 
-本書は、入庫、返品・交換、手動販売出庫、廃棄・破損、CSV取込み、棚卸し補正を「あとから追跡できる」商業用在庫管理の完成形を定義する。各作業画面の下部にある recent list は保存直後の確認 UI であり、業務記録の閲覧・追跡機能の代替ではない。
+本書は、入庫、返品・交換、手動販売出庫、廃棄・破損、CSV取込み、棚卸し補正を「あとから追跡できる」商業用在庫管理の完成形を定義する。振替（詰め替え・切り分け）の記録も同じ形で追う（TRACE-D14、D-143）。各作業画面の下部にある recent list は保存直後の確認 UI であり、業務記録の閲覧・追跡機能の代替ではない。
 
 整合性補正（BIZ-07 fix_integrity）は movement を作らないため在庫変動履歴には現れない。補正の追跡は operation_logs（operation_type='integrity_fix'、old/new 付き、UI-11c 操作ログ画面）で行う（[D-051](../decision-log.md)、36-biz-integrity-check.md §21.4）。
 
@@ -30,7 +30,7 @@
 
 | 層 / 記録 | 役割 | 正本か | 主な利用場面 |
 |---|---|---:|---|
-| 業務記録 | `receiving_records`、`return_records`、`manual_sales`、`disposal_records`、`csv_imports`、`stocktakes` と各明細 | はい | 記録IDごとの詳細確認、取消/訂正、CSV出力、印刷、月末確認 |
+| 業務記録 | `receiving_records`、`return_records`、`manual_sales`、`disposal_records`、`csv_imports`、`stocktakes` と各明細（振替の `transfer_records` と明細は D-143。TRACE-D14） | はい | 記録IDごとの詳細確認、取消/訂正、CSV出力、印刷、月末確認 |
 | 在庫変動履歴 | `inventory_movements` | 在庫推移の台帳 | 商品別に「いつ、何で、何個増減したか」を追う。各行から元業務記録へ戻る |
 | 操作ログ | `operation_logs` | 監査・保守ログ | 誰がどの操作をしたか、エラー、バックアップ、ログ削除などを確認する。業務記録の代替にしない |
 
@@ -52,6 +52,7 @@
 | REQ-206 / duplicate | TRACE-D10 | 同日・同商品・同数量・同理由/同金額に近い記録がある場合、保存前に注意表示する。ブロックではなく確認制にする。 | 二重登録は防ぎたいが、同じ商品が同日に複数回入庫・廃棄されることはあり得る。 |
 | REQ-206 / return | TRACE-D11 | 業務記録詳細へ遷移する一覧、作業画面の recent list、保存結果、操作ログの各 link は、search state を含む遷移元 URL を `returnTo` として送る。詳細画面の「前の画面へ戻る」はその遷移元へ戻し、欠落・不正な値は遷移先の既定 hub（現行の業務記録詳細では `/inventory/records`）へフォールバックする（DSR-18）。 | 月末確認、保存直後確認、操作ログ調査では、詳細確認後に元の作業・検索状態へ戻れないと文脈を組み直す必要がある。`returnTo` は URL 由来の入力なので、DSR-15/18 の検証を通し、外部 URL や想定外 path をそのまま使わない。 |
 | REQ-206 / search | TRACE-D12 | 入出庫履歴の商品検索欄は共有 `SearchBar` の live 型（`debounceMs=200`）を使い、raw の URL `q` と結線する。Enter は debounce を待たず即時反映し、IME 変換確定中の Enter は検索確定と取り違えない。 | 商品一覧・在庫照会との操作一貫性を保ち、自前の draft / IME guard による挙動 drift をなくす。commit 型や画面固有実装を残す案は、一覧 filter 間で確定方法が分裂するため採用しない。 |
+| REQ-206 / REQ-210 / transfer | TRACE-D14 | 振替（詰め替え・切り分け。D-143）の記録は入出庫の業務記録の 1 種（record_type `transfer_record`、ヘッダ `transfer_records`・明細 `transfer_items`、業務日付は `transfer_date`）として、ほかの記録と同じ経路で追う: 入出庫履歴の一覧（種別の選択肢「詰め替え・切り分け」。件数は明細の数、商品・部門の絞り込みは減らす明細と増やす明細の両方）、詳細 `/inventory/transfer/records/$recordId`（記録ID・業務日付・作成日時・状態、「減らした商品」と「増やした商品」の 2 つの表〈商品コード・商品名・部門・数量と単位〉、関連 inventory_movements。原価・金額・種別・理由の欄は持たない）、在庫変動の履歴の元記録（「詰め替え・切り分け #{id}」。画面の語は全て「詰め替え・切り分け」で、「振替」は設計の中の名前）、操作ログの関連記録（`transfer_create`）。作成の画面の recent list は `listInventoryRecords` を種別で絞って読む（[79](79-ui-stock-transfer.md)）。取消・訂正は持たない（TRACE-D4・D5 の取消の設計に後で入れる。誤りは元の記録と同じ日付・同じ数量で向きを入れ替えた振替で戻す。79 §79.6）。 | 1 つの振替は 2 つ以上の商品の在庫を動かすので、どの商品からどの商品へ移ったかを後から追えないと、端切れや小袋の在庫の出所が分からない。ほかの記録と同じ一覧・詳細・相互リンクに載せ、振替だけの一覧画面を作らない（ヘッダと明細の組で 1 行を足すだけで入出庫履歴に載る。[21](21-io-inventory-repo.md) §10.5a）。 |
 
 ## 65.3 完成形ルート
 
@@ -72,10 +73,11 @@
 | CSV取込み詳細 | `/csv-import/records/$importId` | 取込みサマリ、sale_records、エラー行、関連 movements、rollback 状態 |
 | 棚卸し履歴一覧 | `/stocktake/records` | 棚卸し日、棚卸しID、状態、差異件数、ロス/増加原価で検索 |
 | 棚卸し詳細 | `/stocktake/records/$stocktakeId` | stocktake_items（効く計数・差異・評価数量・ロス原価）、完了の後の差（参考）、確定/取消/再開状態（D-118 の b1。関連 movements の節は外した） |
+| 振替の詳細 | `/inventory/transfer/records/$recordId` | 減らした商品・増やした商品の明細、関連 movements（TRACE-D14、D-143。振替だけの一覧 route は作らず、入出庫履歴ハブで種別を絞る） |
 | 在庫変動履歴 | `/stock/$code/movements` | 商品別。各 movement から元業務記録へリンク |
 | 操作ログ | `/settings/logs` | 監査・保守ログ。業務記録詳細への任意リンクを持てる |
 
-作成 route は `/inventory/receiving`、`/inventory/return`、`/inventory/manual-sale`、`/inventory/disposal`、`/csv-import`、`/stocktake` のままにする。recent list は保存直後の確認に限定し、一覧検索・詳細・取消・訂正は上記 records route へ逃がす。`/inventory/records` は CSV取込みと棚卸しも横断検索に含め、詳細遷移先だけ各 route へ分ける。
+作成 route は `/inventory/receiving`、`/inventory/return`、`/inventory/manual-sale`、`/inventory/disposal`、`/csv-import`、`/stocktake` のままにする。recent list は保存直後の確認に限定し、一覧検索・詳細・取消・訂正は上記 records route へ逃がす。`/inventory/records` は CSV取込みと棚卸しも横断検索に含め、詳細遷移先だけ各 route へ分ける。振替の作成 route は `/inventory/transfer`（UI-16、TRACE-D14、D-143）。
 
 ## 65.4 一覧検索
 
@@ -332,3 +334,4 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
 | 2026-10-23 | stocktake-count-runtime-b1（D-118 の b1） | 冒頭の D-118 の節の b1 の分を現行に。入出庫の記録の一覧の棚卸しの件数と商品・部門の filter を明細へ、棚卸し詳細の表示を効く計数と完了の後の差に直した（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)） |
 | 2026-10-25 | z004-rollback-entry（PR #197） | §65.5a（TRACE-D13）を現行に。§65.10 の 4b の取消の CTA の文を、そのスライスでは置かなかった記録に直した（[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |
 | 2026-10-27 | z004-rollback-entry（PR #197、Gated Amendment 2） | §65.5a の「成功」に取消の結果は表示している取込みのものだけであること、「失敗」に取消の応答を待つ間の止め（55 §55.7・§55.11）を足した（Final Review の差し戻し。[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |
+| 2026-10-27 | stock-transfer の起票（D-143） | TRACE-D14（振替の記録の一覧・詳細・相互リンク）と、§65.1・§65.3 の振替の行を、runtime の前の設計として足した（[Plan Packet](../plans/2026-10-29-stock-transfer.md)） |

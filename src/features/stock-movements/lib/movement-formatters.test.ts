@@ -13,4 +13,8 @@ describe("movement-formatters (REQ-303)", () => {
     expect(formatMovementType("receiving")).toBe("入庫");
     expect(formatMovementType("sale_auto")).toBe("POS売上");
   });
+
+  it("U13 / 66・65 TRACE-D14: 振替の movement は「詰め替え・切り分け」", () => {
+    expect(formatMovementType("transfer")).toBe("詰め替え・切り分け");
+  });
 });

@@ -212,3 +212,45 @@ CSV取込みで拾えない販売を補完記録する。使い道は PLU 未登
 ### 設計意図
 - **cost_price_centiを明細に持つ理由**: ロス原価の合計を画面で表示するため（棚卸し時のロス把握）。商品マスタの原価は変わる可能性があるが、廃棄時点の原価を記録しておく
 - **disposal_typeを明細に持つ理由**: 1回の記録で「破損1件＋廃棄2件」のように種別が混在できる
+
+## 11a-11b. transfer_records + transfer_items（振替〈詰め替え・切り分け〉の記録）
+
+D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。画面は [79](../function-design/79-ui-stock-transfer.md)、BIZ は [31](../function-design/31-biz-inventory-service.md) の `create_transfer`。
+
+### 役割
+仕入れた品を別の商品に詰め替え・切り分けた記録（反物 → 端切れ、大袋 → 小袋）。1 つの記録で、減らす商品（元）の在庫を減らし、増やす商品（先）の在庫を増やす。ロス（廃棄）でも仕入れ（入庫）でもない動きを、それらと分けて残す。
+
+### transfer_records カラム定義
+
+| カラム名 | 型 | 制約 | 説明 |
+|---------|---|----|------|
+| id | INTEGER | PK AUTOINCREMENT | 振替の記録ID |
+| transfer_date | TEXT | NOT NULL、CHECK: 長さ 10 で `[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]` に合う（`inventory_movements.business_date` と同じ形） | 詰め替え・切り分けた日（業務日。movement の `business_date` になる） |
+| idempotency_key | TEXT | NOT NULL, 非空CHECK, UNIQUE INDEX | 再送を識別するキー |
+| request_fingerprint | TEXT | NOT NULL, 非空CHECK | 同じキーでの内容不一致を検出 |
+| created_at | TEXT | NOT NULL | 作成日時（YYYY-MM-DDTHH:MM:SS） |
+
+### transfer_items カラム定義
+
+| カラム名 | 型 | 制約 | 説明 |
+|---------|---|----|------|
+| id | INTEGER | PK AUTOINCREMENT | 明細ID |
+| transfer_record_id | INTEGER | FK → transfer_records.id, NOT NULL | 親ヘッダ |
+| product_code | TEXT | FK → products.product_code, NOT NULL | 商品コード |
+| direction | TEXT | NOT NULL, CHECK(direction IN ('out','in')) | `out` = 減らす商品（元）、`in` = 増やす商品（先） |
+| quantity | INTEGER | NOT NULL, CHECK(quantity > 0) | 数量（その商品の在庫の数量の単位。個数は 1 単位、長さは cm。符号は持たず、向きは direction） |
+
+- UNIQUE(transfer_record_id, product_code): 同じ商品を 1 つの記録に 2 回入れない（BIZ の検証の後ろの防御）。
+
+### 設計意図
+- **ヘッダと明細に分けた理由**: 1 本の反物を 2 種の端切れに分ける・複数の商品を 1 つにまとめる記録を 1 回の操作で残す。入出庫履歴の一覧（[65](../function-design/65-inventory-record-traceability.md) の `list_inventory_records`）がヘッダと明細の表の組で記録を数え・探すので、ほかの業務記録と同じ形に揃える。
+- **換算の比・原価を持たない理由**: 元と先の数の対応は回ごとに違いうるので、両方を利用者が入れた値のまま持つ。振替は商品の原価を変えず、ロス原価や仕入れの金額を求めないので、明細に原価を持たない（D-143 (3)(4)）。
+- **取消の列を持たない理由**: ほかの入出庫の業務記録と同じく、取消・訂正（[65](../function-design/65-inventory-record-traceability.md) §65.6.1）は全ての記録で後の設計。誤った振替は、元の記録と同じ日付・同じ数量で向きを入れ替えた振替で戻す（[79](../function-design/79-ui-stock-transfer.md) §79.6）。
+
+### 業務シナリオ例
+
+（説明用の合成の値）反物 A（m）から 3 m を切って、端切れ B（個）を 6 個作った。
+
+- transfer_records: transfer_date=今日
+- transfer_items: (A, out, 300)、(B, in, 6)
+- inventory_movements: (A, transfer, -300, reference_type=transfer_record)、(B, transfer, +6, reference_type=transfer_record)。どちらも業務日は transfer_date、phase 0

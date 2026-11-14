@@ -57,10 +57,10 @@
 |---------|---|----|------|
 | id | INTEGER | PK AUTOINCREMENT | 変動ID |
 | product_code | TEXT | FK → products.product_code, NOT NULL | 商品コード |
-| movement_type | TEXT | NOT NULL, CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake')) | 変動種別 |
+| movement_type | TEXT | NOT NULL, CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake','transfer')) | 変動種別。migration v13 で `'transfer'` を足した（D-143。[22 §21](../function-design/22-mnt-migration.md)） |
 | quantity | INTEGER | NOT NULL | 変動数量。在庫視点で常にプラス=増加、マイナス=減少 |
 | stock_after | INTEGER | NOT NULL | 変動後の在庫数 |
-| reference_type | TEXT | NULLABLE, CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake') OR reference_type IS NULL) | 参照先テーブル名 |
+| reference_type | TEXT | NULLABLE, CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake','transfer_record') OR reference_type IS NULL) | 参照先テーブル名。migration v13 で `'transfer_record'`（`transfer_records`）を足した（D-143） |
 | reference_id | INTEGER | NULLABLE | 参照先レコードID |
 | note | TEXT | NULLABLE | 備考 |
 | is_voided | BOOLEAN | NOT NULL, DEFAULT 0 | 論理無効化フラグ。ロールバック時に1 |
@@ -89,6 +89,9 @@ sale_recordsとinventory_movementsで符号の意味が異なる。混同防止�
 | return | 返品・交換（レジ未処理分のみ） | プラス（戻り） or マイナス（渡し） | REQ-202 |
 | disposal | 廃棄・破損 | マイナス | REQ-204 |
 | stocktake | 棚卸し補正 | プラス or マイナス | REQ-205 |
+| transfer | 振替（詰め替え・切り分け）。減らす商品の行と増やす商品の行を 1 つの振替の記録から作る（D-143。[transaction](transaction-tables.md) の `transfer_records`） | 減らす商品はマイナス、増やす商品はプラス | UI-16（REQ-210） |
+
+`stocktake` の行は D-118 の runtime から作られない（上の「計数の置き場と在庫の求め直しの契約」）が、値は在庫変動の履歴の種別の絞り込みと計数の行の元記録の種類に使うので CHECK と enum に残す（D-061・D-064 の同じ値の集合、D-143）。
 
 ### 設計意図
 - **全ての在庫変動を1テーブルに集約した理由**: 在庫変動履歴画面で「この商品に何が起きたか」を時系列で表示するため。入庫・販売・返品・廃棄・棚卸しの全てがここに入る

@@ -250,6 +250,7 @@ fn show_pre_window_fatal(message: &str) {
 /// - CMD-04: create_manual_sale
 /// - CMD-05: create_disposal / list_disposals
 /// - CMD-05b: list_inventory_records / get_disposal_record
+/// - CMD-13: create_transfer / get_transfer_record
 /// - CMD-06: get_stock_detail / list_low_stock / list_movements
 /// - CMD-07: parse_and_validate_csv / commit_csv_import / rollback_csv_import / list_csv_imports
 /// - CMD-12: parse_and_validate_daily_report / commit_daily_report_import / rollback_daily_report_import / list_daily_report_imports
@@ -308,6 +309,9 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::disposal_cmd::list_disposals,
         cmd::disposal_cmd::list_inventory_records,
         cmd::disposal_cmd::get_disposal_record,
+        // CMD-13: 振替（詰め替え・切り分け）
+        cmd::transfer_cmd::create_transfer,
+        cmd::transfer_cmd::get_transfer_record,
         // CMD-06: 在庫照会
         cmd::inventory_cmd::get_stock_detail,
         cmd::inventory_cmd::list_low_stock,
@@ -1540,6 +1544,9 @@ pub fn run() {
             cmd::disposal_cmd::list_disposals,
             cmd::disposal_cmd::list_inventory_records,
             cmd::disposal_cmd::get_disposal_record,
+            // CMD-13: 振替（詰め替え・切り分け）
+            cmd::transfer_cmd::create_transfer,
+            cmd::transfer_cmd::get_transfer_record,
             // CMD-06: 在庫照会
             cmd::inventory_cmd::get_stock_detail,
             cmd::inventory_cmd::list_low_stock,

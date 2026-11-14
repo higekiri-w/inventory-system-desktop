@@ -1304,6 +1304,24 @@ describe("UI-11c REQ-902", () => {
     );
   });
 
+  it("U16 / 74 UI-11c-D7: transfer_record の関連記録は詰め替え・切り分けの記録の詳細へ進む", async () => {
+    listLogs.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [log('{"record_type":"transfer_record","record_id":7}')],
+        total_count: 1,
+        page: 1,
+        per_page: 20,
+      },
+    });
+    renderPage();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "詳細を表示" }));
+    expect(screen.getByRole("link", { name: "関連記録を見る" })).toHaveAttribute(
+      "href",
+      "/inventory/transfer/records/7?returnTo=%2Fsettings%2Flogs",
+    );
+  });
+
   it("uses the 30-day empty copy for the default search", async () => {
     listLogs.mockResolvedValue({
       status: "ok",

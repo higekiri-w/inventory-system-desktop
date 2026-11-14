@@ -7,6 +7,7 @@ export const INVENTORY_RECORD_TYPE_OPTIONS = [
   { value: "return_record", label: "返品・交換" },
   { value: "manual_sale", label: "手動販売出庫" },
   { value: "disposal_record", label: "廃棄・破損" },
+  { value: "transfer_record", label: "詰め替え・切り分け" },
   { value: "csv_import", label: "CSV取込み" },
   { value: "stocktake", label: "棚卸し" },
 ] as const;

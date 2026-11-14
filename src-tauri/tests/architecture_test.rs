@@ -391,6 +391,11 @@ const DB_IO_REEXPORT_ALLOWLIST: &[(&str, &str, &str)] = &[
         "crate::db::product_repo::StockDetail",
     ), // :46
     (
+        "biz/inventory_service/mod.rs",
+        "TransferRecordDetail",
+        "crate::db::transfer_repo::TransferRecordDetail",
+    ), // 振替の記録の詳細（D-143、44 §23.7a の出力型は IO の型）
+    (
         "biz/product_service.rs",
         "PriceHistoryEntry",
         "crate::db::product_repo::PriceHistoryEntry",

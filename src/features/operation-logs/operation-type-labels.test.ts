@@ -16,4 +16,13 @@ describe("operation type labels（UI-11c）", () => {
       expect(OPERATION_TYPE_LABELS[operationType]).toEqual(contract);
     }
   });
+
+  it("U15 / 74 registry: transfer_create は入出庫の「詰め替え・切り分け記録」で、廃棄・破損記録の次に並ぶ", () => {
+    expect(OPERATION_TYPE_LABELS.transfer_create).toEqual({
+      category: "入出庫",
+      label: "詰め替え・切り分け記録",
+    });
+    const order = Object.keys(OPERATION_TYPE_LABELS);
+    expect(order.indexOf("transfer_create")).toBe(order.indexOf("disposal_create") + 1);
+  });
 });

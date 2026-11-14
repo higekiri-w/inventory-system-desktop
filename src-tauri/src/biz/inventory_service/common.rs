@@ -85,7 +85,7 @@ pub(crate) fn validate_business_date(date: &str) -> Result<(), BizError> {
 /// 商品の在庫を変動させる: movement を並びの鍵付きで INSERT し、その商品を記録から求め直す
 ///
 /// 引数の型（借りた transaction）で TX の内側に限る。TX は呼び出し元の create_* が管理する。
-/// 入出庫 4 業務だけが呼ぶ（Z004 の確定は movement を書いてから商品ごとに求め直す。31）。`stock_after` は、この呼出しが
+/// 入出庫 4 業務と振替の 5 つだけが呼ぶ（Z004 の確定は movement を書いてから商品ごとに求め直す。31）。`stock_after` は、この呼出しが
 /// INSERT した movement だけに、直後の求め直しの写しの値を書く（同じ要求の同じ商品の明細は途中の値）。
 ///
 /// 31-biz-inventory-service.md §12.2 と「計数の置き場と在庫の求め直しの契約」

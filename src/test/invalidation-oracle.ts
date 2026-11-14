@@ -5,7 +5,7 @@ import { queryKeys } from "@/lib/query-keys";
 export type InvalidationKey = readonly unknown[];
 
 /**
- * D-052-C1〜C22 と C23（D-141）を test 側へ独立転記した oracle。
+ * D-052-C1〜C22、C23（D-141）、C24（D-143）を test 側へ独立転記した oracle。
  * production の invalidation-contract.ts を参照してはならない。
  */
 export const d052InvalidationOracle = {
@@ -215,6 +215,17 @@ export const d052InvalidationOracle = {
     ["stock-inquiry"],
     ["receivings"],
     ["inventory-records"],
+  ],
+  // C24: 79 UI-16-D10 の 8 つの key の列から写す（廃棄の C7 から disposals.root() を除いた集合）
+  stockTransfer: () => [
+    ["inventory-records"],
+    ["product-list"],
+    ["products", "low-stock", { includeDiscontinued: false }],
+    ["stock-inquiry"],
+    ["stock-movements"],
+    ["product-form"],
+    ["stocktake", "items"],
+    ["stocktake", "recheck-list"],
   ],
 } satisfies Record<string, (...args: never[]) => InvalidationKey[]>;
 

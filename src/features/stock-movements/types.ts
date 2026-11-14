@@ -13,6 +13,7 @@ export const MOVEMENT_TYPE_OPTIONS = [
   { value: "sale_auto", label: "POS売上" },
   { value: "sale_manual", label: "手動販売" },
   { value: "disposal", label: "廃棄・破損" },
+  { value: "transfer", label: "詰め替え・切り分け" },
   { value: "stocktake", label: "棚卸し" },
 ] as const;
 
