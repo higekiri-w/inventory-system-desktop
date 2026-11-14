@@ -705,12 +705,33 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 
 7-8c の消化。手入力した未保存の編集内容を、確認なしの画面遷移で失わせないための共通 hook 契約。
 
-- **UI-USW-D1（hook API）**: `useUnsavedChangesWarning(isDirty: boolean)` を共通 hook として提供する。form library 非依存（§2.7 の feature-local controlled state + Zod 方針に従い、dirty 判定は各画面が明示計算して boolean を渡す）。内部は TanStack Router `useBlocker`（`shouldBlockFn` + `withResolver`）+ `enableBeforeUnload` 連動（§55.7 importing ガードと同基盤）。画面側での `useBlocker` 直接使用は禁止し、sweep test で機械強制する（例外は [55](function-design/55-ui-csv-import.md) §55.7 が持つ進行中の処理〈取込みの応答と、取消の応答を待つ間〉のガードの hook だけで、どの hook かは 55 §55.7 が名指す）。**保存成功時の誤発火防止（MUST）**: 派生比較で isDirty を導出する画面は、保存成功 mutation の `onSuccess` 内で navigate / 遷移導線の提示より前に、比較 baseline を提出値へ同期更新して isDirty を false 化する（69 `ThresholdSettingsPage` の `setSavedValues(submittedValues)` が正例）。保存後に result panel へ移りフォームを lock する画面は `isDirty = (入力差分) && !isFormLocked` の形で lock 状態を明示的に含め、result panel 内の遷移導線を block しない。
+- **UI-USW-D1（hook API）**: `useUnsavedChangesWarning(isDirty: boolean)` を共通 hook として提供する。form library 非依存（§2.7 の feature-local controlled state + Zod 方針に従い、dirty 判定は各画面が明示計算して boolean を渡す）。内部は TanStack Router `useBlocker`（`shouldBlockFn` + `withResolver`）+ `enableBeforeUnload` 連動（§55.7 importing ガードと同基盤）。画面側での `useBlocker` 直接使用は禁止し、sweep test で機械強制する（例外は [55](function-design/55-ui-csv-import.md) §55.7 が持つ進行中の処理〈取込みの応答と、取消の応答を待つ間〉のガードの hook だけで、どの hook かは 55 §55.7 が名指す）。**保存成功時の誤発火防止（MUST）**: 派生比較で isDirty を導出する画面は、保存成功 mutation の `onSuccess` 内で navigate / 遷移導線の提示より前に、比較 baseline を提出値へ同期更新して isDirty を false 化する（69 `ThresholdSettingsPage` の `setSavedValues(submittedValues)` が正例）。保存後に result panel へ移りフォームを lock する画面は `isDirty = (入力差分) && !isFormLocked` の形で lock 状態を明示的に含め、result panel 内の遷移導線を block しない。同じ hook は同じ `isDirty` で native の window の close の止め（UI-USW-D5 の `useWindowCloseGuard`）も持つ（未実装。PR #250 の実装で入る）。
 - **UI-USW-D2（破棄確認ダイアログ）**: block 時は共通 AlertDialog を表示する — 見出し「編集内容が保存されていません」、説明「このまま移動すると、入力した内容は破棄されます。」、操作 = 「編集を続ける」（既定 focus）/「破棄して移動」（destructive）。DSR-07（不可逆操作のみ確認）に適合 — 未保存内容の破棄は復元不能。判断を曖昧な dismiss で終わらせない意図的 friction として Esc / 外側クリックを無効にし、DSR-20 の硬化条件に適合させる。実装は `onEscapeKeyDown` / `onPointerDownOutside` の明示 prop で `preventDefault()` する方式へ統一し、`onOpenChange` の非配線による暗黙硬化は禁止する。beforeunload 側は platform 既定ダイアログのみ（カスタム文言不可）。runtime の方式統一は後続 R3 で行う。
 - **UI-USW-D3（適用範囲の分類軸）**: 適用対象 = 「利用者の手入力で構築され、保存前に画面遷移で失われると再入力が必要な蓄積編集 state を持つ画面」。除外 = (a) 進行中処理ガード既設（§55.7 所有、相互排他で併用しない）、(b) file・DB 等からの再実行で再導出可能な導出 state — 値の記入を伴わない選択 state を含む（取込み preview 系、整合性チェックの結果と補正対象選択）、(c) 行単位の即時 DB 保存で蓄積未保存が生じない画面（棚卸し）、(d) 外部ツールまたぎの専用復帰設計が所有（§6.5 PLU 書出し）、(e) 編集 state を持たない画面。適用画面は各 function-design の該当節に明記する。
-- **UI-USW-D4（native close は非保証）**: `enableBeforeUnload` は webview の beforeunload に連動するが、Tauri native window close（×ボタン）で確実に発火する保証はしない。native close の破棄防止（`onCloseRequested`）は [backlog](backlog.md) の「native の window の close で取込み・取消・未保存の 3 つの止めを横断して扱う」（owner の決定、repo 外の回答台帳 TD-458）。
+- **UI-USW-D4（native の close は webview の離脱の止めの外）**: `enableBeforeUnload` は webview の beforeunload に連動するが、Tauri の native の window の close（×・Alt+F4）は beforeunload を経ない。native の close は UI-USW-D5 が止める（未実装。PR #250 の実装で入り、それまでは止めない）。
+- **UI-USW-D5（native の window の close の止め）**（未実装。PR #250 の実装で入る。[Plan Packet](plans/2026-11-13-window-close-guard.md)、[decision-log](decision-log.md) D-153。文言と範囲は owner の決定、repo 外の回答台帳 TD-689）: 取込み・取消の応答を待つ間と未保存の入力がある間の × と Alt+F4 を止めて確認の窓を出し、それ以外はすぐ閉じる。
+  1. 止めの集合: `src/lib/window-close-guard.ts` の module の 1 つの store。止めの hook は `useWindowCloseGuard(kind, active)` で、`active` の間だけ hook の instance ごとの鍵で種類を入れ、effect の cleanup で外す（StrictMode の二重の effect でも出し入れが対になる）。種類は進行中の 4 つ（`z004-import`・`z004-rollback`・`daily-report-import`・`daily-report-rollback`）と未保存の `dirty`。UI-USW-D1 の hook と 55 §55.7 の進行中の処理のガードの hook は、`useBlocker` と同じ条件で close の止めも持ち、sweep test が `useBlocker(` を呼ぶ file は全部 `useWindowCloseGuard(` も呼ぶことを強制する。hook は `@tauri-apps/api` を import しない。
+  2. listener: 窓に 1 つ。`src/main.tsx` が render の前に 1 回だけ `onCloseRequested` を登録する（2 回目の呼出しは無視し、登録の失敗は `console.warn` だけ）。page を読み直すと新しい page が登録し直す。
+  3. 判定（同期）: (1) 確認の窓の component が mount されていなければ止めない（root の error の fallback〈UI-EB-D1〉の間を含む） (2) 集合が空なら止めない (3) 確認の窓が既に開いていれば止めるだけで何も変えない（2 回目の ×） (4) 進行中が 1 つでもあれば進行中の窓、そうでなく未保存があれば未保存の窓を開いて止める (5) どこかで例外なら止めない。止めないときは `onCloseRequested` が `destroy` で閉じる。
+  4. 確認の窓（RootLayout に mount する 1 つの AlertDialog。DSR-07・DSR-20）:
+     - 未保存: 見出し「編集内容が保存されていません」、説明「このまま閉じると、入力した内容は破棄されます。」、操作「編集を続ける」（既定 focus）/「破棄して閉じる」（destructive）。UI-USW-D2 と同じ硬化（Esc と外側の click で閉じない）。「編集を続ける」で入力は残る。
+     - 進行中: 操作「待つ」（既定 focus）/「閉じる」。Esc と外側の click は「待つ」と同じ（窓は閉じない）。進行中の種類が集合から外れると確認の窓は自動で閉じ、その後の × で閉じられる。文言は種類ごとに次のとおり（取込みと取消は単一の transaction で、閉じて失うのは済んだかの知らせだけなので、確かめる所を名指す）:
 
-<!-- reviewed: 2026-08-30 -->
+       | 種類 | 見出し | 説明 |
+       |---|---|---|
+       | `z004-import` | 取込みの途中です | 取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「商品別CSV取込み（Z004）」タブの「取り込んだ記録を見る」で確かめてください。 |
+       | `z004-rollback` | 取消の途中です | 取消が終わるまでお待ちください。終わると閉じられます。いま閉じると、取り消せたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「商品別CSV取込み（Z004）」タブの「取り込んだ記録を見る」で、取消済みかを確かめてください。 |
+       | `daily-report-import` | 取込みの途中です | 取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブの「取り込んだ日報の記録を見る」で確かめてください。 |
+       | `daily-report-rollback` | 取消の途中です | 取消が終わるまでお待ちください。終わると閉じられます。いま閉じると、取り消せたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブの「取り込んだ日報の記録を見る」で、取消済みかを確かめてください。 |
+
+       「取り込んだ日報の記録を見る」は PR #235（55 §55.12 UI-07-D19）が足す link で、日報の 2 行は #235 の merge の後の画面の文字（本 D の実装は #235 の merge の後に始める）。
+     - 「破棄して閉じる」「閉じる」は `getCurrentWindow().destroy()` を呼ぶ。拒まれたら確認の窓を閉じ、error の Toast で「閉じられませんでした。もう一度 × を押してください。」を出す。
+  5. fail-open: 止めの仕組みが壊れたとき（登録の失敗・判定の例外・確認の窓の不在）は止めずに閉じる。閉じられない窓を作らないことを、止めることより優先する。抜け道: JS の thread が固まると handler が走らず閉じられない（タスクマネージャーが要る）。読み直しの後、新しい page が登録するまでの短い間の × は効かない。
+  6. 権限: `src-tauri/capabilities/default.json` に `core:window:allow-destroy` を持つ（listener を 1 つでも置くと Rust が close を止め、閉じるのは常に JS の `destroy` になるので、無いと全部の close が失敗する）。test が行を見張る。`allow-close` 等は足さない（`close()` は `CloseRequested` をもう一度出す）。
+  7. 範囲: 取込み・取消・未保存の 3 つの止めだけ。ほかの進行中の処理（バックアップの作成・復元、PLU の書出し等）は、要ると分かった lane で `useWindowCloseGuard` の 1 行で足す。Windows のサインアウト・シャットダウン・タスクマネージャーでの終了は対象外。route の移動と beforeunload の止め（UI-USW-D1・D2、55 §55.7）は変えない（close の止めは別の経路で、置き換えではない）。
+  - 理由と棄てた案: 止めが active の間だけ listener を置く案は、読み直しの後に古い listener が Rust に残って新しい page が登録しないので閉じられない窓を作る。Rust の `on_window_event` で flag を見る案は command・DTO・bindings と未保存の変化のたびの IPC が要り、module の初期化で 1 つ置く形で読み直しも閉じられるので要らない。router の内部の `getBlockers` を読む案は公開の型に無く種類も分からない。画面ごとに listener を置く案は順序と解除が食い違い、2 回 `destroy`・2 枚の窓になる。
+
+<!-- reviewed: 2026-11-14 -->
 
 ### 6.12 class の上書きの罠
 
@@ -847,6 +868,7 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 
 | 日付 | 内容 | 担当 |
 |------|------|------|
+| 2026-11-14 | UI-USW-D4 を改め、UI-USW-D5（native の window の close の止め）を足し、UI-USW-D1 に close の止めを 1 文足した（window-close-guard の plan-first、PR #250。未実装の注は実装の PR で外す。D-153、owner の決定 TD-689） | Claude（Opus 5.5） |
 | 2026-10-31 | §6.5.5 の proposed の注記を外し、印刷の CSS の置き場（`globals.css` の `@page` と `@media print`）を書いた（日報の紙の runtime の実装、D-120） | Claude（Opus 5.5） |
 | 2026-10-29 | §6.5.5 の未確認の前提（WebView2 の印刷）を確かめる時を、日報の紙の runtime の lane の「実装の前」から「実装の後の L3（L3-1）」に直した（同 lane の Plan Review round 1） | Claude |
 | 2026-10-27 | UI-USW-D1 の `useBlocker` の直接使用の例外を、hook の列挙から 55 §55.7 の進行中の処理のガードの hook という持ち主で決める言い方に置き換え（z004-rollback-entry、PR #197 の Gated Amendment 3。取消の応答を待つ間のガードの hook を足しても列挙を継ぎ足さない。D-127） | Claude |

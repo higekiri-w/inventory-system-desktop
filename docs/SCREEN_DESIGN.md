@@ -498,7 +498,7 @@ Phase 1 UI 基盤構築（PR #50 / #52 等）で固まった「画面実装時�
 ### ウィンドウタイトル動的更新（PR #50 / [docs/function-design/52-ui-shared-layout.md](function-design/52-ui-shared-layout.md) §52.6 参照）
 - **書式**: `<アプリ名> - <画面名>`（例: 「在庫管理 - ホーム」「在庫管理 - 商品検索」）
 - **実装**: TanStack Router `useRouterState({ select })` + `getCurrentWindow().setTitle()`（WSL2 WebKitGTK で `document.title` rebind されないため Tauri API 併用必須）
-- **Tauri capability**: `core:window:allow-set-title` を `src-tauri/capabilities/default.json` に許可済
+- **Tauri capability**: `core:window:allow-set-title` を `src-tauri/capabilities/default.json` に許可済。native の window の close を止めた後に閉じるため `core:window:allow-destroy` も持つ（[UI_TECH_STACK](UI_TECH_STACK.md) UI-USW-D5。未実装で、PR #250 の実装で入る）
 
 ### Tauri 2 on Linux IME 制約
 - 日本語 IME インライン入力未対応（tauri#11412 OPEN、WSL2 固有でなく Ubuntu ネイティブでも再現）

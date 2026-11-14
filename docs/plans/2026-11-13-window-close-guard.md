@@ -1,6 +1,6 @@
 # Plan Packet: native の window の close（×・Alt+F4）で取込み・取消・未保存の止めを横断して扱う
 
-wave に属さない単独の lane。出発点は `docs/backlog.md` の項目「native の window の close で取込み・取消・未保存の 3 つの止めを横断して扱う」（owner の決定、repo 外の回答台帳 TD-458。着手の決定は 2026-11-13 の同じ台帳の TD-671。原文は台帳にあり、ここは ID と要旨だけ）。本 commit は Plan Packet の起票だけで、設計正本の plan-first の修正（下の Design Readiness）と実装は後の run。
+wave に属さない単独の lane。出発点は `docs/backlog.md` の項目「native の window の close で取込み・取消・未保存の 3 つの止めを横断して扱う」（owner の決定、repo 外の回答台帳 TD-458。着手の決定は 2026-11-13 の同じ台帳の TD-671。原文は台帳にあり、ここは ID と要旨だけ）。起票の commit（`65520303`）の後、owner の答え（同じ台帳の TD-689、2026-11-14。下の「owner の決定」）を入れ、設計正本を plan-first で直した（下の Design Readiness）。実装は計画の固定の後の run。
 
 ## Workflow State
 
@@ -21,7 +21,7 @@ Goal Invariant:
 
 ### 最小完了条件
 
-- 取込みの応答を待つ間（Z004・日報）と取消の応答を待つ間（Z004・日報）に × か Alt+F4 を押すと、窓は閉じず、その場に「途中であること」と待てば閉じられることを示す確認の窓が出る（文言は O2・O3）。
+- 取込みの応答を待つ間（Z004・日報）と取消の応答を待つ間（Z004・日報）に × か Alt+F4 を押すと、窓は閉じず、その場に「途中であること」と待てば閉じられることを示す確認の窓が出る。「待つ」で窓は残り、「閉じる」で閉じる（文言は UI-USW-D5、TD-689 の O2・O3）。
 - 未保存の入力がある画面（UI-USW-D3 の適用画面）で × か Alt+F4 を押すと、窓は閉じず、破棄の確認が出る。「破棄して閉じる」で閉じ、「編集を続ける」で入力が残る。
 - 上のどれでもない時の × と Alt+F4 は、今と同じくすぐ閉じる。
 - どの失敗の型（下の「失敗の型」F1〜F7）でも、閉じられない窓を作らない。止めの仕組みが壊れたときは「止めずに閉じる」側に倒れる（fail-open）。
@@ -36,7 +36,7 @@ Goal Invariant:
 
 ### 非目的
 
-- 3 つの止めの外の進行中の処理を close で止めること（O4。例はバックアップの作成・復元、PLU の書出し、棚卸しの保存で、全部を数えてはいない）。
+- 3 つの止めの外の進行中の処理を close で止めること（TD-689 の O4。例はバックアップの作成・復元、PLU の書出し、棚卸しの保存で、全部を数えてはいない）。
 - Windows のサインアウト・シャットダウン・タスクマネージャーでの終了を止めること（`CloseRequested` を経ない見込み。未確認）。
 - route の移動と beforeunload の今の止め（UI-USW-D1・D2、55 §55.7）の振舞いを変えること。
 - Rust の側に close の状態を持つこと（下の「案の比較」の C）。
@@ -75,7 +75,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 (4) React の StrictMode: `src/main.tsx:27` で `<React.StrictMode>` の中に `RouterProvider`。effect で listener を登録すると、開発では mount → cleanup → mount で 2 回走り、`onCloseRequested` は Promise で unlisten を返すので、cleanup の時点で unlisten がまだ無い（登録の Promise が後で解ける）。effect に置くなら「解けた時に cleanup 済みなら直ちに unlisten」の形が要る。module の初期化で 1 回だけ登録すれば StrictMode に関わらない（採る案）。止めの集合への出し入れは各 hook の `useEffect`（cleanup で外す）で行い、StrictMode の二重の effect でも出し入れが対になる。
 
-(5) 閉じたときに DB は守られるか: 取込みと取消は単一の transaction（`src-tauri/src/biz/csv_import_service/commit.rs:90`、同 `rollback.rs:74`・`:111`、`daily_report_import_service/commit.rs:108`、同 `rollback.rs:28`）。窓が消えて process が終われば commit の前の変更は残らない（55 §55.7 の「native の close で失うのは結果の通知だけ」と同じ）。失うのは「済んだか」の知らせで、店は次に開いた時に取込みの記録で確かめるしかない（O2 の判断材料）。
+(5) 閉じたときに DB は守られるか: 取込みと取消は単一の transaction（`src-tauri/src/biz/csv_import_service/commit.rs:90`、同 `rollback.rs:74`・`:111`、`daily_report_import_service/commit.rs:108`、同 `rollback.rs:28`）。窓が消えて process が終われば commit の前の変更は残らない（55 §55.7 の「native の close で失うのは結果の通知だけ」と同じ）。失うのは「済んだか」の知らせで、店は次に開いた時に取込みの記録で確かめるしかない（O2・O3 の判断材料。確かめる所の画面の文字は (9)）。
 
 (6) 他の close の経路: Rust の側に `on_window_event`・`RunEvent`・`exit`・`restart` の処理は無い（`rg -n "on_window_event|CloseRequested|RunEvent|ExitRequested|\.restart\(\)|\.exit\(" src-tauri/src` が 0 件）。窓は 1 つ（`src-tauri/tauri.conf.json` の `windows` は 1 件で label の既定 `main`、capability の `windows: ["main"]`）。single-instance の plugin（`src-tauri/src/lib.rs:1437`）は 2 つ目の起動を前の窓へ寄せるだけで close に関わらない。
 
@@ -83,9 +83,11 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 (8) 他の lane との重なり（2026-11-13、`gh pr diff N --name-only` の目視）:
 
-- #235（日報の取消の入口、未 merge）: `src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts` を新設して日報の取消の `useBlocker` を flow から移し、55 §55.7 を書き換える。5 つ目の止めの hook になる。本 lane の実装は #235 の merge の後に始める（下の Scope の「順」）。
+- #235（日報の取消の入口、未 merge）: `src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts` を新設して日報の取消の `useBlocker` を flow から移し、55 §55.7 を書き換える。5 つ目の止めの hook になる。本 lane の実装は #235 の merge の後に始める（下の Scope の「順」）。docs の重なり（2026-11-14、`git diff --name-only origin/main origin/agent/daily-report-rollback-entry -- docs`）: 本 lane の plan-first が直す 55 §55.7 の「止める範囲」と §55.11、`docs/SCREEN_DESIGN.md` に #235 も触れ、#235 は §55.12（UI-07-D19）の「取消の実行と後」に「native の window の close は保証しない」の括弧を足す（同 branch の 55 の :573）。後に merge する側が同期で合わせ、#235 が先なら §55.12 の括弧を本 lane の同期で §55.11 と同じ形に直す（Design Readiness の表の条件つきの行）。
 - #216（振替、未 merge）: `StockTransferPage.tsx` が `useUnsavedChangesWarning` を使い、`docs/UI_TECH_STACK.md` と `docs/function-design/52-ui-shared-layout.md` に触れる。hook の側で止めを持つので画面の追加の手当ては要らない。docs は別の節（本 lane は UI_TECH_STACK §6.11 と 52 §52.1 の表の RootLayout の行）で、末尾の更新履歴の追記は merge 順で両方を残す。
 - #194（PC の外の控え、未 merge）: `src/components/layout/RootLayout.test.tsx` に触れる。本 lane も同じ test を触りうる（確認の窓の mount）。後に merge する側が同期で合わせる。
+
+(9) 確かめる所の画面の文字（2026-11-14、`rg -n "取り込んだ記録を見る|日報の取込みの記録|取消済み" src --glob '!*.test.*'` と #235 の branch の `git show`）: Z004 は「売上データ取込み」（`CsvImportPage.tsx` の `PageHeader`）の「商品別CSV取込み（Z004）」タブの「取り込んだ記録を見る（取り消すときはここから）」（`src/features/csv-import/CsvImportPage.tsx:81`、入出庫履歴を種別「CSV取込み」で開く。状態の label「取消済み」は `src/features/inventory-records/types.ts:16`）。日報は main に記録の画面が無く、#235（`origin/agent/daily-report-rollback-entry`、head `fac35a17`）の「日報取込み」タブの「取り込んだ日報の記録を見る（取り消すときはここから）」（同 branch の `CsvImportPage.tsx:77`）が開く「日報の取込みの記録」（`DailyReportImportRecordsPage.tsx:67`、状態の列に「取消済み」:208）。日報の確かめ方の文は #235 の merge の後の画面の文字で、本 lane の実装は #235 の merge の後に始める（Scope の「順」）。
 
 ## 案の比較
 
@@ -105,7 +107,7 @@ A の handler の判定の順（同期、例外は全部捕まえる）:
 4. 進行中が 1 つでもあれば進行中の窓、そうでなく未保存があれば未保存の窓を開き、`preventDefault`。
 5. 1〜4 のどこかで例外なら `preventDefault` せずに返す（閉じる側に倒れる。F2）。
 
-確認の窓の「破棄して閉じる」（と O2 で b を採れば進行中の「閉じる」）は `getCurrentWindow().destroy()` を呼び、拒まれたら窓を閉じたままにせず、その場に失敗の文（O5）を出して確認の窓を閉じる。
+確認の窓の「破棄して閉じる」と進行中の「閉じる」（TD-689 の O2）は `getCurrentWindow().destroy()` を呼び、拒まれたら確認の窓を閉じ、error の Toast で「閉じられませんでした。もう一度 × を押してください。」（O5）を出す。
 
 ## 失敗の型
 
@@ -113,31 +115,31 @@ A の handler の判定の順（同期、例外は全部捕まえる）:
 |---|---|---|---|
 | F1 | listener の登録の失敗（Promise の reject） | listener が無いので Rust は止めず、× で今どおり閉じる | `catch` で `console.warn` だけ。止めは無いが閉じられる（fail-open） |
 | F2 | handler の例外 | 包みが `destroy` に届かず窓が残る（(3)） | handler の全体を try/catch。例外なら `preventDefault` せず返す |
-| F3 | `destroy` の拒否（権限の欠け・runtime の失敗） | 止めない時も含めて全部の close が失敗 | capabilities に `core:window:allow-destroy`。test で権限の行を見張る（T10）。確認の窓からの `destroy` の失敗はその場で文を出す（O5） |
+| F3 | `destroy` の拒否（権限の欠け・runtime の失敗） | 止めない時も含めて全部の close が失敗 | capabilities に `core:window:allow-destroy`。test で権限の行を見張る（T10）。確認の窓からの `destroy` の失敗は error の Toast で文を出す（O5） |
 | F4 | 状態の読み違い（hook が unmount 後も集合に残る・StrictMode で二重に入る） | 何も無いのに止まり続ける | 集合の鍵は hook の instance ごと、出し入れは `useEffect` の cleanup で対にする（T8）。進行中が終われば確認の窓は自動で閉じる |
-| F5 | 確認の窓の中の close（2 回目の ×・Alt+F4） | 窓が重なる・2 回目で閉じる | handler の 3（既に開いていれば止めるだけ）。O2 の c は採らない |
+| F5 | 確認の窓の中の close（2 回目の ×・Alt+F4） | 窓が重なる・2 回目で閉じる | handler の 3（既に開いていれば止めるだけ）。2 回目の × で閉じる形（起票の時の O2 の c）は採らない |
 | F6 | 確認の窓を出す者がいない（root の error の fallback、mount の前） | 止めたのに何も出ず閉じられない | handler の 1（出す者が mount されていなければ止めない） |
 | F7 | 読み直しの後の古い listener | 新しい page が登録し直すまでの間の × は無反応 | A は module の初期化で登録し直す。登録までの短い間の × は効かないが、登録の後は閉じられる（L3-6） |
 
 ## Scope
 
-順: #235 の merge の後に、設計正本の plan-first の修正（下の Design Readiness の表）を本 lane の branch に commit し、計画の review を受けて計画を固定し、その後に実装する。#235 が merge されないまま計画の review に入るなら、5 つ目の hook の行を「#235 が merge されたら」の条件つきで書く（Coordinator の判断）。
+順: 設計正本の plan-first の修正（下の Design Readiness の表）は #235 の merge を待たずに本 lane の branch に入れた（2026-11-14。#235 は未 merge）。#235 に依る行（5 つ目の止めの hook、日報の確かめ方の文、§55.12 の括弧）は「#235 が merge されたら」の条件つきで書く（Coordinator の判断）。計画の review を受けて計画を固定し、実装は #235 の merge の後に始める（実装の branch を #235 の後の main に同期してから）。
 
 実装（計画の固定の後）:
 
-- `src/lib/window-close-guard.ts`（新）: 止めの集合（鍵は hook の instance ごとの `Symbol`、値は `"busy" | "dirty"`）、`useWindowCloseGuard(kind, active: boolean)`（`useEffect` で出し入れ、cleanup で外す）、確認の窓の状態（`null | "busy" | "dirty"`）と `subscribe`・`getSnapshot`（`useSyncExternalStore` 用）、確認の窓を出す者の mount の登録、handler の判定（純関数、上の 1〜5）。`@tauri-apps/api` を import しない（多くの画面の test が window を mock していないので、hook から Tauri を引かない）。`ponytail:` comment（module の 1 つの store。窓が 2 つ以上になれば窓の label ごとに持つ）。
+- `src/lib/window-close-guard.ts`（新）: 止めの集合（鍵は hook の instance ごとの `Symbol`、値は種類 `WindowCloseGuardKind` = 進行中の `"z004-import" | "z004-rollback" | "daily-report-import" | "daily-report-rollback"` と未保存の `"dirty"`。O3 の文が取込みと取消、確かめる所が Z004 と日報で分かれるので、起票の時の `"busy"` 1 つを 4 つに分けた）、`useWindowCloseGuard(kind, active: boolean)`（`useEffect` で出し入れ、cleanup で外す）、確認の窓の状態（`null` か開いた時の種類。進行中が複数あれば集合に先に入った方）と `subscribe`・`getSnapshot`（`useSyncExternalStore` 用）、確認の窓を出す者の mount の登録、handler の判定（純関数、上の 1〜5）。`@tauri-apps/api` を import しない（多くの画面の test が window を mock していないので、hook から Tauri を引かない）。`ponytail:` comment（module の 1 つの store。窓が 2 つ以上になれば窓の label ごとに持つ）。
 - `src/lib/window-close-listener.ts`（新）: `installWindowCloseGuard(win = getCurrentWindow())`。module の flag で 2 回目の呼出しを無視し、`win.onCloseRequested(handler)` を登録、reject は `console.warn`。開発の HMR では `import.meta.hot?.dispose` で unlisten。
 - `src/main.tsx`: `installWindowCloseGuard()` を render の前に 1 回。
-- `src/components/layout/WindowCloseDialog.tsx`（新）: store を `useSyncExternalStore` で読み、`"dirty"` は UI-USW-D2 と同じ硬化（`onEscapeKeyDown` の `preventDefault`、外側の click で閉じない）の AlertDialog、`"busy"` は O2・O3 の窓。「破棄して閉じる」は `getCurrentWindow().destroy()`、失敗は O5。mount の間だけ「出す者」として store に登録。既存の `src/components/patterns/UnsavedChangesDialog.tsx` を説明と操作の文の prop で使い回せるなら使い回す（D-147 の 2 段目。実装の時に props の形で決め、新しい component にする方が小さければそうする）。
+- `src/components/layout/WindowCloseDialog.tsx`（新）: store を `useSyncExternalStore` で読み、`"dirty"` は UI-USW-D2 と同じ硬化（`onEscapeKeyDown` の `preventDefault`、外側の click で閉じない）の AlertDialog（見出し「編集内容が保存されていません」、説明「このまま閉じると、入力した内容は破棄されます。」、「編集を続ける」〈既定 focus〉/「破棄して閉じる」〈destructive〉。TD-689 の O1）、進行中の 4 つは UI-USW-D5 の表の見出しと説明で「待つ」（既定 focus。Esc と外側の click も「待つ」と同じ）/「閉じる」（O2・O3）。進行中の種類が集合から外れたら窓を閉じる。「破棄して閉じる」と「閉じる」は `getCurrentWindow().destroy()`、拒まれたら窓を閉じて `toast.error("閉じられませんでした。もう一度 × を押してください。")`（O5）。mount の間だけ「出す者」として store に登録。既存の `src/components/patterns/UnsavedChangesDialog.tsx` を説明と操作の文の prop で使い回せるなら使い回す（D-147 の 2 段目。実装の時に props の形で決め、新しい component にする方が小さければそうする）。
 - `src/components/layout/RootLayout.tsx`: `<WindowCloseDialog />` を Toaster と並べて mount。
-- 止めの hook（各 1 行。`useBlocker` と同じ条件を渡す）: `src/hooks/useUnsavedChangesWarning.ts`（`"dirty"`, `isDirty`）、`src/features/csv-import/hooks/useCsvImportFlow.ts`（`"busy"`, importing）、`src/features/csv-import/hooks/useRollbackCsvImport.ts`（`"busy"`, `mutation.isPending`）、`src/features/daily-report-import/hooks/useDailyReportImportFlow.ts`（`"busy"`, 今の条件。#235 の後は importing だけ）、`src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts`（#235 の後、`"busy"`, `mutation.isPending`）。hook の comment の「native の window の close は…保証しない」（`useRollbackCsvImport.ts:38`）と「Tauri webview beforeunload 連動」（`useCsvImportFlow.ts:70`）を直す。
+- 止めの hook（各 1 行。`useBlocker` と同じ条件を渡す）: `src/hooks/useUnsavedChangesWarning.ts`（`"dirty"`, `isDirty`）、`src/features/csv-import/hooks/useCsvImportFlow.ts`（`"z004-import"`, importing）、`src/features/csv-import/hooks/useRollbackCsvImport.ts`（`"z004-rollback"`, `mutation.isPending`）、`src/features/daily-report-import/hooks/useDailyReportImportFlow.ts`（`"daily-report-import"`, importing）、#235 が merge されたら `src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts`（`"daily-report-rollback"`, `mutation.isPending`。#235 の head `fac35a17` の同 file の `useBlocker` と同じ条件）。#235 が merge されないまま実装に入ることになれば（Scope の「順」の外。Coordinator が Gated Amendment で決める）、`useDailyReportImportFlow.ts` が今の 2 つの条件を 2 行に分けて持つ（`"daily-report-import"` に importing、`"daily-report-rollback"` に `rollbackMutation.isPending`）。hook の comment の「native の window の close は…保証しない」（`useRollbackCsvImport.ts:38`）と「Tauri webview beforeunload 連動」（`useCsvImportFlow.ts:70`）を直す。
 - `src-tauri/capabilities/default.json`: `"core:window:allow-destroy"` を 1 行足す。ほかの権限（`allow-close` 等）は足さない。
-- test（下の Test Plan）: `src/lib/window-close-guard.test.tsx`（新）、`src/lib/window-close-listener.test.ts`（新）、`src/components/layout/WindowCloseDialog.test.tsx`（新）、`src/hooks/unsaved-changes-guard-sweep.test.ts`（T18 を足す: `useBlocker(` を呼ぶ file は全部 `useWindowCloseGuard(` も呼ぶ。capabilities の行の検査も同じ file か新しい sweep に置く）、止めの hook の既存の test（`useUnsavedChangesWarning.test.tsx`・`useCsvImportFlow` / `useRollbackCsvImport` / `useDailyReportImportFlow` の test）に集合の出し入れの 1 本ずつ。
+- test（下の Test Plan）: `src/lib/window-close-guard.test.tsx`（新）、`src/lib/window-close-listener.test.ts`（新）、`src/components/layout/WindowCloseDialog.test.tsx`（新）、`src/hooks/unsaved-changes-guard-sweep.test.ts`（T18 を足す: `useBlocker(` を呼ぶ file は全部 `useWindowCloseGuard(` も呼ぶ。capabilities の行の検査も同じ file か新しい sweep に置く）、止めの hook の既存の test（`useUnsavedChangesWarning.test.tsx`・`useCsvImportFlow` / `useRollbackCsvImport` / `useDailyReportImportFlow` の test。#235 が merge されたら `useRollbackDailyReportImport` の test も）に集合の出し入れの 1 本ずつ。
 - 隣の test で見る所: `src/components/layout/RootLayout.test.tsx`・`src/lib/app-router.test.tsx`・`src/features/backup-restore/BackupRestorePage.flow.test.tsx` は `@tauri-apps/api/window` を mock している（`rg -n 'vi.mock\("@tauri-apps/api/window"' src`）。確認の窓は mount だけでは Tauri を呼ばないので、mock の形が変わらないことを確かめる。
 - 生成物: test の名に REQ の ID を付けるなら `docs/function-design/90-traceability.md` を再生成する（`cd src-tauri && cargo run --bin generate_traceability`。手で直さない）。
-- docs（実装の PR）: Design Readiness の表で plan-first に入れた「未実装」の注を外し、更新履歴に実装の行。backlog の項目を済みにする。
+- docs（実装の PR）: Design Readiness の表で plan-first に入れた「未実装（PR #250 の実装で入る）」の注（UI_TECH_STACK UI-USW-D1・D4・D5、55 §55.7・§55.11、65 §65.5a、52 §52.1、SCREEN_DESIGN の「Tauri capability」の行、decision-log D-153 の Status）を外し、各 file の更新履歴に実装の行。#235 が先に merge されていれば 55 §55.12 の括弧も同じ形に直す。backlog の項目を済みにする。
 
-Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/components/patterns/useProductAddSuggest.ts` ほか画面の page（hook の側で止めを持つので page は触らない）、O4 の他の進行中の処理、`tauri.conf.json`（browser accelerator keys を切ることは本 lane の外。読み直しは A で閉じられる）。
+Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/components/patterns/useProductAddSuggest.ts` ほか画面の page（hook の側で止めを持つので page は触らない）、TD-689 の O4 で外した他の進行中の処理、`tauri.conf.json`（browser accelerator keys を切ることは本 lane の外。読み直しは A で閉じられる）。
 
 ## Acceptance Criteria
 
@@ -149,34 +151,36 @@ Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/c
 
 ## Design Readiness
 
-- 引用する設計正本（節まで）: `docs/UI_TECH_STACK.md` §6.11 UI-USW-D1〜D4、`docs/function-design/55-ui-csv-import.md` §55.7（止める範囲・UI-07-D18・解除）と §55.11 の「取消の実行と後」、UI-07-D15 (6)（#235 の後は UI-07-D19 も）、`docs/function-design/52-ui-shared-layout.md` §52.1（RootLayout の責務）・§52.5（capability の記述の形）、`docs/SCREEN_DESIGN.md` の「Tauri capability」の行（:501）、`docs/design-system/02-component-catalog.md` の AlertDialog（DSR-07・DSR-20）、AGENTS.md D-127・D-147。
-- 必要な設計成果物（design-first が要る）: Design Phase Rules の表の「operator の流れ・日本語の文言・Windows native の操作」と「横断の durable な選択」に当たり、今の正本は native の close を「保証しない」（UI-USW-D4）と書いているので足りない。計画の review の前に本 lane の branch に plan-first で入れる:
+- 引用する設計正本（節まで）: `docs/UI_TECH_STACK.md` §6.11 UI-USW-D1〜D5、`docs/function-design/55-ui-csv-import.md` §55.7（止める範囲・UI-07-D18・解除）と §55.11 の「取消の実行と後」、UI-07-D15 (6)（#235 の後は UI-07-D19 も）、`docs/function-design/65-inventory-record-traceability.md` §65.5a の「失敗」、`docs/function-design/52-ui-shared-layout.md` §52.1（RootLayout の責務）・§52.5（capability の記述の形）、`docs/SCREEN_DESIGN.md` の「Tauri capability」の行、`docs/decision-log.md` D-153、`docs/design-system/02-component-catalog.md` の AlertDialog（DSR-07・DSR-20）、AGENTS.md D-127・D-147。
+- 必要な設計成果物（design-first が要る）: Design Phase Rules の表の「operator の流れ・日本語の文言・Windows native の操作」と「横断の durable な選択」に当たる。起票の時の正本は native の close を「保証しない」（UI-USW-D4）と書いていたので、2026-11-14 に本 lane の branch に plan-first で入れた（どの行にも「未実装（PR #250 の実装で入る）」の注を付け、実装の PR で外す。Scope の docs の行）:
 
-  | 正本 | 節 | 変更 |
-  |---|---|---|
-  | UI_TECH_STACK | UI-USW-D4 | 「非保証」を改め、native の close は UI-USW-D5 が止めると書く（未実装の注） |
-  | UI_TECH_STACK | UI-USW-D5（新。`rg -n "UI-USW-D5" docs src` が本 commit の時に 0 件） | 案 A の契約: listener は窓に 1 つで module の初期化で登録、止めの集合の種類（進行中 > 未保存）、確認の窓の 2 つの形と文言（O1〜O3・O5 の答え）、handler の判定の順 1〜5、fail-open の規則（F1〜F7）、`destroy` の権限、`useBlocker` を使う hook は同じ条件で close の止めも持つ（T18 が強制）。棄てた案 B〜E と理由 |
-  | UI_TECH_STACK | UI-USW-D1 | hook が同じ `isDirty` で close の止めも持つことを 1 文 |
-  | 55 | §55.7 の「止める範囲」・UI-07-D18・§55.11 の括弧 | native の close も UI-USW-D5 で止めると直す。「Tauri の native の close は webview の `beforeunload` を経ない」の事実の文は残す |
-  | 52 | §52.1 の表 | RootLayout の行に確認の窓の mount、`main.tsx` の接続点に listener の登録を 1 行 |
-  | SCREEN_DESIGN | 「Tauri capability」の行 | `core:window:allow-destroy` を足し、理由（止めた後に閉じる）を 1 句 |
-  | decision-log | 新しい D | 横断の選択（JS の listener を module の初期化で 1 つ、Rust に状態を持たない、fail-open）。番号は commit の時の最新の次（今の最新は D-152） |
+  | 正本 | 節 | 変更 | 状態 |
+  |---|---|---|---|
+  | UI_TECH_STACK | UI-USW-D4 | 「非保証」を改め、native の close は beforeunload を経ず、UI-USW-D5 が止めると書いた | 入れた |
+  | UI_TECH_STACK | UI-USW-D5（新。`rg -n "UI-USW-D5" docs src` が起票の commit の時に 0 件） | 案 A の契約: 止めの集合と 5 つの種類、listener は窓に 1 つで `main.tsx` から登録、handler の判定の順 1〜5、確認の窓の 2 つの形と文言（TD-689 の O1〜O3・O5）、fail-open と抜け道、`allow-destroy` の権限、範囲（O4）、`useBlocker` を使う hook は同じ条件で close の止めも持つ（T18 が強制）、棄てた案 B〜E と理由 | 入れた |
+  | UI_TECH_STACK | UI-USW-D1 | hook が同じ `isDirty` で close の止めも持つことを 1 文 | 入れた |
+  | 55 | §55.7 の「止める範囲」・§55.11 の「取消の実行と後」の括弧 | 止める範囲に native の close（UI-USW-D5）を足し、ガードの hook が同じ条件を `useWindowCloseGuard` に渡すこと（種類の名）と close の確認の窓の形を書いた。「Tauri の native の close は webview の `beforeunload` を経ない」の事実の文は残した。UI-07-D18 の段落は「上の止める範囲」を引くだけなので変えない | 入れた |
+  | 65 | §65.5a の「失敗」の括弧（表に足した: 起票の表に無く、`rg -n "native の window" docs` で同じ「保証しない」の括弧が残っていた） | 止めに native の close を足した | 入れた |
+  | 52 | §52.1 の表と接続点 | RootLayout の行に確認の窓の mount、接続点に `main.tsx` の listener の登録 | 入れた |
+  | SCREEN_DESIGN | 「Tauri capability」の行 | `core:window:allow-destroy` と理由（止めた後に閉じる） | 入れた |
+  | decision-log | D-153（番号は 2026-11-14 の main と open PR 8 本の branch の `docs/decision-log.md` の最後が D-152） | 横断の選択（JS の listener を module の初期化で 1 つ、Rust に状態を持たない、fail-open）と TD-689 の答え | 入れた |
+  | 55 | §55.12 UI-07-D19 の「取消の実行と後」の括弧（#235 が足す。表に足した: #235 の branch の 55 の :573 が「native の window の close は保証しない」と書く） | #235 が merge されたら、§55.11 と同じ形（止めに native の close を含め、未実装の注）に直す | #235 の merge の後（本 lane の同期か実装の PR） |
 
-- plan にしかない durable な判断の昇格先: 案の比較と失敗の型 → UI-USW-D5 の理由と decision-log の新しい D。packet にだけ残るのは調べの command と出力。
-- 前提・制約と延期した design gap: (i) × と Alt+F4 が Windows で `CloseRequested` を通ること、`destroy` が `allow-destroy` で通ること、読み直しの後に閉じられることは source から読んだ判断で、Windows の実機は未確認（L3-1〜L3-6。外れたら設計へ戻す）。(ii) サインアウト・シャットダウンは対象外（非目的）。(iii) O4 の他の進行中の処理は対象外。
-- 絶対保証の例外と抜け道: 「どの失敗でも閉じられない窓を作らない」の抜け道: (a) JS の thread が固まった時は handler が走らず、Rust が止めたまま閉じない（A・C とも同じ。タスクマネージャーが要る）。(b) F7 の登録までの短い間。(c) O2 で a を採ると、取込み・取消の応答が返らない時は × で閉じられない（O2 の推奨を b にする理由）。「進行中に × で閉じない」の抜け道: F1・F2・F6 の fail-open の時は閉じる（止めより閉じられることを優先する、Goal の 4 つ目）。
-- この変更で不要になる記述・条件: UI-USW-D4 の「native close は非保証」と backlog への行き先、55 §55.7 の「native の window の close（×・Alt+F4）は…止めることを保証しない」と「本節の止めは全てこの範囲」、§55.11 の括弧「native の window の close は §55.7 の『止める範囲』のとおり保証しない」、`useRollbackCsvImport.ts:38` の同じ comment、`useCsvImportFlow.ts:70` の「Tauri webview beforeunload 連動」、backlog の項目（実装の merge で済み）。残すと決めたもの: `useBlocker` と `enableBeforeUnload`（route の移動と読み直しの止めは今の仕組みのまま。close の止めは別の経路で、置き換えではない）、UI-USW-D2 の route の窓の文言、sweep の T16。
-- 判定: not ready。O1〜O5 の owner の答えと、上の表の plan-first の修正が要る。答えの後に表の修正を commit し、計画の review に入る。
+- plan にしかない durable な判断の昇格先: 案の比較と失敗の型 → UI-USW-D5 の理由と D-153。packet にだけ残るのは調べの command と出力。
+- 前提・制約と延期した design gap: (i) × と Alt+F4 が Windows で `CloseRequested` を通ること、`destroy` が `allow-destroy` で通ること、読み直しの後に閉じられることは source から読んだ判断で、Windows の実機は未確認（L3-1〜L3-6。外れたら設計へ戻す）。(ii) サインアウト・シャットダウンは対象外（非目的）。(iii) 3 つの止めの外の進行中の処理は対象外（TD-689 の O4）。(iv) 日報の確かめ方の文が名指す「取り込んだ日報の記録を見る」は #235 の画面の文字で、実装は #235 の merge の後（Scope の「順」）。
+- 絶対保証の例外と抜け道: 「どの失敗でも閉じられない窓を作らない」の抜け道: (a) JS の thread が固まった時は handler が走らず、Rust が止めたまま閉じない（A・C とも同じ。タスクマネージャーが要る）。(b) F7 の登録までの短い間。進行中の窓に「閉じる」を出す（TD-689 の O2）ので、取込み・取消の応答が返らない時も閉じられる。「進行中に × で閉じない」の抜け道: F1・F2・F6 の fail-open の時と、利用者が「閉じる」を選んだ時は閉じる（止めより閉じられることを優先する、Goal の 4 つ目）。
+- この変更で不要になる記述・条件: plan-first で消した: UI-USW-D4 の「native close は非保証」と backlog への行き先、55 §55.7 の「native の window の close（×・Alt+F4）は…止めることを保証しない」と「別 backlog」、§55.11 と 65 §65.5a の「保証しない」の括弧。実装の PR で消す: `useRollbackCsvImport.ts:38` の同じ comment、`useCsvImportFlow.ts:70` の「Tauri webview beforeunload 連動」、#235 の `useRollbackDailyReportImport.ts` の「native の window の close は保証しない」の comment、backlog の項目（実装の merge で済み）、各正本の「未実装」の注。残すと決めたもの: `useBlocker` と `enableBeforeUnload`（route の移動と読み直しの止めは今の仕組みのまま。close の止めは別の経路で、置き換えではない）、UI-USW-D2 の route の窓の文言、sweep の T16、55 §55.7 の「本節の止めは全てこの範囲」（範囲に close を含めた形で残す）。
+- 判定: ready（計画の review に入れる）。owner の答え（TD-689）を入れ、上の表の plan-first の修正のうち #235 に依らない 8 行を入れた。残る 1 行（55 §55.12 の括弧）は #235 の merge が条件で、本 lane の実装も #235 の merge の後に始める（Scope の「順」）ので、計画の review を止めない。計画の固定は計画の review の後。
 
-## Open Questions（owner の判断）
+## owner の決定（Open Questions の答え）
 
-選択肢と推奨は packet の起票の AI が出した（owner の決定ではない）。
+起票の時に O1〜O5 を owner に問い、2026-11-14 に答えが出た（repo 外の回答台帳 TD-689。原文は台帳にあり、ここは ID と要旨だけ）。5 つとも起票の AI の推奨と同じ。未決の問いは残っていない。
 
-- **O1 未保存で × を押した時の窓の文言**: (a) UI-USW-D2 に合わせる: 見出し「編集内容が保存されていません」、説明「このまま閉じると、入力した内容は破棄されます。」、操作「編集を続ける」（既定の focus）/「破棄して閉じる」【推奨。route の移動の窓と同じ見た目で、動詞だけが違う】／(b) route の窓と全く同じ文（「破棄して移動」）にする（動きと文が合わない）／(c) owner の文。
-- **O2 取込み中・取消中に × を押した時に、閉じる道を出すか**: (a) 出さない。「待つ」だけ（終われば窓は自動で消え、もう一度 × で閉じる）／(b) 「待つ」を既定の focus にし、「閉じる」も出す。「閉じる」の前に、閉じると取込みが済んだかをこの画面で確かめられなくなることを書く【推奨。応答が返らない時に閉じられない窓にしない。DB は単一の transaction で守られる（調べ (5)）】／(c) 文だけ出し、もう一度 × を押せば閉じる（隠れた操作で、店に伝わらない）。
-- **O3 取込み中・取消中の窓の文言**（案）: 取込み: 見出し「取込みの途中です」、説明「取込みが終わるまでお待ちください。終わると閉じられます。」。取消: 「取消の途中です」「取消が終わるまでお待ちください。終わると閉じられます。」。O2 で b なら説明に「いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。次に開いたときに取込みの記録で確かめてください。」を足し、操作「待つ」/「閉じる」。(a) 案のまま【推奨】／(b) 取込みと取消を 1 つの文にまとめる（「処理の途中です」。何の途中か分からない）／(c) owner の文。
-- **O4 範囲**: (a) owner の決定（TD-458）の 3 つ（取込み・取消・未保存）だけ【推奨。D-147 の「要るか」。ほかはそれぞれの lane で要ると分かった時に、同じ `useWindowCloseGuard("busy", …)` の 1 行で足せる】／(b) ほかの進行中の処理（例: バックアップの作成・復元、PLU の書出し）も今入れる（全部を数える調べと設計が要り、範囲が広がる）。
-- **O5 「破棄して閉じる」（O2 が b なら「閉じる」も）で閉じられなかった時の文**（案）: 確認の窓を閉じ、その場に「閉じられませんでした。もう一度 × を押してください。」を出す。(a) 案のまま【推奨】／(b) owner の文。
+- **O1 未保存で × を押した時の窓の文言**: (a)。UI-USW-D2 に合わせ、見出し「編集内容が保存されていません」、説明「このまま閉じると、入力した内容は破棄されます。」、操作「編集を続ける」（既定 focus）/「破棄して閉じる」。→ UI-USW-D5 の 4、Scope の `WindowCloseDialog.tsx`、T3・T5、L3-3。
+- **O2 取込み中・取消中に × を押した時に、閉じる道を出すか**: (b)。「待つ」を既定 focus にし、「閉じる」も出す。「閉じる」の前に、閉じると済んだかをこの画面で確かめられなくなることと確かめる所を書く。→ UI-USW-D5 の 4、55 §55.7 の止める範囲、T4、L3-1・L3-2。
+- **O3 取込み中・取消中の窓の文言**: (a)。見出し「取込みの途中です」/「取消の途中です」と待つ文（「…が終わるまでお待ちください。終わると閉じられます。」）。O2 が (b) なので確かめ方の文を足す。確かめる所は Z004 が「売上データ取込み」の「商品別CSV取込み（Z004）」タブの「取り込んだ記録を見る」、日報が同じ画面の「日報取込み」タブの「取り込んだ日報の記録を見る」（#235 の画面。調べ (9)）。文の全文は UI-USW-D5 の 4 の表。→ 種類を進行中の 4 つに分けた（Scope の `window-close-guard.ts`）、T4、L3-1・L3-2。
+- **O4 範囲**: (a)。取込み・取消・未保存の 3 つの止めだけ（TD-458）。ほかは要ると分かった lane で `useWindowCloseGuard` の 1 行で足す。→ UI-USW-D5 の 7、非目的。
+- **O5 「破棄して閉じる」「閉じる」で閉じられなかった時の文**: (a)。確認の窓を閉じ、「閉じられませんでした。もう一度 × を押してください。」を出す（出し方は error の Toast。RootLayout の Toaster が既にある）。→ UI-USW-D5 の 4、T13。
 
 ## Contract Ledger
 
@@ -188,11 +192,12 @@ Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/c
 | UI-USW-D2 | UI_TECH_STACK §6.11 | route の窓は変えない。close の窓が同じ硬化を持つ | T3・T5（Esc で閉じない） | L3-3 |
 | UI-USW-D3 | UI_TECH_STACK §6.11 | 変えない（適用画面は同じ。hook の側で持つので画面を足すと自動で入る） | 既存の T17 | 非対象 |
 | 55 §55.7 止める範囲・UI-07-D18 | 55 §55.7 | `useCsvImportFlow.ts`・`useRollbackCsvImport.ts` の 1 行ずつ | T12（hook） | L3-1・L3-2 |
-| UI-07-D15 (6)（#235 の後は UI-07-D19） | 55 §55.7・§55.12 | `useDailyReportImportFlow.ts`（#235 の後は `useRollbackDailyReportImport.ts`） | T12（hook）・T18 | L3-1・L3-2 |
+| UI-07-D15 (6)（#235 が merge されたら UI-07-D19 も） | 55 §55.7（#235 が merge されたら §55.12 も） | `useDailyReportImportFlow.ts` の `"daily-report-import"`（#235 が merge されたら `useRollbackDailyReportImport.ts` の `"daily-report-rollback"`） | T12（hook）・T18 | L3-1・L3-2（日報の項目は置かない。Z004 と同じ store と窓を通る） |
 | 55 §55.11 取消の実行と後 | 55 §55.11 | 文の括弧だけ | — | 非対象（docs） |
+| 65 §65.5a の「失敗」 | 65 §65.5a | 文の括弧だけ（CSV取込みの詳細の取消は `useRollbackCsvImport` を通るので、上の §55.7 の行と同じ実装） | T12（hook） | 非対象（docs） |
 | 52 §52.1 | 52 | `RootLayout.tsx`・`main.tsx` | T6・T1 | L3-4 |
 | capabilities（`core:window:allow-destroy`） | SCREEN_DESIGN「Tauri capability」・UI-USW-D5 | `src-tauri/capabilities/default.json` | T10 | L3-4（何もない時に閉じる） |
-| decision-log の新しい D | decision-log | — | — | 非対象（docs） |
+| D-153 | decision-log | — | — | 非対象（docs） |
 
 隣の契約の sweep: UI-EB-D1（route の error の fallback）は F6 で触れる（fallback の間は止めない）。行は UI-USW-D5 の handler の 1 に含めた。54 のショートカット（Ctrl+/）は close に関わらない（除外）。
 
@@ -202,8 +207,8 @@ Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/c
 |---|---|---|---|---|
 | UI-USW-D5 | listener が 2 つになる | unit | T1 `installWindowCloseGuard` を 2 回呼んでも `onCloseRequested` は 1 回 | module の flag を外す |
 | UI-USW-D5・D4 | 何もない時に止める | unit | T2 集合が空なら `preventDefault` を呼ばない | 判定の 2 を外す・常に止める |
-| UI-USW-D5・D2 | 未保存が確認なく消える | unit + component | T3 `"dirty"` で `preventDefault` し未保存の窓。「破棄して閉じる」で `destroy` 1 回、「編集を続ける」で `destroy` 0 回・窓が閉じ集合は残る | 種類の判定・操作の結線を外す |
-| UI-USW-D5・§55.7 | 取込み中に消える | unit + component | T4 `"busy"` で `preventDefault` し進行中の窓。集合から busy が外れると窓が自動で閉じる。O2 が b なら「閉じる」で `destroy` | busy の優先・自動で閉じる結線を外す |
+| UI-USW-D5・D2 | 未保存が確認なく消える | unit + component | T3 `"dirty"` で `preventDefault` し未保存の窓（見出し「編集内容が保存されていません」・説明「このまま閉じると、入力した内容は破棄されます。」・既定 focus が「編集を続ける」）。「破棄して閉じる」で `destroy` 1 回、「編集を続ける」で `destroy` 0 回・窓が閉じ集合は残る | 種類の判定・文言・既定 focus・操作の結線を外す |
+| UI-USW-D5・§55.7 | 取込み中に消える | unit + component | T4 進行中の 4 つの種類ごとに `preventDefault` し、UI-USW-D5 の表の見出しと説明の窓（既定 focus が「待つ」）。`"dirty"` と進行中が同時なら進行中の窓。「待つ」と Esc で窓が閉じ `destroy` 0 回、集合からその種類が外れると窓が自動で閉じる。「閉じる」で `destroy` 1 回 | 進行中の優先・種類ごとの文言・自動で閉じる結線・「閉じる」の結線を外す |
 | UI-USW-D2 | Esc で確認を飛ばす | component | T5 未保存の窓で Esc を押しても閉じない | `onEscapeKeyDown` の `preventDefault` を外す |
 | UI-USW-D5・UI-EB-D1 | 出す者がいないのに止める（F6） | unit | T6 確認の窓の component が mount されていなければ、集合が active でも `preventDefault` しない | 判定の 1 を外す |
 | UI-USW-D5 | 2 回目の close で重なる・閉じる（F5） | unit | T7 窓が開いている間の 2 回目の close は `preventDefault` し、窓の状態は変わらず `destroy` 0 回 | 判定の 3 を外す |
@@ -212,17 +217,17 @@ Non-scope: Rust の source（`src-tauri/src/**`）、command・bindings、`src/c
 | capabilities | `destroy` の権限が無い（F3） | sweep | T10 `src-tauri/capabilities/default.json` の `permissions` に `core:window:allow-destroy` がある | 行を消す |
 | UI-USW-D5 | 登録の reject で app が止まる（F1） | unit | T11 `onCloseRequested` の reject で `installWindowCloseGuard` が throw せず `console.warn` | `catch` を外す |
 | UI-USW-D1・§55.7 | hook が集合に入れない | hook | T12 各止めの hook で条件が true の間は集合に種類が入り、false で外れる（hook ごとに 1 本） | hook の 1 行を外す・条件を変える |
-| UI-USW-D5 | `destroy` の失敗が黙る | component | T13 「破棄して閉じる」の `destroy` が reject すると O5 の文が出て窓が閉じる | 失敗の枝を外す |
+| UI-USW-D5 | `destroy` の失敗が黙る | component | T13 「破棄して閉じる」と「閉じる」の `destroy` が reject すると、窓が閉じ error の Toast で「閉じられませんでした。もう一度 × を押してください。」が出る | 失敗の枝を外す |
 | UI-USW-D5 | 新しい止めの hook が close を止めない | sweep | T18 `useBlocker(` を呼ぶ file は全部 `useWindowCloseGuard(` も呼ぶ | 1 つの hook から外す |
 
 状態の遷移: initial（集合が空）→ dirty / busy（T3・T4・T12）→ 窓が開く（T3・T4）→ 2 回目の close（T7）→ 続ける・待つ（T3・T4）→ busy の終わりで自動で閉じる（T4）→ 破棄・閉じる（T3）→ 失敗（T13）。negative: T2・T6・T9・T11。mutation の注入は「Would fail if」の列を実装に注入して red を確かめる（未実測。Contract Audit で）。
 
 ## L3
 
-Windows の店の PC と同じ形の native の build で、各項目を × と Alt+F4 の両方で見る（2 通り × 項目）。fixture は agent が L3 の依頼と同時に渡す（取込みが数秒かかる合成の Z004 の CSV〈CP932〉。行数と時間は未実測）。
+Windows の店の PC と同じ形の native の build で、各項目を × と Alt+F4 の両方で見る（2 通り × 項目）。fixture は agent が L3 の依頼と同時に渡す（取込みが数秒かかる合成の Z004 の CSV〈CP932〉を別の精算で 2 つ。同じ精算の 2 回目は §55.11 の順 4 の拒否で止まるため。行数と時間は未実測）。
 
-- L3-1 取込み中: サイドバーの「売上データ取込み」の「商品別CSV取込み（Z004）」タブで合成の CSV を選び、プレビューの「取り込む」を押し、「取込み完了まで他画面に移れません」が出ている間に × / Alt+F4 → 窓は閉じず、O3 の取込みの窓が出る。取込みが終わると窓が消え、もう一度 × で閉じる。O2 が b なら「閉じる」で閉じる。
-- L3-2 取消中: L3-1 の取込みの結果の画面で「取り消す」→「取込みを取り消しますか？」で取り消す →「取り消し中…」の間に × / Alt+F4 → 窓は閉じず、O3 の取消の窓が出る（取消が短く押せなければ「押す前に終わった」と返す。FAIL にしない）。
+- L3-1 取込み中: サイドバーの「売上データ取込み」の「商品別CSV取込み（Z004）」タブで合成の CSV を選び、プレビューの「取り込む」を押し、「取込み完了まで他画面に移れません」が出ている間に × / Alt+F4 → 窓は閉じず、「取込みの途中です」と、待つ文・確かめ方の文（「…「商品別CSV取込み（Z004）」タブの「取り込んだ記録を見る」で確かめてください。」）の窓が出て、focus は「待つ」にある。「待つ」を押すか、取込みが終わると窓が消え、もう一度 × で閉じる。fixture の 2 つ目の CSV で同じく取り込み、同じ窓で「閉じる」を押すと閉じる。開き直して「取り込んだ記録を見る」を開くと、その取込みが済んでいれば行がある（済む前に閉じたなら無い）。
+- L3-2 取消中: L3-1 の取込みの結果の画面で「取り消す」→「取込みを取り消しますか？」で取り消す →「取り消し中…」の間に × / Alt+F4 → 窓は閉じず、「取消の途中です」と、待つ文・確かめ方の文（「…「取り込んだ記録を見る」で、取消済みかを確かめてください。」）の窓が出る（取消が短く押せなければ「押す前に終わった」と返す。FAIL にしない）。
 - L3-3 未保存: サイドバーの「入庫記録」で商品を検索して明細を 1 行足し、保存せずに × / Alt+F4 →「編集内容が保存されていません」と「このまま閉じると、入力した内容は破棄されます。」が出る。「編集を続ける」で入力が残り、もう一度 × で同じ窓。「破棄して閉じる」で閉じる。窓が出ている間にもう一度 × を押しても窓は 1 枚のまま。
 - L3-4 何もない時: ホームで × / Alt+F4 → 確認なくすぐ閉じる。
 - L3-5 保存の後: 「入庫記録」で保存して「入庫を保存しました」が出た後（入力が無い状態）に × → すぐ閉じる。
@@ -234,4 +239,10 @@ Windows の店の PC と同じ形の native の build で、各項目を × と 
 2. 未保存の窓（route の移動）が出ている間に × を押すと、close の窓が重なる（2 枚の AlertDialog）。close の窓を優先してよいか、route の窓が出ている間は close の窓を出さず route の窓に任せるべきか。
 3. T18 の sweep（`useBlocker(` を呼ぶ file は `useWindowCloseGuard(` も呼ぶ）は、条件まで同じことを見張らない。条件の食い違いを T12 で足りるとしてよいか。
 4. L3-1・L3-2 は応答の短さで到達できないことがある（L3 Eligibility (3) の故障注入を使わない）。L3 に置いてよいか、自動 test だけに回すべきか。
-5. `UnsavedChangesDialog` を文の prop で使い回すか、`WindowCloseDialog` を別に作るかを実装の時に決める書き方でよいか（D-147）。
+5. `UnsavedChangesDialog` を文の prop で使い回すか、`WindowCloseDialog` を別に作るかを実装の時に決める書き方でよいか（D-147）。TD-689 の答えで、未保存の窓は route の窓と説明と操作の文だけが違い、進行中の窓は操作が「待つ」/「閉じる」で Esc の扱いも違うと決まった。
+
+owner の答え（TD-689）の後に足した点（plan-first の Writer、2026-11-14）:
+
+6. 答えの O3（取込みと取消で見出しが違う）と O2 の確かめ方の文（Z004 と日報で確かめる所が違う）から、止めの種類を起票の時の `"busy"` 1 つから進行中の 4 つ（`z004-import`・`z004-rollback`・`daily-report-import`・`daily-report-rollback`）に分けた。種類の数を増やすより、hook が見出しと説明を渡す形のほうが小さいか。
+7. 進行中の窓の Esc と外側の click を「待つ」と同じ（窓を閉じるだけ）にし、未保存の窓だけ UI-USW-D2 の硬化を持たせた。「待つ」は何も失わないので硬化は要らないと判断したが、1 つの窓の component で 2 つの振舞いになる。O5 の「その場に」は error の Toast と読んだ。
+8. 日報の確かめ方の文は #235 の画面の文字（「取り込んだ日報の記録を見る」）で、実装は #235 の merge の後に始める前提に立つ。#235 が大きく遅れるなら、main にある画面で確かめる別の文（どの画面で確かめられるかは未調査）で先に実装する道を Gated Amendment で開くか。
