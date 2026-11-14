@@ -2,11 +2,11 @@
 
 wave に属さない単独の lane。merge の helper（`scripts/pr-gate.py`）の同期だけの条件と manual の使い回し B、その test、正本の文（`docs/agent-guidance/merge-evidence.md` の「base同期だけでheadが変わる場合」、`docs/DEV_WORKFLOW.md` の L3 の表、`docs/decision-log.md`）を変える。製品の runtime（`src/**` の非 test・`src-tauri/**`）・CI の job・classifier は変えない。
 
-出所: owner の決定 TD-704（repo 外の回答台帳、2026-11-14）「同期で docs だけが衝突した lane が L3 を使い回せずにやり直しになるのは理屈に合わないので、規則を直す。今後も必ず同じ状況になる」。owner は PR #123（2026-09-29）で manual の再利用の条件を緩めず、D-144（2026-10-27）で生成物と `docs/decision-log.md` の union だけを受けた。TD-704 はそれより後の決定で、残っていた backlog の観測の項目（「衝突を解いた版の manual の再利用（観測）」）に owner が答えたもの。手で解いてよい path の範囲は owner の決定 TD-706（同じ台帳、2026-11-14。下の「Open Questions」の決定の記録）で (b) に決まった。起点の事実は下の「調べ」。
+出所: owner の決定 TD-704（repo 外の回答台帳、2026-11-14）「同期で docs だけが衝突した lane が L3 を使い回せずにやり直しになるのは理屈に合わないので、規則を直す。今後も必ず同じ状況になる」。owner は PR #123（2026-09-29）で manual の再利用の条件を緩めず、D-144（2026-10-27）で生成物と `docs/decision-log.md` の union だけを受けた。TD-704 はそれより後の決定で、残っていた backlog の観測の項目（「衝突を解いた版の manual の再利用（観測）」）に owner が答えたもの。手で解いてよい path の範囲は owner の決定 TD-706（同じ台帳、2026-11-14。下の「Open Questions」の決定の記録）で (b) に決まり、残りの問いは TD-709〜TD-713（同じ台帳、2026-11-14、owner の「全部推奨」）で決まった。起点の事実は下の「調べ」。
 
 decision-log の番号: 本 lane は D-154 を予約する。2026-11-14 に `git fetch origin` の後で引き直した: `git grep -n "^## D-15" origin/main -- docs/decision-log.md` の最後は D-152（`a90b0d6`）、`git grep -n -E "D-15[3-9]" <open の 7 本の origin/agent/* branch> -- docs/decision-log.md docs/plans` の当たりは PR #250（`agent/window-close-guard`）の D-153 だけで、D-154 以降は無い。
 
-安全の境界: この変更は `AGENTS.md`「継ぎ足さない」と `docs/DEV_WORKFLOW.md` Workflow State（D-098）が挙げる安全の境界のうち「古い証拠の拒否」を緩める向きに変える。改訂は通常の packet・PR の経路で行い（本 packet）、owner の決定の日付は TD-704 と TD-706（どちらも 2026-11-14）。何を新たに受け、何を今までどおり拒むかを下の「境界ごとの受けると拒む」に書く。
+安全の境界: この変更は `AGENTS.md`「継ぎ足さない」と `docs/DEV_WORKFLOW.md` Workflow State（D-098）が挙げる安全の境界のうち「古い証拠の拒否」を緩める向きに変える。改訂は通常の packet・PR の経路で行い（本 packet）、owner の決定の日付は TD-704・TD-706・TD-709〜TD-713（どれも 2026-11-14）。何を新たに受け、何を今までどおり拒むかを下の「境界ごとの受けると拒む」に書く。
 
 ## Workflow State
 
@@ -66,7 +66,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 `src/test/**` と `src/**/*.test.ts(x)` は app の build に入らない: `package.json` の `build` は `vite build`（entry から import を辿る）で、`grep -rlE` で test の file でも `src/test/` でもない `src/**` の file から `src/test/…` か `*.test` を import する所は 0 件。`tsconfig.json` の `include` は `src` と `src/test` を含むので、`tsc --noEmit`（typecheck）と vitest には入り、hosted の frontend の job が新しい head で確かめる。
 
-Rust の test（2026-11-14、本 run で実測）: `rg -l "#\[cfg\(test\)\]" src-tauri/src --type rust --stats` は 102 file 中 69 file（127 箇所）で、多くは本体の file の中の module。ほかに分かれた dir が 3 つある: `src-tauri/tests`（`architecture_test.rs`・`design_compliance_test.rs` ほか）、`src-tauri/dev-tools/tests`、`src-tauri/src/biz/csv_import_service/tests`（`mod.rs:15` の `mod tests;` で本体の crate の module に入る）。TD-706 は Rust の test を全部入れない。分かれた dir の file を path で受けることはできるが、決定の範囲の外に置き、本 lane の集合に入れない（入れるなら別の決定。下の「計画の review に問う点」）。
+Rust の test（2026-11-14、本 run で実測）: `rg -l "#\[cfg\(test\)\]" src-tauri/src --type rust --stats` は 102 file 中 69 file（127 箇所）で、多くは本体の file の中の module。ほかに分かれた dir が 3 つある: `src-tauri/tests`（`architecture_test.rs`・`design_compliance_test.rs` ほか）、`src-tauri/dev-tools/tests`、`src-tauri/src/biz/csv_import_service/tests`（`mod.rs:15` の `mod tests;` で本体の crate の module に入る）。TD-706 は Rust の test を全部入れない。分かれた dir の file を path で受けることはできるが、TD-709（2026-11-14）で決定どおり外したままにし、本 lane の集合に入れない（必要になれば D-154 の Revisit で見直す）。
 
 今の規則で 4 本は全部、同期だけの条件の merge の要件（merge-evidence の「同期だけの条件」の (a)）を満たさない（生成物と union の外の衝突）。B も同期だけの条件を要るので使えず、L3 のやり直しになる。C は 1 親の lane の commit だけを許し、merge の中の違いには効かない。
 
@@ -98,37 +98,39 @@ Rust の test（2026-11-14、本 run で実測）: `rg -l "#\[cfg\(test\)\]" src
 | review の closure | — | 手で解いた path があれば `--review-stage sync`・`--review-stage docs` を拒み、監査の closure を案内する（B の 2 本が兼ねる） |
 | status・Ready・merge の確かめ直し | `reuse_approval` のある manual は、手で解いた path があっても通す | 手で解いた path があるのに `reuse_approval` の無い manual、`sync_from` の形の closure を拒む |
 | `scripts/plan-approve.sh` | — | 手で解いた merge を今のとおり「not a sync of main」で拒む（`sync_merge` の既定は今の厳しい判定のまま、helper の使い回しの経路だけが新しい判定を頼む） |
-| R4 | （Q2 の答えが「入れる」なら）B の manual の使い回し | `r4` の承認は今のとおり使い回さない（新しい head での明示の承認） |
-| packet の無い R0〜R2 | （Q3 の答えが「入れる」なら）今の B と同じく、closure の 2 本の証跡を `reuse_approval` の pointer の先に置いて使い回す | `l3_basis` の比較は packet が無いので行わない（今の B と同じ） |
+| R4（TD-710） | 手で解いた同期での B の manual の使い回し（今の B が R4 の code に触れる同期に効くのと同じ） | `r4` の承認は今のとおり使い回さない（新しい head での明示の承認を取り直す）。C（`docs_route`）は今のとおり R4 に使わない |
+| packet の無い R0〜R2（TD-711） | 手で解いた同期での B の manual の使い回し。今の B と同じく、closure の 2 本の証跡を `reuse_approval` の pointer の先に置く（review の要らない R0/R1 の manual の lane）か、review の closure の evidence に並べる（R2） | `l3_basis` の比較は packet が無いので行わない（L3 の基準は PR body にあり、tree の手の解消で変わらない。今の B と同じ）。`--reuse-from` だけの明示の A は手で解いた同期で拒む |
+| gate の文書（TD-712） | — | classifier の `workflow=true` の path の手の解消は集合の外に置き、同期だけの条件を満たさない（L3 のやり直しだけを案内する）。必要が出たら D-154 の Revisit で見直す |
+| Ready の承認（TD-713） | 手で解いた同期の Ready の承認を、B の owner の 1 行の承認と同じ 1 回に束ねる | helper は手で解いた同期を「同期だけ」と判定しない（`--review-stage sync` を拒む）ので、AGENTS.md の「同期だけと判定した同期を経た head」に入らず、承認は取り直す。AGENTS.md は変えない |
 
 ## Scope
 
 - `scripts/pr-gate.py`（計画の固定の後の実装の run）:
   - `sync_merge(commit, first, second, base, resolve=False)`: `resolve=False`（既定、`plan-approve.sh` の呼出し）は今のまま。`resolve=True` のときは、自動の merge と違う path（今の `lane`）のうち手で解いてよい path の集合の中のものを拒まずに返し、集合の外が 1 つでもあれば今の文で拒む。`docs/decision-log.md` は union と一致すれば今のとおり除き、一致しなければ集合の判定に回す。集合の判定は、まず定数の pattern（frontend の test の file）、外れた path を current main 側の classifier（`self.contents('scripts/ci/classify-changes.sh', base)`）に path ごとに通す（今の `code_paths` と同じ形）。
   - `sync_merges`: 手で解いた path を `self.resolved`（`self.docs_commits` と同じ置き方）に集める。呼出し側は `reusable`・`carry_manual`・`sync_closure`・`nonci`・`record --reuse-from` の 5 か所（`rg -n "sync_merges|reusable\(|sync_merge\(" scripts` で列挙し直す）。
-  - `carry_manual`: `self.resolved` があれば B の command と L3 のやり直しの command を示して止める（理由の文に手で解いた path を並べる）。L3 の比較は `self.docs_commits or self.resolved` のとき行う。
-  - `record --reuse-from`: `--reuse-approval` があれば手で解いた path を受け、無ければ（明示の A）拒む。
+  - `carry_manual`: `self.resolved` があれば B の command と L3 のやり直しの command を示して止める（理由の文に手で解いた path を並べる）。L3 の比較は `self.docs_commits`（今のとおり）か、`--packet` があって `self.resolved` があるとき行う。packet の無い R0〜R2（TD-711）は `l3_change` を呼ばない（呼ぶと packet が読めずに止まる）。R4（TD-710）でも同じく B を示し、`r4` は今のとおり引き継がない。
+  - `record --reuse-from`: `--reuse-approval` があれば手で解いた path を受け（R3・R4・packet の無い R0〜R2 のどれも）、無ければ（R0/R1 の明示の A）拒む。
   - `sync_closure`: `self.resolved` があれば拒み、監査の closure を案内する。
-  - `nonci`: manual の `source_head` から確かめ直すとき、手で解いた path があって `reuse_approval` が無ければ拒む。`sync_from` の closure は手で解いた path があれば拒む。
+  - `nonci`: manual の `source_head` から確かめ直すとき、手で解いた path があって `reuse_approval` が無ければ拒む。L3 の比較は `carry_manual` と同じ条件（packet がある時だけ）。`sync_from` の closure は手で解いた path があれば拒む。
   - pattern の定数（例 `TEST_FILES`）を `GENERATED` の近くに置き、comment に「build に入らない frontend の test の file（TD-706）。classifier から解析して得ない。Rust の test は入れない」と書く。`ponytail:` comment に限界（app の code が test の file を import すると「build に入らない」が崩れる）と見直す条件（その import が出たとき、または Rust の分かれた test の dir を入れる決定が出たとき）を書く。
 - `scripts/tests/pr-gate.test.py`: 下の Test Plan の test を `SyncOnly`・`SyncRecords`・`PacketReuse` に足す。今の `test_sync_only_rejects_manual_conflict_resolution`・`test_sync_only_rejects_edit_inside_merge`・`test_sync_only_decision_log_union_conflict` の拒む向きは既定（`resolve=False`）の判定として残す（弱めない）。
 - `scripts/tests/plan-approve.test.sh`: 変えない（PA5 の「edit in merge」が今のとおり拒まれることが、既定の判定を変えていない根拠）。
 - `docs/agent-guidance/merge-evidence.md`: MG-D13 の行、「同期だけの条件」の (a) の違ってよい path の文、「manualの使い回し」の B（判定の項目に「手の解消が両側の変更を落としていない。test の file では test を消す・skip する・弱めることをしていない」を足す）・使い回せないときの次の一手、「reviewのclosure」、「Helperの境界」の `--reuse-from` の文。L3 の使い回し C の節は変えない。
 - `docs/DEV_WORKFLOW.md`: L3 の表の B の行に「同期で生成物と decision-log の union の外の衝突を手で解いた（手で解いてよい path の中だけ）」を足し、「取り直す」の行と食い違わないようにする。Wave Operation の「衝突の解消が内容を変えたら通常の再検証と現在版の closure を行う」は今も正しいので残す。
-- `docs/decision-log.md`: 末尾に D-154（TD-704・TD-706、案の比較〈(a) を見送った理由を含む〉、境界、Guarantee range: 手の解消の正しさは closure の判断で機械の保証でない）。D-144 に `Superseded in part by: D-154`（(1) の「生成物の外の衝突は満たさない」の部分）の行を足す。
+- `docs/decision-log.md`: 末尾に D-154（TD-704・TD-706・TD-709〜TD-713、案の比較〈(a) を見送った理由を含む〉、境界〈R4 に開き `r4` は取り直す、packet の無い R0〜R2 に開く、gate の文書は集合の外、Ready の承認は B の承認と 1 回に束ねる〉、Guarantee range: 手の解消の正しさは closure の判断で機械の保証でない、Revisit: app の code が test の file を import したとき・Rust の分かれた test の dir〈TD-709〉や gate の文書〈TD-712〉を入れる必要が出たとき）。D-144 に `Superseded in part by: D-154`（(1) の「生成物の外の衝突は満たさない」の部分）の行を足す。
 - `docs/backlog.md`: 項目「衝突を解いた版の manual の再利用（観測）」を実装の merge で済みにする（本 commit は起票の 1 文だけ）。
 - 本 packet（本 commit）。
 
-Non-scope: `AGENTS.md`（Ready の承認を保つ判定は今のとおり helper の `--review-stage sync` か R0/R1 の明示の A で、手で解いた同期は承認を取り直す。B の承認と同じ 1 回に束ねる。Q5）、`scripts/ci/classify-changes.sh`、`.github/**`、RecordV1、`scripts/plan-approve.sh`。
+Non-scope: `AGENTS.md`（Ready の承認を保つ判定は今のとおり helper の `--review-stage sync` か R0/R1 の明示の A で、手で解いた同期は承認を取り直す。B の承認と同じ 1 回に束ねる。TD-713）、`scripts/ci/classify-changes.sh`、`.github/**`、RecordV1、`scripts/plan-approve.sh`。
 
 ## Acceptance Criteria
 
 - AC1: `python3 scripts/tests/pr-gate.test.py` が全 PASS で、Test Plan の受ける組・拒む組の test が全部ある。
 - AC2: `bash scripts/tests/run-workflow-tests.sh` が全 PASS（`plan-approve.test.sh` の PA5 を含む。既定の判定を変えていない）。
-- AC3: Test Plan の mutation（M1〜M6）を実装に入れると、`python3 scripts/tests/pr-gate.test.py` で名指した test が FAIL（exit 非 0）になり、戻すと全 PASS に戻ることを実装の run の報告に書く（D-098 (9)）。
+- AC3: Test Plan の mutation（M1〜M7）を実装に入れると、`python3 scripts/tests/pr-gate.test.py` で名指した test が FAIL（exit 非 0）になり、戻すと全 PASS に戻ることを実装の run の報告に書く（D-098 (9)）。
 - AC4: `bash scripts/doc-consistency-check.sh` と `--target plan docs/plans/2026-11-14-sync-docs-conflict.md` が ERROR なし、`bash scripts/check-workflow-git.sh` が exit 0。
 - AC5: merge-evidence・DEV_WORKFLOW・decision-log の文が helper の振舞いと同じ（手で解いてよい path の集合、A にしない、監査の closure、確かめ直し、plan-approve の既定）で、L3 の使い回し C の節は変わらない（`git diff` で C の節に差分が無い）。
-- AC6: 合成の repo の test で、#236 の形（docs と function-design の衝突を手で解き、main 側が code を含む）と #216 の形（`src/test/*.test.ts` の衝突）と #228 の形（`src/**/*.sd.test.tsx` と function-design の衝突）が、B の command で manual を使い回せ、`--reuse-approval` の無い record・`--review-stage sync` は何も書かずに止まる。同じ合成の repo で `src-tauri/src/**/*.rs`（`#[cfg(test)]` の module の中だけの違い）と `src-tauri/tests/*.rs` の手の解消は同期だけの条件を満たさず、L3 のやり直しだけを案内する。
+- AC6: 合成の repo の test で、#236 の形（docs と function-design の衝突を手で解き、main 側が code を含む）と #216 の形（`src/test/*.test.ts` の衝突）と #228 の形（`src/**/*.sd.test.tsx` と function-design の衝突）が、B の command で manual を使い回せ、`--reuse-approval` の無い record・`--review-stage sync` は何も書かずに止まる。R4 の形（#228・#216）では使い回した後も `r4` は pending で、新しい head の承認なしに Ready・merge へ進まない（TD-710）。packet の無い R2 と R0/R1 の manual の lane（`--risk`・`--manual required`）でも手で解いた同期が B で使い回せ、`l3_change` を呼ばずに通り、R0/R1 の `--reuse-from` だけの明示の A は止まる（TD-711）。`workflow=true` の path（例 `docs/DEV_WORKFLOW.md`）の手の解消は同期だけの条件を満たさない（TD-712）。同じ合成の repo で `src-tauri/src/**/*.rs`（`#[cfg(test)]` の module の中だけの違い）と `src-tauri/tests/*.rs` の手の解消は同期だけの条件を満たさず、L3 のやり直しだけを案内する。
 
 ## Design Readiness
 
@@ -137,21 +139,21 @@ Non-scope: `AGENTS.md`（Ready の承認を保つ判定は今のとおり helper
 - plan にしかない durable な判断の昇格先: 案の比較・境界の表 → D-154 と merge-evidence の該当の文。調べの command と出力は本 packet に残す。
 - 前提・制約と延期した design gap: 手の解消が両側を保つかは機械で判定しない（案 4）。closure の 2 本と owner の判断に置き、D-154 の Guarantee range に書く。classifier が将来 docs の分類を変えれば集合も変わる（current main 側の classifier を使う今の方針どおり）。
 - 絶対保証の例外と抜け道: 「code に触れる手の解消を受けない」は classifier の分類と (b) の定数の pattern に依る。classifier が未知の path を full にするので、未登録の path は受けない側に倒れる。frontend の test の file の「build に入らない」は今の `vite build` と import の実測に依り、app の code が test の file を import するようになれば崩れる（D-154 の Revisit と helper の `ponytail:` comment に置く）。
-- 判定: ready（Q1 は TD-706 で (b) に決まった。残る Q2〜Q5 は R4・R0〜R2・gate の文書・Ready の承認の分岐で、どの答えでも Scope の形〈helper の関数・test・正本の場所〉は変わらない）。
+- 判定: ready（Open Questions は全部決まった: Q1 は TD-706・TD-709、Q2〜Q5 は TD-710〜TD-713。未決の問いは残らない）。
 
 ## Contract Ledger
 
 | 契約 ID | 設計正本の節 | 実装（Scope） | 自動 test | L3・非対象 |
 |---|---|---|---|---|
-| MG-D13 | merge-evidence 設計判断の表・「同期だけの条件」（TD-706 の (b) の集合） | `sync_merge(resolve=True)`・`sync_merges`・`TEST_FILES` | T1〜T5・T4b | 非対象（helper） |
-| MG-D13 B | merge-evidence「manualの使い回し」(B 承認) | `carry_manual`・`record --reuse-from` | T6・T7・T10 | 非対象 |
+| MG-D13 | merge-evidence 設計判断の表・「同期だけの条件」（TD-706 の (b) の集合） | `sync_merge(resolve=True)`・`sync_merges`・`TEST_FILES`（TD-709・TD-712） | T1〜T5・T4b・T14 | 非対象（helper） |
+| MG-D13 B | merge-evidence「manualの使い回し」(B 承認) | `carry_manual`・`record --reuse-from`（TD-710・TD-711） | T6・T7・T10・T13 | 非対象 |
 | MG-D13 closure | merge-evidence「reviewのclosure」 | `sync_closure` | T8 | 非対象 |
 | MG-D13 確かめ直し | merge-evidence「使い回しの元は…確かめ直し」の段落 | `nonci` | T9 | 非対象 |
 | D-145 (6) C | merge-evidence「L3 の使い回し C」 | 変えない（`l3_change` を手で解いた path にも使う） | T11、`scripts/tests/pr-gate.test.py` の今の C1〜C5・RC1〜RC4 の test（PK3 は `scripts/tests` を探さないので名を token にしない） | 非対象 |
 | D-145 (7) 計画の節 | merge-evidence「docs の closure」・DEV_WORKFLOW Workflow State | 変えない（`plan_drift`） | 今の test | 非対象 |
 | D-144 | decision-log D-144 (1)〜(6) | Superseded in part の行 | — | 非対象 |
 | D-146 | decision-log D-146（B の「影響なし」） | 変えない（B の判定の項目に「両側を保つ」を足す） | — | 非対象 |
-| D-098 | DEV_WORKFLOW Workflow State の安全の境界（古い証拠の拒否） | 境界の表の「拒む」列を helper の test で固定 | T1〜T12 | 非対象 |
+| D-098 | DEV_WORKFLOW Workflow State の安全の境界（古い証拠の拒否） | 境界の表の「拒む」列を helper の test で固定 | T1〜T14・T4b | 非対象 |
 | PA5 | `scripts/plan-approve.sh` (a) の merge の判定 | 変えない（`sync_merge` の既定） | `plan-approve.test.sh` PA5 | 非対象 |
 | DEV-L3 | DEV_WORKFLOW L3 の表 | B の行の文 | doc-consistency | 非対象 |
 | D-154 | decision-log（新規） | 本 lane の決定 | — | 非対象 |
@@ -170,11 +172,13 @@ Non-scope: `AGENTS.md`（Ready の承認を保つ判定は今のとおり helper
 | MG-D13 B | B の command で使い回せない／`--reuse-approval` なしの明示の A で受ける | unit | T7 `test_resolved_sync_reuses_with_approval_only` | `record --reuse-from` が承認の有無を見ない |
 | closure | `--review-stage sync`・`docs` が手の解消の同期で機械の closure を書く | unit | T8 `test_resolved_sync_rejects_machine_closure` | `sync_closure` が `self.resolved` を見ない（M4） |
 | 確かめ直し | status が承認の無い manual・`sync_from` の closure を通す | unit | T9 `test_nonci_rechecks_resolved_sync` | `nonci` の確かめ直しを外す（M5） |
-| R4 | `r4` を使い回す／（Q2 が入れるなら）R4 の B を拒む | unit | T10 `test_resolved_sync_r4_keeps_fresh_r4` | `r4` を新しい head の record で pass のまま残す |
+| R4 TD-710 | R4 の lane の手で解いた同期で B を拒む／`r4` を使い回す | unit | T10 `test_resolved_sync_r4_reuses_manual_keeps_fresh_r4` | `carry_manual`・`record --reuse-from` が R4 で手の解消を拒む、または `r4` を新しい head の record で pass のまま残す |
+| R0〜R2 TD-711 | packet の無い R2 と R0/R1 の manual の lane の手で解いた同期で、B を拒む・packet を読みに行って止まる／`--reuse-from` だけの明示の A を受ける | unit | T13 `test_resolved_sync_without_packet_reuses_with_approval` | `l3_change` を packet の有無で分けずに呼ぶ（M7）、または明示の A で `self.resolved` を見ない |
+| gate の文書 TD-712 | `workflow=true` の path（`docs/DEV_WORKFLOW.md`・`docs/agent-guidance/merge-evidence.md`）の手の解消を集合の中で受ける | unit | T14 `test_resolve_rejects_gate_docs` | 集合の (1) の判定から `workflow` を外す |
 | L3 の比較対象 | 手の解消が packet の L3 節・link する Matrix を変えたのに使い回す | unit | T11 `test_resolved_sync_l3_basis_change_stops` | 手で解いた path で `l3_change` を呼ばない |
 | 止まる文 | 止まるときに手で解いた path と次の一手を名指さない | unit | T12 `test_resolved_sync_names_paths_and_next_step` | 理由の文から path の列挙を落とす |
 
-mutation（実装の run で注入し、red を確かめて戻す。AC3）: M1 集合の判定を外す → T3 が red。M2 `sync_merge` の `resolve` の既定を True → T5 と PA5 が red。M3 `carry_manual` で `self.resolved` を見ない → T6 が red。M4 `sync_closure` で `self.resolved` を見ない → T8 が red。M5 `nonci` の `reuse_approval` の確かめを外す → T9 が red。M6 frontend の test の file の pattern を `'test' in path` の部分一致にする → T4 と T4b が red。
+mutation（実装の run で注入し、red を確かめて戻す。AC3）: M1 集合の判定を外す → T3 が red。M2 `sync_merge` の `resolve` の既定を True → T5 と PA5 が red。M3 `carry_manual` で `self.resolved` を見ない → T6 が red。M4 `sync_closure` で `self.resolved` を見ない → T8 が red。M5 `nonci` の `reuse_approval` の確かめを外す → T9 が red。M6 frontend の test の file の pattern を `'test' in path` の部分一致にする → T4 と T4b が red。M7 `carry_manual` の L3 の比較の packet の有無の分岐を外す → T13 が red。
 
 L3: 置かない。operator の画面・app の build を変えず、helper と規則の文だけを変える。振舞いは合成の git の履歴の上の helper の test（上の表）で観測でき、Windows/Tauri native でしか観測できない項目が無い（DEV_WORKFLOW L3 Eligibility の (1) を満たさない）。
 
@@ -188,8 +192,10 @@ TD-706 の (b) で書く。見送った (a) なら #228・#216 は test の file
 |---|---|---|---|
 | #236（R3） | docs 5 path（function-design の 24・57 を含む） | B で使い回せる | main 側が code を含むので、今の規則でも衝突が無ければ B だった。手で解いた 5 path を closure の範囲に足す。`docs/daily-monthly-acceptance-runbook.md` が L3 の手順に関わるなら、closure の「L3 の項目に影響なし」の判定で見る。packet の L3 の比較対象が手の解消で変わらないことも helper が確かめる |
 | #227（R3） | `docs/backlog.md` | B で使い回せる（`90-traceability.md` は再生成） | — |
-| #228（R4） | `docs/backlog.md`・24・37・45・55・`src/features/daily-report-import/DailyReportImportPage.sd.test.tsx` | Q2 で R4 を開くなら B で使い回せる（`*.test.tsx` が集合の中）。`r4` は新しい head で承認を取り直す | Q2 で R4 を開かないなら L3 のやり直し。test の file の解消は closure が「test を消す・skip する・弱めていない」も見る |
-| #216（R4） | `src/test/page-root-pageshell-sweep.test.ts` | #228 と同じ（`src/test/**` が集合の中） | 同上 |
+| #228（R4） | `docs/backlog.md`・24・37・45・55・`src/features/daily-report-import/DailyReportImportPage.sd.test.tsx` | B で使い回せる（TD-710。`*.test.tsx` が集合の中）。`r4` は新しい head で承認を取り直す | test の file の解消は closure が「test を消す・skip する・弱めていない」も見る |
+| #216（R4） | `src/test/page-root-pageshell-sweep.test.ts` | #228 と同じ（TD-710。`src/test/**` が集合の中）。`r4` は取り直す | 同上 |
+
+4 本はどれも手で解いた同期になるので、Ready の承認は B の owner の 1 行の承認と同じ 1 回で取り直す（TD-713）。
 
 本 lane の merge の後: 止めた 4 本が同期すると、取り込む main 側に `scripts/pr-gate.py`（classifier は full）が入るので、どの lane も code に触れる同期（B）になる。4 本はもともと #235 の code を取り込むので B で、増える手は無い。#194・#250・#251 が本 lane の merge の後に同期すると、同じ理由で A でなく B になる（L3 を済ませた lane は closure 2 本と owner の承認が要る）。L3 を済ませた lane は本 lane の merge の前に merge するほうが手が少ない。本 lane の merge の後、同期の前の lane の helper は D-099 で base の版と違うと止まり、base の版の command を示す（今の動き）。
 
@@ -197,14 +203,17 @@ TD-706 の (b) で書く。見送った (a) なら #228・#216 は test の file
 
 ### 決定の記録
 
-- Q1 → TD-706（repo 外の回答台帳、2026-11-14）: owner は「両方推奨」と答え、Coordinator の推奨の (b) に決まった。手で解いてよい path（L3 を使い回せる衝突・自動の merge との違いの範囲）は、docs（L3 の比較対象と計画の節に触れない所）と、build に入らない frontend の test の file（`src/**/*.test.ts(x)`・`src/test/**`）。Rust の test は本体の file の中にあって分けられないので含めない（本 run の実測では分かれた dir もあるが、決定の範囲の外に置く。上の「調べ」）。(a) は「案の比較」の 1-(a) に見送った案として残す。
+- Q1 → TD-706（repo 外の回答台帳、2026-11-14）: owner は「両方推奨」と答え、Coordinator の推奨の (b) に決まった。手で解いてよい path（L3 を使い回せる衝突・自動の merge との違いの範囲）は、docs（L3 の比較対象と計画の節に触れない所）と、build に入らない frontend の test の file（`src/**/*.test.ts(x)`・`src/test/**`）。Rust の test は含めない。(a) は「案の比較」の 1-(a) に見送った案として残す。
+- Q1 の Rust の範囲 → TD-709（2026-11-14）: Rust の test の大半は本体の file の中（`src-tauri/src` の 102 file 中 69 file の `#[cfg(test)]`）で、分かれた dir（`src-tauri/tests`・`src-tauri/dev-tools/tests`・`src-tauri/src/biz/csv_import_service/tests`）もあるが、TD-709 で全部外したままにする（分かれた dir も入れない）。必要になれば D-154 の Revisit で見直す。
 
-### 未決（owner に諮る）
+以下は owner の「全部推奨」（Coordinator の推奨のとおり）で決まった。
 
-- Q2: R4 の lane（#228・#216）に B のこの道を開くか。推奨は開く（candidate）: 今の B は R4 にも効き（code に触れる同期）、`r4` の承認は今のとおり新しい head で取り直す。開かないなら (b) に決まっても #228・#216 は L3 のやり直し。
-- Q3: packet の無い R0〜R2 の lane にも開くか。推奨は開く（candidate）: 今の B と同じく closure の 2 本の証跡を `reuse_approval` の pointer の先に置き、L3 の基準は PR body にあって tree の手の解消で変わらない。
-- Q4: gate の文書（classifier の `workflow=true`）の手の解消を集合の外に置くか。推奨は外に置く（candidate。規則の文の手の解消は lane の規則の review の対象で、L3 と無関係でも機械の分岐を増やさないため）。必要が出たら D-154 の Revisit で見直す。
-- Q5: 手で解いた同期は helper が「同期だけ」と判定しないので、AGENTS.md の Ready の承認は取り直しになる。B の owner の 1 行の承認と同じ 1 回に束ね、AGENTS.md は変えない、でよいか。推奨はこのまま（candidate）。
+- Q2 → TD-710（2026-11-14）: R4 の lane（#228・#216）に B のこの道を開く。今の B は R4 の code に触れる同期にも効き、`r4` の承認は新しい head で取り直す。
+- Q3 → TD-711（2026-11-14）: packet の無い R0〜R2 の lane にも開く。今の B と同じく closure の 2 本の証跡を `reuse_approval` の pointer の先（R0/R1）か review の closure の evidence（R2）に置き、L3 の基準は PR body にあって tree の手の解消で変わらないので `l3_basis` の比較をしない。
+- Q4 → TD-712（2026-11-14）: gate の文書（classifier の `workflow=true`）の手の解消は集合の外に置く。規則の文の手の解消は lane の規則の review の対象で、機械の分岐を増やさない。必要が出たら D-154 の Revisit で見直す。
+- Q5 → TD-713（2026-11-14）: 手で解いた同期は helper が「同期だけ」と判定しないので、AGENTS.md の Ready の承認は取り直しになる。B の owner の 1 行の承認と同じ 1 回に束ね、AGENTS.md は変えない。
+
+未決の問いは残らない。
 
 ## 計画の review に問う点
 
@@ -212,6 +221,6 @@ TD-706 の (b) で書く。見送った (a) なら #228・#216 は test の file
 - 手で解いてよい path の集合を classifier の flag で決めるとき、`traceability`・`rust_drift` を受けてよいか（function-design は設計正本で、手の解消が契約の意味を変え得る。B の closure で見る前提で足りるか）。
 - 手で解いた path に active な packet と link する Matrix を含む merge を拒む規則と、`l3_change` の比較が重複していないか（どちらか一方で足りるなら消す）。
 - この変更で不要になる記述・条件は無いか（D-144 の「生成物の外の衝突は満たさない」の文、backlog の観測の項目、DEV_WORKFLOW の L3 の表の「取り直す」の行の読み）。
-- Test Plan の T1〜T12・T4b と M1〜M6 で、受ける組と拒む組が足りるか（自動の merge と違う「解消でない編集」を集合の中で受けることの是非を含む）。
+- Test Plan の T1〜T14・T4b と M1〜M7 で、受ける組と拒む組が足りるか（自動の merge と違う「解消でない編集」を集合の中で受けることの是非を含む）。
 - TD-706 の frontend の test の file の pattern（`src/test/**`・`src/**/*.test.ts`・`src/**/*.test.tsx`）が、今の tree の test の file（`*.sd.test.tsx` を含む）を漏れなく当て、build に入る file を当てないか。`src/test/**` に vitest の setup 等の test でない file があっても build に入らないか。
-- TD-706 の Rust の除外の理由（「本体の file の中にあって分けられない」）は、本 run の実測で `src-tauri/tests/**` 等の分かれた dir があり、全部には当たらない。決定の範囲どおり Rust を全部外す本 packet の形でよいか（入れる向きの見直しは owner の別の決定。判断の材料として Coordinator に返す）。
+- （決定済み、TD-709）Rust の test は分かれた dir を含めて全部外したまま。review では、T4b が本体の file の `#[cfg(test)]` と分かれた dir の両方を拒む組を持つかだけを見る。
