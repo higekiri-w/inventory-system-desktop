@@ -22,7 +22,7 @@ pub use rollback::rollback_daily_report_import;
 #[allow(unused_imports)]
 pub use scan::scan_register_sd_daily_reports;
 
-use crate::db::sales_repo::DailyReportImport;
+use crate::biz::BizError;
 use crate::io::daily_report_parser::DailyReportSourceKind;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -186,6 +186,8 @@ pub struct DailyReportSdCandidate {
     pub path_date: String,
     pub report_date: Option<String>,
     pub source_filenames: Vec<String>,
+    /// 束の精算回数（IO-07-D5、TD-592）。読めなかった束は None
+    pub settlement_no: Option<i64>,
     pub status: DailyReportSdCandidateStatus,
 }
 
@@ -254,7 +256,37 @@ pub struct ListDailyReportImportsQuery {
     pub status: Option<String>,
 }
 
-pub type DailyReportImportRow = DailyReportImport;
+/// 一覧の行（37 §37.6、45 §45.6）。repo の行から内部の保存の形を外した wire の型
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct DailyReportImportRow {
+    pub id: i64,
+    pub report_date: String,
+    pub source_filenames: Vec<String>,
+    /// 束の精算回数（IO-07-D5）。記録の無い取込みは None（TD-590）
+    pub settlement_no: Option<i64>,
+    pub gross_amount: Option<i64>,
+    pub net_amount: Option<i64>,
+    pub status: String,
+    pub imported_at: String,
+    pub rolled_back_at: Option<String>,
+}
+
+/// 保存の `source_files_json`（§37.4 手順 6）から各 file の `filename` を取り出す。読めなければ ImportError
+pub(super) fn source_filenames(source_files_json: &str) -> Result<Vec<String>, BizError> {
+    let files: Vec<serde_json::Value> = serde_json::from_str(source_files_json)
+        .map_err(|_| BizError::ImportError("既存日報のファイル情報を読み取れません".to_string()))?;
+    files
+        .into_iter()
+        .map(|file| {
+            file.get("filename")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    BizError::ImportError("既存日報のファイル情報を読み取れません".to_string())
+                })
+        })
+        .collect()
+}
 
 pub(crate) fn source_kind_order(source: DailyReportSourceKind) -> i64 {
     match source {

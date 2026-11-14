@@ -214,6 +214,7 @@ fn read_group(
             path_date: group.path_date.format("%Y-%m-%d").to_string(),
             report_date: None,
             source_filenames: source_filenames.clone(),
+            settlement_no: None,
             status,
         },
         files: Vec::new(),
@@ -284,16 +285,19 @@ fn read_group(
                 _ => DailyReportSdCandidateStatus::Unreadable,
             }
         };
+    // 並べ替えの値と wire の値は同じ出所（TD-592）
+    let settlement_no = parsed.settlement_no;
     Ok(Candidate {
         area: group.area,
         sort_path,
-        settlement_no: parsed.settlement_no,
+        settlement_no,
         path_date: group.path_date,
         wire: DailyReportSdCandidate {
             candidate_key: bundle_hash,
             path_date: group.path_date.format("%Y-%m-%d").to_string(),
             report_date: parsed.report_date,
             source_filenames,
+            settlement_no,
             status,
         },
         files,

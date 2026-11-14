@@ -21,7 +21,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,6 +41,10 @@ import {
   type DailyReportSeries,
 } from "./hooks/useDailyReportImportFlow";
 import { AdditionalImportConfirmDialog } from "../csv-import/components/AdditionalImportConfirmDialog";
+import {
+  DailyReportRollbackConfirmDialog,
+  formatMoney,
+} from "./components/DailyReportRollbackConfirmDialog";
 
 export function DailyReportImportPage({
   onBlockingChange,
@@ -344,28 +347,48 @@ function SdCandidateRow({
   onConfirm: (candidateKey: string) => void;
 }) {
   const status = CANDIDATE_STATUS[candidate.status];
+  // UI-07-D15 (3)・UI-07-D19 の O3（TD-592）: 同じ精算を取込み済みの行だけ、精算回数と直し方を名指す（状態の enum で出し分ける）
+  const sameSettlement = candidate.status === "SameSettlementImported";
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
-      <div className="space-y-1">
-        <p className="font-medium">{candidate.report_date ?? candidate.path_date}</p>
-        <p className="text-xs text-muted-foreground">{candidate.source_filenames.join(" / ")}</p>
+    <li className="space-y-2 p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="space-y-1">
+          <p className="font-medium">{candidate.report_date ?? candidate.path_date}</p>
+          <p className="text-xs text-muted-foreground">{candidate.source_filenames.join(" / ")}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" tone={status.tone}>
+            {status.icon}
+            {status.label}
+          </Badge>
+          {sameSettlement && candidate.settlement_no !== null && (
+            <span className="font-medium">{`精算 ${String(candidate.settlement_no)}`}</span>
+          )}
+          {candidate.status === "NotImported" && (
+            <Button
+              size="sm"
+              onClick={() => {
+                onConfirm(candidate.candidate_key);
+              }}
+            >
+              確認する
+            </Button>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2">
-        <Badge variant="outline" tone={status.tone}>
-          {status.icon}
-          {status.label}
-        </Badge>
-        {candidate.status === "NotImported" && (
-          <Button
-            size="sm"
-            onClick={() => {
-              onConfirm(candidate.candidate_key);
-            }}
-          >
-            確認する
-          </Button>
-        )}
-      </div>
+      {sameSettlement && (
+        <div className="space-y-1">
+          <p>取り込み直すときは、前の取込みを取り消してから読み直してください。</p>
+          <p>
+            <Link
+              to="/csv-import/daily-reports"
+              className="font-medium text-primary underline underline-offset-4"
+            >
+              日報の取込みの記録を開く
+            </Link>
+          </p>
+        </div>
+      )}
     </li>
   );
 }
@@ -605,63 +628,15 @@ function DailyReportResultStep({
               SD の一覧へ戻る
             </Button>
           )}
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" disabled={isRollingBack}>
-                {isRollingBack && (
-                  <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />
-                )}
-                {isRollingBack ? "取り消し中…" : "取り消す"}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>日報取込みを取り消しますか？</AlertDialogTitle>
-                <AlertDialogDescription>
-                  この取込みだけを取り消します。同じ日の他の取込みは残ります。取消しても在庫数は変わりません。
-                </AlertDialogDescription>
-                {/* DSR-16: 単一レコード確認の definition list は原則適合。囲み階層が
-                    AlertDialogContent と二重にならないよう、独立した box border は持たせず
-                    border-t の行区切りのみにする（gated Amendment 3 最小調整）。 */}
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3 text-sm">
-                  <div>
-                    <dt className="text-muted-foreground">取込み ID</dt>
-                    <dd className="font-medium">{result.daily_report_import_id}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">対象日</dt>
-                    <dd className="font-medium">{reportDate}</dd>
-                  </div>
-                  <div className="col-span-2">
-                    <dt className="text-muted-foreground">ファイル名</dt>
-                    <dd className="font-medium">
-                      <ul className="space-y-0.5">
-                        {filenames.map((name) => (
-                          <li key={name} className="break-words">
-                            {name}
-                          </li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">総売上</dt>
-                    <dd className="font-medium">{formatMoney(result.gross_amount)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">純売上</dt>
-                    <dd className="font-medium">{formatMoney(result.net_amount)}</dd>
-                  </div>
-                </dl>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>キャンセル</AlertDialogCancel>
-                <AlertDialogAction variant="destructive" onClick={onRollback}>
-                  取り消す
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <DailyReportRollbackConfirmDialog
+            id={result.daily_report_import_id}
+            reportDate={reportDate}
+            filenames={filenames}
+            grossAmount={result.gross_amount}
+            netAmount={result.net_amount}
+            onConfirm={onRollback}
+            isRollingBack={isRollingBack}
+          />
         </div>
       </CardContent>
     </Card>
@@ -675,8 +650,4 @@ function Info({ label, value }: { label: string; value: string }) {
       <dd className="font-medium">{value}</dd>
     </div>
   );
-}
-
-function formatMoney(value: number | null) {
-  return value === null ? "未取得" : `¥${value.toLocaleString()}`;
 }
