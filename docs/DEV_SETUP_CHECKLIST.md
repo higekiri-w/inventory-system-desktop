@@ -50,6 +50,7 @@ Windows 11 Home
 | npm | 12.0.2（D-066 で採用。Node 24 同梱の 11 系から名指し更新） | 依存管理 + lefthook。`allowScripts` / `--allow-git` / `--allow-remote` 既定 off が D-030 の `.npmrc` ガードと併用される |
 | ripgrep (`rg`) | apt 経由 | docs / Rust test traceability などの静的チェック |
 | WebView2 Runtime | Windows 11 同梱 | Tauri Windows 描画 |
+| Visual Studio 2022 Build Tools | 「Desktop development with C++」の workload（Windows native のみ。§4.6） | Windows native の Rust（MSVC）の link |
 | Tauri 2 Linux deps | apt 経由 | `libwebkit2gtk-4.1-dev` 等 |
 | SQLite | rusqlite bundled | DB アクセス（IO-01） |
 
@@ -242,9 +243,37 @@ cargo install tauri-cli --version "^2"
 
 > fresh checkout / 環境再構築（`npm ci --ignore-scripts`）直後は、frontend gate（typecheck / lint / test）実行前に `npm run generate:routes` を明示実行する。`.npmrc` の `ignore-scripts=true` が `pretypecheck` / `prelint` / `pretest` の `tsr generate` 実行を抑止するため、routeTree 未生成のままだと typecheck / lint が fail する（2026-08-26 実測）。
 
-### 4.6 Phase 2 着手時の Windows native ビルド確認
+### 4.6 Windows native の開発環境（日本語入力の L3 と MSI の build）
 
-Tauri 2 on Linux IME 制約のため、Phase 2 (UI-00 ホーム画面以降) の日本語入力検証は Windows native ビルドで行う（§1.4 参照）。Phase 2 完了時に Windows 11 Home で MSI ビルドを生成して動作確認する。
+Tauri 2 on Linux の IME 制約（§1.4）のため、日本語入力を伴う L3 と MSI の build は、開発用の Windows の native の clone で行う。MSI の作り方と店への配布は [msi-distribution-runbook.md](msi-distribution-runbook.md)。店の PC の手順はこの節の対象外。
+
+#### クリーンインストールの後の道具の入れ方（L3 の build を始めるまで）
+
+Windows をクリーンインストールした直後の PowerShell では、`git --version` が `git version 2.56.0.windows.4` を返し、`node`・`npm`・`cargo`・`rustc` は「用語 '…' は … 認識されません」になった（2026-11-14 の観測）。入れる物と版の決め方:
+
+| 入れる物 | 版の決め方 | 確かめた出どころ |
+|---|---|---|
+| Node.js（npm 同梱） | repo の `.node-version`（今は 24.18.0）と同じ版 | `.node-version`（§4.2） |
+| Rust（rustup） | repo に `rust-toolchain` / `rust-toolchain.toml` は無い（2026-11-14 に確かめた）ので、MSVC の stable（`x86_64-pc-windows-msvc`）。rustup の installer で既定の host triple を MSVC にする。入れ済みなら `rustup default stable-msvc` | [Tauri の Prerequisites](https://v2.tauri.app/start/prerequisites/)（2026-11-14 に WebFetch で確かめた）。L3 の時点の版は Windows が 1.100.0、WSL が 1.99.1（2026-11-14 の観測） |
+| Visual Studio 2022 Build Tools | workload の「Desktop development with C++」（ID `Microsoft.VisualStudio.Workload.VCTools`） | [Tauri の Prerequisites](https://v2.tauri.app/start/prerequisites/)・[Build Tools の workload と component の ID](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=vs-2022)（どちらも 2026-11-14 に WebFetch で確かめた） |
+| WebView2 Runtime | 入れない（Windows 11 に同梱） | [WebView2 の配布](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution)の「The Evergreen WebView2 Runtime will be included as part of the Windows 11 operating system.」（2026-11-14 に WebFetch で確かめた） |
+
+Build Tools の installer は入れ終わりに「Restart your PC to finish installation.」を出す。Windows の再起動で WSL と WSL の中の session も止まるので、WSL 側の作業を区切ってから再起動する（2026-11-14 の観測）。
+
+入れ終わったら、新しい PowerShell の窓で次の 5 行がすべて版を返すことを確かめる:
+
+```powershell
+git --version; node --version; npm --version; cargo --version; rustc --version
+```
+
+clone と feature ブランチの取り込みは下の「L3 利用者デモのコード同期手順」に進む。
+
+#### クリーンインストールの後に初めて build するときの落とし穴（2026-11-14 の L3 で踏んだ）
+
+- **Windows PowerShell 5.1 で npm が動かない**: 別の窓に開く Windows PowerShell 5.1 で `npm` を打つと「このシステムではスクリプトの実行が無効になっているため、ファイル C:\Program Files\nodejs\npm.ps1 を読み込むことができません」。→ ExecutionPolicy は変えず、`npm.cmd run tauri dev` のように `npm.cmd` で呼ぶ。PowerShell 7 の窓では `npm` のままで通った。ExecutionPolicy を変えるかは開発用の PC の持ち主の判断。
+- **`tauri dev` の後に `src-tauri/Cargo.toml`・`src/lib/bindings.ts` が「変更あり」になる**: `tauri dev` が LF で書き直した file が、git の autocrlf のため `git status --short` で ` M` に出る（warning は「LF will be replaced by CRLF」だけ）。→ `git diff --ignore-cr-at-eol --stat` が空（改行の差だけ）なら `git restore .` で戻す。空でなければ戻さず、差の中身を WSL 側で確かめる。
+- **Smart App Control が `cargo` を止める**: Windows 11 の Smart App Control が評価の段階から有効に切り替わると、署名の無い `cargo` を止める。`tauri dev` の `cargo metadata` が「アプリケーション制御ポリシーによってこのファイルがブロックされました。 (os error 4551)」で止まった（同じ夜の早い時刻の `cargo check --release` は通っていた）。個々のアプリの例外は作れない（[What is Smart App Control?](https://support.microsoft.com/en-us/topic/what-is-smart-app-control-285ea03d-fa88-4d56-882e-6698afdb7003) の「There is currently no way to bypass Smart App Control protection for individual apps.」。2026-11-14 に WebFetch で確かめた）。→ 切るかは開発用の PC の持ち主の判断（この開発用の Windows では owner が切った）。店の PC の扱いは backlog の訪店の項目。
+- **合成の物（L3 の fixture）を folder の選択で選ぶ**: `\\wsl.localhost\...` の path を native の folder の picker で選べるかは未試行。→ `C:\Users\<user>\` の下へ写してから選ぶ（2026-11-14 はこれで選べた）。
 
 #### L3 利用者デモのコード同期手順（merge 前の feature ブランチを Windows native clone へ取り込む）
 
