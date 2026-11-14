@@ -27,6 +27,10 @@ const EXCLUDED_PAGES = [
     component: "DailyReportImportPage",
     path: "src/features/daily-report-import/DailyReportImportPage.tsx",
   },
+  {
+    component: "DailyReportImportRecordsPage",
+    path: "src/features/daily-report-import/DailyReportImportRecordsPage.tsx",
+  },
   { component: "DailySalesPage", path: "src/features/daily-sales/DailySalesPage.tsx" },
   { component: "HomePage", path: "src/features/home/HomePage.tsx" },
   {
@@ -100,6 +104,7 @@ describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
       "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
+      "src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts",
       "src/hooks/useUnsavedChangesWarning.ts",
     ]);
   });

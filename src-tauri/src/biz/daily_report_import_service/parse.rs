@@ -1,5 +1,5 @@
 use crate::biz::daily_report_import_service::{
-    source_kind_order, CachedDailyReportDepartmentLine, CachedDailyReportPreview,
+    source_filenames, source_kind_order, CachedDailyReportDepartmentLine, CachedDailyReportPreview,
     CachedDailyReportSummaryLine, DailyReportDepartmentLinePreview, DailyReportDuplicateCheck,
     DailyReportDuplicateStatus, DailyReportFileInfo, DailyReportInputFile,
     DailyReportParseValidateResult, DailyReportPaymentLinePreview, DailyReportPreviewData,
@@ -330,22 +330,6 @@ fn resolve_selected_file_origins(
         }
     }
     Ok(())
-}
-
-fn source_filenames(source_files_json: &str) -> Result<Vec<String>, BizError> {
-    let files: Vec<serde_json::Value> = serde_json::from_str(source_files_json)
-        .map_err(|_| BizError::ImportError("既存日報のファイル情報を読み取れません".to_string()))?;
-    files
-        .into_iter()
-        .map(|file| {
-            file.get("filename")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| {
-                    BizError::ImportError("既存日報のファイル情報を読み取れません".to_string())
-                })
-        })
-        .collect()
 }
 
 pub(super) fn build_bundle_hash(

@@ -183,7 +183,7 @@ export const commands = {
 	parseAndValidateDailyReport: (files: DailyReportSourceFileRequest[]) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report", { files })),
 	commitDailyReportImport: (previewToken: string, additionalImportConfirmed: boolean) => typedError<DailyReportImportResult, CmdError>(__TAURI_INVOKE("commit_daily_report_import", { previewToken, additionalImportConfirmed })),
 	rollbackDailyReportImport: (dailyReportImportId: number) => typedError<DailyReportRollbackResult, CmdError>(__TAURI_INVOKE("rollback_daily_report_import", { dailyReportImportId })),
-	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImport>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
+	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImportRow>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
 	// §45.6a（CMD-12-D1）: レジの SD を BIZ-08 §37.9 で読み、候補と scan_token を返す
 	scanRegisterSd: (selectedPath: string | null) => typedError<RegisterSdScanResponse, CmdError>(__TAURI_INVOKE("scan_register_sd", { selectedPath })),
 	// §45.6b（CMD-12-D1）: scan の snapshot の 1 候補から preview を作る。snapshot は消さない
@@ -607,25 +607,6 @@ export type DailyReportFileInfo = {
 	source_files: DailyReportSourceFileInfo[],
 };
 
-/**
- *  daily_report_imports テーブルの行マッピング
- *
- *  24-io-csv-import-repo.md §14.2 / §14.14-14.20
- */
-export type DailyReportImport = {
-	id: number,
-	report_date: string,
-	source_adapter: string,
-	bundle_hash: string,
-	source_files_json: string,
-	gross_amount: number | null,
-	net_amount: number | null,
-	status: string,
-	imported_at: string,
-	rolled_back_at: string | null,
-	note: string | null,
-};
-
 export type DailyReportImportResult = {
 	daily_report_import_id: number,
 	status: string,
@@ -633,6 +614,20 @@ export type DailyReportImportResult = {
 	gross_amount: number | null,
 	net_amount: number | null,
 	warning_count: number,
+};
+
+// 一覧の行（37 §37.6、45 §45.6）。repo の行から内部の保存の形を外した wire の型
+export type DailyReportImportRow = {
+	id: number,
+	report_date: string,
+	source_filenames: string[],
+	// 束の精算回数（IO-07-D5）。記録の無い取込みは None（TD-590）
+	settlement_no: number | null,
+	gross_amount: number | null,
+	net_amount: number | null,
+	status: string,
+	imported_at: string,
+	rolled_back_at: string | null,
 };
 
 export type DailyReportPaymentLinePreview = {
@@ -669,6 +664,8 @@ export type DailyReportSdCandidate = {
 	path_date: string,
 	report_date: string | null,
 	source_filenames: string[],
+	// 束の精算回数（IO-07-D5、TD-592）。読めなかった束は None
+	settlement_no: number | null,
 	status: DailyReportSdCandidateStatus,
 };
 

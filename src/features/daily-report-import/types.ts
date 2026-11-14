@@ -3,7 +3,16 @@ import type {
   DailyReportPreviewData,
   DailyReportSdScan,
 } from "@/lib/bindings";
+import { z } from "zod";
 import type { InvokeError } from "@/lib/invoke";
+
+/// `/csv-import/daily-reports`（日報の取込みの記録）の search。`page` は 1 以上の整数で、欠落・不正は 1 ページ目。
+/// route はここから import するだけ（UI_TECH_STACK UI-STATE-D2）。設計: 55-ui-csv-import.md §55.12 UI-07-D19
+export const dailyReportImportRecordsSearchSchema = z.object({
+  page: z.coerce.number().int().positive().optional().catch(undefined),
+});
+
+export type DailyReportImportRecordsSearch = z.output<typeof dailyReportImportRecordsSearchSchema>;
 
 export type DailyReportErrorRecoverTo = "idle" | "preview" | "sd_list";
 
