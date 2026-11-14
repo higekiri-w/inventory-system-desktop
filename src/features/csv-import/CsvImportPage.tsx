@@ -67,7 +67,16 @@ export function CsvImportPage({ tab }: CsvImportPageProps) {
             商品別CSV取込み（Z004）
           </TabsTrigger>
         </TabsList>
-        <TabsContent value={DEFAULT_TAB}>
+        <TabsContent value={DEFAULT_TAB} className="space-y-4">
+          {/* 結果の画面を離れた後に誤りに気づいたとき・BIZ-08-D4 の拒否が出たときの入口（55 §55.12 UI-07-D19）。タブの状態に依らず出す */}
+          <p className="text-sm">
+            <Link
+              to="/csv-import/daily-reports"
+              className="font-medium text-primary underline underline-offset-4"
+            >
+              取り込んだ日報の記録を見る（取り消すときはここから）
+            </Link>
+          </p>
           <DailyReportImportPage onBlockingChange={setIsDailyReportBlocking} />
         </TabsContent>
         <TabsContent value={Z004_TAB} className="space-y-4">
