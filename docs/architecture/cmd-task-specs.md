@@ -81,7 +81,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | parse_and_validate_daily_report | DailyReportSourceFile[]（filename, file_bytes） | BIZ-08 Stage1+2 | DailyReportPreviewResponse（preview_data, preview_token） |
 | commit_daily_report_import | CommitDailyReportRequest（preview_token, additional_import_confirmed） | BIZ-08 Stage4 | DailyReportImportResult（daily_report_import_id, status, report_date, warning_count） |
 | rollback_daily_report_import | daily_report_import_id | BIZ-08 ロールバック | DailyReportRollbackResult（success, status） |
-| list_daily_report_imports | ListQuery（page, per_page, date_from?, date_to?） | BIZ-08経由 | PaginatedResult\<DailyReportImport\> |
+| list_daily_report_imports | ListQuery（page, per_page, date_from?, date_to?） | BIZ-08経由 | PaginatedResult\<DailyReportImportRow\> |
 
 **CMD-12の責務境界**:
 - ファイルバイト列をBIZ-08へ中継する。Z001/Z002/Z005のsource判定や日報バリデーションはCMDで行わない。SD の探し方・候補の規則・状態はBIZ-08が持ち、CMDは scan の snapshot を保持して渡すだけ（IO-09 を直接呼ばない）。

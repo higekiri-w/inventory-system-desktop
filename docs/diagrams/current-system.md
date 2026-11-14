@@ -139,6 +139,7 @@ routeの末尾 `/` は統一して省略（ルート `/` 自体を除く）。`$
 | 手動販売詳細 | `/inventory/manual-sale/records/$recordId` | 同上 |
 | 廃棄・破損詳細 | `/inventory/disposal/records/$recordId` | 同上 |
 | 商品別CSV詳細 | `/csv-import/records/$importId` | 入出庫履歴、元記録リンク。取込み結果に直接リンクはない |
+| 日報の取込みの記録 | `/csv-import/daily-reports` | 日報取込みタブの上の導線、SD の一覧の「同じ精算を取込み済み」の行の link |
 | 棚卸し詳細 | `/stocktake/records/$stocktakeId` | 入出庫履歴、元記録リンク。棚卸し結果に直接リンクはない |
 | 棚卸し | `/stocktake` | Sidebar。開始前/進行中/完了は画面内state |
 | バックアップ・復元 | `/settings/backup` | Sidebar |
@@ -147,7 +148,7 @@ routeの末尾 `/` は統一して省略（ルート `/` 自体を除く）。`$
 | 在庫整合性検証 | `/settings/integrity` | Sidebar |
 | 取引先管理 | `/settings/suppliers` | Sidebar、取引先pickerの管理導線 |
 
-`/inventory/receiving/records` のような種別専用の一覧routeは現行にはない。完成形設計の専用一覧と、現在の横断ハブを混同しない。日報専用の詳細routeもなく、日報の取込み結果/履歴は取込み画面内で扱う。
+`/inventory/receiving/records` のような種別専用の一覧routeは現行にはない。完成形設計の専用一覧と、現在の横断ハブを混同しない。日報専用の詳細routeは無い。日報の取込みの履歴と取消は `/csv-import/daily-reports`、取込みの結果は取込み画面内で扱う。
 
 ## 業務データの流れ
 

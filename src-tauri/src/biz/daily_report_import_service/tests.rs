@@ -882,6 +882,12 @@ fn test_daily_report_req401_list_validation_and_result() {
     )
     .unwrap();
     assert_eq!(page.total_count, 1);
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(
+        page.items[0].source_filenames,
+        ["Z001_260321.CSV", "Z002_260321.CSV", "Z005_260321.CSV"]
+    );
+    assert_eq!(page.items[0].status, "completed");
 
     let invalid = list_daily_report_imports(
         &conn,
@@ -1027,6 +1033,7 @@ fn test_daily_report_req401_decimal_quantity_preview_and_commit() {
 
 use crate::io::register_sd::{RegisterSdError, RegisterSdRoot};
 use crate::io::REGISTER_SD_FOLDER;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const D4_TEXT: &str = "同じ精算の日報が、別のファイルからすでに取り込まれています。二重に数えないため、取り込みません。取り込み直すときは、前の取込みを取り消してから読み直してください。";
@@ -2133,6 +2140,252 @@ fn test_req401_source_filenames_accepts_missing_copy_fields() {
     assert_eq!(summaries[1].source_filenames[0], "Z001_260321.CSV");
 }
 
+fn list_all(conn: &crate::db::DbConnection) -> Vec<DailyReportImportRow> {
+    list_daily_report_imports(
+        conn,
+        ListDailyReportImportsQuery {
+            page: 1,
+            per_page: 100,
+            date_from: None,
+            date_to: None,
+            status: None,
+        },
+    )
+    .unwrap()
+    .items
+}
+
+#[test]
+fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
+    // REQ-401 / 37 §37.6 / UI-07-D19: 行は file 名（SD の束も手で選んだ束も）・取消済みを含む全状態・対象日と取込み日時と ID の降順
+    let (dir, mut conn) = setup_test_db();
+    let app = dir.path().join("app");
+    let sd = import(
+        &mut conn,
+        &app,
+        as_sd_files(
+            bundle("2026-03-21", "0005", "12000"),
+            "XZ\\2026\\03",
+            "21 .CSV",
+        ),
+        false,
+    );
+    let manual_same_day = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0006", "13000"),
+        true,
+    );
+    let other_day = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-20", "0007", "14000"),
+        false,
+    );
+    let same_time = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0008", "15000"),
+        true,
+    );
+    rollback_daily_report_import(&mut conn, sd).unwrap();
+    // 同じ対象日の行に ID の順と逆の取込み日時を置き、取込み日時の段を ID の段と見分ける。
+    // same_time は manual_same_day と同じ日時にし、最後の ID の段を見る
+    for (id, imported_at) in [
+        (sd, "2026-03-21T18:00:00"),
+        (manual_same_day, "2026-03-21T09:00:00"),
+        (same_time, "2026-03-21T09:00:00"),
+    ] {
+        conn.execute(
+            "UPDATE daily_report_imports SET imported_at = ?1 WHERE id = ?2",
+            rusqlite::params![imported_at, id],
+        )
+        .unwrap();
+    }
+    assert!(sd < manual_same_day && manual_same_day < same_time);
+
+    let rows = list_all(&conn);
+    let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+    // 対象日の降順 → 同じ日は取込み日時の降順（ID の降順なら manual_same_day が先）
+    // → 同じ日時は ID の降順（same_time が manual_same_day の前）
+    assert_eq!(ids, [sd, same_time, manual_same_day, other_day]);
+    assert_eq!(rows[0].imported_at, "2026-03-21T18:00:00");
+    assert_eq!(rows[1].imported_at, "2026-03-21T09:00:00");
+    assert_eq!(rows[2].imported_at, "2026-03-21T09:00:00");
+    assert_eq!(
+        rows[0].source_filenames,
+        ["Z001_21 .CSV", "Z002_21 .CSV", "Z005_21 .CSV"]
+    );
+    assert_eq!(
+        rows[2].source_filenames,
+        ["Z001_260321.CSV", "Z002_260321.CSV", "Z005_260321.CSV"]
+    );
+    assert_eq!(rows[0].status, "rolled_back");
+    assert!(rows[0].rolled_back_at.is_some());
+    assert_eq!(rows[2].status, "completed");
+    assert_eq!(rows[2].rolled_back_at, None);
+    assert_eq!(rows[2].report_date, "2026-03-21");
+    assert_eq!(rows[2].gross_amount, Some(13000));
+    assert_eq!(rows[1].gross_amount, Some(15000));
+    assert_eq!(rows[3].report_date, "2026-03-20");
+}
+
+#[test]
+fn test_daily_report_req401_list_rejects_unreadable_source_files_json() {
+    // REQ-401 / 37 §37.6: 読めない source_files_json は空の名前にせず一覧全体を ImportError にする
+    let (_dir, conn) = setup_test_db();
+    sales_repo::insert_daily_report_import(
+        &conn,
+        &sales_repo::NewDailyReportImport {
+            report_date: "2026-03-21".to_string(),
+            source_adapter: "casio_sr_s4000".to_string(),
+            bundle_hash: "corrupt".to_string(),
+            source_files_json: "{not-json".to_string(),
+            gross_amount: Some(1),
+            net_amount: Some(1),
+            status: "completed".to_string(),
+            note: None,
+            settlement_no: None,
+        },
+    )
+    .unwrap();
+    let result = list_daily_report_imports(
+        &conn,
+        ListDailyReportImportsQuery {
+            page: 1,
+            per_page: 20,
+            date_from: None,
+            date_to: None,
+            status: None,
+        },
+    );
+    assert!(
+        matches!(result, Err(BizError::ImportError(ref message)) if message == "既存日報のファイル情報を読み取れません"),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn test_daily_report_req401_list_rows_carry_settlement_no() {
+    // REQ-401 / 37 §37.6 / 24 §14.2 / TD-590: 行に精算回数、NULL は None。4 つの SELECT の列の位置がそろう
+    let (dir, mut conn) = setup_test_db();
+    let first = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0101", "12000"),
+        false,
+    );
+    let second = import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0102", "13000"),
+        true,
+    );
+    let without = sales_repo::insert_daily_report_import(
+        &conn,
+        &sales_repo::NewDailyReportImport {
+            report_date: "2026-03-20".to_string(),
+            source_adapter: "casio_sr_s4000".to_string(),
+            bundle_hash: "no-settlement".to_string(),
+            source_files_json: "[]".to_string(),
+            gross_amount: Some(1),
+            net_amount: Some(1),
+            status: "completed".to_string(),
+            note: None,
+            settlement_no: None,
+        },
+    )
+    .unwrap();
+
+    let by_id: HashMap<i64, Option<i64>> = list_all(&conn)
+        .into_iter()
+        .map(|row| (row.id, row.settlement_no))
+        .collect();
+    assert_eq!(by_id[&first], Some(101));
+    assert_eq!(by_id[&second], Some(102));
+    assert_eq!(by_id[&without], None);
+
+    for (id, expected) in [(first, Some(101)), (second, Some(102)), (without, None)] {
+        let found = sales_repo::find_daily_report_import_by_id(&conn, id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.settlement_no, expected);
+        assert_eq!(found.note, None);
+    }
+    let same_date =
+        sales_repo::find_daily_report_imports_by_report_date(&conn, "2026-03-21").unwrap();
+    let mut same_date: Vec<_> = same_date.iter().map(|row| row.settlement_no).collect();
+    same_date.sort();
+    assert_eq!(same_date, [Some(101), Some(102)]);
+    let hash: String = conn
+        .query_row(
+            "SELECT bundle_hash FROM daily_report_imports WHERE id = ?1",
+            [first],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let blocking = sales_repo::find_blocking_daily_report_by_bundle_hash(&conn, &hash)
+        .unwrap()
+        .unwrap();
+    assert_eq!(blocking.settlement_no, Some(101));
+}
+
+#[test]
+fn test_req401_scan_candidate_carries_settlement_no() {
+    // REQ-401 / 37 §37.9 / TD-592: 候補の wire に精算回数。読めなかった束（Incomplete）は None
+    let (dir, mut conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    let imported = bundle("2026-03-21", "0101", "15000");
+    put_bundle(&root, "XZ\\2026\\03", "21A.CSV", &imported);
+    put_bundle(
+        &root,
+        "XZ\\2026\\03",
+        "21B.CSV",
+        &bundle("2026-03-21", "0101", "12000"),
+    );
+    put_bundle(
+        &root,
+        "XZ\\2026\\03",
+        "21C.CSV",
+        &bundle("2026-03-21", "0102", "9000"),
+    );
+    let incomplete = bundle("2026-03-21", "0103", "8000");
+    put_sd(&root, "XZ\\2026\\03\\Z001_21D.CSV", &incomplete[0].bytes);
+    put_sd(&root, "XZ\\2026\\03\\Z005_21D.CSV", &incomplete[2].bytes);
+    import(&mut conn, dir.path(), imported, false);
+
+    let scan = scan_selected(&conn, &root, day("2026-03-25")).unwrap().scan;
+    let by_name: HashMap<String, (DailyReportSdCandidateStatus, Option<i64>)> = scan
+        .candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.source_filenames[0].clone(),
+                (candidate.status, candidate.settlement_no),
+            )
+        })
+        .collect();
+    assert_eq!(
+        by_name["Z001_21A.CSV"],
+        (DailyReportSdCandidateStatus::Imported, Some(101))
+    );
+    assert_eq!(
+        by_name["Z001_21B.CSV"],
+        (
+            DailyReportSdCandidateStatus::SameSettlementImported,
+            Some(101)
+        )
+    );
+    assert_eq!(
+        by_name["Z001_21C.CSV"],
+        (DailyReportSdCandidateStatus::NotImported, Some(102))
+    );
+    assert_eq!(
+        by_name["Z001_21D.CSV"],
+        (DailyReportSdCandidateStatus::Incomplete, None)
+    );
+}
+
 #[test]
 #[ignore = "INVENTORY_L3_SD_TREE_OUT に出力先を与えて L3 の前に手元で実行する"]
 fn write_l3_register_sd_tree() {
@@ -2170,6 +2423,33 @@ fn write_l3_register_sd_tree() {
     let mut bom = bundle(&text(before), "0103", "13000");
     bom[2].bytes = [b"\xEF\xBB\xBF".as_slice(), &bom[2].bytes].concat();
     put_bundle(&root, &folder(before), &name(before, 'B'), &bom);
+    println!("合成の SD の tree を書きました: {}", root.path.display());
+}
+
+#[test]
+#[ignore = "INVENTORY_L3_SD_TREE_OUT に出力先を与えて L3 の前に手元で実行する"]
+fn write_l3_daily_report_rollback_sd_tree() {
+    // PR #235 の L3（判断 7）: 昨日の日付で、精算 0101 の X（A）と Y（B、bytes と金額が違う）、精算 0102 の Z（C）
+    let out = std::env::var_os("INVENTORY_L3_SD_TREE_OUT").expect(
+        "INVENTORY_L3_SD_TREE_OUT に出力先の folder を与えてください（何も書いていません）",
+    );
+    let root = sd_root_at(Path::new(&out));
+    let yesterday = chrono::Local::now().date_naive() - chrono::Duration::days(1);
+    let folder = yesterday.format("XZ\\%Y\\%m").to_string();
+    let date = yesterday.format("%Y-%m-%d").to_string();
+    let day_of_month = yesterday.format("%d");
+    for (suffix, settlement, gross) in [
+        ('A', "0101", "15000"),
+        ('B', "0101", "12000"),
+        ('C', "0102", "9000"),
+    ] {
+        put_bundle(
+            &root,
+            &folder,
+            &format!("{day_of_month}{suffix}.CSV"),
+            &bundle(&date, settlement, gross),
+        );
+    }
     println!("合成の SD の tree を書きました: {}", root.path.display());
 }
 

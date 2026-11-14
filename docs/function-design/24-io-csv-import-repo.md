@@ -94,6 +94,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - imported_at: String
 - rolled_back_at: Option\<String\>
 - note: Option\<String\>
+- settlement_no: Option\<i64\>（束の精算回数〈IO-07-D5〉、NULL は `None`。[55](55-ui-csv-import.md) UI-07-D19）
 
 **NewDailyReportImport構造体**:
 - report_date: String
@@ -106,7 +107,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - note: Option\<String\>
 - settlement_no: Option\<i64\>（D-111 で足す。束の精算回数〈IO-07-D5〉、`None` は NULL。BIZ-08-D4 の照合に使う）
 
-`DailyReportImport`（上、`specta::Type` の行の DTO）には `settlement_no` を足さない（list の wire を変えない。`DailyReportImport` を返す既存の SELECT は列を名指しし、`row_to_daily_report_import` はその列の位置で読むので、表に列を足しても読み方は変わらない。2026-10-07 の `src-tauri/src/db/sales_repo.rs` で確認）。精算回数での照合は §14.18a の内部の関数だけが読む。
+`DailyReportImport`（上）は IO の行の型で、wire に出さない（`specta::Type` を持たない）。BIZ-08 §37.6 の一覧は `DailyReportImportRow`（[37](37-biz-daily-report-import-service.md) §37.2）に写して返す（[55](55-ui-csv-import.md) UI-07-D19。§14.20 の signature は変えない）。`settlement_no` を持つ（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 「日報の取込みの記録」の一覧に精算回数の列を出し、同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を行から見分ける。D-111 の時の「足さない〈list の wire を変えない〉」を置き換えた）。`DailyReportImport` を返す SELECT（§14.16・§14.17・§14.18・§14.20 の 4 つ）は列を名指しし、共有の `row_to_daily_report_import` が列の位置で読むので、4 つとも末尾に `settlement_no` を足し、写しの末尾で読む（1 つだけに足すと他の 3 つの位置がずれる）。精算回数での照合は今どおり §14.18a の内部の関数だけが行い、§14.16〜§14.18 の呼出側は足した field を読まない。
 
 **NewDailyReportSummaryLine / NewDailyReportPaymentLine / NewDailyReportDepartmentLine構造体**:
 - DB_DESIGN.md 12c〜12e のカラムに対応するinsert用構造体。`daily_report_import_id` は親INSERT後にBIZ-08が設定する。
@@ -794,4 +795,5 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-27 | 日報の紙の runtime（起票、D-142） | §14.21 の関数要求と手順 3・5・7 を、支払の行を足さずに返す形に直した（足し方・group の代表・互換の範囲・warning は 34 §19.3 手順 3 の BIZ-05。日報の紙と同じ 1 つの関数。proposed・未実装）。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §14.21 手順 8 を、内部の支払の行（親 ID・行 ID を持ち、BIZ-05 の D2 の入力だけ）、公開する支払の集計（BIZ-05 が足した結果）、Z001 の単純な写像の 3 つに分けて書き直した。手順 6 の DB DTO の命名の例を、無くなる `OfficialDailyPaymentRow` から `OfficialDailyDepartmentRow` に替えた。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
+| 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235、55 UI-07-D19） | §14.2 の `DailyReportImport` に `settlement_no` を足し（owner の決定 TD-590。D-111 の時の「足さない」を置き換えた）、§14.16・§14.17・§14.18・§14.20 の 4 つの SELECT の末尾に列を足した。この型を wire に出さないことにした（一覧の wire は BIZ-08 の `DailyReportImportRow`）。 |
 | 2026-11-14 | z001-row-guard（実装） | §14.21 手順 6 に、行を親 id で分け並びの一致に依らないこと、親に無い id の行を読まないことを書いた（[Plan Packet](../plans/2026-11-13-z001-row-guard.md)）。 |

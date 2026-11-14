@@ -16,7 +16,7 @@ import { DailyReportImportPage } from "./DailyReportImportPage";
 
 vi.mock("@tanstack/react-router", () => ({
   useBlocker: vi.fn(),
-  Link: ({ children }: { children: ReactNode }) => <a href="/reports/daily">{children}</a>,
+  Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
 
 vi.mock("sonner", () => ({
@@ -52,12 +52,14 @@ function candidate(
   key: string,
   status: DailyReportSdCandidate["status"],
   day = "21",
+  settlementNo: number | null = 101,
 ): DailyReportSdCandidate {
   return {
     candidate_key: key,
     path_date: `2026-03-${day}`,
     report_date: `2026-03-${day}`,
     source_filenames: [`Z001_${key}.CSV`, `Z002_${key}.CSV`, `Z005_${key}.CSV`],
+    settlement_no: settlementNo,
     status,
   };
 }
@@ -162,6 +164,38 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       );
     }
     expect(screen.queryByText("新しい精算はありません")).not.toBeInTheDocument();
+  });
+
+  it("REQ-401 / UI-07-D15 (3) / UI-07-D19 O3 / TD-592: only a same-settlement row names 精算 {n}, the fix and the records link", async () => {
+    const GUIDE = "取り込み直すときは、前の取込みを取り消してから読み直してください。";
+    await scanWith(
+      makeScan([
+        candidate("A", "NotImported", "21", 102),
+        candidate("B", "Imported", "21", 103),
+        candidate("C", "SameSettlementImported", "21", 101),
+        candidate("D", "SameSettlementImported", "20", null),
+      ]),
+    );
+    const same = row("Z001_C.CSV");
+    expect(within(same).getByText("精算 101")).toBeInTheDocument();
+    expect(within(same).getByText(GUIDE)).toBeInTheDocument();
+    expect(within(same).getByRole("link", { name: "日報の取込みの記録を開く" })).toHaveAttribute(
+      "href",
+      "/csv-import/daily-reports",
+    );
+    // null は「精算」の文を出さない（案内と link は出す）
+    const withoutNo = row("Z001_D.CSV");
+    expect(within(withoutNo).queryByText(/精算 /)).not.toBeInTheDocument();
+    expect(within(withoutNo).getByText(GUIDE)).toBeInTheDocument();
+    expect(
+      within(withoutNo).getByRole("link", { name: "日報の取込みの記録を開く" }),
+    ).toBeInTheDocument();
+    for (const key of ["A", "B"]) {
+      const item = row(`Z001_${key}.CSV`);
+      expect(within(item).queryByText(/精算 /)).not.toBeInTheDocument();
+      expect(within(item).queryByText(GUIDE)).not.toBeInTheDocument();
+      expect(within(item).queryByRole("link")).not.toBeInTheDocument();
+    }
   });
 
   it("REQ-401 / UI-07-D15 (2)(3): read-done text and the summary text follow the state counts", async () => {
