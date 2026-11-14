@@ -218,6 +218,8 @@ fn execute_commit(conn: &mut DbConnection, req: &CommitRequest) -> Result<Import
     let targets = recheck_targets(&tx, &codes)?;
     let gaps = settlement_gaps(&tx, settlement.settlement_no)?;
 
+    // probe: Contract Probe の build だけ（PR #250）。transaction の中で 10 秒待つ
+    std::thread::sleep(std::time::Duration::from_secs(10));
     tx.commit().map_err(DbError::from)?;
 
     // 8. TX外: 操作ログ記録（best-effort）

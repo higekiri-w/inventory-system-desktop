@@ -111,7 +111,8 @@ pub fn parse_and_validate_csv(
 /// プレビュー済みデータの取込みを確定する
 ///
 /// docs/function-design/41-cmd-pos.md §17.5 commit_csv_import
-#[tauri::command]
+// probe: Contract Probe の build だけ（PR #250）。取込みの確定だけを async にする
+#[tauri::command(async)]
 #[specta::specta]
 pub fn commit_csv_import(
     state: State<AppState>,

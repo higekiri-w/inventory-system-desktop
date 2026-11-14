@@ -6,7 +6,6 @@ import { useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { navigation } from "@/config/navigation";
-import { useAutoBackupCheck } from "@/features/backup-restore/useAutoBackupCheck";
 import { PrintUnsupportedNotice } from "@/features/daily-sales/components/PrintUnsupportedNotice";
 import { ShortcutsDialog, useShortcutsDialog } from "@/features/shortcuts";
 
@@ -45,8 +44,8 @@ export function RootLayout() {
   // §54.1 接続点: useShortcutsDialog で open state + global Ctrl+/ keydown listener。
   // ShortcutsDialog は <Toaster /> と並列、TooltipProvider 直下に mount (Portal 注入で layout 非影響)。
   const { open: shortcutsOpen, setOpen: setShortcutsOpen } = useShortcutsDialog();
-  // UI-11b-D13: 自動バックアップの確認を画面に依らず 60 秒ごとに動かす（hook 本体と state は backup-restore feature）。
-  useAutoBackupCheck();
+  // probe: Contract Probe の build だけ（PR #250）。60 秒の tick の check_auto_backup が 10 秒の sleep に重ならないよう
+  // useAutoBackupCheck() の呼出しを外す（起動時の確認は setup hook の run_startup_auto_backup が動かす）。
 
   useEffect(() => {
     // §52.5: WSL2 WebKitGTK では document.title が OS ウィンドウタイトルに rebind されない (2026-04-21 実機確認)。

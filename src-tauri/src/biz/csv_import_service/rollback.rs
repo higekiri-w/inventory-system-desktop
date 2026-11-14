@@ -110,6 +110,8 @@ pub fn rollback_csv_import(
     // 2〜3. 取消の本体（無効化・状態・求め直し・要再確認の一覧）
     let tx = conn.transaction().map_err(DbError::from)?;
     let result = apply_rollback(&tx, csv_import_id)?;
+    // probe: Contract Probe の build だけ（PR #250）。transaction の中で 10 秒待つ
+    std::thread::sleep(std::time::Duration::from_secs(10));
     tx.commit().map_err(DbError::from)?;
 
     // 4. TX外: 操作ログ記録（best-effort）
