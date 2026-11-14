@@ -5,7 +5,7 @@ wave に属さない単独の lane。出発点は `docs/backlog.md` の項目「
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: d1abd005f3b682046ffcad51fdb8273667ab6cb2
 - Amendments: none
 
 ## Risk
