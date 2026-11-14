@@ -54,7 +54,7 @@ repo の現物で確かめた（2026-10-17、`src-tauri/tauri.conf.json`・`.git
 
 開発用の Windows の clone（[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の `C:\Users\Alice\projects\inventory-system-desktop`）で、PowerShell から行う。
 
-1. 配布する commit を checkout し、`git status` に変更が無いことと、`git log -1` が配布する commit であることを確かめる。変更が `package-lock.json` だけなら、[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の「毎回ハマる落とし穴」の 1 のとおり `git restore package-lock.json` で捨てて確かめ直す。`tauri dev` の後の改行だけの変更（§4.6 の「クリーンインストールの後に初めて build するときの落とし穴」の autocrlf の項）なら、その項のとおり `git diff --ignore-cr-at-eol --stat` が空のときだけ `git restore .` で戻して確かめ直す。それ以外の変更があれば、その clone の MSI を配布しない。
+1. 配布する commit を checkout し、`git status` に変更が無いことと、`git log -1` が配布する commit であることを確かめる。変更が `package-lock.json` だけなら、[DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) §4.6 の「毎回ハマる落とし穴」の 1 のとおり `git restore package-lock.json` で捨てて確かめ直す。`tauri dev` の後の改行だけの変更（§4.6 の「クリーンインストールの後に初めて build するときの落とし穴」の autocrlf の項）なら、その項のとおり `git diff --ignore-cr-at-eol --stat` の出力が空（「LF will be replaced by CRLF」の warning の行を除いて）のときだけ `git restore .` で戻して確かめ直す。それ以外の変更があれば、その clone の MSI を配布しない。
 2. `npm ci --ignore-scripts`（[AGENTS.md](../AGENTS.md) の npm 供給網ガード、D-030）。
 3. `npm run tauri build`。route の生成は build の中の Vite の plugin が行う。`failed to run light.exe` で止まったら、Windows の「設定 → アプリ → オプション機能 → Windows のその他の機能」で VBSCRIPT を有効にしてやり直す（[Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)、2026-10-17 に確かめた）。それ以外で止まったら、その commit の MSI を配布しない。
 4. 出来た MSI を `src-tauri\target\release\bundle\msi\` で探す。file の名前は `在庫管理システム_{version}_x64_ja-JP.msi` の形で、`bundle\` の下にできる installer は MSI だけ（M1、2026-10-24）。
