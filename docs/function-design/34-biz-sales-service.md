@@ -145,6 +145,7 @@ struct MonthlySalesReport {
     items: Vec<MonthlySaleItem>,                    // 集計結果
     prev_month_comparison: Option<Vec<MonthlySaleItem>>, // 前月比較（取得できた場合）
     official_department_totals: Option<Vec<OfficialMonthlyDepartmentTotal>>, // Z005日報集計由来。日報未取込みならNone
+    official_report_dates: Vec<String>,             // completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。日報未取込みなら空（§19.4 手順 6、57 UI-09b-D11）
 }
 ```
 
@@ -393,11 +394,13 @@ fn get_monthly_sales(
    - `daily_report_department_lines` を `daily_report_imports.status='completed'` かつ `report_date BETWEEN date_from AND date_to` で集計する
    - 同一日の複数completed親もすべて加算する。日次の追加取込みが月次合計へ加算されることを回帰契約とする
    - mode に関係なく `official_department_totals` として返す
-   - 日報取込みが1件もない月は `None`。一部日だけ日報がある月は取得済み日だけの合計とする。将来coverage countを返す場合はparent件数ではなく `COUNT(DISTINCT report_date)` を使う
-   - 公式日報部門集計と商品別集計は別seriesとして返し、両者を加算しない
+   - 日報取込みが1件もない月は `None`。一部日だけ日報がある月は取得済み日だけの合計とする
+   - 取り込んだ日（57 UI-09b-D10・D11）: sales_repo::get_monthly_official_report_dates(conn, date_from, date_to) → Vec<String>（[24 §14.22a](24-io-csv-import-repo.md)。completed の親の distinct report date、昇順）を `official_report_dates` として返す。parent の件数を使わない（同じ日の複数 completed 親は 1 日）。mode に関係なく返す
+   - 不変条件: 同じ conn・同じ `date_from`/`date_to`・同じ `status='completed'` の条件で読むので、`official_report_dates` が空 ⇔ `official_department_totals` が `None`。CMD が DB の mutex を持つ間に 2 つを読むので、間に書込みは入らない。部門の行が 0 の親だけの日は、日には入り、部門の集計は `Some(空Vec)` になる
+   - 公式日報部門集計と商品別集計は別seriesとして返し、両者を加算しない。取り込んだ日は `daily_report_imports` だけから読み、`sale_records`（Z004・手動販売）の日を入れない（57 UI-09b-D8）
 
 7. **結果返却**
-   - MonthlySalesReport { month, mode, items, prev_month_comparison, official_department_totals }
+   - MonthlySalesReport { month, mode, items, prev_month_comparison, official_department_totals, official_report_dates }
 
 **エラーハンドリング**:
 - 月形式不正 → BizError::ValidationFailed(メッセージ)
@@ -406,6 +409,11 @@ fn get_monthly_sales(
 **設計判断 — ranking を items に埋め込む（architecture/cmd-task-specs.md との差異）**:
 - architecture/cmd-task-specs.md CMD-09 は `MonthlySalesReport(items[], rankings[], prev_month_comparison)` と ranking を独立配列で記載
 - 本設計では `MonthlySaleItem.ranking` として items に埋め込む。理由: ranking は items の amount 降順と1:1対応しており、別配列にすると items とのインデックス同期が必要になる。埋め込みの方がUI側の実装が単純
+
+**設計判断 — 取り込んだ日を月次の DTO で返す（57 UI-09b-D11）**:
+- 既存の `list_daily_report_imports`（§37.6）を UI から呼んで日を作る案は採らない。取込みごとの行で取消した行も返し、completed で絞り日で distinct にする規則（UI-09b-D10）を UI に置くことになる。paging（per_page の上限 100）で月の全部を 1 回で得る保証が無い。公式部門集計と別の query・cache になり、invalidate の時差で日と集計が食い違う時間ができる
+- `get_monthly_official_department_totals`（24 §14.22）とは別の IO の関数にする。既存の関数の `None` の契約と test を変えずに済み、2 つの食い違いは手順 6 の不変条件の test が見張る
+- 「取り込んでいない日」（暦の補集合と、今日と今日より後の日の除外）は返さない。今日の日付を BIZ に持ち込まず、UI が `official_report_dates` と暦から作る（57 UI-09b-D11）
 
 **設計判断 — 全件返却（ページングなし）**:
 - 先決事項D-5 に基づき、初期実装では全件返却
@@ -520,3 +528,5 @@ fn export_sales_csv(
 | 2026-10-27 | 日報の紙の runtime（起票、D-142） | 冒頭の「数量と単位」にレジの日報の値の範囲（IO-07-D6 の上限で収め、読取りで検査しない）を足した。§19.3 手順 3 の支払を、IO が足さずに返した行に BIZ-05 が紙と同じ 1 つの関数で SALES-SHEET-D2 を当てる形にし、互換の範囲の正本を 24 §14.21 手順 3 からこの段へ移した。D2 の足す値の溢れを紙と画面とも `ValidationFailed` にした（proposed・未実装）。 |
 | 2026-10-29 | 日報の紙の runtime（Plan Review round 1 の是正） | §19.3a の「精算をまたいで足してよい根拠」の未確認の前提（行ごとにレジスターツールの値と同じか）を確かめる場を、runtime の lane の L3 から紙の切替えの前の UI-09a-D19 の (2) へ移した（D-142 の (5)）。 |
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §19.3 手順 3 と §19.3a の proposed の注記を外し、D2 の関数（`apply_sheet_rule`）の置き場を書いた。 |
+| 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | `MonthlySalesReport` に `official_report_dates` を足し（未実装）、§19.4 手順 6 の「将来coverage countを返す場合は」を 24 §14.22a で日を得る手順と、`official_department_totals` との不変条件に置き換えた。取り込んだ日を月次の DTO で返す設計判断の段を足した（57 UI-09b-D11、[packet](../plans/2026-11-03-monthly-imported-days.md)）。設計判断の段の「取り込んでいない日」の除外を、owner の決定 TD-593 に合わせて「今日と今日より後の日」の言い方にした。 |
+| 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | `MonthlySalesReport.official_report_dates` と §19.4 手順 6 の取り込んだ日を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |

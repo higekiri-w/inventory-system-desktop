@@ -1599,6 +1599,31 @@ pub fn get_monthly_official_department_totals(
         .map_err(|e| DbError::QueryFailed(e.to_string()))
 }
 
+/// 指定期間の completed 日報取込みのある日を重複なしの昇順で取得する
+///
+/// 24-io-csv-import-repo.md §14.22a
+pub fn get_monthly_official_report_dates(
+    conn: &DbConnection,
+    date_from: &str,
+    date_to: &str,
+) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT report_date
+             FROM daily_report_imports
+             WHERE status = 'completed' AND report_date BETWEEN ?1 AND ?2
+             ORDER BY report_date ASC",
+        )
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+    let rows = stmt
+        .query_map([date_from, date_to], |row| row.get(0))
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+    rows.collect::<Result<Vec<String>, _>>()
+        .map_err(|e| DbError::QueryFailed(e.to_string()))
+}
+
 /// 指定期間の商品別売上集計を取得する
 pub fn get_monthly_sales_by_product(
     conn: &DbConnection,
@@ -3270,6 +3295,46 @@ mod tests {
         let rows =
             get_monthly_official_department_totals(&conn, "2026-03-01", "2026-03-31").unwrap();
         assert!(rows.is_none());
+    }
+
+    #[test]
+    fn test_get_monthly_official_report_dates_req502_distinct_completed_in_range() {
+        // REQ-502 / FUNC-14.22a / UI-09b-D10: completed の日を重複なし・範囲内で返す
+        let (_dir, conn) = setup_test_db();
+        seed_daily_report_import(&conn, "2026-03-01", "dates-01", "completed");
+        seed_daily_report_import(&conn, "2026-03-23", "dates-23", "completed");
+        seed_daily_report_import(&conn, "2026-03-24", "dates-24a", "completed");
+        seed_daily_report_import(&conn, "2026-03-24", "dates-24b", "completed");
+        seed_daily_report_import(&conn, "2026-03-31", "dates-31", "completed");
+        seed_daily_report_import(&conn, "2026-03-25", "dates-25", "rolled_back");
+        seed_daily_report_import(&conn, "2026-02-28", "dates-0228", "completed");
+        seed_daily_report_import(&conn, "2026-04-01", "dates-0401", "completed");
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert_eq!(
+            dates,
+            ["2026-03-01", "2026-03-23", "2026-03-24", "2026-03-31"]
+        );
+    }
+
+    #[test]
+    fn test_get_monthly_official_report_dates_req502_empty_month() {
+        // REQ-502 / FUNC-14.22a: 取込みの無い月は空の Vec（error にしない）
+        let (_dir, conn) = setup_test_db();
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert!(dates.is_empty());
+    }
+
+    #[test]
+    fn test_get_monthly_official_report_dates_req502_same_day_rollback_and_completed() {
+        // REQ-502 / FUNC-14.22a: 同じ日に rolled_back と completed があればその日を返す
+        let (_dir, conn) = setup_test_db();
+        seed_daily_report_import(&conn, "2026-03-10", "same-day-rolled", "rolled_back");
+        seed_daily_report_import(&conn, "2026-03-10", "same-day-completed", "completed");
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert_eq!(dates, ["2026-03-10"]);
     }
 
     #[test]

@@ -79,7 +79,7 @@ export function DailySalesPage({ search, onSearchChange }: DailySalesPageProps) 
     <PageShell>
       <PageHeader title="日次売上" />
 
-      <TabsHeader />
+      <TabsHeader month={date.slice(0, 7)} />
 
       <div className="flex flex-wrap items-end justify-between gap-4">
         <DateNavigator date={date} onChange={handleDateChange} />

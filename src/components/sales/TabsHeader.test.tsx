@@ -21,8 +21,8 @@ import {
 
 import { TabsHeader } from "./TabsHeader";
 
-function renderAt(initialPath: string) {
-  const rootRoute = createRootRoute({ component: () => <TabsHeader /> });
+function renderAt(initialPath: string, month?: string) {
+  const rootRoute = createRootRoute({ component: () => <TabsHeader month={month} /> });
   const dailyRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/reports/daily",
@@ -60,5 +60,24 @@ describe("TabsHeader (PR-1 B1: search params 付き URL の active 維持)", () 
 
     expect(monthlyLink).toHaveAttribute("data-status", "active");
     expect(dailyLink).not.toHaveAttribute("data-status", "active");
+  });
+});
+
+describe("TabsHeader (REQ-502 UI-09b-D11: 日次から月次への戻り)", () => {
+  it("T1: month を渡すと月次の link が その月を開き、渡さないと今の href のまま", async () => {
+    const { unmount } = renderAt("/reports/daily?date=2026-03-23", "2026-03");
+    expect(await screen.findByRole("link", { name: "月次" })).toHaveAttribute(
+      "href",
+      "/reports/monthly?month=2026-03",
+    );
+    expect(screen.getByRole("link", { name: "日次" })).toHaveAttribute("href", "/reports/daily");
+    unmount();
+
+    renderAt("/reports/daily?date=2026-03-23");
+    expect(await screen.findByRole("link", { name: "月次" })).toHaveAttribute(
+      "href",
+      "/reports/monthly",
+    );
+    expect(screen.getByRole("link", { name: "日次" })).toHaveAttribute("href", "/reports/daily");
   });
 });

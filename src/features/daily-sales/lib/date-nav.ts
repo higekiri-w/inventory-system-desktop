@@ -2,7 +2,8 @@
 //
 // 日付ナビ純関数 + useTodayDate hook。
 // useTodayDate は UI-00 useYesterdayDate と同型（Visibility API listener、24:00 またぎ再計算）。
-// 将来 UI-09b / UI-06a で多用化されたら src/lib/dates/ に共通化（Backlog）。
+// useTodayDate の使い手は日次売上と月次売上（57 UI-09b-D11）の 2 つで、2 つでは移さない。
+// 3 つめの使い手ができたら src/lib/dates/ へ移す（56 §56.5）。
 // 設計: docs/function-design/56-ui-daily-sales.md §56.5 + §56.6 + §56.7
 
 import { useEffect, useState } from "react";

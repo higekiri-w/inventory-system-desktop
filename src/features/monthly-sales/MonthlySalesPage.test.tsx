@@ -7,11 +7,14 @@
 // 設計: docs/plans/2026-05-19-pr-66-codex-r1-p2-fixes.md §2 commit 2
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { commands } from "@/lib/bindings";
 import type { MonthlySalesReport } from "@/lib/bindings";
+import { queryKeys } from "@/lib/query-keys";
+import { renderWithRouter } from "@/test/render-with-router";
 
 import { MonthlySalesPage } from "./MonthlySalesPage";
 import type { MonthlySalesSearch } from "./MonthlySalesPage";
@@ -70,16 +73,23 @@ function buildReport(): MonthlySalesReport {
     ],
     prev_month_comparison: null,
     official_department_totals: null,
+    official_report_dates: [],
   };
 }
 
-function renderPage(search: MonthlySalesSearch, onSearchChange = vi.fn()) {
-  const qc = new QueryClient({
+function newQueryClient() {
+  return new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Number.POSITIVE_INFINITY } },
   });
+}
+
+// 公式部門集計の節の日の link（UI-09b-D11）が router の文脈を要するので renderWithRouter で描く。
+function renderPage(search: MonthlySalesSearch, onSearchChange = vi.fn()) {
+  const qc = newQueryClient();
   return {
+    qc,
     onSearchChange,
-    ...render(
+    ...renderWithRouter(
       <QueryClientProvider client={qc}>
         <MonthlySalesPage search={search} onSearchChange={onSearchChange} />
       </QueryClientProvider>,
@@ -87,7 +97,22 @@ function renderPage(search: MonthlySalesSearch, onSearchChange = vi.fn()) {
   };
 }
 
+// onSearchChange の updater を state に当てて描き直す（月の切替え、P5）
+function StatefulPage({ initial }: { initial: MonthlySalesSearch }) {
+  const [search, setSearch] = useState(initial);
+  return (
+    <MonthlySalesPage
+      search={search}
+      onSearchChange={(updater) => {
+        setSearch(updater);
+      }}
+    />
+  );
+}
+
 beforeEach(() => {
+  // 途中で落ちた test の mockResolvedValueOnce・mockImplementation の残りを後の test へ持ち越さない
+  mockGetMonthlySales.mockReset();
   mockGetMonthlySales.mockResolvedValue({ status: "ok", data: buildReport() });
 });
 
@@ -104,6 +129,7 @@ describe("MonthlySalesPage (B0 empty-state characterization)", () => {
         items: [],
         prev_month_comparison: null,
         official_department_totals: null,
+        official_report_dates: [],
       },
     });
 
@@ -132,7 +158,9 @@ describe("MonthlySalesPage_req502 official department totals", () => {
     expect(
       await screen.findByRole("heading", { name: "公式部門集計（レジ日報由来）" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("日報取込み済み日の Z005 部門別売上合計です。")).toBeInTheDocument();
+    expect(
+      screen.getByText("「取り込んだ日」に並ぶ日の Z005 部門別売上の合計です。"),
+    ).toBeInTheDocument();
     expect(screen.getByText("その他小物")).toBeInTheDocument();
     expect(screen.getByText("¥4,000")).toBeInTheDocument();
     expect(screen.getByText("商品A")).toBeInTheDocument();
@@ -168,6 +196,9 @@ describe("MonthlySalesPage_req502 official department totals", () => {
         ?.querySelector('svg[aria-hidden="true"]'),
     ).toBeInTheDocument();
     expect(screen.getByText("商品A")).toBeInTheDocument();
+    // P1 / UI-09b-D11: 公式部門集計の無い月は日の一覧を出さない
+    expect(screen.queryByRole("list", { name: "取り込んだ日" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /取り込んだ日/ })).toBeNull();
   });
 });
 
@@ -279,10 +310,136 @@ describe("MonthlySalesPage native input tokens（Lane 5 SC4j）", () => {
 it("SC22 / REQ-502: empty official department rows retain their plain paragraph", async () => {
   mockGetMonthlySales.mockResolvedValue({
     status: "ok",
-    data: { ...buildReport(), official_department_totals: [] },
+    data: {
+      ...buildReport(),
+      official_department_totals: [],
+      official_report_dates: ["2026-05-02"],
+    },
   });
   renderPage({ month: "2026-05", mode: "by_product" });
   const empty = await screen.findByText("公式部門集計の行はありません。");
   expect(empty.tagName).toBe("P");
   expect(empty.closest('[data-slot="alert"]')).toBeNull();
+  // P2 / UI-09b-D11: 空配列の月は日の一覧と「行はありません」の両方を出す
+  expect(screen.getByRole("heading", { name: "取り込んだ日（1日分）" })).toBeInTheDocument();
+  expect(
+    within(screen.getByRole("list", { name: "取り込んだ日" })).getByRole("link", {
+      name: "2日（土）",
+    }),
+  ).toBeInTheDocument();
+});
+
+describe("MonthlySalesPage REQ-502 UI-09b-D11 取り込んだ日の状態", () => {
+  const withDates = (month: string, dates: string[]): MonthlySalesReport => ({
+    ...buildReport(),
+    month,
+    official_department_totals: [
+      { department_id: 1, label: "その他小物", quantity: 6, count: 3, amount: 4000 },
+    ],
+    official_report_dates: dates,
+  });
+
+  it("P3: monthlySalesRoot の invalidate の後の refetch で日の一覧が新しい値に変わる", async () => {
+    mockGetMonthlySales
+      .mockResolvedValueOnce({ status: "ok", data: withDates("2026-05", ["2026-05-02"]) })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: withDates("2026-05", ["2026-05-02", "2026-05-03"]),
+      });
+    const { qc } = renderPage({ month: "2026-05", mode: "by_product" });
+
+    expect(
+      await screen.findByRole("heading", { name: "取り込んだ日（1日分）" }),
+    ).toBeInTheDocument();
+
+    await qc.invalidateQueries({ queryKey: queryKeys.monthlySalesRoot() });
+
+    expect(
+      await screen.findByRole("heading", { name: "取り込んだ日（2日分）" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "3日（日）" })).toBeInTheDocument();
+  });
+
+  it("P4: 取得の失敗では日の一覧を出さず、再試行の成功で出る", async () => {
+    const failure = {
+      status: "error" as const,
+      error: {
+        kind: "internal" as const,
+        message: "月次売上の取得に失敗しました",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    };
+    // useMonthlySalesReport は retry: 1 なので 2 回失敗させて error を確定させる
+    mockGetMonthlySales
+      .mockResolvedValueOnce(failure)
+      .mockResolvedValueOnce(failure)
+      .mockResolvedValue({ status: "ok", data: withDates("2026-05", ["2026-05-02"]) });
+    renderPage({ month: "2026-05", mode: "by_product" });
+
+    const retry = await screen.findByRole("button", { name: "再試行" }, { timeout: 4000 });
+    expect(screen.queryByRole("list", { name: "取り込んだ日" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /取り込んだ日/ })).toBeNull();
+
+    fireEvent.click(retry);
+
+    expect(
+      await screen.findByRole("heading", { name: "取り込んだ日（1日分）" }),
+    ).toBeInTheDocument();
+  });
+
+  it("P6: 今月は page の今日より前の日だけを取り込んでいない日に並べる（TD-593）", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 4, 3, 12));
+    try {
+      mockGetMonthlySales.mockResolvedValue({
+        status: "ok",
+        data: {
+          ...buildReport(),
+          official_department_totals: [],
+          official_report_dates: ["2026-05-01"],
+        },
+      });
+      renderPage({ month: "2026-05", mode: "by_product" });
+
+      expect(
+        await screen.findByRole("heading", { name: "取り込んでいない日（1日分）" }),
+      ).toBeInTheDocument();
+      const notImported = screen.getByRole("list", { name: "取り込んでいない日" });
+      expect(
+        within(notImported)
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toEqual(["2日（土）"]);
+      expect(screen.getByText("今日と、今日より後の日は数えていません。")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("P5: 月を切り替えると、その月の日だけが並ぶ", async () => {
+    mockGetMonthlySales.mockImplementation((month) =>
+      Promise.resolve({
+        status: "ok",
+        data:
+          month === "2026-04"
+            ? withDates("2026-04", ["2026-04-10"])
+            : withDates("2026-05", ["2026-05-02"]),
+      }),
+    );
+    renderWithRouter(
+      <QueryClientProvider client={newQueryClient()}>
+        <StatefulPage initial={{ month: "2026-05", mode: "by_product" }} />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("link", { name: "2日（土）" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "前月" }));
+
+    expect(await screen.findByRole("link", { name: "10日（金）" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "2日（土）" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "取り込んだ日（1日分）" })).toBeInTheDocument();
+  });
 });

@@ -1127,6 +1127,8 @@ export type MonthlySalesReport = {
 	items: MonthlySaleItem[],
 	prev_month_comparison: MonthlySaleItem[] | null,
 	official_department_totals: OfficialMonthlyDepartmentTotal[] | null,
+	// completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。空 ⇔ official_department_totals が None（34 §19.4 手順 6）
+	official_report_dates: string[],
 };
 
 /**
