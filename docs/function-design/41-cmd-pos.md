@@ -49,6 +49,8 @@ CMD層は薄いラッパー。以下のみを行う:
 **ファイルバイト列の受け渡し方針**:
 フロントエンドがFileAPIで読み込んだバイナリを `Vec<u8>` としてTauriコマンドに渡す。CMD層はバイト列をそのままBIZ層に中継する。
 
+**実行の thread**（未実装。PR #250 の実装で入り、それまでは 2 つとも main thread で動く）: `commit_csv_import` と `rollback_csv_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と §17.9 の登録は変えない（wire と生成 bindings は変わらない）。DB の Mutex と cache の Mutex の取り方と順（§17.5）は変えない。source の検査を 1 本置く（`settings_cmd.rs` の test `test_inspect_backup_cmd_req901_runs_off_main_thread` と同じ判定: command の属性が `tauri::command(async)` か、関数が `async fn`）。CMD-07・CMD-08 のほかの command の実行の thread は変えない。
+
 ---
 
 ### 17.3 AppState の拡張
@@ -743,3 +745,4 @@ wire の型を変えたら `src/lib/bindings.ts` を generator で再生成す�
 | 2026-08-16 | PR #79 | SPEC-SDI-D3/D4: same-date summary DTO、`additional_import_confirmed`、snapshot mismatch時のtoken破棄、bindings再生成義務を正本化。 |
 | 2026-10-23 | stocktake-count-runtime-b1（D-118 の b1） | 冒頭の D-118 の節を現行に。commit_csv_import から同じ日の追加の確認のフラグを外し、token は成功のときだけ消す。知らせと `recheck_targets`、停止の注記を外した（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)） |
 | 2026-10-25 | z004-rollback-entry（PR #197） | CMD-07 に `preview_rollback_csv_import` を足し（§17.5、§17.9 の 2 面に登録）、§17.4 に順 4 の拒否の `SettlementConflict` → kind `import_error`・`related_csv_import_id` の行を足した（[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |
+| 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §17.2 に「実行の thread」を足した（`commit_csv_import`・`rollback_csv_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§17.5 の 2 つのシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |

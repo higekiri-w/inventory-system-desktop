@@ -92,6 +92,8 @@ fn commit_daily_report_import(
 
 `app` は Tauri が注入する。手順 3a の `app_data_dir` は command が test 用の `commit_daily_report_import_with_state`（`src-tauri/src/cmd/daily_report_import_cmd.rs`）を呼ぶ前に取り、解決済みの `app_data_dir: &Path` を引数で渡す（取れなければ cache に触れずに `internal`。test は一時 directory を渡す）。このため手順 3a は番号に反して手順 1 より前に行い、観測できる差は token が不正（手順 1〜3 の失敗）かつ `app_data_dir` を取れないときに、手順 1〜3 の error でなく手順 3a の `internal` が返る（期限切れの token も cache から消えない）ことだけである（`src-tauri/src/cmd/daily_report_import_cmd.rs` の `commit_daily_report_import`）。
 
+**実行の thread**（未実装。PR #250 の実装で入り、それまでは 2 つとも main thread で動く）: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。CMD-12 のほかの command の実行の thread は変えない。
+
 **処理ステップ**:
 1. preview_tokenのUUID形式を検証する。
 2. `daily_report_preview_cache` からcached previewを取得する。
@@ -264,3 +266,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-07 | sd-direct-read（Plan Review round 1 の是正） | §45.4 の commit に `app: tauri::AppHandle` と `app_data_dir` の取り方（手順 3a）を足した（BIZ-08-D5 の写しの置き場所）。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | §45.6c（CMD-12-D2）: 一括取込みと EJ の控えの command と、scan に後から足す EJ の数え・Z004 の bytes を proposed で足した。§45.6a・§45.6b は変えていない。Plan Review round 2 の是正で、`Failed` の kind と EJ の kind・mode を生成 enum にし、scan の `ej_unreadable_files` と手で選んだ EJ の保留の判定の置き場を書いた。Plan Review round 3 の是正で、一括取込みと手で選ぶ EJ の取込みの後に無効にする控えの query の key を書いた。Final Review の是正で、(B) の scan が返す `z004_unreadable_files` を書いた。あわせて `z004_unreadable_count` を書いた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
+| 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §45.4 に「実行の thread」を足した（`commit_daily_report_import`・`rollback_daily_report_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§45.4・§45.5 のシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
