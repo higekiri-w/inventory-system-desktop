@@ -28,7 +28,7 @@ UI 層の関数設計書は業務ロジック有無で 2 段階のテンプレ�
 | ファイル | 責務 |
 |---|---|
 | `src/config/navigation.ts` | NavStatus / NavItem / NavArea 型定義 + navigation 定数（4 エリア × 22 項目）。アイコンは lucide-react を import |
-| `src/components/layout/RootLayout.tsx` | 2 カラム grid + Outlet + Toaster + Devtools + ウィンドウタイトル更新 useEffect（§52.5）+ 自動バックアップ確認 hook の呼出し（UI-11b-D13。hook 本体と state は backup-restore feature が持つ）+ 印刷の案内の 1 行（[56](56-ui-daily-sales.md) UI-09a-D18。component は daily-sales feature が持つ） |
+| `src/components/layout/RootLayout.tsx` | 2 カラム grid + Outlet + Toaster + Devtools + ウィンドウタイトル更新 useEffect（§52.5）+ 自動バックアップ確認 hook の呼出し（UI-11b-D13。hook 本体と state は backup-restore feature が持つ）+ 印刷の案内の 1 行（[56](56-ui-daily-sales.md) UI-09a-D18。component は daily-sales feature が持つ）+ native の window の close の確認の窓 `WindowCloseDialog` の mount（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5。止めの集合は `src/lib/window-close-guard.ts` が持つ。未実装で、PR #250 の実装で入る） |
 | `src/components/layout/Sidebar.tsx` | aside + SidebarHeader + min-h-0 ScrollArea + 4 エリアの map（SidebarArea を呼ぶ） + DisplayScaleControl |
 | `src/components/layout/SidebarArea.tsx` | 1 エリア描画。h2 + アイコン + SidebarLink × N + Separator |
 | `src/components/layout/SidebarLink.tsx` | active/pending status 分岐。`activeMatch` を持たない項目は `<Link>` + `activeOptions={{ exact: true, includeSearch: false }}`（search params 付き URL でも path 一致のみで active 判定、TanStack デフォルト `includeSearch:true` は search 完全一致を要求し active が外れる）+ shared stone selection tone。`activeMatch` を持つ項目（在庫照会・在庫少一覧、同じ `to="/stock"` を共有）は `includeSearch` 意味論に依存せず、router の現在 pathname + search state を明示比較して排他的に active 判定する（UI-12-D1、§52.6。route 文字列のコンポーネント内ハードコード禁止）。pending=`<span role="link" aria-disabled="true" tabIndex={-1}>` + sr-only "（未実装）"、cursor-not-allowed + opacity-60。focusable な link（active / inactive）には UI_TECH_STACK §5.4 系統①の focus ring `focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50` を付与する（pending は `tabIndex={-1}` で focus 対象外。2026-08-03、batch A packet 起源） |
@@ -40,6 +40,7 @@ UI 層の関数設計書は業務ロジック有無で 2 段階のテンプレ�
 **接続点**:
 
 - `src/routes/__root.tsx` で `<RootLayout>` を mount。既存の暫定レイアウトを差し替え
+- `src/main.tsx` が render の前に native の window の close の listener を 1 回だけ登録する（`installWindowCloseGuard()`、`src/lib/window-close-listener.ts`。UI-USW-D5。未実装で、PR #250 の実装で入る）
 - `notFoundComponent` から `min-h-screen` を削除（RootLayout の `h-screen` 枠内で 404 描画、サイドバーから戻れる 404 = Nielsen #3 整合）
 
 ---
@@ -266,3 +267,4 @@ UI-12 内で唯一「処理 + エラーハンドリング + 書式規約」を�
 | 2026-06-08 | selection-tone follow-up | SidebarLink active tone を amber 系から shared stone selection tone へ統一。amber は在庫少などの業務セマンティック色に残し、navigation selection とは分離 |
 | 2026-07-16 | sidebar pending links follow-up | サイドバー最後の pending 2 項目を解消。「商品登録」（UI-01b）を既存 `/products/new` route へ active化。「在庫少一覧」（UI-06b）の独立画面 `/stock/low` 予約を廃止し、UI-06a `/stock` の `status=low_stock` フィルタへの deep-link に統合（D-047）。`NavItem` に optional `search` field を追加し、`/stock` を指す 2 nav 項目の排他 active 判定を新設（UI-12-D1） |
 | 2026-09-16 | ㉔ mockup-c 採用 | `NavItem.description` をホーム入口 card の 1 行説明として追加。sidebar は参照せず、既存の navigation 契約を維持 |
+| 2026-11-14 | window-close-guard（plan-first、PR #250） | §52.1 の RootLayout の行に native の window の close の確認の窓の mount、接続点に `main.tsx` の listener の登録を足した（UI_TECH_STACK UI-USW-D5、D-153）。未実装の注は実装の PR で外す |

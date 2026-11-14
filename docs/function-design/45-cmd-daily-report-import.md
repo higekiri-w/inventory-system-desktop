@@ -92,6 +92,8 @@ fn commit_daily_report_import(
 
 `app` は Tauri が注入する。手順 3a の `app_data_dir` は command が test 用の `commit_daily_report_import_with_state`（`src-tauri/src/cmd/daily_report_import_cmd.rs`）を呼ぶ前に取り、解決済みの `app_data_dir: &Path` を引数で渡す（取れなければ cache に触れずに `internal`。test は一時 directory を渡す）。このため手順 3a は番号に反して手順 1 より前に行い、観測できる差は token が不正（手順 1〜3 の失敗）かつ `app_data_dir` を取れないときに、手順 1〜3 の error でなく手順 3a の `internal` が返る（期限切れの token も cache から消えない）ことだけである（`src-tauri/src/cmd/daily_report_import_cmd.rs` の `commit_daily_report_import`）。
 
+**実行の thread**（未実装。PR #250 の実装で入り、それまでは 2 つとも main thread で動く）: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。CMD-12 のほかの command の実行の thread は変えない。
+
 **処理ステップ**:
 1. preview_tokenのUUID形式を検証する。
 2. `daily_report_preview_cache` からcached previewを取得する。
@@ -271,3 +273,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`。精算回数を含む、TD-590）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §45.6a に候補の `settlement_no`（TD-592）、§45.8 にその再生成を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §45.3・§45.6・§45.6a・§45.8 の proposed・未実装の注記を外し、実装の記述にした（bindings は再生成）。§45.8 の wire に出さない精算回数を preview の cache の値と書き分けた。 |
+| 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §45.4 に「実行の thread」を足した（`commit_daily_report_import`・`rollback_daily_report_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§45.4・§45.5 のシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
