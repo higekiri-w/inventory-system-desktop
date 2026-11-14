@@ -354,6 +354,18 @@ export const commands = {
 	 *  DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
 	 */
 	inspectBackup: (request: InspectBackupRequest) => typedError<BackupInspection, CmdError>(__TAURI_INVOKE("inspect_backup", { request })),
+	// USB メモリを PC の外の控えの保存先として用意する（§43.8.2）
+	prepareOffsiteMedium: (request: PrepareOffsiteMediumRequest) => typedError<OffsiteMediumView, CmdError>(__TAURI_INVOKE("prepare_offsite_medium", { request })),
+	// 用意した媒体へまだ写していない最新の backup を写す（§43.8.3）
+	checkOffsiteBackup: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("check_offsite_backup")),
+	// 「PC の外の控え」の card とホームの状態（§43.8.4）
+	getOffsiteBackupStatus: () => typedError<OffsiteBackupStatus, CmdError>(__TAURI_INVOKE("get_offsite_backup_status")),
+	// 読めない記録を作り直す。先に backup を作る（§43.8.6）
+	resetOffsiteState: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("reset_offsite_state")),
+	// PC の外の控えをやめる。DB を使わない（§43.8.7）
+	stopOffsiteBackup: () => typedError<null, CmdError>(__TAURI_INVOKE("stop_offsite_backup")),
+	// 保存先に選ぼうとする folder を確かめる。DB を使わず、保存しない（§43.8.8）
+	checkBackupDirChoice: (request: BackupDirChoiceRequest) => typedError<null, CmdError>(__TAURI_INVOKE("check_backup_dir_choice", { request })),
 	/**
 	 *  バックアップから復元する（§43.9）
 	 *
@@ -403,6 +415,11 @@ export type AppSetting = {
 	key: string,
 	value: string,
 	updated_at: string,
+};
+
+// §43.8.8
+export type BackupDirChoiceRequest = {
+	selected_path: string,
 };
 
 /**
@@ -1228,6 +1245,32 @@ export type OfficialMonthlyDepartmentTotal = {
 	count: number | null,
 };
 
+// 画面とホームが出す状態（§71.11.5）
+export type OffsiteBackupStatus = {
+	prepared: boolean,
+	last_success_at: string | null,
+	last_success_label: string | null,
+	days_since_last_success: number | null,
+	stale: boolean,
+	attached: OffsiteMediumView[],
+	last_failure_kind: OffsiteFailureKind | null,
+	local_backup_old: boolean,
+};
+
+// 確認の結果（§71.11.4。wire は `kind` で分ける tagged enum）
+export type OffsiteCheckResult = { kind: "not_prepared" } | { kind: "no_local_backup" } | { kind: "medium_missing" } | { kind: "up_to_date" } | { kind: "copied"; file_name: string; labels: string[] };
+
+// 最後の確認の失敗の種類（wire は snake_case）
+export type OffsiteFailureKind = "register_sd" | "not_removable" | "storage_full" | "verify_mismatch" | "io" | "state_unreadable" | "source_unverified" | "backup_dir_is_medium_folder";
+
+// 用意した媒体の見え方（§71.11.2）
+export type OffsiteMediumView = {
+	label: string,
+	drive_root: string,
+	// 媒体の `InventoryBackup\` の最新の正式名（reparse point の entry を除く）
+	newest_copy: string | null,
+};
+
 /**
  *  操作ログの行マッピング（第6段階追加）
  *
@@ -1318,6 +1361,11 @@ export type PluRegisterSnapshotSummary = {
 	app_managed_count: number,
 	conflict_count: number,
 	release_pending_count: number,
+};
+
+// §43.8.2
+export type PrepareOffsiteMediumRequest = {
+	selected_path: string,
 };
 
 // フロントエンドに返すプレビューデータ

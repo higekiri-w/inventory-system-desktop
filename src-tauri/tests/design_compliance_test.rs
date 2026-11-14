@@ -285,7 +285,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
         vec!["io::report_csv_exporter"],
     );
     map.insert("28-io-image-manager.md", vec!["io::image_manager"]);
-    map.insert("71-mnt-backup.md", vec!["mnt::backup"]);
+    map.insert("71-mnt-backup.md", vec!["mnt::backup", "mnt::offsite"]);
     map.insert("72-mnt-log-manager.md", vec!["mnt::log_manager"]);
     map.insert("43-cmd-settings-log.md", vec!["cmd::settings_cmd"]);
     // CMD-02〜06: 入出庫・在庫照会コマンド群（実装済み）

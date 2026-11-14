@@ -1165,6 +1165,16 @@ Use concise ADR-style entries.
 - Compatibility: D-119 (5) の U6 の既定（答えが無い間は原価の lane を起票しない）と、D-119 の Why (4) の前提を置き換える（D-119 の Superseded in part の行）。D-119 (2)・(4) の決定（巻・cm を vB で外す、1 cm まで受ける）は変えない。
 - Revisit: 税理士への出し方が税込に変わったとき。Q-098 の答えが出たとき（刻みを検査するなら SPEC-UNIT-D2 と数量の入力の検査を直す）。巻・cm で数える商品が新しく出たとき（vB の後は単位を足す migration と、値のある DB の守りが要る。D-123 (5)）。
 
+## D-130: PC の中の保存先を、PC の外の控えの USB メモリの InventoryBackup と同じ folder にしない（D-114 の追加）（2026-10-23）
+
+- Status: accepted（owner の決定 2026-10-23、repo 外の回答台帳 TD-398。同じ日の TD-396 の B を置き換えた。PC の外の控えの runtime (b) の Plan Packet `docs/plans/2026-10-23-backup-offsite-runtime-b.md` の owner の判断事項 J1 の A）
+- Context: D-114 の正本は、PC の中の保存先（`backup_path`、取外し可能な drive も選べる、68 UI-11b-D8）を、用意した USB メモリの `InventoryBackup` の folder そのものにした組み合わせを扱っていなかった。この組み合わせでは、PC の中の保持日数の掃除（71 §71.5、既定 3 日）が媒体の写しを日付で消し、写す元と写す先が同じ file なので確認が毎回「写すものが無い」になって最後に写せた日が進まず、3 日後に「差してあるのに写せない」の知らせが原因を名指さずに出る。
+- Decision: (1) 保存先と媒体の `{root}\InventoryBackup` を、どちらも書く先の固定（71 §71.4 の `pin_to_volume`）で得た実体の path で比べ、同じ folder なら書かずに新しい失敗 `BackupDirIsMediumFolder`（wire の `OffsiteFailureKind` の `backup_dir_is_medium_folder`）を返す（71 MNT-01-D11、§71.11.3）。(2) 判定は 3 つの時点で同じ関数を使う（A の範囲の中の Writer の技術判断）: バックアップ画面の「保存先を選ぶ」で保存する前（新しい command `check_backup_dir_choice`、43 §43.8.8、71 §71.11.5c）、USB メモリの用意（§71.11.2 手順 3c）、確認のたび（§71.11.4 手順 3）。(3) 画面は、保存先の選択と用意ではその場の card に、確認の失敗では card の副情報と、知らせ（`stale`）のときは card とホームの原因の文（68 UI-11b-D14 の (4)、53 UI-00-D12 の (4)）に、「保存先を選ぶ」で PC の中の別のフォルダを選び直す直し方を名指す。
+- Why: 回避を手順書の文に回さず、問題を起きたその画面で原因と直し方を名指す（D-127 の「使い手に押しつけない」）。保存先の選択でも止めるのは、用意の後に保存先を選ぶ順では、確認が止めても保持日数の掃除が媒体の写しを消し続けるため。用意と確認でも止めるのは、用意の前に選んだ保存先と、drive 文字の割当ての変化を、保存先の選択だけでは見落とすため。
+- Alternatives: 71 §71.11.7 に「PC の中の保存先にこの folder を選ばない」と 1 文足すだけ（起票の推奨の B。回避を文に回す）; backlog に残す（C）; 設定の文字列・drive 文字の path で比べる（junction・symbolic link・大文字・小文字の違いで見落とす）; 用意と確認だけで止める（上の Why の掃除）; 保存先の選択だけで止める（上の Why の見落とし）; `update_setting` の中で `backup_path` の key だけを確かめる（key に依らない設定の保存の入口に分岐を足し、main thread で drive を列挙する）; 同じ folder のときは保持日数の掃除を止める（PC の中の backup が無制限に溜まる）。
+- Guarantee range: 保存先を選んだ時点で目印の無かった folder が後で用意された場合は用意が、選んだ後に drive 文字の割当てが替わって別の用意済みの媒体の `InventoryBackup` を指した場合は次の確認が止めて知らせる。確認が止めている間も保持日数の掃除はその folder の古い写しを消すので、保存先を選び直すまで、その媒体の写しは保持日数の分に減る（71 §71.11.7）。保存先が `InventoryBackup` の中の folder や媒体の root のときは止めない（互いの掃除が file を消さない、71 §71.11.3）。
+- Compatibility: D-114 に足す。D-114 の Compatibility の「command 6 つと DTO を足す」は、本決定で 7 つ（43 §43.8.8 と `BackupDirChoiceRequest`）になる。`OffsiteFailureKind` は 8 値、`OffsiteError` は 14 値になる。`CmdErrorKind`・`app_settings` の key・DB の schema・既に保存してある `backup_path` の値は変えない。
+- Revisit: PC の中の保存先に USB メモリそのものを使う運用を owner が求めたとき。保存先を媒体の root や `InventoryBackup` の中の folder にした組み合わせで、互いの掃除が file を消す経路が見つかったとき。D-114 の Revisit（USB の HDD・network の保存先）を設計するとき。
 ## D-132: MSI の製品名を「在庫管理システム」にし、upgrade code を今の既定の値で固定し、`identifier` を `com.inventory-system.desktop` へ変え、installer を MSI だけにする（2026-10-23）
 
 - Status: accepted（owner の決定、repo 外の回答台帳 TD-392、2026-10-23。MSI の固定の lane〈Plan Packet `docs/archive/plans/2026-10-23-msi-fix.md`〉の design の段で正本へ置いた）

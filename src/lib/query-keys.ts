@@ -122,6 +122,8 @@ export const queryKeys = {
     settings: () => ["backup-restore", "settings"] as const,
     list: () => ["backup-restore", "list"] as const,
     effectiveDir: () => ["backup-restore", "effective-dir"] as const,
+    // UI-11b-D14 の card と UI-00-D12 のホームが同じ key を読む（D-114）
+    offsiteStatus: () => ["backup-restore", "offsite-status"] as const,
   },
   // UI-11a 閾値設定（在庫少の基準）
   // 設計: docs/function-design/69-ui-threshold-settings.md §69.10
