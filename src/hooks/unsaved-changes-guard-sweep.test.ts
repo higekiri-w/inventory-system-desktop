@@ -92,15 +92,18 @@ function readRepoFile(path: string): string {
   return readFileSync(join(process.cwd(), path), "utf8");
 }
 
+/** test を除く source のうち、`useBlocker(` を直接呼ぶ file（repo 相対、昇順） */
+function collectUseBlockerUsers(): string[] {
+  return collectSourceFiles(SOURCE_ROOT)
+    .filter((path) => /\.(ts|tsx)$/.test(path) && !/\.test\.(ts|tsx)$/.test(path))
+    .filter((path) => /\buseBlocker\s*\(/.test(readFileSync(path, "utf8")))
+    .map((path) => relative(process.cwd(), path))
+    .sort();
+}
+
 describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
   it("T16: useBlocker の直接使用は 55 §55.7 の進行中の処理のガードの hook と共通警告 hookだけに限定する", () => {
-    const directUsers = collectSourceFiles(SOURCE_ROOT)
-      .filter((path) => /\.(ts|tsx)$/.test(path) && !/\.test\.(ts|tsx)$/.test(path))
-      .filter((path) => /\buseBlocker\s*\(/.test(readFileSync(path, "utf8")))
-      .map((path) => relative(process.cwd(), path))
-      .sort();
-
-    expect(directUsers).toEqual([
+    expect(collectUseBlockerUsers()).toEqual([
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
       "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
@@ -127,5 +130,33 @@ describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
     const classifiedPages = [...APPLIED_PAGES, ...EXCLUDED_PAGES].map(({ path }) => path).sort();
 
     expect(actualPages).toEqual(classifiedPages);
+  });
+
+  it("T18 UI-USW-D5: useBlocker を呼ぶ file は全部、native の window の close の止めも持つ", () => {
+    const users = collectUseBlockerUsers();
+    expect(users.length).toBeGreaterThan(0);
+    for (const path of users) {
+      expect(readRepoFile(path), `${path} must also call useWindowCloseGuard`).toMatch(
+        /\buseWindowCloseGuard\s*\(/,
+      );
+    }
+  });
+
+  it("T10 UI-USW-D5 の 6: capability に core:window:allow-destroy がある（無いと全部の close が失敗する）", () => {
+    const capability = JSON.parse(readRepoFile("src-tauri/capabilities/default.json")) as {
+      windows: string[];
+      permissions: unknown[];
+    };
+
+    expect(capability.windows).toContain("main");
+    expect(capability.permissions).toContain("core:window:allow-destroy");
+  });
+
+  it("T21 (c) UI-USW-D5 の 8: main.tsx は app の既定の factory で QueryClient を作り、listener を登録する", () => {
+    const source = readRepoFile("src/main.tsx");
+
+    expect(source).toMatch(/\bcreateAppQueryClient\s*\(/);
+    expect(source).not.toMatch(/new\s+QueryClient\s*\(/);
+    expect(source).toMatch(/\binstallWindowCloseGuard\s*\(\s*\)/);
   });
 });

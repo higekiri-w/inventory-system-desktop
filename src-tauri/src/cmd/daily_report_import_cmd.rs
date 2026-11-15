@@ -202,7 +202,9 @@ fn parse_from_sd_with_state(
     preview_and_cache(state, files)
 }
 
-#[tauri::command]
+// transaction の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
 #[specta::specta]
 pub fn commit_daily_report_import(
     state: State<AppState>,
@@ -296,7 +298,9 @@ fn commit_daily_report_import_with_state(
     }
 }
 
-#[tauri::command]
+// transaction の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
 #[specta::specta]
 pub fn rollback_daily_report_import(
     state: State<AppState>,
@@ -458,6 +462,15 @@ mod tests {
                 register_sd_scan_cache: std::sync::Mutex::new(HashMap::new()),
             },
         )
+    }
+
+    #[test]
+    fn test_daily_report_cmd_req401_commit_and_rollback_run_off_main_thread() {
+        // REQ-401 / 45 §45.4「実行の thread」・UI-USW-D5 の 8: 進行中の止めがかかる 2 command は main thread で動かない
+        crate::cmd::assert_commands_run_off_main_thread(
+            include_str!("daily_report_import_cmd.rs"),
+            &["commit_daily_report_import", "rollback_daily_report_import"],
+        );
     }
 
     #[test]

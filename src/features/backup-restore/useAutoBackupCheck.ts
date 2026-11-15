@@ -2,8 +2,9 @@
 //
 // UI-11b-D13: 設定時刻の自動バックアップの確認（71 §71.8 のフロントエンドタイマー）。
 // 共通レイアウト（UI-12 RootLayout）が 1 回 mount し、画面に依らず 60 秒ごとに確認する。
-// 停止の 2 つの理由・世代番号・実行中の回は module scope に持つ（UI-11b-D11 と同じ in-memory の形。
-// reload / アプリ再起動で初期値に戻る）。止まっているかは毎回 2 つの理由から導き、別の flag に写さない。
+// 選択と復元の 2 つの停止の理由・世代番号・実行中の回は module scope に持つ（UI-11b-D11 と同じ in-memory の形。
+// reload / アプリ再起動で初期値に戻る）。3 つ目の理由（native の window の close の進行中の止め）は state を持たず、
+// 回のたびに止めの集合から導く。止まっているかは毎回 3 つの理由から導き、別の flag に写さない。
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -12,6 +13,7 @@ import { toast } from "sonner";
 import { commands } from "@/lib/bindings";
 import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
+import { hasBusyWindowCloseGuard } from "@/lib/window-close-guard";
 
 const AUTO_BACKUP_CHECK_INTERVAL_MS = 60_000;
 
@@ -27,7 +29,9 @@ let generation = 0;
 let inFlight: Promise<void> | null = null;
 
 function isHeld(): boolean {
-  return selectionHold || restoringCount > 0 || fatalHold;
+  // 取込み・取消の command が DB の Mutex を持つ間に main thread の checkAutoBackup が Mutex を待つと、
+  // × が処理されなくなる。進行中の止めの間は回を飛ばす（世代番号は進めない。UI-USW-D5 の 8）
+  return selectionHold || restoringCount > 0 || fatalHold || hasBusyWindowCloseGuard();
 }
 
 /** 選択の理由を立てて世代番号を進める。停止の前に始まった確認の結果は捨てる。 */

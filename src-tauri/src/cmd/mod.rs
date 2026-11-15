@@ -266,6 +266,43 @@ impl From<BizError> for CmdError {
 }
 
 // ---------------------------------------------------------------------------
+// source の検査（test 用）
+// ---------------------------------------------------------------------------
+
+/// 名指した command が main thread の外で動く定義（`#[tauri::command(async)]` か `async fn`）であることを、
+/// その file の source から確かめる（43 §43.8.2・41 §17.2・45 §45.4 の「実行の thread」）。
+// ponytail: settings_cmd.rs の test_inspect_backup_cmd_req901_runs_off_main_thread は同じ判定を自前で持つ。
+// PR #194 が同じ一覧を触るので寄せていない。#194 の merge の後に、その test もこの関数へ寄せられる。
+#[cfg(test)]
+pub(crate) fn assert_commands_run_off_main_thread(source: &str, names: &[&str]) {
+    let file = syn::parse_file(source).unwrap();
+    for name in names {
+        let command = file
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} が無い"));
+        let async_attribute = command.attrs.iter().any(|attribute| {
+            attribute
+                .path()
+                .segments
+                .iter()
+                .map(|segment| segment.ident.to_string())
+                .collect::<Vec<_>>()
+                == ["tauri", "command"]
+                && matches!(&attribute.meta, syn::Meta::List(list) if list.tokens.to_string() == "async")
+        });
+        assert!(
+            async_attribute || command.sig.asyncness.is_some(),
+            "{name} は #[tauri::command(async)] でない"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // テスト
 // ---------------------------------------------------------------------------
 

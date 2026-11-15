@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type CmdError, type DailyReportRollbackResult } from "@/lib/bindings";
+import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { useRollbackDailyReportImport } from "./useRollbackDailyReportImport";
 
@@ -114,5 +115,26 @@ describe("useRollbackDailyReportImport_req401", () => {
     expect(toast.error).toHaveBeenCalledWith("取り消しに失敗しました。もう一度お試しください");
     expect(onSuccess).not.toHaveBeenCalled();
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  it("T12 REQ-401 / UI-USW-D5 / UI-07-D19: 取消の応答を待つ間だけ close の止めに daily-report-rollback を入れる", async () => {
+    const { result } = setup();
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    const pending = deferred<RollbackResponse>();
+    mockRollback.mockReturnValueOnce(pending.promise);
+    act(() => {
+      result.current.mutate(7);
+    });
+    await waitFor(() => {
+      expect(result.current.isPending).toBe(true);
+    });
+    expect(getWindowCloseGuardKinds()).toEqual(["daily-report-rollback"]);
+
+    pending.resolve({ status: "error", error: FAILED });
+    await waitFor(() => {
+      expect(result.current.isPending).toBe(false);
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
   });
 });

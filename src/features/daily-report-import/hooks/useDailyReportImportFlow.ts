@@ -8,6 +8,7 @@ import { describeError } from "@/lib/describe-error";
 import { extractFilename } from "@/lib/extractFilename";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/invoke";
+import { useWindowCloseGuard } from "@/lib/window-close-guard";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { dailyReportImportReducer } from "../reducer";
@@ -190,12 +191,13 @@ export function useDailyReportImportFlow() {
     },
   });
 
-  // 取込み中は画面を離れない（取消の応答を待つ間の止めは useRollbackDailyReportImport）
+  // 取込み中は画面を離れず、native の window の close も止める（UI-USW-D5。取消の応答を待つ間の止めは useRollbackDailyReportImport）
   const importing = state.status === "importing";
   useBlocker({
     shouldBlockFn: () => importing,
     enableBeforeUnload: () => importing,
   });
+  useWindowCloseGuard("daily-report-import", importing);
 
   const scanSd = useCallback(
     (selectedPath: string | null = null) => {

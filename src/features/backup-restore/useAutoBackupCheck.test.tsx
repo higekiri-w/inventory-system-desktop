@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { commands } from "@/lib/bindings";
 import { queryKeys } from "@/lib/query-keys";
+import { useWindowCloseGuard, type WindowCloseGuardKind } from "@/lib/window-close-guard";
 import {
   holdAutoBackupCheckForRestore,
   releaseAutoBackupCheckAfterRestore,
@@ -370,5 +371,50 @@ describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15
     releaseAutoBackupCheckAfterRestore(false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("native の window の close の進行中の止めの間の停止 (REQ-901 / UI-11b-D13 / UI-USW-D5 の 8)", () => {
+  it("T15 REQ-901 / UI-11b-D13 / UI-USW-D5 の 8: 進行中の close の止めが集合にある間の回は呼ばず、外れた後の回で呼ぶ（未保存だけなら呼ぶ）", async () => {
+    const renderGuard = (kind: WindowCloseGuardKind) =>
+      renderHook(
+        ({ active }) => {
+          useWindowCloseGuard(kind, active);
+        },
+        { initialProps: { active: true } },
+      );
+    renderCheck();
+
+    // 未保存の止めだけなら確認は動く
+    const dirty = renderGuard("dirty");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+    // 取込みの応答を待つ間: command が DB の Mutex を持つので、main thread の checkAutoBackup を呼ばない
+    const importing = renderGuard("z004-import");
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+    importing.rerender({ active: false });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
+    dirty.unmount();
+  });
+
+  it("T15 REQ-901 / UI-11b-D13: 進行中の close の止めは世代番号を進めず、止めの前に始まった確認の結果を捨てない", async () => {
+    const check = pendingCheck();
+    const { invalidateSpy } = renderCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+
+    const rollingBack = renderHook(() => {
+      useWindowCloseGuard("daily-report-rollback", true);
+    });
+    check.settle(ok(true));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.backupRestore.list() });
+    expect(mockToastSuccess).toHaveBeenCalledWith("自動バックアップを作成しました");
+    rollingBack.unmount();
   });
 });
