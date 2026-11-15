@@ -25,7 +25,7 @@ Plan Commit の固定・R4 の承認・fail-closed は変えない（集合の�
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: a43cb55db9442604d2ca98e6f954f1926f17e4be
 - Amendments: none
 
 ## Risk
