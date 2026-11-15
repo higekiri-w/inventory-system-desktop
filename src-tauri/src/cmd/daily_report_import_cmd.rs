@@ -467,9 +467,12 @@ mod tests {
     #[test]
     fn test_daily_report_cmd_req401_commit_and_rollback_run_off_main_thread() {
         // REQ-401 / 45 §45.4「実行の thread」・UI-USW-D5 の 8: 進行中の止めがかかる 2 command は main thread で動かない
+        let commands = ["commit_daily_report_import", "rollback_daily_report_import"];
+        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（45 §45.4 が名指す 2 つ）を先に固定する
+        assert_eq!(commands.len(), 2);
         crate::cmd::assert_commands_run_off_main_thread(
             include_str!("daily_report_import_cmd.rs"),
-            &["commit_daily_report_import", "rollback_daily_report_import"],
+            &commands,
         );
     }
 
