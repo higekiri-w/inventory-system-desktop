@@ -18,6 +18,7 @@ import {
   resumeAutoBackupCheck,
   suspendAutoBackupCheck,
   suspendAutoBackupCheckAndWait,
+  trackOffsiteOperation,
   useAutoBackupCheck,
 } from "./useAutoBackupCheck";
 
@@ -26,12 +27,20 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/lib/bindings", () => ({
-  commands: { checkAutoBackup: vi.fn() },
+  commands: { checkAutoBackup: vi.fn(), checkOffsiteBackup: vi.fn() },
 }));
 
 type CheckResult = Awaited<ReturnType<typeof commands.checkAutoBackup>>;
+type OffsiteResult = Awaited<ReturnType<typeof commands.checkOffsiteBackup>>;
+type OffsiteKind =
+  | { kind: "not_prepared" }
+  | { kind: "no_local_backup" }
+  | { kind: "medium_missing" }
+  | { kind: "up_to_date" }
+  | { kind: "copied"; file_name: string; labels: string[] };
 
 const mockCheckAutoBackup = vi.mocked(commands.checkAutoBackup);
+const mockCheckOffsite = vi.mocked(commands.checkOffsiteBackup);
 const mockToastSuccess = vi.mocked(toast.success);
 const mockToastError = vi.mocked(toast.error);
 
@@ -50,6 +59,31 @@ function failure(): CheckResult {
       stocktake_recovery: null,
     },
   };
+}
+
+function offsiteOk(data: OffsiteKind = { kind: "not_prepared" }): OffsiteResult {
+  return { status: "ok", data };
+}
+
+function offsiteFailure(): OffsiteResult {
+  return {
+    status: "error",
+    error: {
+      kind: "internal",
+      message: "PC の外の控えを写せませんでした",
+      field: null,
+      error_id: "e-1",
+      stocktake_recovery: null,
+    },
+  };
+}
+
+function invalidationsOf(spy: { mock: { calls: unknown[][] } }, key: readonly string[]): number {
+  return spy.mock.calls.filter(
+    ([filters]) =>
+      JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey) ===
+      JSON.stringify(key),
+  ).length;
 }
 
 function renderCheck({ strict = false } = {}) {
@@ -75,6 +109,8 @@ beforeEach(() => {
   resetAutoBackupCheckForTests();
   mockCheckAutoBackup.mockReset();
   mockCheckAutoBackup.mockResolvedValue(ok(false));
+  mockCheckOffsite.mockReset();
+  mockCheckOffsite.mockResolvedValue(offsiteOk());
   mockToastSuccess.mockReset();
   mockToastError.mockReset();
 });
@@ -101,7 +137,7 @@ describe("useAutoBackupCheck (REQ-901 / UI-11b-D13)", () => {
     const { invalidateSpy } = renderCheck();
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidationsOf(invalidateSpy, queryKeys.backupRestore.list())).toBe(1);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.backupRestore.list() });
     expect(mockToastSuccess).toHaveBeenCalledTimes(1);
     expect(mockToastSuccess).toHaveBeenCalledWith("自動バックアップを作成しました");
@@ -109,7 +145,7 @@ describe("useAutoBackupCheck (REQ-901 / UI-11b-D13)", () => {
     // 次の回は false
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidationsOf(invalidateSpy, queryKeys.backupRestore.list())).toBe(1);
     expect(mockToastSuccess).toHaveBeenCalledTimes(1);
     expect(mockToastError).not.toHaveBeenCalled();
   });
@@ -226,7 +262,7 @@ describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15
       await vi.advanceTimersByTimeAsync(0);
       expect(waiting.settled).toBe(true);
       expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(invalidateSpy).not.toHaveBeenCalled();
+      expect(invalidationsOf(invalidateSpy, queryKeys.backupRestore.list())).toBe(0);
     } finally {
       check.settle(ok(false));
     }
@@ -276,7 +312,7 @@ describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15
       check.settle(ok(true));
       await vi.advanceTimersByTimeAsync(0);
       expect(mockToastSuccess).not.toHaveBeenCalled();
-      expect(invalidateSpy).not.toHaveBeenCalled();
+      expect(invalidationsOf(invalidateSpy, queryKeys.backupRestore.list())).toBe(0);
 
       await vi.advanceTimersByTimeAsync(60_000);
       expect(mockCheckAutoBackup).toHaveBeenCalledTimes(2);
@@ -370,5 +406,208 @@ describe("停止の待ちと 2 つの停止の理由 (REQ-901 / UI-11b-D13・D15
     releaseAutoBackupCheckAfterRestore(false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+  });
+});
+
+function pendingOffsite() {
+  let settle: (value: OffsiteResult) => void = () => undefined;
+  const promise = new Promise<OffsiteResult>((resolve) => {
+    settle = resolve;
+  });
+  mockCheckOffsite.mockReturnValueOnce(promise);
+  return {
+    settle: (value: OffsiteResult) => {
+      settle(value);
+    },
+  };
+}
+
+const offsiteKey = queryKeys.backupRestore.offsiteStatus();
+
+describe("PC の外の控えの確認 (REQ-901 / UI-11b-D16)", () => {
+  it("REQ-901 / UI-11b-D16: mount で 1 回だけ checkOffsiteBackup を呼び（checkAutoBackup は呼ばない）、StrictMode でも 1 回", async () => {
+    renderCheck({ strict: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D16: 同じ回の中で checkAutoBackup の結果の後（成功・失敗とも）に呼ぶ", async () => {
+    renderCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    mockCheckOffsite.mockClear();
+
+    const auto = pendingCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+    expect(mockCheckOffsite).not.toHaveBeenCalled();
+    auto.settle(ok(true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+
+    const failed = pendingCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+    failed.settle(failure());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(2);
+  });
+
+  it("REQ-901 / UI-11b-D16: 停止中は mount も interval も呼ばない", async () => {
+    suspendAutoBackupCheck();
+    renderCheck();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(mockCheckOffsite).not.toHaveBeenCalled();
+    expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+
+    resumeAutoBackupCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockCheckAutoBackup).toHaveBeenCalledTimes(1);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+  });
+
+  it("REQ-901 / UI-11b-D16: PC の中の確認の待機中に止めると、その結果の後に offsite を開始しない", async () => {
+    renderCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    mockCheckOffsite.mockClear();
+    const auto = pendingCheck();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+    auto.settle(ok(false));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(waiting.settled).toBe(true);
+    expect(mockCheckOffsite).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["失敗", offsiteFailure()],
+    [
+      "成功（copied）",
+      offsiteOk({
+        kind: "copied",
+        file_name: "inventory_backup_20991231_235959.db",
+        labels: ["控え 2"],
+      }),
+    ],
+  ] as [string, OffsiteResult][])(
+    "REQ-901 / UI-11b-D15・D16: 開始済みの offsite（mount の 1 回）の完了まで待ち、その結果（%s）を捨てる",
+    async (_label, result) => {
+      const offsite = pendingOffsite();
+      const { invalidateSpy } = renderCheck();
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mockCheckOffsite).toHaveBeenCalledTimes(1);
+        const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(waiting.settled).toBe(false);
+        expect(mockCheckAutoBackup).not.toHaveBeenCalled();
+
+        offsite.settle(result);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(waiting.settled).toBe(true);
+        // 捨てた結果は成功でも失敗でも status を invalidate しない（§68.10）
+        expect(invalidationsOf(invalidateSpy, offsiteKey)).toBe(0);
+        expect(mockToastError).not.toHaveBeenCalled();
+      } finally {
+        offsite.settle(offsiteOk());
+      }
+    },
+  );
+
+  it("REQ-901 / §68.7・UI-11b-D15: 登録した用意・作り直しの操作（成功・失敗とも）の完了まで待つ（hook の mount に依らない）", async () => {
+    let finishFirst: () => void = () => undefined;
+    let failSecond: (error: Error) => void = () => undefined;
+    void trackOffsiteOperation(
+      new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }),
+    );
+    trackOffsiteOperation(
+      new Promise<void>((_resolve, reject) => {
+        failSecond = reject;
+      }),
+    ).catch(() => undefined);
+
+    const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(waiting.settled).toBe(false);
+    finishFirst();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(waiting.settled).toBe(false);
+    failSecond(new Error("synthetic operation failure"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(waiting.settled).toBe(true);
+
+    // 終わった操作は次の選択を待たせない
+    const idle = trackSettled(suspendAutoBackupCheckAndWait());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(idle.settled).toBe(true);
+  });
+
+  it("REQ-901 / UI-11b-D15・D16: interval の回の offsite の完了まで待つ", async () => {
+    renderCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    const offsite = pendingOffsite();
+    try {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mockCheckOffsite).toHaveBeenCalledTimes(2);
+      const waiting = trackSettled(suspendAutoBackupCheckAndWait());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waiting.settled).toBe(false);
+      offsite.settle(offsiteOk({ kind: "up_to_date" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(waiting.settled).toBe(true);
+    } finally {
+      offsite.settle(offsiteOk());
+    }
+  });
+
+  it("REQ-901 / UI-11b-D16: 失敗の toast は連続の最初の 1 回だけ、medium_missing では出さず、失敗でない結果で連続を解く", async () => {
+    mockCheckOffsite
+      .mockResolvedValueOnce(offsiteOk({ kind: "medium_missing" }))
+      .mockResolvedValueOnce(offsiteFailure())
+      .mockResolvedValueOnce(offsiteFailure())
+      .mockResolvedValueOnce(offsiteOk({ kind: "up_to_date" }))
+      .mockResolvedValueOnce(offsiteFailure());
+    renderCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockToastError).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(3);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("PC の外の控えを写せませんでした", {
+      id: "backup-offsite-error",
+    });
+
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockCheckOffsite).toHaveBeenCalledTimes(5);
+    expect(mockToastError).toHaveBeenCalledTimes(2);
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("REQ-901 / UI-11b-D16: 結果の種類に依らず status を invalidate する（6 種）", async () => {
+    const results: OffsiteResult[] = [
+      offsiteOk({ kind: "not_prepared" }),
+      offsiteOk({ kind: "no_local_backup" }),
+      offsiteOk({ kind: "medium_missing" }),
+      offsiteOk({ kind: "up_to_date" }),
+      offsiteOk({
+        kind: "copied",
+        file_name: "inventory_backup_20991231_235959.db",
+        labels: ["控え 2"],
+      }),
+      offsiteFailure(),
+    ];
+    for (const result of results) mockCheckOffsite.mockResolvedValueOnce(result);
+    const { invalidateSpy } = renderCheck();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invalidationsOf(invalidateSpy, offsiteKey)).toBe(1);
+    for (let round = 2; round <= results.length; round += 1) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(invalidationsOf(invalidateSpy, offsiteKey)).toBe(round);
+    }
   });
 });
