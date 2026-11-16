@@ -17,7 +17,7 @@ decision-log の番号: D-155 を予約する（下の「調べ」）。
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: ffebcfef4f50a865950ccb69edfaa2f794f991c1
 - Amendments: none
 
 ## Risk
