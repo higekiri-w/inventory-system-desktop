@@ -179,7 +179,7 @@ UI-02 実装 PR では以下を generated binding に出す。
 
 | 日付 | 版 | 内容 |
 |---|---|---|
-| 2026-11-16 | 原価の欄の税抜（PR #<N>） | UI-02-D7 に明細の原価の列の見出し `原価（税抜）` と欄の名 `<商品コード> の原価（税抜）` を置いた（D-128 (1)）。 |
+| 2026-11-16 | 原価の欄の税抜（PR #260） | UI-02-D7 に明細の原価の列の見出し `原価（税抜）` と欄の名 `<商品コード> の原価（税抜）` を置いた（D-128 (1)）。 |
 | 2026-11-11 | 導入の前の関門 13 の実装（`docs/plans/2026-11-03-stale-direct-search-guard.md`、PR #237） | UI-02-D19・UI-02-D14 を実装した（`ReceivingPage.tsx` の form lock ref と検索の世代 ref、suggest の `isLocked` を lock ref に）。§61.3・§61.6・§61.9 の「未実装」を外した。test は `ReceivingPage.stale-search.test.tsx`。 |
 | 2026-11-03 | 導入の前の関門 13 の起票（plan-first、`docs/plans/2026-11-03-stale-direct-search-guard.md`） | UI-02-D19 を追加（未実装）: 直接検索の応答を form lock ref と検索の世代で採否する。UI-02-D14 の lock source を UI-02-D19 の lock ref に改めた（未実装）。§61.3・§61.6・§61.9 を合わせた。2026-11-04 の計画の review round 1 で、lock ref を残す理由と §61.9 の保存 event の lock の確かめ方（構造の検査）を直した。 |
 | 2026-10-23 | docs の小口（[Plan Packet](../archive/plans/2026-10-23-docs-small-batch.md) の S5） | UI-02-D17 を追加: 取り寄せ（客注）の品を入庫に記録しない決まり（TD-350）。 |
