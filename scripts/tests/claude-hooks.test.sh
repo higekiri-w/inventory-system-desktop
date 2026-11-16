@@ -28,8 +28,8 @@ validate_inventory() {
         return 1
     jq -e --arg key "$HARNESS_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
         return 1
-    # D-147: the ponytail plugin stays off in this project (AGENTS.md, writer.md and writer-fable.md carry the rule instead).
-    jq -e --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] == false' "$settings" >/dev/null ||
+    # D-156: the project does not override the ponytail plugin; the user-global setting enables it.
+    jq -e --arg key "$PONYTAIL_KEY" '.enabledPlugins | has($key) | not' "$settings" >/dev/null ||
         return 1
     # SPEC-WF-HARNESS5-D4: subagent nesting stays off (depth 1).
     jq -e '.env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH == "1"' "$settings" >/dev/null ||
@@ -225,17 +225,17 @@ jq --arg key "$HARNESS_KEY" '.enabledPlugins[$key] = true' \
     "$fixture/.claude/settings.json" > "$plugin_mutant/.claude/settings.json"
 expect_rejected "CH2 harness true" "$plugin_mutant"
 
+ponytail_false_mutant="$tmp/ponytail-false-mutant"
+cp -a "$fixture" "$ponytail_false_mutant"
+jq --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] = false' \
+    "$fixture/.claude/settings.json" > "$ponytail_false_mutant/.claude/settings.json"
+expect_rejected "D-156 ponytail false" "$ponytail_false_mutant"
+
 ponytail_true_mutant="$tmp/ponytail-true-mutant"
 cp -a "$fixture" "$ponytail_true_mutant"
 jq --arg key "$PONYTAIL_KEY" '.enabledPlugins[$key] = true' \
     "$fixture/.claude/settings.json" > "$ponytail_true_mutant/.claude/settings.json"
-expect_rejected "D-147 ponytail true" "$ponytail_true_mutant"
-
-ponytail_missing_mutant="$tmp/ponytail-missing-mutant"
-cp -a "$fixture" "$ponytail_missing_mutant"
-jq --arg key "$PONYTAIL_KEY" 'del(.enabledPlugins[$key])' \
-    "$fixture/.claude/settings.json" > "$ponytail_missing_mutant/.claude/settings.json"
-expect_rejected "D-147 ponytail missing" "$ponytail_missing_mutant"
+expect_rejected "D-156 ponytail true" "$ponytail_true_mutant"
 
 script_mutant="$tmp/script-mutant"
 cp -a "$fixture" "$script_mutant"
