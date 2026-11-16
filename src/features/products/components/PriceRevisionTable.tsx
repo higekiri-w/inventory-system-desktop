@@ -158,7 +158,7 @@ function PriceRevisionRowView({
           inputMode="decimal"
           min={0}
           step="0.01"
-          aria-label={`${product.product_code} 新原価（案）`}
+          aria-label={`${product.product_code} 新原価（税抜、案）`}
           value={cost}
           disabled={mutation.isPending}
           aria-invalid={costInvalid || costTooLarge}
@@ -240,7 +240,7 @@ export function PriceRevisionTable({
             "現原価",
             "現掛率",
             "新売価",
-            "新原価（案）",
+            "新原価（税抜、案）",
             "確定",
           ].map((label) => (
             <TableHead key={label}>{label}</TableHead>

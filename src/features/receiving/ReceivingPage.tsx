@@ -575,7 +575,7 @@ export function ReceivingPage() {
                   <TableHead>商品名</TableHead>
                   <TableHead>単位</TableHead>
                   <TableHead>数量</TableHead>
-                  <TableHead>原価</TableHead>
+                  <TableHead>原価（税抜）</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>
@@ -612,7 +612,7 @@ export function ReceivingPage() {
                         step="0.01"
                         value={row.costPrice}
                         disabled={isFormLocked}
-                        aria-label={`${row.productCode} の原価`}
+                        aria-label={`${row.productCode} の原価（税抜）`}
                         aria-invalid={errors.rows?.[row.productCode] !== undefined}
                         className="w-28"
                         onChange={(event) => {
