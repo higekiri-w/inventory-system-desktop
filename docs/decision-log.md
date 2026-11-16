@@ -1389,3 +1389,15 @@ Use concise ADR-style entries.
 - Guarantee range: 当て先を限る句は文で、注入の文との優先を機械で保証しない。project の key を消すと user global の有効が効くことは merge の後の session で観測する（packet の AC8）。
 - owner の決定（repo 外の回答台帳、要旨）: TD-753（長くすることは品質の改善と同じではない。D-147 は code にしか当たっていなかった）。TD-754（(c) 裁定の規則と「最小」を docs・規則の文に当てることを正本に書き、(a) ponytail をこの project で戻し、reviewer・相談役に当て先の 1 行を置く）。
 - Revisit: 戻した後の lane の review で、調べる範囲や必須の確かめが縮んだ指摘が出たとき。plugin の版が上がり注入の範囲が変わったとき。
+- Superseded in part by: D-155（2026-11-17。(4) が merge-evidence に置く B の基準のうち (ii) の Scope の照らし）
+
+## D-155: 同期の手と L3 の後の lane の commit のうち、L3 の版の lane の変更と main 側の変更を重ねる直しと、main 側の test・docs を L3 の版の lane に合わせる直しは B の (ii) で Scope と照らさない（2026-11-17）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-743・746・747・750・751・753・755・756〈計画の承認の確認、条件付き〉、2026-11-16〜17。lane「B (ii) の Scope の文」〈Plan Packet `docs/plans/2026-11-17-b-scope-sync-hands.md`〉で起票した）
+- Context: PR #194・#216 の B の closure で、同期の手が packet の Scope の予定 path に無いとして reviewer が割れ、owner がその回限りで Scope の中と裁定した（TD-743・TD-746）。
+- Decision: 基準の文は [merge-evidence](agent-guidance/merge-evidence.md) MG-D13 の「manualの使い回し」の B の (ii) が持ち、ここは要旨と参照（D-146・D-154 と同じ置き方）。L3 の版と Scope の食い違いは (ii) の合否に数えず、closure が気づいたら packet の docs の follow-up（P3）として報告し、契約に及ぶ食い違いは中身に応じて (i) か通常の finding として扱う。
+- Why: L3 の版の lane の変更は同期の前からあり、L3 の版の review の範囲。main 側の件数・名・参照を合わせる直しは新しい振舞いを持ち込まない。置き場所で線を引くと TD-723 に反する。
+- Alternatives: 回ごとに owner が裁定する（2 回続けて止まった、TD-747）; 同期のたびに Gated Amendment を出す; Scope の照らしを外す; 手の目的を closure に判定させる（TD-723）; 例外を継ぎ足す（D-127）; helper に照らさせる（中身は機械で判定できない）。
+- Guarantee range: 当てはめは closure と owner の判断で、機械の保証でない。線の上で割れうる。照らす読み（予定 path でか振舞いでか）は D-154 の文から引き継ぎ、割れたら owner の裁定。
+- Compatibility: D-154 (4) が merge-evidence に置く B の基準のうち (ii) の Scope の照らしを置き換える（D-154 の Superseded in part の行）。ほかの D、集合・本数・helper は変えない。D-098 の安全の境界（古い証拠の拒否・独立 review）の運用を、通常の packet・PR の経路で緩める向きに改訂した。
+- Revisit: 照らさなかった手が merge の後で lane の振舞いと合わないと分かったとき。closure がまた割れたとき。
