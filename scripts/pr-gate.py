@@ -31,7 +31,18 @@ BROAD_REQUIRED = ('broad required: record --review-stage broad at the current he
 # MG-D13: the only paths a sync may regenerate. They are exactly the paths the hosted drift checks
 # re-derive from source (scripts/ci/classify-changes.sh `generated` case, .github/workflows/ci.yml
 # `rust_drift` job). Kept as a constant, never parsed from the classifier; src/routeTree.gen.ts is untracked.
-GENERATED = frozenset({'src/lib/bindings.ts', 'docs/function-design/90-traceability.md'})
+TRACEABILITY = 'docs/function-design/90-traceability.md'
+GENERATED = frozenset({'src/lib/bindings.ts', TRACEABILITY})
+# MG-D13 / D-154: the frontend test files a lane hand may touch on the manual reuse route (src/test/**,
+# src/**/*.test.ts, src/**/*.test.tsx; `**` is zero or more directories). A constant, never parsed from the
+# classifier. Under ROUTES only a basename starting with `-` counts (ROUTE_IGNORE).
+# ponytail: "these files never enter the app's JS runtime modules" rests on the route generator's default
+# routeFileIgnorePrefix `-` and on no app code importing a test file. Their effect on the generated CSS (the
+# Tailwind scanner reads class literals in any file) is not checked here; the B closure looks at it (TD-714).
+# Revisit when tsr.config.json changes the ignore prefix or the routes directory, when app code imports a test
+# file, when the CSS scanner's source setting changes, or when a separate Rust test directory is to be taken.
+TEST_FILES = re.compile(r'src/(?:test/.+|(?:.+/)?[^/]*\.test\.tsx?)')
+ROUTES, ROUTE_IGNORE = 'src/routes/', '-'
 # MG-D13 / D-144: tail appends of parallel lanes may conflict here; only the union result is accepted.
 UNION = 'docs/decision-log.md'
 CODE_FLAGS = ('rust', 'frontend', 'env', 'unknown')
@@ -47,6 +58,10 @@ BODY_RISK = re.compile(r'Risk: (R[0-2])（目視: (要|不要)）')
 REPORT_HEAD = re.compile(r'REVIEWED_HEAD=([0-9a-f]{40})')
 # D-145 (6): a lane commit may keep L3 and review only when the classifier sees docs and nothing else.
 NON_DOCS = ('rust', 'rust_drift', 'frontend', 'env', 'generated', 'traceability', 'workflow', 'unknown')
+# D-154: a path with any of these flags is outside the set a lane hand may touch on the manual reuse route.
+OUTSIDE = ('rust', 'env', 'generated', 'workflow', 'unknown')
+# D-154: the one place that states what the B closures look at; the helper names it and never restates it.
+B_RULE = '`docs/agent-guidance/merge-evidence.md` の「manualの使い回し」の B'
 
 
 class GateError(Exception):
@@ -85,6 +100,20 @@ def classify(classifier, paths):
     expected = set('rust rust_drift frontend docs env generated traceability workflow unknown'.split())
     require(set(flags) == expected and all(v in ('true','false') for v in flags.values()), 'invalid main classifier', 2)
     return flags
+
+
+def outside(classifier, paths):
+    """D-154: the paths outside the set (docs except gate documents, and frontend test files), each judged alone
+    by the current main classifier. TEST_FILES only excuses frontend / traceability / rust_drift.
+    ponytail: one classifier process per path (about 4 ms each); batch it when a sync brings thousands of paths."""
+    def inside(path):
+        flags = classify(classifier, [path])
+        if any(flags[flag] == 'true' for flag in OUTSIDE):
+            return False
+        if TEST_FILES.fullmatch(path):
+            return not path.startswith(ROUTES) or path.rpartition('/')[2].startswith(ROUTE_IGNORE)
+        return flags['docs'] == 'true' and flags['frontend'] == 'false'
+    return [path for path in paths if not inside(path)]
 
 
 def unique_object(pairs):
@@ -420,6 +449,10 @@ def workflow_scope(env_base, names):
 
 class Gate:
     docs_commits = ()  # lane docs commits the last sync_merges(docs=True) walked over (D-145 (6) C)
+    # D-154, set by the reuse route (hands=True) only and always replaced, never added to in place:
+    resolved = ()  # hand-resolved or hand-edited paths of the sync merges (inside the set)
+    lane = ()  # paths of the lane commits that are not C (inside the set)
+    closures = 2  # how many B closures the walked column asks for (TD-728 / TD-729)
 
     def __init__(self, args):
         self.args = args
@@ -577,37 +610,51 @@ class Gate:
         else:
             require(closure is not None and (closure['head'], closure['base']) == (head, base), 'current closure missing')
 
-    def sync_merges(self, origin, head, base, docs=False):
+    def sync_merges(self, origin, head, base, docs=False, hands=False):
         """MG-D13 sync-only condition: head reaches origin by first parents through sync merges and
         generated-only regenerations. Returns the merges oldest first as (merge, first, second, merge_base).
         docs=True (D-145 (6) C) also passes 1-parent lane commits whose --no-renames paths the base classifier
-        sees as docs only; then the head needs no merge when the source already holds the base."""
+        sees as docs only; then the head needs no merge when the source already holds the base.
+        hands=True (D-154, the manual reuse route only) also passes lane hands inside the set: hand-resolved merge
+        paths go to self.resolved, the paths of lane commits that are not C go to self.lane."""
         merges, commit, self.docs_commits = [], head, []
+        if hands:
+            self.resolved, self.lane, self.closures = set(), set(), 2
         while commit != origin:
             parents = git('rev-list', '--parents', '-n', '1', commit).split()[1:]
             if len(parents) == 2:
-                merges.append(self.sync_merge(commit, *parents, base))
+                merges.append(self.sync_merge(commit, *parents, base, hands))
             else:
                 require(len(parents) == 1, f'commit {commit} is neither a sync merge nor a regeneration; source {origin} not reached')
                 lane = sorted(changed(parents[0], commit) - GENERATED)
-                if lane and docs:
-                    flags = classify(self.contents('scripts/ci/classify-changes.sh', base), lane)
-                    other = [flag for flag in NON_DOCS if flags[flag] == 'true']
-                    require(not other, f'lane commit {commit} after source {origin} is not docs only ({", ".join(other)}):'
-                            f' {", ".join(lane)}')
-                    self.docs_commits.append(commit)
+                if lane and (docs or hands):
+                    classifier = self.contents('scripts/ci/classify-changes.sh', base)
+                    flags = classify(classifier, lane) if docs else {}
+                    other = [flag for flag in NON_DOCS if flags.get(flag) == 'true']
+                    if docs and not other:
+                        self.docs_commits.append(commit)
+                    else:
+                        require(hands, f'lane commit {commit} after source {origin} is not docs only ({", ".join(other)}):'
+                                f' {", ".join(lane)}')
+                        out = outside(classifier, lane)
+                        require(not out, f'lane commit {commit} after source {origin} changes paths outside the reusable set'
+                                f'（集合の外。docs と frontend の test の file でない）: {", ".join(out)}')
+                        self.lane = {*self.lane, *lane}
                     lane = []
                 require(not lane, f'lane commit {commit} after source {origin} changes {", ".join(lane)}')
             commit = parents[0]
         if merges:
             require(merges[0][2] == base, f'last sync merge {merges[0][0]} takes {merges[0][2]}, not the current base {base}; sync again')
         else:
-            require(docs, f'no sync merge between source {origin} and head {head}')
+            # Without a merge only lane commits are taken (C, or the set on the reuse route), as before D-154.
+            require(docs or (hands and self.lane), f'no sync merge between source {origin} and head {head}')
             code, _ = git('merge-base', '--is-ancestor', base, origin, status=True)
             require(code == 0, f'base が進んだ。先に同期する: source {origin} does not hold the current base {base}')
         return merges[::-1]
 
-    def sync_merge(self, commit, first, second, base):
+    def sync_merge(self, commit, first, second, base, hands=False):
+        """One sync merge of the column. hands=True (D-154, the manual reuse route only) takes hand-resolved or
+        hand-edited paths inside the set into self.resolved; the default refuses every such path."""
         code, _ = git('merge-base', '--is-ancestor', second, base, status=True)
         require(code == 0, f'merge {commit} takes {second}, which is not in main (not an ancestor of base {base})')
         bases = git('merge-base', '--all', first, second).split()
@@ -620,15 +667,28 @@ class Gate:
         if UNION in paths:
             union = git('merge-file', '-p', '--union', '--object-id', f'{first}:{UNION}', f'{bases[0]}:{UNION}',
                         f'{second}:{UNION}', binary=True)
-            require(union == git('cat-file', 'blob', f'{commit}:{UNION}', binary=True),
-                    f'merge {commit} resolves {UNION} differently from the union of both sides')
-        lane = sorted(paths - GENERATED - {UNION})
+            if union == git('cat-file', 'blob', f'{commit}:{UNION}', binary=True):
+                paths.discard(UNION)
+            else:  # the reuse route judges a non-union result like any other hand-resolved path
+                require(hands, f'merge {commit} resolves {UNION} differently from the union of both sides')
+        lane = sorted(paths - GENERATED)
+        if hands and lane:
+            out = outside(self.contents('scripts/ci/classify-changes.sh', base), lane)
+            require(not out, f'merge {commit} resolves or edits paths outside the reusable set'
+                    f'（集合の外。docs と frontend の test の file でない）: {", ".join(out)}')
+            self.resolved = {*self.resolved, *lane}
+            lane = []
         require(not lane, f'merge {commit} differs from the automatic merge (conflict or edit) at {", ".join(lane)}')
         return commit, first, second, bases[0]
 
+    @staticmethod
+    def main_paths(merges):
+        """The main-side paths of every sync merge (merge-base to second parent, both sides of a rename)."""
+        return set().union(*(changed(merge_base, second) for _, _, second, merge_base in merges))
+
     def code_paths(self, merges, base):
         """MG-D13 code-free condition: main-side paths of every sync merge, classified by current main."""
-        paths = sorted(set().union(*(changed(merge_base, second) for _, _, second, merge_base in merges)))
+        paths = sorted(self.main_paths(merges))
         if not paths:
             return []
         classifier = self.contents('scripts/ci/classify-changes.sh', base)
@@ -637,10 +697,17 @@ class Gate:
             return []
         return [path for path in paths if touches([path])] or paths
 
-    def reusable(self, origin, head, base, code=True, docs=False):
-        """Sync-only (and, if asked, code-free) check from origin; returns the code paths the sync brings."""
+    def reusable(self, origin, head, base, code=True, docs=False, hands=False, risk=None):
+        """Sync-only (and, if asked, code-free) check from origin; returns the code paths the sync brings.
+        hands=True (D-154, the manual reuse route only) takes lane hands inside the set and sets self.closures:
+        1 when the lane's risk is R0..R3 and every main-side path except the generated traceability doc is inside
+        the set, else 2 (TD-728 / TD-729). This count never changes code_paths or the A condition."""
         try:
-            merges = self.sync_merges(origin, head, base, docs)
+            merges = self.sync_merges(origin, head, base, docs, hands)
+            if hands and risk in ('R0', 'R1', 'R2', 'R3'):  # an unnamed risk stays on the two-closure side
+                main = sorted(self.main_paths(merges) - {TRACEABILITY})
+                if not (main and outside(self.contents('scripts/ci/classify-changes.sh', base), main)):
+                    self.closures = 1
             return self.code_paths(merges, base) if code else []
         except GateError as error:
             if error.code == 2:
@@ -697,6 +764,22 @@ class Gate:
             return False
         return self.plan_change(broad['head'], head, req['risk']) is None
 
+    def hands_l3(self, source, head):
+        """D-154: with a packet, a column holding any lane hand (C commit, hand-resolved path, lane commit) needs the
+        L3 basis of the L3 version; returns why it differs, or None. A lane without a packet has nothing to compare."""
+        if self.args.packet and (self.docs_commits or self.resolved or self.lane):
+            return self.l3_change(source, head)
+        return None
+
+    def closure_words(self):
+        return 'two sync closures' if self.closures == 2 else 'one sync closure'
+
+    def review_lines(self, code):
+        """D-154: the changes a B closure must read, one line per kind that has any, then the count and the rule."""
+        kinds = (('手で解いた path', self.resolved), ('lane の commit の path', self.lane), ('取り込む main 側の code', code))
+        lines = [f'{name}: {", ".join(sorted(paths))}' for name, paths in kinds if paths]
+        return '\n'.join([*lines, f'closure {self.closures} 本が見るものと合否: {B_RULE}'])
+
     def cli(self, *extra):
         a = self.args
         scope = ['--packet', a.packet] if a.packet else ['--risk', a.risk or 'R0', '--manual', a.manual or 'required']
@@ -710,20 +793,25 @@ class Gate:
         require(old['head'] != head,
                 f'base が進んだ。先に同期する: head {head} is unchanged but base moved from {old["base"]} to {base};'
                 ' run git -c merge.directoryRenames=false merge origin/main, push, capture, then record. Nothing written')
-        docs = self.docs_route(snap['requirements'])
+        req = snap['requirements']
         try:
-            code = self.reusable(old['head'], head, base, docs=docs)
-            change = self.docs_commits and self.l3_change(source, head)
+            code = self.reusable(old['head'], head, base, docs=self.docs_route(req), hands=True, risk=req['risk'])
+            change = self.hands_l3(source, head)
             require(not change, change)
         except GateError as error:
             if error.code == 2:
                 raise GateError(f'{error}; or redo L3: {pending}', 2) from None
             raise GateError(f'manual pass not reusable: {error}. Nothing written; next: redo L3: {pending}') from None
-        if code:
+        if code or self.resolved or self.lane:
+            # D-154: an approval on the old manual covered the changes before old['head'], never these.
             evidence = [item for value in manual['evidence'] for item in ('--evidence', value)]
             b = self.cli('--kind', 'manual', '--outcome', 'pass', *evidence, '--reuse-from', source, '--reuse-approval', 'POINTER')
+            if self.resolved or self.lane:
+                raise GateError('manual pass not carried: the lane changed paths after the L3 pass. Nothing written; next is one of:'
+                                f' (B, needs the closures named below and the owner\'s one-line approval) {b} | (redo L3) {pending}\n'
+                                + self.review_lines(code))
             raise GateError(f'manual pass not carried: the sync brings code {", ".join(code)}. Nothing written; next is one of:'
-                            f' (B, needs two sync closures and the owner\'s one-line approval) {b} | (redo L3) {pending}')
+                            f' (B, needs {self.closure_words()} and the owner\'s one-line approval) {b} | (redo L3) {pending}')
         result = dict(outcome='pass', evidence=list(manual['evidence']), source_head=source)
         if 'reuse_approval' in manual:
             result['reuse_approval'] = manual['reuse_approval']
@@ -786,10 +874,13 @@ class Gate:
         manual, closure = record['manual'], record['review']['closure']
         docs = self.docs_route(req)
         if 'source_head' in manual:
-            code = self.reusable(manual['source_head'], snap['head'], snap['base'], code='reuse_approval' not in manual, docs=docs)
-            require(not code, f"manual reuse from {manual['source_head']} brings code without approval: {', '.join(code)}")
-            change = self.docs_commits and self.l3_change(manual['source_head'], snap['head'])
+            code = self.reusable(manual['source_head'], snap['head'], snap['base'], docs=docs, hands=True, risk=req['risk'])
+            change = self.hands_l3(manual['source_head'], snap['head'])
             require(not change, f"manual reuse from {manual['source_head']}: {change}")
+            if 'reuse_approval' not in manual:
+                hands = sorted({*self.resolved, *self.lane})
+                require(not hands, f"manual reuse from {manual['source_head']} has lane changes without approval: {', '.join(hands)}")
+                require(not code, f"manual reuse from {manual['source_head']} brings code without approval: {', '.join(code)}")
         if closure and 'sync_from' in closure:
             code = self.reusable(closure['sync_from'], snap['head'], snap['base'], docs=docs)
             require(not code, f"sync closure from {closure['sync_from']} brings code: {', '.join(code)}")
@@ -945,11 +1036,16 @@ class Gate:
                 require(args.kind == 'manual' and args.outcome == 'pass' and old and old['manual']['outcome'] == 'pass', 'server manual pass required')
                 source=old['manual'].get('source_head',old['head'])
                 require(sha(args.reuse_from) == source and args.evidence == old['manual']['evidence'], 'manual source/evidence mismatch')
-                code=self.reusable(old['head'],snap['head'],snap['base'],code=args.reuse_approval is None,docs=self.docs_route(req))
-                require(not code, f"the sync brings code {', '.join(code)}; --reuse-from alone needs a code-free sync"
-                        ' (B: add --reuse-approval POINTER after two sync closures and the owner\'s approval)')
-                change=self.docs_commits and self.l3_change(source,snap['head'])
+                code=self.reusable(old['head'],snap['head'],snap['base'],docs=self.docs_route(req),hands=True,risk=req['risk'])
+                change=self.hands_l3(source,snap['head'])
                 require(not change, f'manual pass not reusable: {change}')
+                # D-154: only this record's own --reuse-approval approves the changes since old['head'].
+                if args.reuse_approval is None:
+                    require(not (self.resolved or self.lane), 'the lane changed paths after the L3 pass; this reuse needs'
+                            ' --reuse-approval POINTER (B, after the closures named below and the owner\'s approval)\n'
+                            + self.review_lines(code))
+                    require(not code, f"the sync brings code {', '.join(code)}; --reuse-from alone needs a code-free sync"
+                            f' (B: add --reuse-approval POINTER after {self.closure_words()} and the owner\'s approval)')
                 approval=args.reuse_approval or old['manual'].get('reuse_approval')
                 result['source_head']=source
                 if approval:
