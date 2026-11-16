@@ -16,6 +16,7 @@ pub mod return_cmd;
 pub mod sales_cmd;
 pub mod settings_cmd;
 pub mod stocktake_cmd;
+pub mod transfer_cmd;
 
 use crate::biz::csv_import_service::CachedPreview;
 use crate::biz::daily_report_import_service::{

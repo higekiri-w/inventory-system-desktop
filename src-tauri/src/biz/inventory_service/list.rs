@@ -90,6 +90,7 @@ pub fn list_inventory_records(
             | Some("disposal_record")
             | Some("csv_import")
             | Some("stocktake")
+            | Some("transfer_record")
     ) {
         return Err(BizError::ValidationFailed(
             "未対応の記録種別です".to_string(),
@@ -388,6 +389,7 @@ pub(crate) fn resolve_movement_source(
         ReferenceType::DisposalRecord => ("廃棄・破損", "/inventory/disposal/records"),
         ReferenceType::CsvImport => ("CSV取込み", "/csv-import/records"),
         ReferenceType::Stocktake => ("棚卸し", "/stocktake/records"),
+        ReferenceType::TransferRecord => ("詰め替え・切り分け", "/inventory/transfer/records"),
     };
 
     Some(MovementSourceLink {

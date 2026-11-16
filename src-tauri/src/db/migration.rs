@@ -13,6 +13,7 @@ use super::schema_v1;
 use super::schema_v10;
 use super::schema_v11;
 use super::schema_v12;
+use super::schema_v13;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -101,6 +102,11 @@ fn migrations() -> Vec<Migration> {
             version: 12,
             description: "日報の束の精算回数の列（daily_report_imports.settlement_no）",
             kind: MigrationKind::Sql(schema_v12::get_v12_daily_report_settlement_no_schema()),
+        },
+        Migration {
+            version: 13,
+            description: "振替の種類と振替の記録の表（D-143）",
+            kind: MigrationKind::Custom(schema_v13::apply_stock_transfer),
         },
     ]
 }
@@ -512,6 +518,18 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn vt_stock_transfer_m7_migration_versions_are_gapless_from_one() {
+        // REQ-903 / MNT-03-D22 / Test Plan M7: `migrations()` の版は 1 から欠けの無い昇順の連番
+        // （merge の順で版の番号を取り直し忘れた欠けと重複を CI で止める。`migrate` は欠けを確かめない）
+        let versions: Vec<i64> = super::migrations()
+            .iter()
+            .map(|migration| migration.version)
+            .collect();
+        let expected: Vec<i64> = (1..=versions.len() as i64).collect();
+        assert_eq!(versions, expected);
     }
 
     #[test]

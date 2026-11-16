@@ -1,12 +1,12 @@
 # REQ インベントリ
 
 > **親文書**: [README.md](README.md)（spec index）
-> **出典**: owner が repo 外で保管する要求原典の REQ 17 本 + 開発拡張 ID 8 本（コードコメント / Design Phase 由来）+ Design Phase 補足 ID 6 本 + 原典 SP 復活対応 ID 1 本。公開要求の全 ID 対応と状態は [requirements-coverage.md](requirements-coverage.md) を正とする
+> **出典**: owner が repo 外で保管する要求原典の REQ 17 本 + 開発拡張 ID 8 本（コードコメント / Design Phase 由来）+ Design Phase 補足 ID 7 本 + 原典 SP 復活対応 ID 1 本。公開要求の全 ID 対応と状態は [requirements-coverage.md](requirements-coverage.md) を正とする
 > **役割**: `generate_traceability` bin（`cargo run --bin generate_traceability -- --check`）の T2 phantom REQ 判定 / T3 テスト 0 本 WARN の判定基盤。本表にない REQ ID をテストが使うと CI / pre-push が ERROR になる
 > **coverage**: `required` はテスト 0 本なら T3 WARN、`deferred` は未実装要求として T3 WARN 対象外。実装着手時に `required` へ戻す。
 > **更新規約**: owner 保管原典の変更を採用するときは、本表、[requirements-coverage.md](requirements-coverage.md)、対応 design、traceability を同じ変更で同期する。原典の文面や機微な業務事実は公開 repository へ転記しない
 
-## REQ 一覧（32 行）
+## REQ 一覧（33 行）
 
 | REQ ID | 名称 | 対応タスク | 出典 | coverage |
 |---|---|---|---|---|
@@ -26,6 +26,7 @@
 | REQ-207 | 在庫変動履歴から元業務記録へ相互参照できること | UI-06c, BIZ-02 | Design Phase 補足 2026-06-27 | required |
 | REQ-208 | 入出庫系の業務記録を物理削除せず取消・訂正できること | UI-02b, UI-03b, UI-04b, UI-05b, BIZ-02 | Design Phase 補足 2026-06-27 | deferred |
 | REQ-209 | 仕入入庫の明細原価が商品マスタの原価と異なる場合に検知し、マスタ原価の更新を提案できること | UI-02, BIZ-02 | Design Phase 補足 2026-08-22 | required |
+| REQ-210 | 仕入れた品を別の商品に詰め替え・切り分けた在庫の動きを記録できること | UI-16, UI-16b, BIZ-02 | Design Phase 補足 2026-10-27（D-143） | required |
 | REQ-301 | 商品別の在庫数を照会できること | UI-00, UI-06a | 要求仕様書 v2.1 | required |
 | REQ-302 | 在庫切れ・在庫少の商品を一覧表示できること | UI-00, UI-06b | 要求仕様書 v2.1 | required |
 | REQ-303 | 商品ごとの在庫変動履歴を時系列で参照できること | UI-06c, BIZ-02 | 要求仕様書 v2.1 | required |
@@ -46,7 +47,7 @@
 ## 補足
 
 - 開発拡張 ID（REQ-700, REQ-901〜907）は owner 保管原典の ID 集合には含まれない。REQ-907 は D-072 の design-first 契約として追加し、D-117 で解放・bulk onboarding・段階移行状態を外した（runtime は後続の lane）。
-- Design Phase 補足 ID（REQ-106 / REQ-107 / REQ-206〜209）は既存要求の実装・聞き取りで露出した横断要件である。
+- Design Phase 補足 ID（REQ-106 / REQ-107 / REQ-206〜210）は既存要求の実装・聞き取りで露出した横断要件である。
 - REQ-107 は取引先管理の実装により `coverage=required` とする。
 - REQ-208 は実装着手まで `coverage=deferred` とする。
 - REQ-106 / REQ-209 は価格改定支援の設計契約（SPEC-PRV-D11）として `coverage=required` とする。

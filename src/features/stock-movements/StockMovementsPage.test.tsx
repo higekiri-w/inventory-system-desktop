@@ -197,6 +197,7 @@ describe("StockMovementsPage (UI-06c)", () => {
       "POS売上",
       "手動販売",
       "廃棄・破損",
+      "詰め替え・切り分け",
       "棚卸し",
     ]);
     await user.click(screen.getByRole("option", { name: "入庫" }));
@@ -230,6 +231,8 @@ describe("StockMovementsPage (UI-06c)", () => {
       ["返品・交換", "return"],
       ["POS売上", "sale_auto"],
       ["廃棄・破損", "disposal"],
+      // U14（66 Filters・65 TRACE-D14）: 廃棄・破損の次の「詰め替え・切り分け」は type=transfer
+      ["詰め替え・切り分け", "transfer"],
       ["棚卸し", "stocktake"],
     ];
     for (const [label, expectedValue] of REMAINING_MOVEMENT_TYPE_OPTIONS) {

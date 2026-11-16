@@ -14,6 +14,7 @@ const movementTypeLabels: Record<MovementType, string> = {
   sale_auto: "POS売上",
   sale_manual: "手動販売",
   disposal: "廃棄・破損",
+  transfer: "詰め替え・切り分け",
   stocktake: "棚卸し",
 };
 

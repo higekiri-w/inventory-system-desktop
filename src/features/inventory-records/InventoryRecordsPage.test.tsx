@@ -118,7 +118,7 @@ afterEach(() => {
 });
 
 describe("InventoryRecordsPage (REQ-206)", () => {
-  it("REQ-206: 記録種別フィルターで6種の業務記録を選べる", async () => {
+  it("REQ-206: 記録種別フィルターで7種の業務記録を選べる（U14: 廃棄・破損の次に詰め替え・切り分け）", async () => {
     mockListInventoryRecords.mockResolvedValue({
       status: "ok",
       data: { items: [], total_count: 0, page: 1, per_page: 50 },
@@ -137,6 +137,7 @@ describe("InventoryRecordsPage (REQ-206)", () => {
       "返品・交換",
       "手動販売出庫",
       "廃棄・破損",
+      "詰め替え・切り分け",
       "CSV取込み",
       "棚卸し",
     ]);
