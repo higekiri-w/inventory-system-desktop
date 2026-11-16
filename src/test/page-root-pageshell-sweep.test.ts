@@ -23,8 +23,8 @@ const ALLOWED_NON_ROOT_HITS = [
 ];
 
 // PageShell 全置換の機械抽出値（AC2 と突合、機械抽出表は Implementation Results に貼る）。
-const EXPECTED_PAGESHELL_FILE_COUNT = 28;
-const EXPECTED_PAGESHELL_OCCURRENCE_COUNT = 43;
+const EXPECTED_PAGESHELL_FILE_COUNT = 29;
+const EXPECTED_PAGESHELL_OCCURRENCE_COUNT = 44;
 
 function collectPageFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -64,7 +64,7 @@ describe("SC2b: no feature page file declares a p-6 root className outside PageS
     expect(hits.sort()).toEqual([...ALLOWED_NON_ROOT_HITS].sort());
   });
 
-  it("28 file / 43 箇所が PageShell を import して page root に使う", () => {
+  it("29 file / 44 箇所が PageShell を import して page root に使う", () => {
     const pageFiles = collectPageFiles(FEATURES_ROOT);
     const pageShellOccurrencePattern = /<PageShell\b/g;
     let totalOccurrences = 0;

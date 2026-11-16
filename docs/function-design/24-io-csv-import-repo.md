@@ -94,6 +94,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - imported_at: String
 - rolled_back_at: Option\<String\>
 - note: Option\<String\>
+- settlement_no: Option\<i64\>（束の精算回数〈IO-07-D5〉、NULL は `None`。[55](55-ui-csv-import.md) UI-07-D19）
 
 **NewDailyReportImport構造体**:
 - report_date: String
@@ -106,7 +107,7 @@ sales_repo.rs に追加する（ARCHITECTURE.md: sales_repository は sale_recor
 - note: Option\<String\>
 - settlement_no: Option\<i64\>（D-111 で足す。束の精算回数〈IO-07-D5〉、`None` は NULL。BIZ-08-D4 の照合に使う）
 
-`DailyReportImport`（上、`specta::Type` の行の DTO）には `settlement_no` を足さない（list の wire を変えない。`DailyReportImport` を返す既存の SELECT は列を名指しし、`row_to_daily_report_import` はその列の位置で読むので、表に列を足しても読み方は変わらない。2026-10-07 の `src-tauri/src/db/sales_repo.rs` で確認）。精算回数での照合は §14.18a の内部の関数だけが読む。
+`DailyReportImport`（上）は IO の行の型で、wire に出さない（`specta::Type` を持たない）。BIZ-08 §37.6 の一覧は `DailyReportImportRow`（[37](37-biz-daily-report-import-service.md) §37.2）に写して返す（[55](55-ui-csv-import.md) UI-07-D19。§14.20 の signature は変えない）。`settlement_no` を持つ（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 「日報の取込みの記録」の一覧に精算回数の列を出し、同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を行から見分ける。D-111 の時の「足さない〈list の wire を変えない〉」を置き換えた）。`DailyReportImport` を返す SELECT（§14.16・§14.17・§14.18・§14.20 の 4 つ）は列を名指しし、共有の `row_to_daily_report_import` が列の位置で読むので、4 つとも末尾に `settlement_no` を足し、写しの末尾で読む（1 つだけに足すと他の 3 つの位置がずれる）。精算回数での照合は今どおり §14.18a の内部の関数だけが行い、§14.16〜§14.18 の呼出側は足した field を読まない。
 
 **NewDailyReportSummaryLine / NewDailyReportPaymentLine / NewDailyReportDepartmentLine構造体**:
 - DB_DESIGN.md 12c〜12e のカラムに対応するinsert用構造体。`daily_report_import_id` は親INSERT後にBIZ-08が設定する。
@@ -647,7 +648,7 @@ fn get_completed_daily_report_aggregate(conn: &DbConnection, report_date: &str) 
 3. `daily_report_payment_lines` は足さずに返す（[D-120](../decision-log.md)・D-142。前の実装はここで `payment_key` で集約し、並び順から作る `payment_N` が、同日の取込みの間で名称の違う行を 1 行に足しえた）。手順 1 と同じ条件の親に join する 1 つの query で、行ごとに親の `id`・`imported_at` と行の `id`・`sort_order`・`label`・`payment_key`・`amount`・`count` を、親の `imported_at ASC, id ASC`・行の `sort_order ASC, id ASC` で読み、`OfficialDailyReportRow` の field `payment_lines` に入れる。足し方（[34](34-biz-sales-service.md) の SALES-SHEET-D2）、group の代表、互換の範囲、warning は BIZ-05 が持つ（34 §19.3 手順 3。日報の紙と同じ 1 つの関数）。`payment_key` は保存を続けるが足す鍵に使わない。
 4. `daily_report_department_lines` は `department_id` がある行をその ID で、未対応行を `normalized_department_name`、それもなければ `raw_department_name` で集約する。amount は合計し、`quantity_hundredths` / count は対象行のいずれかが NULL なら集約値も NULL とする。`quantity_hundredths` は 100 倍の整数のまま足して DB DTO に入れ、単位の数への変換は BIZ-05 が行う（IO-07-D2）。
 5. 部門の label と sort は、各 group の最小 `sort_order`、同値なら最小 row ID の行を決定的な代表とする（支払の group の代表は BIZ-05、34 §19.3 手順 3）。未対応の部門は集約後の group として返し、import ごとに重複させない（警告の文は BIZ-05 が作る）。
-6. `daily_report_summary_lines`（Z001）を、手順 1 と同じ条件（`report_date=? AND status='completed'`、`rolled_back` の親の行は読まない）の親に join する 1 つの query で読み、親の `imported_at ASC, id ASC`、行の `sort_order ASC, id ASC` で並べる。行は合算しない（D-096）。手順 1 の親ごとに 1 件の取込み（親 `id`・`imported_at`・行の `label` / `quantity_hundredths` / `count` / `amount`）を作り、行の無い親も空の行で残す（件数は `source_import_count` と等しい）。`line_key` は返さない。新しい repo 関数・schema・index は足さない（`idx_daily_report_summary_lines_import_id` を使う）。
+6. `daily_report_summary_lines`（Z001）を、手順 1 と同じ条件（`report_date=? AND status='completed'`、`rolled_back` の親の行は読まない）の親に join する 1 つの query で読み、親の `imported_at ASC, id ASC`、行の `sort_order ASC, id ASC` で並べる。行は合算しない（D-096）。手順 1 の親ごとに 1 件の取込み（親 `id`・`imported_at`・行の `label` / `quantity_hundredths` / `count` / `amount`）を作り、行の無い親も空の行で残す（件数は `source_import_count` と等しい）。行は親 id で取込みに分け、親と行の query の並びの一致に依らない（行の並びは取込みの中の順にだけ使う）。手順 1 の親に無い id の行は読まない（§14.21a 手順 2 と同じ。手順 1 の後に確定した取込みの行を混ぜない）。`line_key` は返さない。新しい repo 関数・schema・index は足さない（`idx_daily_report_summary_lines_import_id` を使う）。
    取込みと行の型は、BIZ-05 の `OfficialDailySummaryImport` / `OfficialDailySummaryLine`（[34 §19.2](34-biz-sales-service.md#192-型定義)）と同じ形の DB DTO（IO の所有。既存の `OfficialDailyDepartmentRow` と同じ命名で `OfficialDailySummaryImportRow` / `OfficialDailySummaryLineRow`。ただし個数は `quantity_hundredths: Option<i64>`〈100 倍の整数〉で、単位の数への変換は BIZ-05）とし、`OfficialDailyReportRow` の field `summary_imports` に入れる。
 7. 手順 2〜4 の加算はすべて（NULL を伝える加算〈親の `gross_amount` / `net_amount`、部門の `quantity_hundredths` / count〉と、部門の amount の合計。支払は手順 3 のとおり IO では足さない）溢れを検査して足し（`checked_add`）、`i64` を溢れたら黙って wrap せず `DbError::QueryFailed` を返す（月次の §14.22 の `SUM` の溢れと同じく error で止める）。100 倍の整数は範囲内の値（MNT-03-D12 の範囲検査、`i64::MAX / 100`）でも 2 行の和で溢れうる。返した `DbError` の上位の扱いは既存の DB 読み取りの失敗と同じで（[34 §19.3](34-biz-sales-service.md#193-get_daily_sales) のエラーハンドリング、[40 §5.3](40-cmd-product.md#53-cmd層のエラー返却方針) の `internal`、CMD-ERR-D2）、利用者には既存の文「データベースエラーが発生しました。もう一度お試しください」と error_id が出る。新しい文言は足さない。
 8. `OfficialDailyReportRow` を返す。field ごとの持つものと BIZ-05 の扱いは次の 3 つで、混ぜない（D-142）。(a) 内部の支払の行（`payment_lines` の要素。手順 3）は、行ごとに親の `id`・`imported_at` と行の `id`・`sort_order` を持つ。BIZ-05 はこれを SALES-SHEET-D2 の関数の入力にだけ使い、wire に出さない（足し方・並び・group の代表は [34](34-biz-sales-service.md) §19.3 手順 3 が決め、IO の並びと値のまま写さない）。(b) 公開する支払の集計（wire の `OfficialDailyPaymentLine`）は BIZ-05 が (a) を D2 で足した結果で、親 ID・行 ID・`imported_at` を持たない。(c) Z001 の取込みごとの行（`summary_imports`）は親 ID と `imported_at` を持ち、BIZ-05 はこれを公開 DTO へ並びと値を変えずに写す（単純な写像。D-096）。部門の集約（手順 4）は単一親 ID を返さない。
@@ -816,3 +817,5 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-10-31 | 日報の紙の runtime（実装、D-120・D-142） | §14.21 手順 3・8、§14.21a・§14.21b の proposed の注記を外した。§14.21a の DB DTO は帳票ごとの 3 つの field にした（`db` が IO-07 の型を参照しないため。層の検査）。 |
 | 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を足した（未実装、34 §19.4 手順 6・57 UI-09b-D11）。§14.22 手順 5 の「将来、取込み済み営業日数を返す場合は」を §14.22a を引く文に置き換えた（「営業日数」の語は 57 §57.10 Q-1 と合わないので外した）。 |
 | 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |
+| 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235、55 UI-07-D19） | §14.2 の `DailyReportImport` に `settlement_no` を足し（owner の決定 TD-590。D-111 の時の「足さない」を置き換えた）、§14.16・§14.17・§14.18・§14.20 の 4 つの SELECT の末尾に列を足した。この型を wire に出さないことにした（一覧の wire は BIZ-08 の `DailyReportImportRow`）。 |
+| 2026-11-14 | z001-row-guard（実装） | §14.21 手順 6 に、行を親 id で分け並びの一致に依らないこと、親に無い id の行を読まないことを書いた（[Plan Packet](../plans/2026-11-13-z001-row-guard.md)）。 |

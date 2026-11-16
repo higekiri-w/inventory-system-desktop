@@ -132,6 +132,12 @@ describe("ReturnExchangePage ProductAddSuggest (UI-03-D21)", () => {
     renderPage();
     await user.type(await screen.findByLabelText("返品・交換商品検索"), "RT-S1{Enter}");
     await screen.findByText("保存対象");
+    // UI-03-D23: 既定の選択が無いので、保存の前にレジでの戻し方を選ぶ
+    await user.click(
+      screen.getByLabelText(
+        "バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）",
+      ),
+    );
     mockSearchProducts.mockResolvedValueOnce(
       result(
         [

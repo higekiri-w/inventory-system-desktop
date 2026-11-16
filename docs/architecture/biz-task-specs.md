@@ -170,8 +170,8 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
    - return_recordsにINSERT → record_idを取得
    - 各return_itemについて:
      - return_itemsにINSERT
-     - register_processed=1（レジ戻し済み）の場合 → 在庫は動かさない（CSV取込みで自動反映）
-     - register_processed=0（レジ未処理）の場合:
+     - register_processed=1（レジでバーコードを読んで戻した）かつ Z004 の取込みが在庫を動かす商品（`z004_moves_stock`: 13 桁の JAN が 1 商品だけに当たり在庫連動）の明細 → 在庫は動かさない（CSV取込みで自動反映）
+     - それ以外（register_processed=0、または Z004 が在庫を動かさない商品の明細。D-148）:
        - direction='in'（戻り）→ 共通在庫変動処理（quantity=+数量, movement_type='return'）
        - direction='out'（渡し）→ 共通在庫変動処理（quantity=-数量, movement_type='return'）
    - operation_logsに記録（operation_type='return_create'）
@@ -201,7 +201,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **【制御構造】**
 - 全てのヘッダ+明細+在庫更新+変動履歴はBEGIN〜COMMITで一括。途中で失敗したらROLLBACK
 - 在庫マイナス警告はエラーではなく警告。処理は続行する（利用者が後で確認）
-- 返品のregister_processedフラグは画面入力時に決定。BIZ層では渡された値に従って分岐するだけ
+- 返品のregister_processedフラグ（レジでバーコードを読んで戻したか）は画面で既定なしに問う。BIZ層は渡された値と商品の設定から明細ごとに在庫を動かすかを決め、動かした商品コードを結果に返す（D-148）
 
 ---
 

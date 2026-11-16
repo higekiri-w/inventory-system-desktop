@@ -65,10 +65,11 @@ beforeEach(() => {
 });
 
 describe("CsvImportPage_req401", () => {
-  it("REQ-401: opens as sales import with daily report default tab and Z004 tab label", () => {
-    render(<CsvImportPage />);
+  it("REQ-401: opens as sales import with daily report default tab and Z004 tab label", async () => {
+    // 日報取込みタブの上の導線（UI-07-D19）が Link なので router の context の中で描く（描画は非同期）
+    renderWithRouter(<CsvImportPage />);
 
-    expect(screen.getByRole("heading", { name: "売上データ取込み" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "売上データ取込み" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "日報取込み" })).toHaveAttribute(
       "aria-selected",
       "true",

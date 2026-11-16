@@ -86,7 +86,7 @@ sale_recordsとinventory_movementsで符号の意味が異なる。混同防止�
 | sale_auto | CSV取込みによる販売 | マイナス（返品時はプラス） | REQ-401 |
 | sale_manual | 手動販売出庫 | マイナス | REQ-203 |
 | receiving | 仕入入庫 | プラス | REQ-201 |
-| return | 返品・交換（レジ未処理分のみ） | プラス（戻り） or マイナス（渡し） | REQ-202 |
+| return | 返品・交換（この保存で在庫を動かす明細のみ。D-148） | プラス（戻り） or マイナス（渡し） | REQ-202 |
 | disposal | 廃棄・破損 | マイナス | REQ-204 |
 | stocktake | 棚卸し補正 | プラス or マイナス | REQ-205 |
 
@@ -99,7 +99,7 @@ sale_recordsとinventory_movementsで符号の意味が異なる。混同防止�
 - **通常取消と is_voided の使い分け（2026-06-27 追加）**: 業務記録の通常取消は元 movement を隠さず、逆方向 movement を追加して追跡可能にする。`is_voided=1` は CSV取込み rollback のように取込み自体を通常履歴から外す用途に限定する。完成形では `movement_kind` / `reversal_of_movement_id` の追加を検討する（[65-inventory-record-traceability.md](../function-design/65-inventory-record-traceability.md) §65.6）。
 
 ### 困りそうなケース
-- **レジ戻し処理済みの返品**: register_processed=1の返品は、CSV取込み時にZ004のマイナス値を読んで、sale_recordsにはquantity=-1（売上帳票視点）、inventory_movementsにはquantity=+1（在庫視点: 在庫が1個戻る）として記録される。return_recordsは帳面記録のみで、独自のinventory_movementsは作らない。これにより二重計上を防ぐ
+- **レジでバーコードを読んで戻した返品**: register_processed=1の返品のうち、Z004 の取込みが在庫を動かす商品（13 桁の JAN が 1 商品だけに当たり在庫連動）の明細は、CSV取込み時にZ004のマイナス値を読んで、sale_recordsにはquantity=-1（売上帳票視点）、inventory_movementsにはquantity=+1（在庫視点: 在庫が1個戻る）として記録される。return_recordsはその明細の独自のinventory_movementsを作らない。これにより二重計上を防ぐ。Z004 の取込みが在庫を動かさない商品（`pos_stock_sync=false`・共有 JAN・JAN 無し・JAN が 13 桁でない）の明細は、返品・交換の保存で `return` の movement を作る（D-148）
 
 ---
 

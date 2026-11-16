@@ -63,10 +63,14 @@ const mockCreateReturn = vi.mocked(commands.createReturn);
 const mockSaveReceiptImage = vi.mocked(commands.saveReceiptImage);
 const mockScrollTo = vi.fn();
 
-const registerProcessedStockDescription =
-  "この保存では在庫数を変更しません。日次CSV取込みで返品分の在庫が反映されます。";
-const registerUnprocessedStockDescription =
-  "この保存で在庫数を反映します。日次CSVに同じ返品を重ねて取込まない運用です。";
+// UI-03-D23 の文言（63）
+const READ_AT_REGISTER = "レジでバーコードを読んで戻した";
+const NOT_READ_AT_REGISTER =
+  "バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）";
+const readAtRegisterDescription =
+  "在庫連動の商品は、売上データ（Z004）の取込みで在庫に戻ります。レジの資料に載らない商品（POS販売で在庫を減らさない・JAN が無いか 13 桁でない・JAN が同じ商品がある）は、この保存で在庫を動かします。";
+const notReadAtRegisterDescription = "この保存で全部の商品の在庫を動かします。";
+const REGISTER_METHOD_REQUIRED = "レジでの戻し方を選んでください";
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -108,6 +112,14 @@ async function addSingleProduct(user: ReturnType<typeof userEvent.setup>) {
   expect(await screen.findByText("RT-001")).toBeInTheDocument();
 }
 
+// UI-03-D23: 既定の選択が無いので、保存する test は保存の前にどちらかを選ぶ
+async function chooseRegisterMethod(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string = NOT_READ_AT_REGISTER,
+) {
+  await user.click(screen.getByLabelText(label));
+}
+
 function dropReceipt(file: File) {
   fireEvent.drop(screen.getByTestId("file-picker-dropzone"), {
     dataTransfer: { files: [file] },
@@ -126,48 +138,182 @@ beforeEach(() => {
 });
 
 describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
-  it("shows register processed explanation as text and badge", async () => {
+  it("UI-03-D23: レジでの戻し方の選択肢と Badge と説明文を文言で出し、既定の選択は無い", async () => {
     const user = userEvent.setup();
     renderWithClient(<ReturnExchangePage />);
 
-    expect(await screen.findByText("CSV取込みで反映")).toBeInTheDocument();
-    expect(screen.getAllByText(registerProcessedStockDescription).length).toBeGreaterThan(0);
-    expect(screen.getByLabelText("レジ戻し済み")).toBeChecked();
-    await user.click(screen.getByLabelText("レジ未処理"));
+    const fieldset = (await screen.findByText("レジでの戻し方")).closest("fieldset");
+    if (fieldset === null) throw new Error("expected fieldset");
+    expect(within(fieldset).getByText("取込みで反映")).toBeInTheDocument();
+    expect(within(fieldset).getByText("この保存で反映")).toBeInTheDocument();
+    expect(within(fieldset).getByText(readAtRegisterDescription)).toBeInTheDocument();
+    expect(within(fieldset).getByText(notReadAtRegisterDescription)).toBeInTheDocument();
+    expect(screen.getByLabelText(READ_AT_REGISTER)).not.toBeChecked();
+    expect(screen.getByLabelText(NOT_READ_AT_REGISTER)).not.toBeChecked();
 
-    expect(screen.getByLabelText("レジ未処理")).toBeChecked();
-    expect(screen.getByText("この保存で反映")).toBeInTheDocument();
-    expect(screen.getAllByText(registerUnprocessedStockDescription).length).toBeGreaterThan(0);
+    await user.click(screen.getByLabelText(NOT_READ_AT_REGISTER));
+    expect(screen.getByLabelText(NOT_READ_AT_REGISTER)).toBeChecked();
+    expect(screen.getByLabelText(READ_AT_REGISTER)).not.toBeChecked();
+    await user.click(screen.getByLabelText(READ_AT_REGISTER));
+    expect(screen.getByLabelText(READ_AT_REGISTER)).toBeChecked();
+    expect(screen.getByLabelText(NOT_READ_AT_REGISTER)).not.toBeChecked();
   });
 
-  it("successful submit invalidates returns and stock keys only when register_processed=false", async () => {
+  it("UI-03-D23 (U2): 選ばずに保存すると欄の近くに error を出して createReturn を呼ばず、選ぶと消える", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<ReturnExchangePage />);
+    await addSingleProduct(user);
+
+    await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
+
+    const fieldset = screen.getByText("レジでの戻し方").closest("fieldset");
+    if (fieldset === null) throw new Error("expected fieldset");
+    const error = await screen.findByText(REGISTER_METHOD_REQUIRED);
+    expect(fieldset).toContainElement(error);
+    expect(fieldset).toHaveAttribute("aria-describedby", error.id);
+    expect(mockCreateReturn).not.toHaveBeenCalled();
+    expect(mockScrollTo).not.toHaveBeenCalled();
+
+    await chooseRegisterMethod(user, READ_AT_REGISTER);
+    expect(screen.queryByText(REGISTER_METHOD_REQUIRED)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [READ_AT_REGISTER, true],
+    [NOT_READ_AT_REGISTER, false],
+  ] as const)(
+    "UI-03-D23 (U3): 「%s」を選んで保存すると register_processed=%s を送る",
+    async (label, expected) => {
+      const user = userEvent.setup();
+      mockCreateReturn.mockResolvedValue({
+        status: "ok",
+        data: {
+          record_id: 40,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [],
+        },
+      });
+      renderWithClient(<ReturnExchangePage />);
+      await addSingleProduct(user);
+      await chooseRegisterMethod(user, label);
+      await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
+
+      await waitFor(() => {
+        expect(mockCreateReturn).toHaveBeenCalledTimes(1);
+      });
+      expect(mockCreateReturn.mock.calls[0][0].register_processed).toBe(expected);
+    },
+  );
+
+  it.each([false, true])(
+    "UI-03-D23・D15 (U4): 保存結果の商品の行ごとに stock_applied_product_codes どおりの反映を出す（idempotent_replay=%s）",
+    async (idempotentReplay) => {
+      const user = userEvent.setup();
+      mockCreateReturn.mockResolvedValue({
+        status: "ok",
+        data: {
+          record_id: 41,
+          created: !idempotentReplay,
+          idempotent_replay: idempotentReplay,
+          stock_warnings: [],
+          stock_applied_product_codes: ["RT-002"],
+        },
+      });
+      renderWithClient(<ReturnExchangePage />);
+      await addSingleProduct(user);
+      mockSearchProducts.mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          items: [makeMockProductWithRelations({ product_code: "RT-002", name: "返品商品2" })],
+          total_count: 1,
+          page: 1,
+          per_page: 10,
+        },
+      });
+      await user.type(screen.getByLabelText("返品・交換商品検索"), "RT-002{enter}");
+      expect(await screen.findByText("RT-002")).toBeInTheDocument();
+      await chooseRegisterMethod(user, READ_AT_REGISTER);
+      await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
+
+      const resultRegion = await screen.findByRole("region", { name: "保存結果" });
+      expect(within(resultRegion).getByText("バーコードで戻した")).toBeInTheDocument();
+      const savedTable = within(resultRegion).getByRole("table", { name: "保存した商品" });
+      const rowOf = (code: string) => {
+        const row = within(savedTable).getByText(code).closest("tr");
+        if (row === null) throw new Error("expected table row");
+        return row;
+      };
+      expect(within(rowOf("RT-001")).getByText("取込みで反映")).toBeInTheDocument();
+      expect(within(rowOf("RT-001")).queryByText("この保存で反映")).not.toBeInTheDocument();
+      expect(within(rowOf("RT-002")).getByText("この保存で反映")).toBeInTheDocument();
+      expect(within(rowOf("RT-002")).queryByText("取込みで反映")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    [READ_AT_REGISTER, ["RT-001"], true],
+    [READ_AT_REGISTER, [], false],
+    [NOT_READ_AT_REGISTER, ["RT-001"], true],
+  ] as const)(
+    "UI-03-D17・D23 (U5): 「%s」で列 %j なら在庫系 consumer の invalidation は returnExchange(%s) と一致する",
+    async (label, codes, stockApplied) => {
+      const user = userEvent.setup();
+      mockCreateReturn.mockResolvedValue({
+        status: "ok",
+        data: {
+          record_id: 30,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [...codes],
+        },
+      });
+
+      const { queryClient } = renderWithClient(<ReturnExchangePage />);
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      await addSingleProduct(user);
+      await chooseRegisterMethod(user, label);
+      await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
+
+      await waitFor(() => {
+        expect(mockScrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "smooth" });
+      });
+      expect(await screen.findByText("返品・交換を保存しました")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "詳細を見る" })).toHaveAttribute(
+        "href",
+        "/inventory/return/records/30?returnTo=%2Finventory%2Freturn",
+      );
+      await waitFor(() => {
+        expectExactInvalidations(
+          invalidateSpy.mock.calls,
+          d052InvalidationOracle.returnExchange(stockApplied),
+        );
+      });
+    },
+  );
+
+  it("UI-03-D23: 続けて返品・交換ではレジでの戻し方が未選択に戻る", async () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 30, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 42,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: ["RT-001"],
+      },
     });
-
-    const { queryClient } = renderWithClient(<ReturnExchangePage />);
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    renderWithClient(<ReturnExchangePage />);
     await addSingleProduct(user);
-    await user.click(screen.getByLabelText("レジ未処理"));
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
+    await user.click(await screen.findByRole("button", { name: "続けて返品・交換" }));
 
-    await waitFor(() => {
-      expect(mockScrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "smooth" });
-    });
-    expect(await screen.findByText("返品・交換を保存しました")).toBeInTheDocument();
-    expect(screen.getAllByText(registerUnprocessedStockDescription).length).toBeGreaterThan(0);
-    expect(screen.getByRole("link", { name: "詳細を見る" })).toHaveAttribute(
-      "href",
-      "/inventory/return/records/30?returnTo=%2Finventory%2Freturn",
-    );
-    await waitFor(() => {
-      expectExactInvalidations(
-        invalidateSpy.mock.calls,
-        d052InvalidationOracle.returnExchange(false),
-      );
-    });
+    expect(screen.getByLabelText(READ_AT_REGISTER)).not.toBeChecked();
+    expect(screen.getByLabelText(NOT_READ_AT_REGISTER)).not.toBeChecked();
   });
 
   // T4 (UI-03-D22): recent list returnTo contract.
@@ -208,7 +354,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 36, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 36,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
@@ -216,6 +368,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     expect(noteField.tagName).toBe("TEXTAREA");
     await user.type(noteField, "サイズ交換のため確認済み");
     await addSingleProduct(user);
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     await waitFor(() => {
@@ -266,31 +419,36 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     );
     expect(within(recentRegion).getByText("—")).toBeInTheDocument();
     expect(within(recentRegion).queryByText("備考なし")).not.toBeInTheDocument();
+    // UI-03-D23 (U6): 記録の値は true を「バーコードで戻した」、false を「バーコードなし」で出す
+    expect(
+      within(recentRegion).getByRole("columnheader", { name: "レジでの戻し方" }),
+    ).toBeInTheDocument();
+    expect(within(recentRegion).getByText("バーコードなし")).toBeInTheDocument();
+    expect(within(recentRegion).getByText("バーコードで戻した")).toBeInTheDocument();
   });
 
-  it("successful register-processed submit invalidates returns without stock keys", async () => {
+  it("UI-03-D19: 保存結果の空備考は「—」で出す", async () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 32, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 32,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
-    const { queryClient } = renderWithClient(<ReturnExchangePage />);
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    renderWithClient(<ReturnExchangePage />);
     await addSingleProduct(user);
+    await chooseRegisterMethod(user, READ_AT_REGISTER);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     expect(await screen.findByText("返品・交換を保存しました")).toBeInTheDocument();
     const resultRegion = screen.getByRole("region", { name: "保存結果" });
     expect(within(resultRegion).getByText("—")).toBeInTheDocument();
     expect(within(resultRegion).queryByText("備考なし")).not.toBeInTheDocument();
-    expect(screen.getAllByText(registerProcessedStockDescription).length).toBeGreaterThan(0);
-    await waitFor(() => {
-      expectExactInvalidations(
-        invalidateSpy.mock.calls,
-        d052InvalidationOracle.returnExchange(true),
-      );
-    });
   });
 
   it("can add the same product as both return-in and exchange-out rows", async () => {
@@ -336,7 +494,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { record_id: 33, created: true, idempotent_replay: false, stock_warnings: [] },
+        data: {
+          record_id: 33,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [],
+        },
       });
 
     renderWithClient(<ReturnExchangePage />);
@@ -348,6 +512,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
       "src",
       "blob:receipt-preview",
     );
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     expect(
       await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
@@ -382,6 +547,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const file = new File(["receipt"], "invalid.png", { type: "image/png" });
     dropReceipt(file);
     expect(await screen.findByText("invalid.png")).toBeInTheDocument();
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     expect(
@@ -410,11 +576,18 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { record_id: 34, created: true, idempotent_replay: false, stock_warnings: [] },
+        data: {
+          record_id: 34,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [],
+        },
       });
 
     renderWithClient(<ReturnExchangePage />);
     await addSingleProduct(user);
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     expect(
       await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
@@ -450,6 +623,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
 
     expect(await screen.findByText("該当する商品がありません")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "商品登録へ進む" })).toBeInTheDocument();
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     expect(await screen.findByRole("button", { name: "保存中..." })).toBeDisabled();
@@ -489,7 +663,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { record_id: 31, created: true, idempotent_replay: false, stock_warnings: [] },
+        data: {
+          record_id: 31,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [],
+        },
       });
 
     renderWithClient(<ReturnExchangePage />);
@@ -498,6 +678,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     dropReceipt(file);
     expect(await screen.findByText("receipt.png")).toBeInTheDocument();
 
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     expect(
       await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
@@ -530,11 +711,18 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
       })
       .mockResolvedValueOnce({
         status: "ok",
-        data: { record_id: 35, created: true, idempotent_replay: false, stock_warnings: [] },
+        data: {
+          record_id: 35,
+          created: true,
+          idempotent_replay: false,
+          stock_warnings: [],
+          stock_applied_product_codes: [],
+        },
       });
 
     renderWithClient(<ReturnExchangePage />);
     await addSingleProduct(user);
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     expect(
       await screen.findByText("一時的なエラー。詳細は診断ログに記録されています。"),
@@ -627,11 +815,18 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 60, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 60,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
     await addSingleProduct(user);
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     await waitFor(() => {
       expect(mockCreateReturn).toHaveBeenCalledTimes(1);
@@ -644,7 +839,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 63, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 63,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
@@ -655,6 +856,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     // 交換 → 返品へ明示的に戻す（渡し行が無いため hasOut ガードに抵触しない）。
     await user.click(screen.getByLabelText("種別"));
     await user.click(await screen.findByRole("option", { name: "返品" }));
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
 
     await waitFor(() => {
@@ -667,7 +869,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 61, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 61,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
@@ -692,6 +900,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     await user.type(screen.getByLabelText("返品・交換商品検索"), "RT-002{enter}");
     expect(await screen.findByText("RT-002")).toBeInTheDocument();
 
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     await waitFor(() => {
       expect(mockCreateReturn).toHaveBeenCalledTimes(1);
@@ -706,7 +915,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 64, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 64,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
@@ -736,6 +951,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     await user.type(screen.getByLabelText("返品・交換商品検索"), "RT-002{enter}");
     expect(await screen.findByText("RT-002")).toBeInTheDocument();
 
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     await waitFor(() => {
       expect(mockCreateReturn).toHaveBeenCalledTimes(1);
@@ -748,7 +964,13 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     const user = userEvent.setup();
     mockCreateReturn.mockResolvedValue({
       status: "ok",
-      data: { record_id: 62, created: true, idempotent_replay: false, stock_warnings: [] },
+      data: {
+        record_id: 62,
+        created: true,
+        idempotent_replay: false,
+        stock_warnings: [],
+        stock_applied_product_codes: [],
+      },
     });
 
     renderWithClient(<ReturnExchangePage />);
@@ -778,6 +1000,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     await user.click(screen.getByLabelText("RT-002 の方向"));
     await user.click(await screen.findByRole("option", { name: "戻り（在庫+）" }));
 
+    await chooseRegisterMethod(user);
     await user.click(screen.getByRole("button", { name: "返品・交換を保存" }));
     await waitFor(() => {
       expect(mockCreateReturn).toHaveBeenCalledTimes(1);
@@ -806,7 +1029,7 @@ describe("ReturnExchangePage native input tokens（Lane 5 SC4d）", () => {
     }
 
     // registerOptionClass のラジオ選択肢ラベルは対象外、bg-background のまま不変。
-    const registerLabel = screen.getByLabelText("レジ未処理").closest("label");
+    const registerLabel = screen.getByLabelText(NOT_READ_AT_REGISTER).closest("label");
     expect(registerLabel).not.toBeNull();
     expect(registerLabel).toHaveClass("bg-background");
   });
@@ -814,24 +1037,31 @@ describe("ReturnExchangePage native input tokens（Lane 5 SC4d）", () => {
 
 // SPEC-COLOR-EMPHASIS-RT-1 / D-CE17 / S21: 登録方法の選択カードは選ぶと枠が操作の色で focus の前後に
 // 変わらないため、focus は不透明な ring。radio の点は操作の色（accent-primary）。
-it("D-CE17 / S21: register option cards use the opaque focus ring and the operation-colored radio", () => {
+it("D-CE17 / S21: register option cards use the opaque focus ring and the operation-colored radio", async () => {
+  const user = userEvent.setup();
   renderWithClient(<ReturnExchangePage />);
-  const processed = screen.getByLabelText("レジ戻し済み");
-  const unprocessed = screen.getByLabelText("レジ未処理");
-  expect(processed).toBeChecked();
-  for (const radio of [processed, unprocessed]) {
+  const read = screen.getByLabelText(READ_AT_REGISTER);
+  const notRead = screen.getByLabelText(NOT_READ_AT_REGISTER);
+  for (const radio of [read, notRead]) {
+    expect(radio).not.toBeChecked();
     expect(radio).toHaveClass("accent-primary");
     const card = radio.closest("label");
-    expect(card).toHaveClass("focus-within:ring-ring");
+    expect(card).toHaveClass("focus-within:ring-ring", "border-border", "bg-background");
     expect(card).not.toHaveClass("focus-within:ring-ring/50");
   }
-  expect(processed.closest("label")).toHaveClass("border-primary", "bg-primary/5");
+  await user.click(read);
+  expect(read.closest("label")).toHaveClass("border-primary", "bg-primary/5");
+  await user.click(notRead);
+  expect(notRead.closest("label")).toHaveClass("border-warning-border", "bg-warning-soft");
+  expect(read.closest("label")).toHaveClass("border-border", "bg-background");
 });
 
 it("⑮ SC3/SC14: 副題と直近件数の説明を表示する", () => {
   renderWithClient(<ReturnExchangePage />);
   expect(
-    screen.getByText("レジ戻し済みなら帳面記録だけ、未処理ならこの保存で在庫を反映します"),
+    screen.getByText(
+      "レジでの戻し方を選んで保存します。売上データの取込みで在庫に戻らない商品は、この保存で反映します",
+    ),
   ).toBeInTheDocument();
   expect(screen.getByText("直近 10 件の返品・交換を新しい順に表示します。")).toBeInTheDocument();
 });

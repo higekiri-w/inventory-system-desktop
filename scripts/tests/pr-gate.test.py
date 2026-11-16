@@ -269,6 +269,8 @@ SEED={'docs/a.md':'a\n','src/app.ts':'app\n',DLOG:'# log\n\nD-1\n',GEN_TRACE:'t1
       'docs/shared.md':''.join(f'{i}\n' for i in range(1,13)),'public/help.html':'<p>help page body for rename</p>\n',
       'docs/dir/x.md':'x\n','docs/dir/y.md':'y\n','src/x.ts':'export const x = 1\n'}
 LANE_EVIDENCE=['https://example.invalid/manual']
+# D-154: the line naming the count and the rule; a literal from the packet (Scope「止める文と B の案内」), not from the helper.
+RULE_LINE='closure {} 本が見るものと合否: `docs/agent-guidance/merge-evidence.md` の「manualの使い回し」の B'
 
 class Synth:
     """main and a lane branch; `source` is the lane head that passed L3. Syncs merge like the lane does."""
@@ -484,9 +486,14 @@ class SyncRecords(SyncCase):
         # Nothing was written, so B still works on the same server record.
         self.assertEqual(self.rec(self.old(),kind='manual',source=self.repo.source,approval=APPROVAL)['manual']['reuse_approval'],APPROVAL)
     def test_lane_commit_stops_with_reason(self):
-        self.docs_sync();lane=self.repo.commit({'docs/lane.md':'more\n'})
+        # D-154 (TD-724 / TD-711): a lane commit inside the set no longer leaves redo L3 as the only step. The record
+        # still stops before any write and now names B. A lane commit outside the set stays redo-only.
+        self.docs_sync();self.repo.commit({'docs/lane.md':'more\n'})
+        self.stop(self.old(),'manual pass not carried','lane の commit の path: docs/lane.md',
+                  '--reuse-from '+self.repo.source+' --reuse-approval POINTER','--outcome pending',RULE_LINE.format(1))
+        self.repo.git('reset','-q','--hard','HEAD~1');lane=self.repo.commit({'src/app.ts':'more\n'})
         with patch.object(self.gate,'code_paths',wraps=self.gate.code_paths) as spy:
-            message=self.stop(self.old(),'lane commit '+lane,'--outcome pending')
+            message=self.stop(self.old(),'lane commit '+lane,'集合の外','src/app.ts','--outcome pending')
         spy.assert_not_called()
         self.assertNotIn('--reuse-approval',message)
     def test_b_reuse_with_approval(self):
@@ -617,8 +624,14 @@ class SyncRecords(SyncCase):
         self.docs_sync()
         record=self.old(head=self.head(),base=self.repo.base,req=LOW,source_head=self.repo.source)
         self.status(record,LOW)
+        # D-154: status still refuses a lane commit after a manual without reuse_approval; the reason is now the
+        # missing approval for the named path. A lane commit outside the set is refused with or without one.
         lane=self.repo.commit({'docs/lane.md':'after\n'});record['head']=lane
-        with self.assertRaisesRegex(g.GateError,lane):self.status(record,LOW)
+        with self.assertRaisesRegex(g.GateError,'lane changes without approval: docs/lane.md$'):self.status(record,LOW)
+        outside=self.repo.commit({'src/app.ts':'after\n'});record['head']=outside
+        for manual in (record['manual'],record['manual']|dict(reuse_approval=APPROVAL)):
+            with self.subTest(manual=sorted(manual)),self.assertRaisesRegex(g.GateError,'lane commit '+outside+'.*集合の外.*src/app.ts'):
+                self.status(record|dict(manual=manual),LOW)
     def test_nonci_rechecks_sync_closure(self):
         def closure_record():
             record=self.old(head=self.head(),base=self.repo.base,req=NO_MANUAL)
@@ -1443,16 +1456,22 @@ class PacketReuse(SyncCase):
         self.edit(l3='- PASS 基準: 10 pt 以上\n')
         self.stop(self.old(),'L3 節が変わった',kind='r4',packet=PKT)
     def test_c3_runtime_unknown_workflow_and_rename_stop(self):
-        for files,texts in (({'src/app.ts':'app2\n'},['not docs only','frontend']),({'weird/x.bin':'?\n'},['not docs only','unknown']),
-                            ({'docs/DEV_WORKFLOW.md':'gate\n'},['not docs only','workflow'])):
-            with self.subTest(texts=texts):
+        # D-154: the same inputs still stop the carry with redo L3 as the only step; the reason is now the set.
+        for files,path in (({'src/app.ts':'app2\n'},'src/app.ts'),({'weird/x.bin':'?\n'},'weird/x.bin'),
+                           ({'docs/DEV_WORKFLOW.md':'gate\n'},'docs/DEV_WORKFLOW.md')):
+            with self.subTest(path=path):
                 self.reset();self.lane(files)
-                self.stop(self.old(),*texts,kind='r4',packet=PKT)
+                message=self.stop(self.old(),'lane commit','集合の外',path,'next: redo L3','--outcome pending',kind='r4',packet=PKT)
+                self.assertNotIn('--reuse-approval',message)
         self.reset();self.repo.move('src/x.ts','docs/x.md');self.repo.git('commit','-qm','rename into docs')
-        self.stop(self.old(),'src/x.ts','not docs only',kind='r4',packet=PKT)
+        message=self.stop(self.old(),'集合の外','src/x.ts','next: redo L3',kind='r4',packet=PKT)
+        for absent in ('--reuse-approval','docs/x.md'):self.assertNotIn(absent,message)
     def test_c4_r4_never_takes_docs_route(self):
+        # D-154 (TD-710 / TD-724): the machine still never carries an R4 lane's docs commit (no C, nothing written);
+        # the next step is now B with two closures or redo L3, no longer redo L3 only.
         self.lane({'docs/lane.md':'typo\n'})
-        self.stop(self.old(),'lane commit',kind='r4',req=REQ|dict(risk='R4'),packet=PKT)
+        self.stop(self.old(),'manual pass not carried','lane の commit の path: docs/lane.md','--reuse-approval POINTER',
+                  '--outcome pending',RULE_LINE.format(2),kind='r4',req=REQ|dict(risk='R4'),packet=PKT)
     def test_c5_old_packet_without_l3_compares_test_plan_and_matrix(self):
         self.repo.git('reset','-q','--hard',self.repo.base0)
         self.repo.source=self.repo.commit({PKT:rebuild_packet(),MATRIX:'## Manual\n\n- 9 pt 以上\n'},'criteria in Test Plan + Matrix')
@@ -1549,6 +1568,398 @@ class PacketReuse(SyncCase):
     def test_ga4_r4_recovery_change_needs_fresh_broad(self):
         self.ga(risk='R4',extra='\n## Review Response\n\n- note\n')()
         with self.assertRaisesRegex(g.GateError,'^'+re.escape(FRESH_BROAD)+'$'):self.ga(risk='R4',recovery='- new restore\n')()
+
+# D-154 (packet docs/plans/2026-11-14-sync-docs-conflict.md, Test Plan T1..T16): lane hands on the manual reuse route.
+FD='docs/function-design/24-lane.md';TEST_TS='src/test/a.test.ts';SD_TEST='src/features/x/Y.sd.test.tsx'
+R4=REQ|dict(risk='R4');R2=dict(risk='R2',plan_commit=None,amendments=[],minimum=1,manual=True,r4=False)
+# AC6: paths outside the set, refused inside a merge and as a lane commit alike.
+OUTSIDE_SET=('src/lib/x.ts','docs/DEV_WORKFLOW.md','src-tauri/tests/x.rs','src/routes/foo.test.tsx','src/test/.env.test')
+
+class Hands(SyncCase):
+    """T1..T16 / MG-D13, D-154: hand-resolved sync merges and lane commits inside the set (docs, frontend test files)."""
+    exercise=RecordLifecycle.exercise;old=SyncRecords.old;rec=SyncRecords.rec;stop=SyncRecords.stop;status=SyncRecords.status
+    carried=SyncRecords.carried
+    def setUp(self):
+        super().setUp();self.first=self.repo.source
+    def restart(self):
+        """Back to the seed: main at the base, the lane at its first L3 version."""
+        self.repo.git('reset','-q','--hard',self.first);self.repo.git('branch','-f','main',self.repo.base0)
+        self.repo.base=self.repo.base0;self.repo.source=self.first
+    def packet_lane(self,**kw):
+        """A lane whose L3 version adds the packet (old form with a `## L3` section unless told otherwise)."""
+        self.restart();self.repo.git('reset','-q','--hard',self.repo.base0)
+        self.repo.source=self.repo.commit({PKT:rebuild_packet(**dict(l3='- PASS 基準: 9 pt 以上\n')|kw),MATRIX:'## Manual\n\n- 9 pt 以上\n'},'lane + L3')
+    def lane_side(self,files):
+        """The lane's own change before L3; its commit is the L3 version."""
+        self.repo.source=self.repo.commit(files,'lane before L3');return self.repo.source
+    def resolve(self,files,main=None):
+        """main changes the same paths (and `main`); the lane syncs and resolves each conflict by hand to `files`."""
+        self.repo.main({path:'main side\n' for path in files}|(main or {}));return self.repo.sync(files=files)
+    def hand_sync(self,main=None):
+        self.lane_side({'docs/a.md':'lane side\n'});return self.resolve({'docs/a.md':'both\n'},main)
+    def docs_sync(self):
+        self.repo.main({'docs/b.md':'b\n'});return self.repo.sync()
+    def walk(self):return self.gate.sync_merges(self.repo.source,self.head(),self.repo.base,hands=True)
+    def b(self,old=None,approval=APPROVAL,**kw):
+        """record --kind manual --reuse-from SOURCE [--reuse-approval POINTER]: B, or the explicit A with approval=None."""
+        old=old or self.old()
+        return self.rec(old,kind='manual',source=old['manual'].get('source_head',old['head']),approval=approval,**kw)
+    def b_stop(self,old=None,*texts,approval=None,**kw):
+        old=old or self.old()
+        return self.stop(old,*texts,kind='manual',source=old['manual'].get('source_head',old['head']),approval=approval,**kw)
+    def shapes(self):
+        """AC6: the lane hands B takes, as (name, build, requirements, extra record arguments)."""
+        def conflict(paths,main=None,**packet):
+            def build():
+                self.packet_lane(**packet);self.lane_side({path:'lane side\n' for path in paths})
+                self.resolve({path:'both\n' for path in paths},main)
+            return build
+        def commit(files,packet=True,**kw):
+            def build():
+                self.packet_lane(**kw) if packet else self.restart()
+                self.repo.commit(files)
+            return build
+        r4=dict(risk='R4',gate='ready,merge,manual,r4');packet=dict(packet=PKT)
+        return [('#236: docs and function-design conflicts, main brings code',conflict(['docs/a.md',FD],{'src/app.ts':'app2\n'}),REQ,packet),
+                ('#216: src/test conflict',conflict([TEST_TS]),REQ,packet),
+                ('#228: sd.test.tsx and function-design conflicts on R4',conflict([SD_TEST,FD],**r4),R4,packet),
+                ('R3 function-design lane commit',commit({FD:'design\n'}),REQ,packet),
+                ('R4 docs lane commit',commit({'docs/lane.md':'typo\n'},**r4),R4,packet),
+                ('no-packet R0/R1 docs lane commit',commit({'docs/lane.md':'more\n'},packet=False),LOW,{})]
+
+    def test_hands_resolved_paths_in_set_only(self):
+        # T1: conflicts in docs and function-design resolved by hand, plus an edit of a path that did not conflict.
+        self.lane_side({'docs/a.md':'lane side\n',FD:'lane side\n'})
+        self.repo.main({'docs/a.md':'main side\n',FD:'main side\n','docs/b.md':'b\n'})
+        head=self.repo.sync(files={'docs/a.md':'both\n',FD:'both\n','docs/lane.md':'edited inside the merge\n'})
+        self.assertEqual([m[0] for m in self.walk()],[head])
+        self.assertEqual((self.gate.resolved,self.gate.lane),({'docs/a.md',FD,'docs/lane.md'},set()))
+        self.refuse('merge '+head,'differs from the automatic merge','docs/a.md')
+        for path in ('src/lib/x.ts','weird/x.bin','docs/DEV_WORKFLOW.md'):
+            with self.subTest(path=path):
+                self.restart();self.repo.main({'docs/b.md':'b\n'})
+                head=self.repo.sync(files={path:'edited inside the merge\n','docs/lane.md':'inside the set\n'})
+                with self.assertRaises(g.GateError) as caught:self.walk()
+                message=str(caught.exception)
+                self.assertEqual(caught.exception.code,1,message)
+                for text in ('merge '+head,'集合の外',path):self.assertIn(text,message)
+                self.assertNotIn('docs/lane.md',message)
+    def test_hands_set_frontend_test_files_exact(self):
+        # T2 (TD-706 / TD-709): the set is exact. `**` is zero or more directories; under src/routes only `-` files.
+        inside=['src/test/setup.ts','src/test/deep/dir/helper.tsx',TEST_TS,'src/a.test.ts','src/a.test.tsx',SD_TEST,
+                'src/features/x/deep/z.test.ts','src/routes/-x.test.tsx','src/routes/settings/-logs.test.ts','docs/x.md',FD]
+        near=['src/testing/x.ts','src/lib/test.ts','src/a.test.ts.bak','src/a.test.js','src/routes/foo.test.tsx',
+              'src/routes/settings/logs.test.ts','src/test/.env.test','src-tauri/tests/x.rs','src-tauri/src/a/b.rs',
+              'src/lib/x.ts','docs/DEV_WORKFLOW.md',GEN_BIND,'weird/x.bin']
+        self.assertEqual(g.outside(CLASSIFIER,inside+near),near)
+        self.docs_sync();self.repo.commit({path:'lane\n' for path in inside})
+        self.walk();self.assertEqual(self.gate.lane,set(inside))
+        # AC6: outside the set stops with the set as the reason and redo L3 as the only step, with or without approval.
+        for path in OUTSIDE_SET:
+            for form in ('lane commit','merge'):
+                with self.subTest(path=path,form=form):
+                    self.restart();self.repo.main({'docs/b.md':'b\n'})
+                    if form=='merge':self.repo.sync(files={path:'by hand\n'})
+                    else:self.repo.sync();self.repo.commit({path:'lane\n'})
+                    message=self.stop(self.old(),form,'集合の外',path,'next: redo L3','--outcome pending')
+                    self.assertNotIn('--reuse-approval',message)
+                    self.b_stop(None,form,'集合の外',path,approval=APPROVAL)
+    def test_hands_lane_commit_routes(self):
+        # T3 (TD-724). C: a packet R3 lane's docs-only commit is carried by the machine, with no approval.
+        self.packet_lane();self.repo.commit({'docs/lane.md':'typo\n'})
+        self.assertEqual(self.rec(self.old(),kind='r4',packet=PKT)['manual'],self.carried|dict(source_head=self.repo.source))
+        # Not C but inside the set: never carried, never redo-only; B is named and works.
+        for files in ({FD:'design\n'},{TEST_TS:'test\n'},{'docs/lane.md':'typo\n',SD_TEST:'test\n'}):
+            with self.subTest(files=sorted(files)):
+                self.packet_lane();self.repo.commit(files)
+                message=self.stop(self.old(),'manual pass not carried','--reuse-approval POINTER',kind='r4',packet=PKT)
+                self.assertIn('lane の commit の path: '+', '.join(sorted(files)),message.split('\n'))
+                self.assertEqual(self.b(packet=PKT)['manual'],self.carried|dict(source_head=self.repo.source,reuse_approval=APPROVAL))
+        # A C commit next to one that is not C: B, and only the commit that is not C is named.
+        self.packet_lane();self.repo.commit({'docs/lane.md':'typo\n'});self.repo.commit({FD:'design\n'})
+        self.assertIn('lane の commit の path: '+FD,self.stop(self.old(),kind='r4',packet=PKT).split('\n'))
+        # An R4 lane's docs commit is not C: B.
+        self.packet_lane();self.repo.commit({'docs/lane.md':'typo\n'})
+        message=self.stop(self.old(),'--reuse-approval POINTER',kind='r4',req=R4,packet=PKT)
+        self.assertIn('lane の commit の path: docs/lane.md',message.split('\n'))
+        # Outside the set: refused, redo L3 only.
+        self.packet_lane();lane=self.repo.commit({'src/lib/x.ts':'x\n'})
+        message=self.stop(self.old(),'lane commit '+lane,'集合の外','src/lib/x.ts','next: redo L3',kind='r4',packet=PKT)
+        self.assertNotIn('--reuse-approval',message)
+        # A column without a merge is taken for lane commits only (C, or the set). Where C does not apply (an R4 lane,
+        # a lane without a packet), a regeneration of generated files alone is not carried: as before D-154, redo L3.
+        for name,build,req,kw in (('R4',lambda:self.packet_lane(risk='R4',gate='ready,merge,manual,r4'),R4,dict(packet=PKT)),
+                                  ('no packet',self.restart,LOW,{})):
+            with self.subTest(regeneration_without_merge=name):
+                build();self.repo.commit({GEN_TRACE:'t1\nt2\nt3\nregenerated\n'},'regenerate')
+                message=self.stop(self.old(req=req),'manual pass not reusable: no sync merge','next: redo L3',kind='r4',req=req,**kw)
+                self.assertNotIn('--reuse-approval',message)
+                self.b_stop(self.old(req=req),'no sync merge',approval=APPROVAL,req=req,**kw)
+    def test_sync_merge_default_stays_strict(self):
+        # T4: like scripts/plan-approve.sh, a gate that ran neither __init__ nor sync_merges calls sync_merge directly.
+        # The classifier is read from the synthetic base's own file, so a refusal here is a verdict, not a failed read.
+        path='scripts/ci/classify-changes.sh'
+        self.lane_side({'docs/a.md':'lane side\n'})
+        self.repo.main({'docs/a.md':'main side\n',path:CLASSIFIER})
+        head=self.repo.sync(files={'docs/a.md':'both\n'})
+        first,second=self.repo.git('rev-list','--parents','-n','1',head).split()[1:]
+        gate=object.__new__(g.Gate)
+        with patch.object(gate,'contents',side_effect=lambda name,ref:self.repo.git('show',f'{ref}:{name}')) as contents:
+            with self.assertRaises(g.GateError) as caught:gate.sync_merge(head,first,second,self.repo.base)
+            self.assertIn('differs from the automatic merge (conflict or edit) at docs/a.md',str(caught.exception))
+            contents.assert_not_called()
+            self.assertEqual((gate.resolved,gate.lane,gate.closures),((),(),2))
+            self.assertEqual(gate.sync_merge(head,first,second,self.repo.base,hands=True),
+                             (head,first,second,self.repo.git('merge-base',first,second)))
+            contents.assert_called_once_with(path,self.repo.base)
+        self.assertEqual(gate.resolved,{'docs/a.md'})
+        self.assertEqual((g.Gate.resolved,g.Gate.lane,g.Gate.closures),((),(),2))
+        # The default of the walk and of reusable refuse the same merge and leave the new attributes alone.
+        for check in (self.gate.sync_merges,self.gate.reusable):
+            with self.subTest(check=check.__name__),self.assertRaisesRegex(g.GateError,'differs from the automatic merge'):
+                check(self.repo.source,head,self.repo.base)
+        self.assertEqual((self.gate.resolved,self.gate.lane),((),()))
+    def test_hands_never_auto_carry(self):
+        # T5: a column with a lane hand is never carried by the machine, whether or not the old manual has an approval.
+        builds=(('手で解いた path: docs/a.md',self.hand_sync),
+                ('lane の commit の path: '+FD,lambda:(self.docs_sync(),self.repo.commit({FD:'design\n'}))))
+        for line,build in builds:
+            for approved in (False,True):
+                self.restart();build()
+                old=self.old(**(dict(source_head=self.first,reuse_approval=APPROVAL) if approved else {}))
+                source=old['manual'].get('source_head',old['head'])
+                for kind in ('r4','review'):
+                    with self.subTest(line=line,approved=approved,kind=kind):
+                        message=self.stop(old,'manual pass not carried','--reuse-from '+source+' --reuse-approval POINTER',
+                                          '--outcome pending',kind=kind)
+                        self.assertIn(line,message.split('\n'))
+    def test_hands_reuse_needs_cli_approval(self):
+        # T6 / AC6: every shape is reused by B, and a record without --reuse-approval writes nothing.
+        for name,build,req,kw in self.shapes():
+            with self.subTest(shape=name):
+                build();old=self.old(req=req)
+                self.b_stop(old,'needs --reuse-approval',RULE_LINE.format(2 if req['risk']=='R4' or 'code' in name else 1),req=req,**kw)
+                record=self.b(old,req=req,**kw)
+                self.assertEqual(record['manual'],self.carried|dict(source_head=self.repo.source,reuse_approval=APPROVAL))
+                self.assertEqual(record['r4']['outcome'],'pending' if req['r4'] else 'not-required')
+        # An approval already on the old manual never stands in for this record's own --reuse-approval.
+        self.restart();self.hand_sync()
+        approved=self.old(source_head=self.first,reuse_approval='https://example.invalid/older')
+        self.b_stop(approved,'needs --reuse-approval','手で解いた path: docs/a.md')
+        self.assertEqual(self.b(approved)['manual'],self.carried|dict(source_head=self.first,reuse_approval=APPROVAL))
+    def test_hands_reject_machine_closure(self):
+        # T7 / AC6: --review-stage sync and docs never write a machine closure over a lane hand.
+        for name,build,req,kw in self.shapes():
+            with self.subTest(shape=name):
+                build()
+                self.stop(self.old(req=req),kind='review',req=req,stage='sync',**SYNC|kw)
+                if req['minimum']:
+                    free=req|dict(manual=False)
+                    self.stop(self.old(req=free),'sync closure not allowed','監査の closure を要る',kind='review',req=free,stage='sync',**SYNC|kw)
+        docs=dict(kind='review',req=NO_MANUAL,stage='docs',packet=PKT,**SYNC|dict(values=['https://example.invalid/p3']))
+        self.packet_lane();self.repo.commit({FD:'design\n'})
+        self.stop(self.old(req=NO_MANUAL),'docs closure not allowed','not docs only','監査の closure を要る',**docs)
+        self.packet_lane();head=self.hand_sync()
+        self.stop(self.old(req=NO_MANUAL),'docs closure not allowed','merge '+head+' differs from the automatic merge','docs/a.md',**docs)
+    def test_nonci_rechecks_hands(self):
+        # T8: status rechecks the reuse from the L3 version; a lane hand needs the manual's reuse_approval.
+        head=self.hand_sync()
+        record=self.old(head=head,base=self.repo.base,req=LOW,source_head=self.repo.source)
+        approved=record|dict(manual=record['manual']|dict(reuse_approval=APPROVAL))
+        with self.assertRaisesRegex(g.GateError,'lane changes without approval: docs/a.md$'):self.status(record,LOW)
+        self.status(approved,LOW)
+        # The machine closure's recheck keeps the default: a sync_from range holding the same hand is refused.
+        closure=self.old(head=head,base=self.repo.base,req=NO_MANUAL);closure['manual']=dict(outcome='not-required',evidence=[])
+        closure['review']['broad'].update(head=self.repo.source,base=self.repo.base0)
+        closure['review']['closure']=dict(head=head,base=self.repo.base,sync_from=self.repo.source)
+        with self.assertRaisesRegex(g.GateError,'merge '+head+' differs from the automatic merge'):self.status(closure,NO_MANUAL)
+        record['head']=approved['head']=self.repo.commit({TEST_TS:'test\n'})
+        with self.assertRaisesRegex(g.GateError,'lane changes without approval: docs/a.md, '+TEST_TS+'$'):self.status(record,LOW)
+        self.status(approved,LOW)
+    def test_hands_r4_reuses_manual_keeps_fresh_r4(self):
+        # T9 (TD-710), the #228 shape: an R4 lane reuses the manual by B; the r4 approval is never reused.
+        self.packet_lane(risk='R4',gate='ready,merge,manual,r4')
+        self.lane_side({SD_TEST:'lane side\n',FD:'lane side\n'});self.resolve({SD_TEST:'both\n',FD:'both\n'})
+        old=self.old(req=R4)
+        self.assertEqual(old['r4']['outcome'],'pass')
+        message=self.stop(old,'manual pass not carried','--reuse-approval POINTER',kind='review',req=R4,packet=PKT)
+        # main changed the test file too (that is the conflict), so it is also main-side code by the code-free condition.
+        self.assertEqual(message.split('\n')[1:],['手で解いた path: '+FD+', '+SD_TEST,'取り込む main 側の code: '+SD_TEST,RULE_LINE.format(2)])
+        record=self.b(old,req=R4,packet=PKT)
+        self.assertEqual(record['manual'],self.carried|dict(source_head=self.repo.source,reuse_approval=APPROVAL))
+        self.assertEqual(record['r4'],dict(outcome='pending',evidence=[]))
+        # With the review closed at this head, status still waits for a fresh r4.
+        record['review']['outcome']='pass'
+        record['review']['closure']=dict(head=self.head(),base=self.repo.base,audit=dict(model='codex',run_ref='b',evidence=['https://example.invalid/b']))
+        with self.assertRaisesRegex(g.GateError,'^r4 incomplete$'):self.status(record,R4)
+    def test_hands_l3_basis_change_stops_before_write(self):
+        # T10 / AC7 (a): an old-form packet without `## L3` links the Matrix; the lane resolves another doc by hand
+        # and the Matrix change arrives from main by the automatic merge. No docs commit (C) is in the column.
+        def build(matrix):
+            self.restart();self.repo.main({MATRIX:'## Manual\n\n- 9 pt 以上\n'});start=self.repo.base
+            self.repo.git('reset','-q','--hard',start)
+            self.repo.source=self.repo.commit({PKT:rebuild_packet(),'docs/a.md':'lane side\n'},'lane + packet')
+            self.resolve({'docs/a.md':'both\n'},main={MATRIX:matrix})
+            return self.old(base=start)
+        old=build('## Manual\n\n- 10 pt 以上\n')
+        self.walk();self.assertEqual((self.gate.resolved,self.gate.docs_commits),({'docs/a.md'},[]))
+        self.b_stop(old,'manual pass not reusable: L3 節が変わった',approval=APPROVAL,packet=PKT)
+        self.assertNotIn('--reuse-approval',self.stop(old,'L3 節が変わった','next: redo L3',kind='r4',packet=PKT))
+        # Control: the same shape with the Matrix unchanged is reused.
+        self.assertEqual(self.b(build('## Manual\n\n- 9 pt 以上\n'),packet=PKT)['manual']['reuse_approval'],APPROVAL)
+        # (b): a function-design lane commit that also changes the `## L3` section.
+        self.packet_lane();self.repo.commit({FD:'design\n',PKT:rebuild_packet(l3='- PASS 基準: 10 pt 以上\n')})
+        self.walk();self.assertEqual((self.gate.lane,self.gate.docs_commits),({FD,PKT},[]))
+        self.b_stop(None,'manual pass not reusable: L3 節が変わった',approval=APPROVAL,packet=PKT)
+    def test_hands_without_packet_reuses_with_approval(self):
+        # T11 (TD-711): a lane without a packet has no L3 basis in the repo to compare; B works and never reads a packet.
+        builds=(('resolved',self.hand_sync),('lane commit',lambda:self.repo.commit({'docs/lane.md':'more\n'})))
+        for req in (R2,LOW):
+            for name,build in builds:
+                with self.subTest(risk=req['risk'],hand=name):
+                    self.restart();build();old=self.old(req=req)
+                    with patch.object(self.gate,'packet_at',side_effect=AssertionError('a lane without a packet has none to read')):
+                        self.b_stop(old,'needs --reuse-approval',req=req)
+                        record=self.b(old,req=req)
+                    self.assertEqual(record['manual'],self.carried|dict(source_head=self.repo.source,reuse_approval=APPROVAL))
+    def test_hands_guidance_names_kinds_and_points_to_rule(self):
+        # T12: one line per kind that has any path, every path sorted, then the one line naming the count and the rule.
+        self.lane_side({'docs/c.md':'lane side\n','docs/a.md':'lane side\n'})
+        self.resolve({'docs/c.md':'both\n','docs/a.md':'both\n'},main={'src/x.ts':'x2\n','src/app.ts':'app2\n'})
+        self.repo.commit({TEST_TS:'test\n',FD:'design\n'})
+        message=self.stop(self.old(),'manual pass not carried','--reuse-from '+self.repo.source+' --reuse-approval POINTER',
+                          '(redo L3)','--outcome pending')
+        self.assertEqual(message.split('\n')[1:],['手で解いた path: docs/a.md, docs/c.md','lane の commit の path: '+FD+', '+TEST_TS,
+                                                  '取り込む main 側の code: src/app.ts, src/x.ts',RULE_LINE.format(2)])
+        self.assertEqual(self.b_stop(None,'needs --reuse-approval').split('\n')[1:],message.split('\n')[1:])
+        # AC6, the #236 shape: the hand-resolved paths and the code are on separate lines; no line for a kind with none.
+        self.shapes()[0][1]()
+        message=self.stop(self.old(),kind='r4',packet=PKT)
+        self.assertEqual(message.split('\n')[1:],['手で解いた path: docs/a.md, '+FD,'取り込む main 側の code: src/app.ts',RULE_LINE.format(2)])
+        self.restart();self.hand_sync()
+        self.assertEqual(self.stop(self.old()).split('\n')[1:],['手で解いた path: docs/a.md',RULE_LINE.format(1)])
+        # No lane hand and two closures (main brings app code): both sentences are the ones before D-154, byte for byte.
+        self.restart();self.repo.main({'src/app.ts':'app2\n'});self.repo.sync()
+        message=self.stop(self.old())
+        b=self.gate.cli('--kind','manual','--outcome','pass','--evidence',LANE_EVIDENCE[0],'--reuse-from',self.repo.source,'--reuse-approval','POINTER')
+        pending=self.gate.cli('--kind','manual','--outcome','pending','--evidence','POINTER')
+        self.assertEqual(message,'manual pass not carried: the sync brings code src/app.ts. Nothing written; next is one of:'
+                         f" (B, needs two sync closures and the owner's one-line approval) {b} | (redo L3) {pending}")
+        self.assertEqual(self.b_stop(),'the sync brings code src/app.ts; --reuse-from alone needs a code-free sync'
+                         " (B: add --reuse-approval POINTER after two sync closures and the owner's approval)")
+        # The refusing side names the set and the path, and only redo L3.
+        self.restart();self.repo.main({'docs/b.md':'b\n'});head=self.repo.sync(files={'src/lib/x.ts':'x\n'})
+        message=self.stop(self.old(),'manual pass not reusable: merge '+head,'集合の外','src/lib/x.ts','next: redo L3')
+        for absent in ('--reuse-approval','見るものと合否','\n'):self.assertNotIn(absent,message)
+    def test_hands_l3_reason_precedes_approval(self):
+        # T13: with a changed L3 basis, lane hands and main-side code together, only the L3 reason is given.
+        self.packet_lane();self.lane_side({'docs/a.md':'lane side\n'})
+        self.resolve({'docs/a.md':'both\n'},main={'src/app.ts':'app2\n'})
+        self.repo.commit({FD:'design\n',PKT:rebuild_packet(l3='- PASS 基準: 10 pt 以上\n')})
+        old=self.old()
+        def only_l3(message):
+            self.assertIn('L3 節が変わった',message)
+            for other in ('--reuse-approval','without approval','brings code','src/app.ts','見るものと合否'):self.assertNotIn(other,message)
+        with self.subTest(place='carry_manual'):only_l3(self.stop(old,kind='r4',packet=PKT))
+        for approval in (APPROVAL,None):
+            with self.subTest(place='record --reuse-from',approval=approval):only_l3(self.b_stop(old,approval=approval,packet=PKT))
+        for extra in ({},dict(reuse_approval=APPROVAL)):
+            with self.subTest(place='nonci',extra=sorted(extra)):
+                record=self.old(head=self.head(),base=self.repo.base,source_head=self.repo.source,**extra)
+                with self.assertRaises(g.GateError) as caught:self.status(record,REQ)
+                only_l3(str(caught.exception))
+    def test_hands_decision_log_union_mismatch_goes_to_review(self):
+        # T14: on the reuse route a decision-log result that is not the union is a hand-resolved path like any other.
+        self.lane_side({DLOG:SEED[DLOG]+'\nD-2 lane\n'});self.repo.main({DLOG:SEED[DLOG]+'\nD-3 main\n'})
+        head=self.repo.sync(files={DLOG:SEED[DLOG]+'\nD-3 main\n\nD-2 lane\n'})
+        self.refuse('merge '+head,'resolves '+DLOG+' differently from the union')
+        self.assertEqual([m[0] for m in self.walk()],[head]);self.assertEqual(self.gate.resolved,{DLOG})
+        self.assertIn('手で解いた path: '+DLOG,self.stop(self.old()).split('\n'))
+        # The union result is not a hand-resolved path: the machine carries the manual (A).
+        self.repo.git('reset','-q','--hard',self.repo.source);self.repo.sync(union=True)
+        self.walk();self.assertEqual((self.gate.resolved,self.gate.lane),(set(),set()))
+        self.assertEqual(self.rec(self.old())['manual'],self.carried|dict(source_head=self.repo.source))
+    def test_hands_chain(self):
+        # T15 / AC8: B, then a code-free sync is A (the old approval stays and status passes); a new lane hand after
+        # that needs a new --reuse-approval. The range each record judges starts at the old record's head.
+        free=dict(kind='r4',req=LOW,outcome='not-required',values=[])
+        self.hand_sync();l3=self.repo.source
+        b1=self.b(self.old(req=LOW),req=LOW)
+        self.docs_sync()
+        a=self.rec(b1,**free)
+        self.assertEqual(a['manual'],self.carried|dict(source_head=l3,reuse_approval=APPROVAL))
+        self.status(a,LOW)
+        self.repo.commit({TEST_TS:'test\n'})
+        message=self.stop(a,'manual pass not carried','--reuse-from '+l3+' --reuse-approval POINTER',**free)
+        self.assertEqual(message.split('\n')[1:],['lane の commit の path: '+TEST_TS,RULE_LINE.format(1)])
+        self.b_stop(a,'needs --reuse-approval',req=LOW)
+        newer='https://example.invalid/owner-2'
+        b2=self.b(a,approval=newer,req=LOW)
+        self.assertEqual(b2['manual'],self.carried|dict(source_head=l3,reuse_approval=newer))
+        self.status(b2,LOW)
+        # A fix commit after a failed closure joins the same rule, named next to the earlier merge's paths.
+        self.restart();self.hand_sync();self.repo.commit({'docs/a.md':'both, fixed\n'})
+        message=self.stop(self.old(req=LOW),**free)
+        self.assertEqual(message.split('\n')[1:],['手で解いた path: docs/a.md','lane の commit の path: docs/a.md',RULE_LINE.format(1)])
+    def test_hands_chain_l3_basis_change_stops_before_write(self):
+        # Final review round 1 (P2) / MG-D13 L3 の比較: after a first reuse, a sync that only brings a changed L3 basis
+        # holds no new lane hand, yet the column since the L3 version does. Both record routes judge that same range
+        # nonci rechecks: they stop on the L3 reason before any write. With the basis unchanged the manual is carried.
+        nine,ten='## Manual\n\n- 9 pt 以上\n','## Manual\n\n- 10 pt 以上\n'
+        newer='https://example.invalid/owner-2'
+        def by_hand(req):
+            self.resolve({'docs/a.md':'both\n'});return self.b(self.old(base=self.start,req=req),req=req,packet=PKT)
+        def twice(req):
+            first=by_hand(req);self.repo.commit({FD:'design\n'});return self.b(first,approval=newer,req=req,packet=PKT)
+        def c_only(req):
+            self.repo.commit({'docs/lane.md':'typo\n'});return self.rec(self.old(base=self.start,req=req),kind='r4',req=req,packet=PKT)
+        r4=dict(risk='R4',gate='ready,merge,manual,r4')
+        for name,first,req,packet in (('B by hand',by_hand,REQ,{}),('B twice',twice,REQ,{}),('C only',c_only,REQ,{}),('B by hand on R4',by_hand,R4,r4)):
+            for matrix in (ten,nine):
+                with self.subTest(first=name,basis_changed=matrix==ten):
+                    # main holds the Matrix; the lane's L3 version adds an old-form packet (no `## L3`) that links it.
+                    self.restart();self.repo.main({MATRIX:nine});self.start=self.repo.base
+                    self.repo.git('reset','-q','--hard',self.start)
+                    self.repo.source=self.repo.commit({PKT:rebuild_packet(**packet),'docs/a.md':'lane side\n'},'lane + packet')
+                    reused=first(req)
+                    self.assertEqual(reused['manual']['source_head'],self.repo.source)
+                    self.repo.main({MATRIX:matrix,'docs/b.md':'b\n'});self.repo.sync()
+                    current=self.old(head=self.head(),base=self.repo.base,req=req);current['manual']=reused['manual']
+                    if matrix==nine:
+                        self.assertEqual(self.rec(reused,kind='r4',req=req,packet=PKT)['manual'],reused['manual'])
+                        self.assertEqual(len(self.writes),1)
+                        self.status(current,req)
+                        continue
+                    message=self.stop(reused,'manual pass not reusable: L3 節が変わった','next: redo L3',kind='r4',req=req,packet=PKT)
+                    self.assertNotIn('--reuse-approval',message)
+                    for approval in (None,newer):
+                        self.b_stop(reused,'manual pass not reusable: L3 節が変わった',approval=approval,req=req,packet=PKT)
+                    with self.assertRaisesRegex(g.GateError,'L3 節が変わった'):self.status(current,req)
+    def test_hands_guidance_closure_count_follows_main_paths(self):
+        # T16 / AC9 (TD-728 / TD-729): the count follows the lane's Risk and the main-side paths of the guided range.
+        def count(expected,old=None,req=REQ,**kw):
+            message=self.stop(old or self.old(req=req),'manual pass not carried',RULE_LINE.format(expected),req=req,**kw)
+            self.assertNotIn(RULE_LINE.format(3-expected),message)
+        def hand(main=None):self.restart();self.hand_sync(main)
+        for name,main,expected in (('a: docs only',None,1),('b: app code',{'src/lib/x.ts':'x\n'},2),
+                                   ('c: frontend test file and the generated traceability doc',{TEST_TS:'test\n',GEN_TRACE:'t1\nt2\nt3\nt4\n'},1),
+                                   ('d: gate document',{'docs/DEV_WORKFLOW.md':'gate\n'},2),('d: generated binding',{GEN_BIND:'b2\n'},2)):
+            with self.subTest(case=name):hand(main);count(expected)
+        with self.subTest(case='e: lane commit, no merge'):
+            self.packet_lane();self.repo.commit({FD:'design\n'});count(1,packet=PKT)
+        with self.subTest(case='f: lane commit after a recorded code B'):
+            self.restart();self.repo.main({'src/app.ts':'app2\n'});self.repo.sync();b=self.b()
+            self.repo.commit({FD:'design\n'});count(1,old=b)
+        with self.subTest(case='g: R4'):hand();count(2,req=R4)
+        with self.subTest(case='h: no-packet R0/R1'):hand();count(1,req=LOW)
+        # (i): no lane hand, main brings a frontend test file only (today's B): both sentences say the same count.
+        for req,words,other in ((REQ,'one sync closure','two sync closures'),(R4,'two sync closures','one sync closure')):
+            with self.subTest(case='i',risk=req['risk']):
+                self.restart();self.repo.main({TEST_TS:'test\n'});self.repo.sync();old=self.old(req=req)
+                carry=self.stop(old,'manual pass not carried: the sync brings code '+TEST_TS,'needs '+words+' and',req=req)
+                refuse=self.b_stop(old,'the sync brings code '+TEST_TS,'after '+words+' and',req=req)
+                for message in (carry,refuse):
+                    self.assertNotIn(other,message);self.assertNotIn('見るものと合否',message)
 
 class NewForm(unittest.TestCase):
     """MN1..MN5, PH1..PH3 at the parser."""

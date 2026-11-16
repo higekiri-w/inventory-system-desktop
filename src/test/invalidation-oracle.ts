@@ -63,10 +63,10 @@ export const d052InvalidationOracle = {
     queryKeys.stocktake.itemsRoot(),
     queryKeys.stocktake.recheckList(),
   ],
-  returnExchange: (registerProcessed: boolean) => [
+  returnExchange: (stockApplied: boolean) => [
     queryKeys.returns.root(),
     queryKeys.inventoryRecords.root(),
-    ...(!registerProcessed
+    ...(stockApplied
       ? [
           queryKeys.productList.root(),
           queryKeys.lowStock(false),

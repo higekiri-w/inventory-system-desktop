@@ -6,7 +6,7 @@
 
 - 在庫を動かす TX は、header / item・inventory_movements（並びの鍵 `business_date` = header の日付〈`receiving_date`・`return_date`・`sale_date`・`disposal_date`〉、`phase` = 0）を書き、同じ TX で触れた商品を求め直して写し（`products.stock_quantity` ほか）を書く。どれかの失敗で TX 全体を戻す。
 - header の日付は業務の日付 D で、計数に入っているかは ADR D3 の窓の判定表で決まる（既定の計数と同じ日付なら決まらない、fresh な計数より先に保存したものは入っている、など）。日付を計数の日付より前にした入力は、計数のある商品の在庫に足されない（数えた数に入っているとみなす。ADR の Consequences）。
-- レジ処理済みの返品など在庫を動かさない経路は movement を作らない（今のまま）。冪等な要求の再送は新しい movement を作らない（今のまま）。
+- 在庫を動かさない明細（返品・交換のうち、レジでバーコードを読んで戻し Z004 の取込みが在庫を動かす商品の明細。D-148）は movement を作らない。冪等な要求の再送は新しい movement を作らない（今のまま）。
 
 ## 金額の丸めと、原価の 1/100 円
 
@@ -78,7 +78,7 @@
 ## 6-7. return_records + return_items（返品・交換記録）
 
 ### 役割
-返品・交換の帳面記録。レシート画像の添付先。レジ戻し済みかどうかのフラグで在庫処理を分岐。
+返品・交換の帳面記録。レシート画像の添付先。レジで商品のバーコードを読んで戻したかのフラグと商品の設定から、明細ごとに在庫処理を分岐（D-148）。
 
 ### return_records カラム定義
 
@@ -87,7 +87,7 @@
 | id | INTEGER | PK AUTOINCREMENT | 返品記録ID |
 | return_type | TEXT | NOT NULL | 種別。'return'（返品）/ 'exchange'（交換） |
 | return_date | TEXT | NOT NULL | 返品日 |
-| register_processed | BOOLEAN | NOT NULL, DEFAULT 1 | レジ戻し処理済みか。1=済み（在庫はCSVで自動反映）、0=未処理（システムで在庫増減） |
+| register_processed | BOOLEAN | NOT NULL, DEFAULT 1 | レジで商品のバーコードを読んで戻したか（Z004 に載る。D-148）。1=読んで戻した（Z004 の取込みが在庫を動かす商品の明細は在庫を動かさず、それ以外の明細はこの保存で在庫増減）、0=読んでいない（全明細をこの保存で在庫増減）。画面は既定を置かずに問い、BIZ が常に値を書くので DEFAULT 1 は使われない |
 | receipt_image_path | TEXT | NULLABLE | レシート画像のファイルパス |
 | note | TEXT | NULLABLE | 備考 |
 | idempotency_key | TEXT | NOT NULL, 非空CHECK, UNIQUE INDEX | 再送を識別するキー（migration v2） |
@@ -105,25 +105,26 @@
 | quantity | INTEGER | NOT NULL | 数量 |
 
 ### 設計意図
-- **register_processedフラグの理由（Z004実機検証結果に基づく）**: レジの「戻」モードで処理した返品はZ004にマイナス値で出る。CSV取込みで在庫が自動反映されるから、システム側で在庫を動かすと二重計上になる。このフラグで分岐
+- **register_processedフラグの理由（Z004実機検証結果に基づく。D-148 で意味を読み替えた）**: レジの「戻」モードで商品のバーコード（PLU）を読んで処理した返品はZ004にマイナス値で出る。その商品が Z004 の取込みで在庫を動かす商品（13 桁の JAN が 1 商品だけに当たり在庫連動）なら、システム側で在庫を動かすと二重計上になる。部門キーで打った返品・差額だけの戻し・Z004 が在庫を動かさない商品（`pos_stock_sync=false`・共有 JAN・JAN 無し・JAN が 13 桁でない）は Z004 で在庫が戻らないので、この保存で動かす。判定は BIZ の `z004_moves_stock`（[31](../function-design/31-biz-inventory-service.md) §12.4）
 - **directionの理由**: 交換は「戻り商品（in）」と「渡し商品（out）」の2種類がある。返品はinのみ。1つのreturn_recordに対してin/outの明細が混在する
 
 ### 業務シナリオ例
 ```
-ケース1: 通常の交換（レジで戻し処理済み）
+ケース1: 通常の交換（レジでバーコードを読んで戻した。どちらも 13 桁の JAN が 1 商品だけに当たる在庫連動の商品）
   return_records: id=1, return_type="exchange", register_processed=1
   return_items:
     id=1, return_record_id=1, product_code="4976383262108", direction="in", quantity=1  （戻り）
     id=2, return_record_id=1, product_code="4976383262207", direction="out", quantity=1 （渡し）
-  → register_processed=1 なので在庫は動かさない。帳面記録のみ
+  → どちらの明細も Z004 の取込みが在庫を動かす商品なので在庫は動かさない。帳面記録のみ
   → CSV取込み時にZ004のマイナス値で在庫が自動反映される
+  → 明細の商品が JAN 無し・pos_stock_sync=false などなら、その明細だけはこの保存で在庫を動かす（D-148）
 
-ケース2: 色交換（レジ打ちしない）
+ケース2: 色交換（レジでバーコードを読んでいない）
   return_records: id=2, return_type="exchange", register_processed=0
   return_items:
     id=3, return_record_id=2, product_code="HZ-0012", direction="in", quantity=1  （戻り）
     id=4, return_record_id=2, product_code="HZ-0013", direction="out", quantity=1 （渡し）
-  → register_processed=0 なのでシステムで在庫増減
+  → register_processed=0 なので全明細をシステムで在庫増減
   → products.stock_quantity: HZ-0012は+1、HZ-0013は-1
   → inventory_movementsに2行挿入
 ```

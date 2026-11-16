@@ -693,10 +693,16 @@ describe("useDailyReportImportFlow_req401", () => {
     const { result } = renderHook(() => useDailyReportImportFlow(), {
       wrapper: makeWrapper(queryClient),
     });
-    const lastBlocker = () =>
-      mockUseBlocker.mock.calls[mockUseBlocker.mock.calls.length - 1]?.[0] as
-        | { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean }
-        | undefined;
+    // flow は 1 回の描画で useBlocker を 2 回呼ぶ（共有の取消の hook〈UI-07-D19〉と取込み中の止め）。
+    // 最後の描画の 2 つのどちらかが止めれば離脱は止まる
+    interface Blocker {
+      shouldBlockFn: () => boolean;
+      enableBeforeUnload: () => boolean;
+    }
+    const latestBlockers = () =>
+      mockUseBlocker.mock.calls.slice(-2).map((call) => call[0] as unknown as Blocker);
+    const blocks = () => latestBlockers().some((blocker) => blocker.shouldBlockFn());
+    const blocksUnload = () => latestBlockers().some((blocker) => blocker.enableBeforeUnload());
 
     await chooseAndConfirmThree(() => result.current);
     await waitFor(() => {
@@ -708,7 +714,7 @@ describe("useDailyReportImportFlow_req401", () => {
     await waitFor(() => {
       expect(result.current.state.status).toBe("result");
     });
-    expect(lastBlocker()?.shouldBlockFn()).toBe(false);
+    expect(blocks()).toBe(false);
 
     act(() => {
       result.current.rollback(501);
@@ -716,13 +722,13 @@ describe("useDailyReportImportFlow_req401", () => {
     await waitFor(() => {
       expect(result.current.isRollingBack).toBe(true);
     });
-    expect(lastBlocker()?.shouldBlockFn()).toBe(true);
-    expect(lastBlocker()?.enableBeforeUnload()).toBe(true);
+    expect(blocks()).toBe(true);
+    expect(blocksUnload()).toBe(true);
 
     resolveRollback({ status: "ok", data: makeRollback() });
     await waitFor(() => {
       expect(result.current.state.status).toBe("idle");
     });
-    expect(lastBlocker()?.shouldBlockFn()).toBe(false);
+    expect(blocks()).toBe(false);
   });
 });
