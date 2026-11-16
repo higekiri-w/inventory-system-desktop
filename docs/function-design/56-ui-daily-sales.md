@@ -136,12 +136,12 @@ UI-00 ホーム同型の「簡潔版 = useState + useQuery + 純関数」を採�
 | `src/features/daily-sales/lib/filter-items.ts` | `filterItemsByDepartment` 純関数 | 15-25 |
 | `src/features/daily-sales/lib/compute-summary.ts` | `computeSalesLineSummary` 純関数（BIZ-05 で source 別集計未提供のため UI 派生） | 25-40 |
 | `src/features/daily-sales/lib/calculate-unit-price.ts` | `calculateEffectiveUnitPrice` 純関数（user Option 1.5 採用、`Math.round(abs(amount)/abs(quantity))`） | 20-30 |
-| `src/features/daily-sales/lib/date-nav.ts` | `addDays` / `formatJpDate` / `useTodayDate()` hook（daily-sales 内閉鎖、UI-00 `useYesterdayDate` 同型） | 50-75 |
+| `src/features/daily-sales/lib/date-nav.ts` | `addDays` / `formatJpDate` / `useTodayDate()` hook（daily-sales に置き、月次売上〈57 UI-09b-D11〉も読む。UI-00 `useYesterdayDate` 同型） | 50-75 |
 | `src/features/daily-sales/lib/test-fixtures.ts` | `makeMockItem(overrides: Partial<DailySaleItem>): DailySaleItem` factory | 20-30 |
 | `src/features/daily-sales/hooks/useDailySalesReport.ts` | 2 useQuery + 派生 5 純関数 orchestration + `derived.departmentOptions` 生成 | 100-140 |
 | `src/features/daily-sales/hooks/useExportDailySalesCsv.ts` | useMutation + Blob ダウンロード + `setTimeout(100)` で `revokeObjectURL` + Sonner id-based dedup（UI-09b PR #66 で `useExportFile` 共通化 + 本 hook は wrapper 化 = 20-30 行に縮退） | 80-110 |
 | `src/features/daily-sales/components/DateNavigator.tsx` | 前日 button + `<input type="date">` + 翌日 button | 60-80 |
-| `src/components/sales/TabsHeader.tsx` | 日次（`/reports/daily`）+ 月次（`/reports/monthly`）切替（router-driven `<Link>` 視覚表現、UI-09b PR #66 で共通化 + daily/monthly 共有） | 45-60 |
+| `src/components/sales/TabsHeader.tsx` | 日次（`/reports/daily`）+ 月次（`/reports/monthly`）切替（router-driven `<Link>` 視覚表現、UI-09b PR #66 で共通化 + daily/monthly 共有）。日次の画面は表示中の日（`search.date`、無ければ今日）の月を prop `month` で渡し、`月次` の link はその月を search `month` で開く（[57](57-ui-monthly-sales.md) UI-09b-D11 の日次から月次への戻り） | 45-60 |
 | `src/components/patterns/DepartmentFilter.tsx` | shadcn Select 単一選択、hook 側 `derived.departmentOptions` を pure に描画（PR-B で 3 feature のローカル実装を統合、allLabel 既定「すべての部門」、[59-ui-shared-patterns.md](59-ui-shared-patterns.md)） | 50-70 |
 | `src/features/daily-sales/components/SummaryCardsBar.tsx` | 4 カード（売上合計 / 販売点数 / 売上明細数 + Tooltip / 前日比） | 90-130 |
 | `src/features/daily-sales/components/ProductTable.tsx` | shadcn Table 6 列 + 列ソート（5 列対応）+ 部門小計行 + 手動バッジ + 単価列 null = 「—」placeholder | 140-180 |
@@ -343,11 +343,11 @@ export function useExportDailySalesCsv(): Result;
 2. **IPC payload size**: `bytes_base64` は 1 日 sale_records 最大想定 1000 件 × ~200 byte = ~200KB、Tauri 2 IPC payload 上限（WebView2 256MB 公称、現実 50MB degrade）内、安全マージン十分
 3. **base64 改行混入**: Rust 側 `cmd::sales_cmd::export_sales_csv` で `base64::engine::general_purpose::STANDARD.encode` 使用 = 改行なし pure base64 → UI 側 `atob(bytes_base64)` 直 decode 安全。`MIME` engine のみ改行混入リスクあり、本実装の `STANDARD` engine は安全（`.replace(/\s/g, '')` 前処理不要）
 
-#### useTodayDate（daily-sales 内閉鎖）
+#### useTodayDate（daily-sales に置き、月次売上も読む）
 
 - `src/features/daily-sales/lib/date-nav.ts` 内に `useTodayDate(): string` を `useYesterdayDate.ts` と同型で実装（`toLocaleDateString("sv-SE")` + Visibility API listener）
 - UI-00 の `useYesterdayDate` との実装重複は 5-10 行レベルで許容（DRY 違反軽微）
-- 将来 UI-09b / UI-06a 等で today/yesterday hooks を多用するようになったら `src/lib/dates/` に共通化（Backlog 候補）
+- 使い手は日次売上と月次売上（[57](57-ui-monthly-sales.md) UI-09b-D11 の今日の日付）の 2 つ。2 つでは `src/lib/dates/` へ移さず、3 つめの使い手ができたら移す（§56.13 の非目的の行と `date-nav.ts` の冒頭の comment と同じ判断）
 
 ---
 
@@ -608,7 +608,7 @@ export function makeMockItem(overrides: Partial<DailySaleItem> = {}): DailySaleI
 | DatePicker（shadcn Date Picker）採用 | `<input type="date">` で十分、依存 7 component + dayjs 不要 | 日付範囲選択が要件化された時点で別 PR |
 | hooks/components の Vitest test | 本 PR の時点では Query Provider mock / Router mock が無かった（その後に整い、今は `QueryClientProvider` を使う test がある） | 済み |
 | E2E（Playwright）テスト | Phase 2 完了時 8-9 判定で対応 | 8-9 判定後 |
-| useTodayDate の共通 `src/lib/dates/` 移送 | UI-00 既存 `useYesterdayDate.ts` への影響、本 PR scope 外 | 将来 UI-09b / UI-06a 等で多用化する時に共通化 |
+| useTodayDate の共通 `src/lib/dates/` 移送 | UI-00 既存 `useYesterdayDate.ts` への影響。使い手は日次売上と月次売上（57 UI-09b-D11）の 2 つで、2 つでは移さない | 3 つめの使い手ができたら `src/lib/dates/` へ移す（`date-nav.ts` の冒頭の comment と同じ判断） |
 
 ---
 
@@ -634,6 +634,8 @@ export function makeMockItem(overrides: Partial<DailySaleItem> = {}): DailySaleI
 | 2026-11-03 | 日報・月次の画面の導入前受入（計画の review round 1 の是正） | UI-09a-D13 の受入の段で、backup/restore 後の再現の手順と合格基準を「backup → まだ取り込んでいない日を 1 つ取り込む → 同じ日のうちに復元 → backup を作った時の値と同じ」に直した（「復元の前と同じ」は手順の順と食い違った。backup の前の取込みの取消は今の版でできないので、取消を使わない形にした）。綴りの紙を借りて並べ返すこと（TD-580）、USB メモリの写しの置き場、agent の境界を渡し方で書くこと、前提の lane が受入の手順書の行を書き足す義務と、前提の行が残る版では全体の判定が未了であることを足した。 |
 | 2026-11-03 | 日報・月次の画面の導入前受入（計画の review の closure round 2 の是正） | UI-09a-D13 の判定の段に、全体の合格は前提の行が残らず行う項目が全部合ったときだけで、月の帳票との照合は行わない間は「行わない（理由）」と書いて合否に数えないことを足した（UI-09b-D9・packet と同じ読み）。写しの folder の形（`<日付の folder>\CASIO\SR500_550_4000\XZ`）と、backup/restore 後の再現で backup を作った時の値を金額を書かずに確かめる参照と、足す日を比べる月から選ぶことを書いた。 |
 | 2026-11-03 | 日報・月次の画面の導入前受入（実装） | UI-09a-D13 の受入の段に受入の手順書（`docs/daily-monthly-acceptance-runbook.md`）への link を足した。修正・再取込み後の表示に、取り込み直した後の参照（日次売上の画面のその日の値が、取り込み直す前の確認の画面と完了の画面の値と同じ）を足した（計画の review の closure round 3 の P3）。 |
+| 2026-11-03 | 月次の画面に取り込んだ日を出す（起票、関門 12 の前提 B。計画の review round 1 の是正） | §56.1 の `TabsHeader` の行に、日次が表示中の日の月を `月次` の link へ渡すこと（57 UI-09b-D11、未実装）を足した。`useTodayDate` の `src/lib/dates/` 移送の非目的の行を、使い手 2 つでは移さず 3 つめで移す、に置き換えた（[packet](../plans/2026-11-03-monthly-imported-days.md)）。closure round 2 の是正で、§56.5 の `useTodayDate` の段の共通化の条件を同じ判断に置き換え、§56.1・§56.5 の「daily-sales 内閉鎖」を月次売上も読む形に直した。 |
+| 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | §56.1 の `TabsHeader` の行の日次から月次への戻り（57 UI-09b-D11）を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |
 | 2026-11-11 | 日報・月次の画面の導入前受入（PR #229 の Gated Amendment 1、owner の決定 TD-650） | UI-09a-D13 の受入で値を比べる相手を借りた綴りの紙にそろえた: 修正・再取込み後の表示は、取り込み直す前の確認の画面と完了の画面の値から、借りたその日の紙（3 つの表を枠・行ごと）に、backup/restore 後の再現の月次は、日次の部門別集計の和から、借りた紙の部門別集計の和（紙から電卓で出す）に替えた（画面の値を覚えて運ぶ比べ方は、確認の画面に件数・数量・日計の全行が無く、合計の変わらない誤りを見逃すので採らない。製品の契約 UI-09b-D10 は変えない）。公式集計に、2 回以上精算した日を取り込んで並べるのは月次の判定の後、と順を足した（その日の紙が 2 回分を載せるかが未確認のため）。復元の後の日次は比べる日と取り込み直した日の 2 日とも紙と比べ、月次を紙の和と比べるのは復元の後の 1 回にした（UI-09b-D9 の修正後の値の判定を兼ねる）。 |
 | 2026-11-12 | 日報・月次の画面の導入前受入（PR #229 の Gated Amendment 2） | UI-09a-D13 の受入の場と時期で、SD の写しをアプリの data folder（`%APPDATA%`・`%LOCALAPPDATA%` の `com.inventory-system.desktop`）とその別名の folder の外に置くと書いた（中に置くと、準備の退避や片付けで写しが一緒に動く。計画の review 845 の P2）。 |
 | 2026-11-12 | 日報・月次の画面の導入前受入（PR #229 の Final Review 838 の是正） | UI-09a-D13 の公式集計で、同じ日に 2 回以上精算した日を並べるのは任意で、並べる場合だけその日の紙も借りると書いた（旧版の「窓の中に同じ日に 2 回以上精算した日があればその日も」は必須と読め、packet の Scope の手順 (8) と受入の手順書の手順 8 の「任意」と食い違った。合否に数えないことは変えない）。 |
