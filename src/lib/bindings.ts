@@ -1141,6 +1141,8 @@ export type MonthlySalesReport = {
 	items: MonthlySaleItem[],
 	prev_month_comparison: MonthlySaleItem[] | null,
 	official_department_totals: OfficialMonthlyDepartmentTotal[] | null,
+	// completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。空 ⇔ official_department_totals が None（34 §19.4 手順 6）
+	official_report_dates: string[],
 };
 
 /**
@@ -1661,6 +1663,8 @@ export type ReturnCreateResult = {
 	created: boolean,
 	idempotent_replay: boolean,
 	stock_warnings: string[],
+	// この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送では記録の movement から作る。D-148 (3)）
+	stock_applied_product_codes: string[],
 };
 
 export type ReturnDirection = "in" | "out";

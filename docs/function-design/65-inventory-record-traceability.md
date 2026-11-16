@@ -62,7 +62,7 @@
 | 入出庫履歴ハブ | `/inventory/records` | Sidebar「入出庫履歴」。全種別横断検索、または種別タブへの入口 |
 | 入庫履歴一覧 | `/inventory/receiving/records` | 日付範囲、記録ID、商品、取引先、状態で検索 |
 | 入庫記録詳細 | `/inventory/receiving/records/$recordId` | 明細、原価、関連 movements、取消/訂正、CSV/印刷 |
-| 返品・交換履歴一覧 | `/inventory/return/records` | 種別、レジ戻し済み、商品、画像有無、状態で検索 |
+| 返品・交換履歴一覧 | `/inventory/return/records` | 種別、レジでの戻し方（バーコードで戻した／バーコードなし。D-148）、商品、画像有無、状態で検索 |
 | 返品・交換詳細 | `/inventory/return/records/$recordId` | 明細、レシート画像、在庫反映有無、関連 movements |
 | 手動販売履歴一覧 | `/inventory/manual-sale/records` | 日付、商品、理由、状態で検索 |
 | 手動販売詳細 | `/inventory/manual-sale/records/$recordId` | 明細、売上金額、日次売上へのリンク、関連 movements |
@@ -114,7 +114,7 @@
 | 種別 / 方向 / 理由 | no | yes | yes | yes | no | no |
 | 備考 | optional | yes | optional | optional | optional | optional |
 | 画像 | optional | receipt | no | optional | no | no |
-| 関連 inventory_movements | yes | register_processed=false のみ | yes | yes | yes | yes |
+| 関連 inventory_movements | yes | この保存で在庫を動かした明細のみ（D-148） | yes | yes | yes | yes |
 | 取消/訂正情報 | yes | yes | yes | yes | rollback | yes |
 
 返品・交換詳細の備考は返品理由、交換理由、顧客対応メモの確認に使うため、レシート画像の補足文に混ぜず、独立した `備考` 領域で表示する。本文は通常本文色で読み、入力なしの場合は `—` を muted 表示する。
@@ -215,7 +215,7 @@ UI-03 の既存 `return_records.receipt_image_path` は互換維持し、共通�
 | Command | 処理 |
 |---|---|
 | `cancelReceivingRecord(id, reason, idempotencyKey)` | 入庫の在庫加算を逆方向に戻す |
-| `cancelReturnRecord(id, reason, idempotencyKey)` | register_processed=false の movement だけ逆方向に戻す。true は帳面取消のみ |
+| `cancelReturnRecord(id, reason, idempotencyKey)` | 保存で作った movement（この保存で在庫を動かした明細。D-148）だけ逆方向に戻す。movement の無い記録は帳面取消のみ |
 | `cancelManualSaleRecord(id, reason, idempotencyKey)` | 在庫戻し + 手動 sale_records の取消扱い |
 | `cancelDisposalRecord(id, reason, idempotencyKey)` | 廃棄で減った在庫を戻す |
 | `correct*Record(id, reason, replacementReq, idempotencyKey)` | 元記録を `status='corrected'` にし、逆方向 movement と replacement の新規作成を同一 TX で行う |

@@ -407,6 +407,13 @@ mod tests {
 
         let (_dir, mut conn) = setup_test_db();
         create_test_product(&conn, "E1", 5);
+        // D-148: register_processed=true の返品が movement を作らないのは、Z004 の取込みが在庫を動かす商品
+        // （13 桁の JAN が 1 商品だけに当たり在庫連動）の明細だけなので、E1 にその JAN を持たせる
+        conn.execute(
+            "UPDATE products SET jan_code = '4901234567887' WHERE product_code = 'E1'",
+            [],
+        )
+        .unwrap();
         let date = "2026-04-07".to_string();
         create_receiving(
             &mut conn,

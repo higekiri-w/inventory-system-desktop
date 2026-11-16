@@ -34,6 +34,20 @@ pub(crate) fn missing_ranges(present: &[i64]) -> Vec<SettlementGap> {
         .collect()
 }
 
+/// Z004 の取込みの確定がこの JAN の商品の在庫を動かすか（D-148 (2)、31 §12.4）。
+///
+/// `candidates` は `product_repo::find_by_jan_code(conn, jan_code)` の結果。返品・交換（`create_return`）と
+/// Z004 の確定（`commit.rs` の `recheck_matches`）が同じこの関数を通る。`jan_code` が Z004 の照合に現れうる形
+/// （ASCII 数字ちょうど 13 桁で全桁ゼロでない。23 §13.5 の `normalize_jan` の `Ok(Some)` の値の形。前後の空白も
+/// 削らずに比べる）で、候補が 1 商品だけ、かつその商品が在庫連動のときだけ true。`plu_target` は見ない（D-148）。
+pub(crate) fn z004_moves_stock(jan_code: &str, candidates: &[Product]) -> bool {
+    jan_code.len() == 13
+        && jan_code.bytes().all(|b| b.is_ascii_digit())
+        && jan_code.bytes().any(|b| b != b'0')
+        && candidates.len() == 1
+        && candidates[0].pos_stock_sync
+}
+
 // CMD層が使用する API を一元化するため、各処理の再エクスポートを維持
 #[allow(unused_imports)]
 pub use commit::commit_csv_import;
@@ -44,6 +58,7 @@ pub use parse::parse_and_validate;
 #[allow(unused_imports)]
 pub use rollback::{preview_rollback_csv_import, rollback_csv_import};
 
+use crate::db::product_repo::Product;
 use serde::Serialize;
 
 // ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       invalidationContract.productUpdate("P-001"),
       invalidationContract.productImport(),
       invalidationContract.receiving(),
+      invalidationContract.returnExchange(true),
       invalidationContract.returnExchange(false),
       invalidationContract.manualSale("2026-07-23"),
       invalidationContract.disposal(),
@@ -64,6 +65,7 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       d052InvalidationOracle.productUpdate("P-001"),
       d052InvalidationOracle.productImport(),
       d052InvalidationOracle.receiving(),
+      d052InvalidationOracle.returnExchange(true),
       d052InvalidationOracle.returnExchange(false),
       d052InvalidationOracle.manualSale("2026-07-23"),
       d052InvalidationOracle.disposal(),
@@ -84,7 +86,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       d052InvalidationOracle.supplierMerge(),
     ];
 
-    expect(actualEntries).toHaveLength(23);
+    // returnExchange は stockApplied の true と false の両方を比べる（引数の取り違えを捕まえる。D-148 (4)）
+    expect(actualEntries).toHaveLength(24);
     expect(actualEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort())).toEqual(
       expectedEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort()),
     );
