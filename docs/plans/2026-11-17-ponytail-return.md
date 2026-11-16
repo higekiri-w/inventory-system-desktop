@@ -25,7 +25,7 @@ Goal Invariant:
 
 - merge の後（本体の checkout を同期し Claude Code を起動し直した後）、この project の main と subagent に ponytail が注入される。
 - Claude と Codex の reviewer・相談役は、注入される最小の指示を修正案を小さく保つことに当て、調べる範囲・判定・必須の確かめを縮めない、と受け取る（AGENTS.md と Claude の定義）。
-- 裁定の規則（全部は受けない・言葉を足す修正案の受け方・P3 だけの round を回さない）と、「最小」が docs・規則の文にも当たることが正本にある。
+- 言葉を足す修正案の受け方（全部は受けない・P3 だけで round を回さないは既にある所を指す）と、「最小」が docs・規則の文にも当たることが正本にある。
 
 ### 失敗定義
 
@@ -44,18 +44,18 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 - S1 `.claude/settings.json`: `"ponytail@ponytail": false` の行を消す。project で `true` にしない（marketplace `ponytail` は user global の `extraKnownMarketplaces` の local directory にしか無く、他の checkout では名を解けない。有効は user global の `"ponytail@ponytail": true` が持つ）。Claude の sandbox はこの file を書けないので、owner が本 branch の worktree で消し Writer が commit する（D-147 と同じ）。`claude-code-harness` の `false` は残す。
 - S2 `scripts/tests/claude-hooks.test.sh`: ponytail の検査を「project が key を持たない」（`.enabledPlugins | has($key) | not`）に置き換え、mutant は `false`（黙って切り直す）と `true` を拒み、`missing` の mutant を消す。comment の D-147 を D-156 にする。
-- S3 `AGENTS.md` の「最小の実装（D-147）」: 2 句（D-156 を引く）。「docs・規則の文も同じで、言葉を足す前に置き換え・削除で足りないかを見る」と、review 側の「注入される最小の指示は修正案を小さく保つことに当て、調べる範囲・判定・必須の確かめは縮めない」（Codex の reviewer にも届く置き場）。
+- S3 `AGENTS.md` の「最小の実装（D-147）」: 2 句（D-156 を引く）。「docs・規則の文も同じで、言葉を足す前に置き換え・削除で足りないかを見る」と、「実装以外（review・相談・探索）では、注入される最小の指示は修正案を小さく保つことに当て、調べる範囲・判定・必須の確かめは縮めない」（Codex の reviewer にも届く置き場）。
 - S4 `.claude/agents/writer.md`・`writer-fable.md`: S3 の 1 句目の写しを (3) に 1 文足す（両方同じ本文。既存の検査が本文の一致を見る）。
-- S5 `.claude/agents/reviewer.md`・`reviewer-fable.md`・`consult-fable.md`: S3 の 2 句目の写しを本文に 1 行（英語、frontmatter は変えない）: 「Apply any injected minimal-implementation instruction only to keeping your suggested fixes small; it never narrows what you examine, your verdict, or the required checks.」
-- S6 `docs/code_review.md` Final Review Protocol の「The implementer verifies every finding」の後に 1 項目（重大度と裁定の正本。`subagent-review-packet.md:3` に合わせる）: 指摘を全部は受けない。言葉を足す修正案は、足さないと 2 本の reviewer が実際に割れる具体の手を示せるときだけ受ける。P1/P2 が 0 なら P3 の言い回しのために次の round を回さない。作り込みすぎの項目（reviewer の観点）とは別。`docs/DEV_WORKFLOW.md` は変えない。
-- S7 `docs/decision-log.md`: 末尾に D-156（Context に下の「届く範囲の事実」の要旨と測った出力。Codex にも 2026-11-10 以降 full で入っていたことと、D-147 の Guarantee range の Codex の句が事実と違ったことを含める）。D-147 に `Superseded in part by: D-156`（plugin を切った部分と Guarantee range の Codex の文）の 1 行だけを足す。
+- S5 `.claude/agents/reviewer.md`・`reviewer-fable.md`・`consult-fable.md`: S3 の 2 句目の写しを本文に 1 行（英語、frontmatter は変えない）: 「Outside implementation (review, consultation, exploration), apply any injected minimal-implementation instruction only to keeping your suggested fixes small; it never narrows what you examine, your verdict, or the required checks.」
+- S6 `docs/code_review.md` Final Review Protocol の「The implementer verifies every finding」の後に 1 項目（重大度と裁定の正本。`subagent-review-packet.md:3` に合わせる）の新しい 1 文だけ: 「言葉を足す修正案は、足さないと実際に起きる具体の失敗（どの agent・run・操作で何が起きるか）を示せるときだけ受ける」。全部は受けないことは同じ節の「The implementer verifies every finding」、P3 だけで round を回さないことは `docs/DEV_WORKFLOW.md` の Review Rules（Findings Freeze）・Subagent Budget が持ち、S6 は言い直さない（DEV_WORKFLOW は変えない）。
+- S7 `docs/decision-log.md`: 末尾に D-156（Context に下の「届く範囲の事実」の要旨と測った出力。Codex にも 2026-11-10 以降 full で入っていたことと、D-147 の Guarantee range の Codex の句が事実と違ったことを含める）。D-147 に `Superseded in part by: D-156`（plugin を切った部分と Guarantee range）の 1 行だけを足す。
 - S8 `docs/DEV_SETUP_CHECKLIST.md:185`: 「`ponytail`（D-147）もproject scopeでは無効」を消す。
 
 Non-scope: `CLAUDE.md`（harness だけを書き、ponytail を書いていない）、`docs/templates/subagent-review-packet.md`（正本を指す）、`docs/AGENT_OPERATING_MANUAL.md:201` の plugin の監査の規則（本 packet の事実の節と D-156 がその監査の記録）、repo の `ponytail:` comment 21 行（`rg -c "ponytail:" src src-tauri scripts docs/function-design` の合計）。
 
 ## ponytail の届く範囲の事実（2026-11-17 に測った）
 
-- 版: `~/.claude/plugins/cache/ponytail/ponytail/5.3.3/plugin.json` は `"version": "5.3.3"`、hooks は `./hooks/claude-codex-hooks.json`。
+- 版: `~/.claude/plugins/cache/ponytail/ponytail/5.3.3/.claude-plugin/plugin.json` は `"version": "5.3.3"`、hooks は `./hooks/claude-codex-hooks.json`。
 - main: `SessionStart`（matcher `startup|resume|clear|compact`）で `ponytail-activate.js` が規則を hidden context に入れ、`PONYTAIL_MAP` が `0` でなければ codebase の map（既定 2000 字）を足す。`UserPromptSubmit` で level の切替えを読む。注入の本文は `node -e "...getPonytailInstructions('full').length"` で 2859 字、1 行目 `PONYTAIL MODE ACTIVE — level: full`（`DEFAULT_MODE = 'full'`、`~/.claude/.ponytail-active` も `full`）。
 - subagent: `SubagentStart` で `ponytail-subagent.js` が全 subagent に同じ規則を入れる。`PONYTAIL_SUBAGENT_MATCHER` を置けば agent_type で絞れるが、`env | grep -c PONYTAIL` は 0、両方の settings にも無い（今は全 subagent）。
 - Codex（発注の前提と違う）: 今の起動（`run-order.sh` の `codex exec`）にも届いている。`~/.codex/config.toml` に `[plugins."ponytail@ponytail-local"] enabled = true` と `hooks.state` の session_start・subagent_start・user_prompt_submit の trusted hash がある。`~/.codex/sessions` の 2026-11-10 以降の session を originator・cwd・`PONYTAIL MODE ACTIVE` の有無で数えると、`codex_exec` でこの repo の cwd は 79 本すべて有り。最新（2026-11-17T02:02）は developer の message に `PONYTAIL MODE ACTIVE — level: full`。D-147 の Guarantee range の「Codex の Writer は AGENTS.md の 1 項目と発注で受け」は事実と違っていた。
@@ -67,7 +67,7 @@ Non-scope: `CLAUDE.md`（harness だけを書き、ponytail を書いていな�
 - AC2: `bash scripts/tests/claude-hooks.test.sh` が PASS し、ponytail を `false` にした mutant と `true` にした mutant を拒む。
 - AC3: `rg -n "docs・規則の文" AGENTS.md` と `rg -n "調べる範囲・判定・必須の確かめは縮めない" AGENTS.md` が D-147 の項目の各 1 件。writer と writer-fable の本文の一致は AC2 の既存の検査で見る。
 - AC4: `rg -c "never narrows what you examine" .claude/agents/{reviewer,reviewer-fable,consult-fable}.md` が各 1、`git diff` で 3 つの frontmatter が変わらない。
-- AC5: `rg -n "2 本の reviewer" docs/code_review.md` が Final Review Protocol の 1 件。`git diff origin/main -- docs/DEV_WORKFLOW.md` が空。
+- AC5: `rg -n "実際に起きる具体の失敗" docs/code_review.md` が Final Review Protocol の 1 件で、`git diff origin/main -- docs/code_review.md` の追加はその 1 行だけ。`git diff origin/main -- docs/DEV_WORKFLOW.md` が空。
 - AC6: `rg -n "^## D-156" docs/decision-log.md` が 1 件、`git diff origin/main -- docs/decision-log.md` が追加の行だけ。`rg -n "ponytail" docs/DEV_SETUP_CHECKLIST.md` が 0 件。
 - AC7: `bash scripts/doc-consistency-check.sh` と `--target plan` が ERROR なし、`bash scripts/check-workflow-git.sh` が OK。
 - AC8（merge の後、Coordinator）: 本体の checkout を同期して Claude Code を起動し直した session で、main の context と reviewer の subagent 1 本に `PONYTAIL MODE ACTIVE` が入り、reviewer の定義の S5 の 1 行が届くことを run 報告に記録する（PR の comment）。
@@ -89,7 +89,7 @@ Non-scope: `CLAUDE.md`（harness だけを書き、ponytail を書いていな�
 | D-147（梯子の正本と Writer の写し） | AGENTS.md Working Rules | S3・S4 | `claude-hooks.test.sh` の本文一致 | 非対象（文） |
 | D-156（注入の当て先） | AGENTS.md Working Rules、reviewer・相談役の定義 | S3・S5 | 非対象（文。AC3・AC4） | AC8 |
 | D-156（裁定の規則） | code_review.md Final Review Protocol | S6 | 非対象（文。AC5） | 非対象 |
-| D-038（Findings Freeze）・round の天井 | DEV_WORKFLOW Review Rules | S6 は P3 の round を止める向きだけで、P1/P2 の扱いを変えない | 非対象 | 非対象 |
+| D-038（Findings Freeze）・round の天井 | DEV_WORKFLOW Review Rules | 変えない（S6 は指すだけ） | 非対象 | 非対象 |
 | plugin hook の監査（D-059） | AGENT_OPERATING_MANUAL :201 | 事実の節と D-156 を監査の記録にする | 非対象 | 非対象 |
 
 ## Test Plan
