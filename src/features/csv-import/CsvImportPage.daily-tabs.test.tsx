@@ -195,6 +195,37 @@ describe("CsvImportPage daily report tabs_req401", () => {
     expect(dailyTab()).toBeEnabled();
   });
 
+  it("REQ-401 / UI-07-D19 / BIZ-08-D4: 日報取込みタブの上の記録への導線は、D4 の拒否の error の状態でも出ている", async () => {
+    const ENTRY = "取り込んだ日報の記録を見る（取り消すときはここから）";
+    // 37 §37.3 手順 8 の固定の文
+    const D4_TEXT =
+      "同じ精算の日報が、別のファイルからすでに取り込まれています。二重に数えないため、取り込みません。取り込み直すときは、前の取込みを取り消してから読み直してください。";
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByRole("link", { name: ENTRY })).toHaveAttribute(
+      "href",
+      "/csv-import/daily-reports",
+    );
+
+    vi.mocked(commands.parseAndValidateDailyReport).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "import_error",
+        message: D4_TEXT,
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "ファイルを選んで取り込む" }));
+    await user.click(await screen.findByRole("button", { name: "確認する" }));
+    expect(await screen.findByText(D4_TEXT)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: ENTRY })).toHaveAttribute(
+      "href",
+      "/csv-import/daily-reports",
+    );
+  });
+
   it("REQ-401 / UI-07-D15 (6): 日報の取込みの応答を待つ間もどちらのタブにも切り替えられない", async () => {
     const user = userEvent.setup();
     renderPage();

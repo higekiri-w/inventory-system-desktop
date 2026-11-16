@@ -13,6 +13,7 @@
 | 更新の前の版へ戻す管理者の手順（migration v8 以降） | [migration-recovery-runbook.md](migration-recovery-runbook.md)（正本は [22](function-design/22-mnt-migration.md) §16） |
 | アプリの MSI を作る・入れる・更新する・前の版へ戻す管理者の手順 | [msi-distribution-runbook.md](msi-distribution-runbook.md) |
 | 店の PC で本物のデータを入れ始める管理者の手順（初期投入） | [initial-load-runbook.md](initial-load-runbook.md) |
+| 初期投入の前に開発用の Windows で日報・月次の画面を受け入れる管理者の手順（導入前受入、関門 12） | [daily-monthly-acceptance-runbook.md](daily-monthly-acceptance-runbook.md) |
 | 現行のER・画面遷移・業務フローと設計点検 | [図面の入口](diagrams/current-system.md)、[図面監査](research/2026-09-16-diagram-audit.md) |
 | 表示・操作・日本語文言 | [SCREEN_DESIGN.md](SCREEN_DESIGN.md)、[design-system](design-system/README.md) |
 | 環境構築 | [DEV_SETUP_CHECKLIST.md](DEV_SETUP_CHECKLIST.md) |

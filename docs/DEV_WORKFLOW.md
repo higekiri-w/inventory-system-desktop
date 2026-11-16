@@ -154,7 +154,7 @@ Design Phase は、R3+ の変更が設計正本・共有の UI の振舞い・wo
 
 - stacked train は後続 lane を先頭 lane の branch に stack する逐次の依存の train。後続の Draft PR は先頭 lane の branch を base にし、先頭の merge の後に base を付け替える。
 - 付け替えは後続の旧 tip を保存してから最新の `origin/main` を 1 回だけ merge する（`git -c merge.directoryRenames=false merge origin/main`）。`Plan Commit`・`Amendments` の祖先関係を保ち、先頭 lane の tip を追加で merge する多段の merge はしない（D-074）。
-- 衝突の解消が実装の file に及んだら、独立の Final Reviewer が差分を確かめ直す（docs だけの解消は差分の確認だけ）。
+- 同期の merge で衝突を解くか手で編集した版は、path に関わらず監査の closure を要る（helper の記録の closure にならない。生成物の再生成と、union の結果と一致する `docs/decision-log.md` は手の解消に数えない）。manual のある lane は [merge-evidence](agent-guidance/merge-evidence.md) の B で L3 を使い回すか取り直す。
 
 ## L3
 
@@ -167,9 +167,9 @@ operator 向けの画面を作る・実質的に変える PR は、merge の前�
 | L3 の後に入った変更 | L3 | 誰が判定 |
 |---|---|---|
 | main との単段の同期で、取り込んだ main 側が code に触れない（A） | 使い回す | helper（[merge-evidence](agent-guidance/merge-evidence.md) MG-D13） |
-| 同期で、取り込んだ main 側が code に触れる（B） | 同期の closure 2 本と owner の 1 行の承認で使い回す | Final Reviewer 2 本・owner |
+| 取り込んだ main 側の code、同期の merge の中の手の解消・編集、C に当たらない lane の commit で、lane の手が docs と frontend の test の file の中（B） | closure（2 本。R3 以下の lane で、その B の案内の範囲〈起点は旧 record の head。[merge-evidence](agent-guidance/merge-evidence.md) の B〉で入った変更が docs と frontend の test の file だけなら 1 本。TD-728・729）と owner の 1 行の承認で使い回す | Final Reviewer（本数は左の列。走った本数は Coordinator が確かめる）・owner |
 | lane の docs だけの commit（classifier が docs だけ、`## L3` 節〈旧形式で無ければ `## Test Plan` 節と link する Matrix〉が byte で同じ）（C） | 使い回す（R4 は除く） | helper |
-| runtime・生成物・未知の path・gate の文書の変更、`## L3` 節の変更 | 取り直す | — |
+| lane の手が docs と frontend の test の file の外（runtime・Rust の test・gate の文書・未知の path）、`## L3` 節の変更 | 取り直す | — |
 | FAIL を直した | 直した項目を取り直す | owner |
 
 ## Subagent Budget

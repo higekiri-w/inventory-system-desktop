@@ -136,6 +136,34 @@ git -C "$repo" switch -q lane
 git -C "$repo" merge -q --no-ff --no-edit side
 before="$(git -C "$repo" rev-parse HEAD)"
 approve "$PKT" "$reviewed"; refused "PA5 side branch" "not a sync of main" "$before"
+# D-154: only the manual reuse route takes lane hands inside the set (docs, frontend test files). plan-approve keeps
+# the default: (a) a docs conflict resolved by hand and (b) a docs edit inside a merge without conflict are refused.
+new_repo pa5a
+printf 'lane\n' > "$repo/docs/x.md"; git -C "$repo" add -A; git -C "$repo" commit -qm 'lane docs'
+reviewed="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" switch -q main
+mkdir -p "$repo/docs"; printf 'main\n' > "$repo/docs/x.md"; git -C "$repo" add -A; git -C "$repo" commit -qm main
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" switch -q lane
+if git -C "$repo" -c merge.directoryRenames=false merge -q --no-ff --no-commit origin/main > /dev/null 2>&1; then
+    fail "PA5 hand-resolved docs conflict: the fixture did not conflict"
+fi
+printf 'lane\nmain\n' > "$repo/docs/x.md"; git -C "$repo" add -A; git -C "$repo" commit -q --no-edit
+before="$(git -C "$repo" rev-parse HEAD)"
+approve "$PKT" "$reviewed"; refused "PA5 hand-resolved docs conflict" "not a sync of main" "$before"
+[[ "$out" == *"docs/x.md"* ]] || fail "PA5 hand-resolved docs conflict: path missing: $out"
+new_repo pa5b
+printf 'lane\n' > "$repo/docs/x.md"; git -C "$repo" add -A; git -C "$repo" commit -qm 'lane docs'
+reviewed="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" switch -q main
+printf 'main moved\n' > "$repo/main.txt"; git -C "$repo" add -A; git -C "$repo" commit -qm main
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+git -C "$repo" switch -q lane
+git -C "$repo" -c merge.directoryRenames=false merge -q --no-ff --no-commit origin/main > /dev/null
+printf 'edited inside the merge\n' > "$repo/docs/x.md"; git -C "$repo" add -A; git -C "$repo" commit -q --no-edit
+before="$(git -C "$repo" rev-parse HEAD)"
+approve "$PKT" "$reviewed"; refused "PA5 docs edit in merge" "not a sync of main" "$before"
+[[ "$out" == *"docs/x.md"* ]] || fail "PA5 docs edit in merge: path missing: $out"
 echo "PASS: PA5"
 
 # Final review C2: a failure to list the merges stops before any write (never read as "no merge").
