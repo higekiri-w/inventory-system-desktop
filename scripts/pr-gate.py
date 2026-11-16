@@ -697,8 +697,8 @@ class Gate:
             return []
         return [path for path in paths if touches([path])] or paths
 
-    def reusable(self, origin, head, base, code=True, docs=False, hands=False, risk=None):
-        """Sync-only (and, if asked, code-free) check from origin; returns the code paths the sync brings.
+    def reusable(self, origin, head, base, docs=False, hands=False, risk=None):
+        """Sync-only check from origin; returns the code paths the sync brings.
         hands=True (D-154, the manual reuse route only) takes lane hands inside the set and sets self.closures:
         1 when the lane's risk is R0..R3 and every main-side path except the generated traceability doc is inside
         the set, else 2 (TD-728 / TD-729). This count never changes code_paths or the A condition."""
@@ -708,7 +708,7 @@ class Gate:
                 main = sorted(self.main_paths(merges) - {TRACEABILITY})
                 if not (main and outside(self.contents('scripts/ci/classify-changes.sh', base), main)):
                     self.closures = 1
-            return self.code_paths(merges, base) if code else []
+            return self.code_paths(merges, base)
         except GateError as error:
             if error.code == 2:
                 raise GateError(f'{error}; reuse undecidable: run git fetch origin and retry', 2) from None
@@ -764,10 +764,19 @@ class Gate:
             return False
         return self.plan_change(broad['head'], head, req['risk']) is None
 
-    def hands_l3(self, source, head):
-        """D-154: with a packet, a column holding any lane hand (C commit, hand-resolved path, lane commit) needs the
-        L3 basis of the L3 version; returns why it differs, or None. A lane without a packet has nothing to compare."""
-        if self.args.packet and (self.docs_commits or self.resolved or self.lane):
+    def hands_l3(self, origin, source, head, base, docs):
+        """D-154: with a packet, a column holding any lane hand (C commit, hand-resolved path, lane commit) since the
+        L3 version needs that version's L3 basis; returns why it differs, or None. A lane without a packet has nothing
+        to compare. The range is always source..head, the one nonci rechecks: a record whose own walk began later
+        (origin, the old record's head, which keeps the approval and the closure count) walks the whole column on a
+        copy, so an earlier reuse's hands still ask for the comparison and this gate's own walk stays as it is."""
+        if not self.args.packet:
+            return None
+        walk = self
+        if origin != source:
+            walk = copy.copy(self)
+            walk.reusable(source, head, base, docs=docs, hands=True)
+        if walk.docs_commits or walk.resolved or walk.lane:
             return self.l3_change(source, head)
         return None
 
@@ -795,8 +804,9 @@ class Gate:
                 ' run git -c merge.directoryRenames=false merge origin/main, push, capture, then record. Nothing written')
         req = snap['requirements']
         try:
-            code = self.reusable(old['head'], head, base, docs=self.docs_route(req), hands=True, risk=req['risk'])
-            change = self.hands_l3(source, head)
+            docs = self.docs_route(req)
+            code = self.reusable(old['head'], head, base, docs=docs, hands=True, risk=req['risk'])
+            change = self.hands_l3(old['head'], source, head, base, docs)
             require(not change, change)
         except GateError as error:
             if error.code == 2:
@@ -875,7 +885,7 @@ class Gate:
         docs = self.docs_route(req)
         if 'source_head' in manual:
             code = self.reusable(manual['source_head'], snap['head'], snap['base'], docs=docs, hands=True, risk=req['risk'])
-            change = self.hands_l3(manual['source_head'], snap['head'])
+            change = self.hands_l3(manual['source_head'], manual['source_head'], snap['head'], snap['base'], docs)
             require(not change, f"manual reuse from {manual['source_head']}: {change}")
             if 'reuse_approval' not in manual:
                 hands = sorted({*self.resolved, *self.lane})
@@ -1036,8 +1046,9 @@ class Gate:
                 require(args.kind == 'manual' and args.outcome == 'pass' and old and old['manual']['outcome'] == 'pass', 'server manual pass required')
                 source=old['manual'].get('source_head',old['head'])
                 require(sha(args.reuse_from) == source and args.evidence == old['manual']['evidence'], 'manual source/evidence mismatch')
-                code=self.reusable(old['head'],snap['head'],snap['base'],docs=self.docs_route(req),hands=True,risk=req['risk'])
-                change=self.hands_l3(source,snap['head'])
+                docs=self.docs_route(req)
+                code=self.reusable(old['head'],snap['head'],snap['base'],docs=docs,hands=True,risk=req['risk'])
+                change=self.hands_l3(old['head'],source,snap['head'],snap['base'],docs)
                 require(not change, f'manual pass not reusable: {change}')
                 # D-154: only this record's own --reuse-approval approves the changes since old['head'].
                 if args.reuse_approval is None:

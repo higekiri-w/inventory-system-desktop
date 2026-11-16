@@ -1686,6 +1686,15 @@ class Hands(SyncCase):
         self.packet_lane();lane=self.repo.commit({'src/lib/x.ts':'x\n'})
         message=self.stop(self.old(),'lane commit '+lane,'集合の外','src/lib/x.ts','next: redo L3',kind='r4',packet=PKT)
         self.assertNotIn('--reuse-approval',message)
+        # A column without a merge is taken for lane commits only (C, or the set). Where C does not apply (an R4 lane,
+        # a lane without a packet), a regeneration of generated files alone is not carried: as before D-154, redo L3.
+        for name,build,req,kw in (('R4',lambda:self.packet_lane(risk='R4',gate='ready,merge,manual,r4'),R4,dict(packet=PKT)),
+                                  ('no packet',self.restart,LOW,{})):
+            with self.subTest(regeneration_without_merge=name):
+                build();self.repo.commit({GEN_TRACE:'t1\nt2\nt3\nregenerated\n'},'regenerate')
+                message=self.stop(self.old(req=req),'manual pass not reusable: no sync merge','next: redo L3',kind='r4',req=req,**kw)
+                self.assertNotIn('--reuse-approval',message)
+                self.b_stop(self.old(req=req),'no sync merge',approval=APPROVAL,req=req,**kw)
     def test_sync_merge_default_stays_strict(self):
         # T4: like scripts/plan-approve.sh, a gate that ran neither __init__ nor sync_merges calls sync_merge directly.
         # The classifier is read from the synthetic base's own file, so a refusal here is a verdict, not a failed read.
@@ -1892,6 +1901,40 @@ class Hands(SyncCase):
         self.restart();self.hand_sync();self.repo.commit({'docs/a.md':'both, fixed\n'})
         message=self.stop(self.old(req=LOW),**free)
         self.assertEqual(message.split('\n')[1:],['手で解いた path: docs/a.md','lane の commit の path: docs/a.md',RULE_LINE.format(1)])
+    def test_hands_chain_l3_basis_change_stops_before_write(self):
+        # Final review round 1 (P2) / MG-D13 L3 の比較: after a first reuse, a sync that only brings a changed L3 basis
+        # holds no new lane hand, yet the column since the L3 version does. Both record routes judge that same range
+        # nonci rechecks: they stop on the L3 reason before any write. With the basis unchanged the manual is carried.
+        nine,ten='## Manual\n\n- 9 pt 以上\n','## Manual\n\n- 10 pt 以上\n'
+        newer='https://example.invalid/owner-2'
+        def by_hand(req):
+            self.resolve({'docs/a.md':'both\n'});return self.b(self.old(base=self.start,req=req),req=req,packet=PKT)
+        def twice(req):
+            first=by_hand(req);self.repo.commit({FD:'design\n'});return self.b(first,approval=newer,req=req,packet=PKT)
+        def c_only(req):
+            self.repo.commit({'docs/lane.md':'typo\n'});return self.rec(self.old(base=self.start,req=req),kind='r4',req=req,packet=PKT)
+        r4=dict(risk='R4',gate='ready,merge,manual,r4')
+        for name,first,req,packet in (('B by hand',by_hand,REQ,{}),('B twice',twice,REQ,{}),('C only',c_only,REQ,{}),('B by hand on R4',by_hand,R4,r4)):
+            for matrix in (ten,nine):
+                with self.subTest(first=name,basis_changed=matrix==ten):
+                    # main holds the Matrix; the lane's L3 version adds an old-form packet (no `## L3`) that links it.
+                    self.restart();self.repo.main({MATRIX:nine});self.start=self.repo.base
+                    self.repo.git('reset','-q','--hard',self.start)
+                    self.repo.source=self.repo.commit({PKT:rebuild_packet(**packet),'docs/a.md':'lane side\n'},'lane + packet')
+                    reused=first(req)
+                    self.assertEqual(reused['manual']['source_head'],self.repo.source)
+                    self.repo.main({MATRIX:matrix,'docs/b.md':'b\n'});self.repo.sync()
+                    current=self.old(head=self.head(),base=self.repo.base,req=req);current['manual']=reused['manual']
+                    if matrix==nine:
+                        self.assertEqual(self.rec(reused,kind='r4',req=req,packet=PKT)['manual'],reused['manual'])
+                        self.assertEqual(len(self.writes),1)
+                        self.status(current,req)
+                        continue
+                    message=self.stop(reused,'manual pass not reusable: L3 節が変わった','next: redo L3',kind='r4',req=req,packet=PKT)
+                    self.assertNotIn('--reuse-approval',message)
+                    for approval in (None,newer):
+                        self.b_stop(reused,'manual pass not reusable: L3 節が変わった',approval=approval,req=req,packet=PKT)
+                    with self.assertRaisesRegex(g.GateError,'L3 節が変わった'):self.status(current,req)
     def test_hands_guidance_closure_count_follows_main_paths(self):
         # T16 / AC9 (TD-728 / TD-729): the count follows the lane's Risk and the main-side paths of the guided range.
         def count(expected,old=None,req=REQ,**kw):
