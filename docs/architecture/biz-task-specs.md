@@ -170,8 +170,8 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
    - return_recordsにINSERT → record_idを取得
    - 各return_itemについて:
      - return_itemsにINSERT
-     - register_processed=1（レジ戻し済み）の場合 → 在庫は動かさない（CSV取込みで自動反映）
-     - register_processed=0（レジ未処理）の場合:
+     - register_processed=1（レジでバーコードを読んで戻した）かつ Z004 の取込みが在庫を動かす商品（`z004_moves_stock`: 13 桁の JAN が 1 商品だけに当たり在庫連動）の明細 → 在庫は動かさない（CSV取込みで自動反映）
+     - それ以外（register_processed=0、または Z004 が在庫を動かさない商品の明細。D-148）:
        - direction='in'（戻り）→ 共通在庫変動処理（quantity=+数量, movement_type='return'）
        - direction='out'（渡し）→ 共通在庫変動処理（quantity=-数量, movement_type='return'）
    - operation_logsに記録（operation_type='return_create'）
@@ -201,7 +201,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **【制御構造】**
 - 全てのヘッダ+明細+在庫更新+変動履歴はBEGIN〜COMMITで一括。途中で失敗したらROLLBACK
 - 在庫マイナス警告はエラーではなく警告。処理は続行する（利用者が後で確認）
-- 返品のregister_processedフラグは画面入力時に決定。BIZ層では渡された値に従って分岐するだけ
+- 返品のregister_processedフラグ（レジでバーコードを読んで戻したか）は画面で既定なしに問う。BIZ層は渡された値と商品の設定から明細ごとに在庫を動かすかを決め、動かした商品コードを結果に返す（D-148）
 
 ---
 
@@ -365,7 +365,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **集計契約**:
 - 商品別日次は同日の `is_voided=0` 全行を `product_code + source` で加算し、manual/autoを混ぜない
 - 公式日報日次は同日の全completed parentを加算する。親・明細のoptional値はいずれかNULLなら集約結果もNULLとし、単一parent IDではなく `source_import_count` を返す（Z001 の行は全 active import を読むが加算せず、取込みごとに ID つきで返す、D-096）
-- 月次は同日複数parentを加算し、将来のcoverage日数は `COUNT(DISTINCT report_date)` とする。公式日報seriesと商品別seriesは互いに加算しない
+- 月次は同日複数parentを加算する。月の取り込んだ日は `official_report_dates`（[34 §19.4](../function-design/34-biz-sales-service.md) 手順 6。completed の取込みのある日の distinct report date）で、import の件数で数えない。公式日報seriesと商品別seriesは互いに加算しない
 
 ---
 
@@ -374,6 +374,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 | 日付 | PR | 内容 |
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D1〜D8: Z004/日報の追加取込み、TX内snapshot再検証、per-import rollback、additive readを正本化。 |
+| 2026-11-11 | PR #236 | 集計契約の「将来のcoverage日数」を、月の取り込んだ日を返す今の契約（`official_report_dates`、34 §19.4 手順 6）を引く文に置き換えた。 |
 
 ---
 

@@ -149,7 +149,7 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     if (candidate === null) throw new Error("expected table structure");
     expect(within(candidate).getByText("¥83.33")).toBeInTheDocument();
     await user.click(within(candidate).getByRole("button", { name: "廃棄・破損に追加" }));
-    const cost = await screen.findByLabelText("C17-A の原価");
+    const cost = await screen.findByLabelText("C17-A の原価（税抜）");
     expect(cost).toHaveValue(83.33);
     expect(cost).toHaveAttribute("inputmode", "decimal");
     expect(cost).toHaveAttribute("step", "0.01");
@@ -173,11 +173,44 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     expect(disposalTypeTrigger.tagName).toBe("BUTTON");
     expect(disposalTypeTrigger).toHaveTextContent("破損");
     expect(screen.getByLabelText("DP-001 の数量")).toHaveValue(1);
-    expect(screen.getByLabelText("DP-001 の原価")).toHaveValue(120);
+    expect(screen.getByLabelText("DP-001 の原価（税抜）")).toHaveValue(120);
     expect(screen.getByLabelText("DP-001 の理由")).toHaveValue("破損");
     await waitFor(() => {
       expect(screen.getByLabelText("廃棄・破損商品検索")).toHaveFocus();
     });
+  });
+
+  it("REQ-204 / UI-05-D8 / D-128: 候補の一覧と明細の原価の列、明細の欄の名に税抜を示す", async () => {
+    const user = userEvent.setup();
+    mockSearchProducts.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          makeMockProductWithRelations({ product_code: "TX-A", name: "税抜確認 A" }),
+          makeMockProductWithRelations({ product_code: "TX-B", name: "税抜確認 B" }),
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
+    renderWithClient(<DisposalPage />);
+    await user.type(await screen.findByLabelText("廃棄・破損商品検索"), "税抜{enter}");
+    const candidateTable = (await screen.findByText("TX-A")).closest("table");
+    if (candidateTable === null) throw new Error("expected table structure");
+    expect(
+      within(candidateTable).getByRole("columnheader", { name: "原価（税抜）" }),
+    ).toBeInTheDocument();
+
+    const candidate = within(candidateTable).getByText("TX-A").closest("tr");
+    if (candidate === null) throw new Error("expected table structure");
+    await user.click(within(candidate).getByRole("button", { name: "廃棄・破損に追加" }));
+    const cost = await screen.findByRole("spinbutton", { name: "TX-A の原価（税抜）" });
+    const inputTable = cost.closest("table");
+    if (inputTable === null) throw new Error("expected table structure");
+    expect(
+      within(inputTable).getByRole("columnheader", { name: "原価（税抜）" }),
+    ).toBeInTheDocument();
   });
 
   it("REQ-204 requires explicit selection when multiple products match", async () => {
@@ -285,7 +318,7 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     await addSingleProduct(user);
 
     fireEvent.change(screen.getByLabelText("DP-001 の数量"), { target: { value: "0" } });
-    fireEvent.change(screen.getByLabelText("DP-001 の原価"), { target: { value: "-1" } });
+    fireEvent.change(screen.getByLabelText("DP-001 の原価（税抜）"), { target: { value: "-1" } });
     fireEvent.change(screen.getByLabelText("DP-001 の理由"), { target: { value: "" } });
     await user.click(screen.getByRole("button", { name: "廃棄・破損を保存" }));
 
@@ -813,7 +846,17 @@ it.each([
       within(inputTable)
         .getAllByRole("columnheader")
         .map((cell) => cell.textContent),
-    ).toEqual(["商品コード", "商品名", "部門", "現在庫", "種別", "数量", "原価", "理由", "操作"]);
+    ).toEqual([
+      "商品コード",
+      "商品名",
+      "部門",
+      "現在庫",
+      "種別",
+      "数量",
+      "原価（税抜）",
+      "理由",
+      "操作",
+    ]);
     const cells = within(inputRow).getAllByRole("cell");
     expect(cells[3].textContent).toBe(display);
     expect(
@@ -821,7 +864,7 @@ it.each([
     ).toBeInTheDocument();
     expect(within(cells[5]).getByText(unitLabel)).toBeInTheDocument();
     expect(
-      within(cells[6]).getByRole("spinbutton", { name: "UNIT-001 の原価" }),
+      within(cells[6]).getByRole("spinbutton", { name: "UNIT-001 の原価（税抜）" }),
     ).toBeInTheDocument();
     expect(within(cells[6]).getByText("円")).toBeInTheDocument();
     expect(within(cells[7]).getByLabelText("UNIT-001 の理由")).toBeInTheDocument();

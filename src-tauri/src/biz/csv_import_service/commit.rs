@@ -8,7 +8,7 @@ use crate::biz::csv_import_service::parse::{
     check_settlement_rules, settlement_gaps, settlement_identity,
 };
 use crate::biz::csv_import_service::{
-    CommitRequest, CsvImportErrorType, ErrorRow, ImportResult, MatchedRow,
+    z004_moves_stock, CommitRequest, CsvImportErrorType, ErrorRow, ImportResult, MatchedRow,
 };
 use crate::biz::stock_ledger::recompute_for_settlement_change;
 use crate::biz::stocktake_service::recheck_targets;
@@ -52,7 +52,7 @@ fn registration_changed() -> BizError {
 }
 
 /// 確定の TX の照合（32「preview の cache の契約」の (4)）。preview の引き当てと違えば書く前に拒む。
-/// 在庫連動は確定の時点の設定（共有 JAN の行は 0）を返す
+/// 在庫連動は確定の時点の設定（共有 JAN の行は 0）を返す。判定は返品・交換と同じ `z004_moves_stock`（D-148）
 fn recheck_matches(
     conn: &DbConnection,
     matched_rows: &[MatchedRow],
@@ -66,7 +66,7 @@ fn recheck_matches(
         if head.product_code != row.product_code || shared != row.shared_jan {
             return Err(registration_changed());
         }
-        stock_linked.push(!shared && head.pos_stock_sync);
+        stock_linked.push(z004_moves_stock(&row.normalized_jan, &candidates));
     }
     for row in error_rows {
         if row.error_type != CsvImportErrorType::UnmatchedProduct {

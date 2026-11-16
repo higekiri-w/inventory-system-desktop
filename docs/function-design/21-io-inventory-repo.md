@@ -189,7 +189,7 @@ fn list_return_records(conn: &DbConnection, query: &ListQuery) -> Result<Paginat
 
 #### get_return_record_detail
 
-**関数要求**: 返品・交換記録詳細として、ヘッダ、明細、レシート画像パス、関連 `inventory_movements` を取得する。`register_processed=true` の記録は作成時に在庫を動かしていないため、movements が 0 件でも正常とする。
+**関数要求**: 返品・交換記録詳細として、ヘッダ、明細、レシート画像パス、関連 `inventory_movements` を取得する。作成時に在庫を動かした明細が無い記録（`register_processed=true` で、全部の明細が Z004 の取込みで在庫に戻る商品。D-148）は movements が 0 件でも正常とする。movement の商品コードは `create_return` の冪等の再送が `stock_applied_product_codes` を作るのにも使う（[31](31-biz-inventory-service.md) §12.4）。
 
 **シグネチャ**:
 ```

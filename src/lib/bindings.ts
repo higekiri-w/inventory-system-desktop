@@ -195,7 +195,7 @@ export const commands = {
 	parseAndValidateDailyReport: (files: DailyReportSourceFileRequest[]) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report", { files })),
 	commitDailyReportImport: (previewToken: string, additionalImportConfirmed: boolean) => typedError<DailyReportImportResult, CmdError>(__TAURI_INVOKE("commit_daily_report_import", { previewToken, additionalImportConfirmed })),
 	rollbackDailyReportImport: (dailyReportImportId: number) => typedError<DailyReportRollbackResult, CmdError>(__TAURI_INVOKE("rollback_daily_report_import", { dailyReportImportId })),
-	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImport>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
+	listDailyReportImports: (page: number, perPage: number, dateFrom: string | null, dateTo: string | null) => typedError<PaginatedResult<DailyReportImportRow>, CmdError>(__TAURI_INVOKE("list_daily_report_imports", { page, perPage, dateFrom, dateTo })),
 	// §45.6a（CMD-12-D1）: レジの SD を BIZ-08 §37.9 で読み、候補と scan_token を返す
 	scanRegisterSd: (selectedPath: string | null) => typedError<RegisterSdScanResponse, CmdError>(__TAURI_INVOKE("scan_register_sd", { selectedPath })),
 	// §45.6b（CMD-12-D1）: scan の snapshot の 1 候補から preview を作る。snapshot は消さない
@@ -366,6 +366,18 @@ export const commands = {
 	 *  DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
 	 */
 	inspectBackup: (request: InspectBackupRequest) => typedError<BackupInspection, CmdError>(__TAURI_INVOKE("inspect_backup", { request })),
+	// USB メモリを PC の外の控えの保存先として用意する（§43.8.2）
+	prepareOffsiteMedium: (request: PrepareOffsiteMediumRequest) => typedError<OffsiteMediumView, CmdError>(__TAURI_INVOKE("prepare_offsite_medium", { request })),
+	// 用意した媒体へまだ写していない最新の backup を写す（§43.8.3）
+	checkOffsiteBackup: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("check_offsite_backup")),
+	// 「PC の外の控え」の card とホームの状態（§43.8.4）
+	getOffsiteBackupStatus: () => typedError<OffsiteBackupStatus, CmdError>(__TAURI_INVOKE("get_offsite_backup_status")),
+	// 読めない記録を作り直す。先に backup を作る（§43.8.6）
+	resetOffsiteState: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("reset_offsite_state")),
+	// PC の外の控えをやめる。DB を使わない（§43.8.7）
+	stopOffsiteBackup: () => typedError<null, CmdError>(__TAURI_INVOKE("stop_offsite_backup")),
+	// 保存先に選ぼうとする folder を確かめる。DB を使わず、保存しない（§43.8.8）
+	checkBackupDirChoice: (request: BackupDirChoiceRequest) => typedError<null, CmdError>(__TAURI_INVOKE("check_backup_dir_choice", { request })),
 	/**
 	 *  バックアップから復元する（§43.9）
 	 *
@@ -415,6 +427,11 @@ export type AppSetting = {
 	key: string,
 	value: string,
 	updated_at: string,
+};
+
+// §43.8.8
+export type BackupDirChoiceRequest = {
+	selected_path: string,
 };
 
 /**
@@ -619,25 +636,6 @@ export type DailyReportFileInfo = {
 	source_files: DailyReportSourceFileInfo[],
 };
 
-/**
- *  daily_report_imports テーブルの行マッピング
- *
- *  24-io-csv-import-repo.md §14.2 / §14.14-14.20
- */
-export type DailyReportImport = {
-	id: number,
-	report_date: string,
-	source_adapter: string,
-	bundle_hash: string,
-	source_files_json: string,
-	gross_amount: number | null,
-	net_amount: number | null,
-	status: string,
-	imported_at: string,
-	rolled_back_at: string | null,
-	note: string | null,
-};
-
 export type DailyReportImportResult = {
 	daily_report_import_id: number,
 	status: string,
@@ -645,6 +643,20 @@ export type DailyReportImportResult = {
 	gross_amount: number | null,
 	net_amount: number | null,
 	warning_count: number,
+};
+
+// 一覧の行（37 §37.6、45 §45.6）。repo の行から内部の保存の形を外した wire の型
+export type DailyReportImportRow = {
+	id: number,
+	report_date: string,
+	source_filenames: string[],
+	// 束の精算回数（IO-07-D5）。記録の無い取込みは None（TD-590）
+	settlement_no: number | null,
+	gross_amount: number | null,
+	net_amount: number | null,
+	status: string,
+	imported_at: string,
+	rolled_back_at: string | null,
 };
 
 export type DailyReportPaymentLinePreview = {
@@ -681,6 +693,8 @@ export type DailyReportSdCandidate = {
 	path_date: string,
 	report_date: string | null,
 	source_filenames: string[],
+	// 束の精算回数（IO-07-D5、TD-592）。読めなかった束は None
+	settlement_no: number | null,
 	status: DailyReportSdCandidateStatus,
 };
 
@@ -1139,6 +1153,8 @@ export type MonthlySalesReport = {
 	items: MonthlySaleItem[],
 	prev_month_comparison: MonthlySaleItem[] | null,
 	official_department_totals: OfficialMonthlyDepartmentTotal[] | null,
+	// completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。空 ⇔ official_department_totals が None（34 §19.4 手順 6）
+	official_report_dates: string[],
 };
 
 /**
@@ -1240,6 +1256,32 @@ export type OfficialMonthlyDepartmentTotal = {
 	count: number | null,
 };
 
+// 画面とホームが出す状態（§71.11.5）
+export type OffsiteBackupStatus = {
+	prepared: boolean,
+	last_success_at: string | null,
+	last_success_label: string | null,
+	days_since_last_success: number | null,
+	stale: boolean,
+	attached: OffsiteMediumView[],
+	last_failure_kind: OffsiteFailureKind | null,
+	local_backup_old: boolean,
+};
+
+// 確認の結果（§71.11.4。wire は `kind` で分ける tagged enum）
+export type OffsiteCheckResult = { kind: "not_prepared" } | { kind: "no_local_backup" } | { kind: "medium_missing" } | { kind: "up_to_date" } | { kind: "copied"; file_name: string; labels: string[] };
+
+// 最後の確認の失敗の種類（wire は snake_case）
+export type OffsiteFailureKind = "register_sd" | "not_removable" | "storage_full" | "verify_mismatch" | "io" | "state_unreadable" | "source_unverified" | "backup_dir_is_medium_folder";
+
+// 用意した媒体の見え方（§71.11.2）
+export type OffsiteMediumView = {
+	label: string,
+	drive_root: string,
+	// 媒体の `InventoryBackup\` の最新の正式名（reparse point の entry を除く）
+	newest_copy: string | null,
+};
+
 /**
  *  操作ログの行マッピング（第6段階追加）
  *
@@ -1330,6 +1372,11 @@ export type PluRegisterSnapshotSummary = {
 	app_managed_count: number,
 	conflict_count: number,
 	release_pending_count: number,
+};
+
+// §43.8.2
+export type PrepareOffsiteMediumRequest = {
+	selected_path: string,
 };
 
 // フロントエンドに返すプレビューデータ
@@ -1628,6 +1675,8 @@ export type ReturnCreateResult = {
 	created: boolean,
 	idempotent_replay: boolean,
 	stock_warnings: string[],
+	// この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送では記録の movement から作る。D-148 (3)）
+	stock_applied_product_codes: string[],
 };
 
 export type ReturnDirection = "in" | "out";

@@ -152,7 +152,7 @@ pub(crate) fn complete_reconciled_restore(
 const BACKUP_PREFIX: &str = "inventory_backup_";
 const BACKUP_EXT: &str = ".db";
 /// 作業名の接尾辞（MNT-01-D7。`.db` で終わらないので正式名の規約に掛からない）
-const PARTIAL_SUFFIX: &str = ".partial";
+pub(super) const PARTIAL_SUFFIX: &str = ".partial";
 /// デフォルトのバックアップ保持日数（設定行が存在しない場合）
 const DEFAULT_RETENTION_DAYS: u32 = 3;
 
@@ -256,14 +256,14 @@ fn split_backup_stamp(filename: &str) -> Option<(&str, &str)> {
 }
 
 /// ファイル名からYYYYMMDD部分を抽出してNaiveDateに変換（保持日数の掃除の対象、§71.5 ステップ2a-2d）
-fn extract_date_from_backup(filename: &str) -> Option<chrono::NaiveDate> {
+pub(super) fn extract_date_from_backup(filename: &str) -> Option<chrono::NaiveDate> {
     let (date_part, time_part) = split_backup_stamp(filename)?;
     chrono::NaiveTime::parse_from_str(time_part, "%H%M%S").ok()?;
     chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()
 }
 
 /// ファイル名からYYYYMMDD_HHMMSS部分を抽出して "YYYY-MM-DD HH:MM:SS" に変換
-fn extract_datetime_from_backup(filename: &str) -> Option<String> {
+pub(super) fn extract_datetime_from_backup(filename: &str) -> Option<String> {
     let (date_part, time_part) = split_backup_stamp(filename)?;
     // 日付・時刻のパースチェック
     chrono::NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()?;
@@ -281,12 +281,12 @@ fn extract_datetime_from_backup(filename: &str) -> Option<String> {
 }
 
 /// 作業名（MNT-01-D7）
-fn partial_name(file_name: &str) -> String {
+pub(super) fn partial_name(file_name: &str) -> String {
     format!("{file_name}{PARTIAL_SUFFIX}")
 }
 
 /// 共有の判定「使える控え」（71 §71.12）
-fn is_usable_backup(inspection: &BackupInspection) -> bool {
+pub(super) fn is_usable_backup(inspection: &BackupInspection) -> bool {
     !inspection.newer_than_app && inspection.quick_check_ok
 }
 

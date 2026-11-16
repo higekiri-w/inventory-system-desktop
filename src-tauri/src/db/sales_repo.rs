@@ -183,8 +183,8 @@ pub struct VoidedMovement {
 
 /// daily_report_imports テーブルの行マッピング
 ///
-/// 24-io-csv-import-repo.md §14.2 / §14.14-14.20
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+/// 24-io-csv-import-repo.md §14.2 / §14.14-14.20。wire に出さない（一覧の wire は BIZ の `DailyReportImportRow`）
+#[derive(Debug, Clone)]
 pub struct DailyReportImport {
     pub id: i64,
     pub report_date: String,
@@ -197,6 +197,8 @@ pub struct DailyReportImport {
     pub imported_at: String,
     pub rolled_back_at: Option<String>,
     pub note: Option<String>,
+    /// 束の精算回数（IO-07-D5）。NULL は None（24 §14.2、TD-590）
+    pub settlement_no: Option<i64>,
 }
 
 /// daily_report_imports INSERT用（id/imported_at/rolled_back_at は自動設定）
@@ -856,7 +858,7 @@ pub fn find_daily_report_import_by_id(
 ) -> Result<Option<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports WHERE id = ?1",
     )?;
     let mut rows = stmt.query(rusqlite::params![id])?;
@@ -875,7 +877,7 @@ pub fn find_blocking_daily_report_by_bundle_hash(
 ) -> Result<Option<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports
          WHERE bundle_hash = ?1 AND status = 'completed'
          ORDER BY id DESC LIMIT 1",
@@ -896,7 +898,7 @@ pub fn find_daily_report_imports_by_report_date(
 ) -> Result<Vec<DailyReportImport>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports
          WHERE report_date = ?1 AND status = 'completed'
          ORDER BY imported_at DESC, id DESC",
@@ -1002,7 +1004,7 @@ pub fn list_daily_report_imports(
     let offset = (page - 1) * per_page;
     let select_sql = format!(
         "SELECT id, report_date, source_adapter, bundle_hash, source_files_json,
-                gross_amount, net_amount, status, imported_at, rolled_back_at, note
+                gross_amount, net_amount, status, imported_at, rolled_back_at, note, settlement_no
          FROM daily_report_imports{}
          ORDER BY report_date DESC, imported_at DESC, id DESC
          LIMIT ? OFFSET ?",
@@ -1073,6 +1075,7 @@ fn row_to_daily_report_import(row: &rusqlite::Row) -> rusqlite::Result<DailyRepo
         imported_at: row.get(8)?,
         rolled_back_at: row.get(9)?,
         note: row.get(10)?,
+        settlement_no: row.get(11)?,
     })
 }
 
@@ -1408,7 +1411,7 @@ pub fn get_completed_daily_report_aggregate(
              ORDER BY i.imported_at ASC, i.id ASC, l.sort_order ASC, l.id ASC",
         )
         .map_err(|e| DbError::QueryFailed(e.to_string()))?;
-    let mut summary_lines = summary_stmt
+    let summary_lines = summary_stmt
         .query_map([report_date.as_str()], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -1422,20 +1425,11 @@ pub fn get_completed_daily_report_aggregate(
         })
         .map_err(|e| DbError::QueryFailed(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| DbError::QueryFailed(e.to_string()))?
-        .into_iter()
-        .peekable();
-    // 行は親と同じ並びなので、親ごとに先頭から取り分ける（行の無い親は空のまま）
-    let summary_imports = parents
-        .iter()
-        .map(|parent| OfficialDailySummaryImportRow {
-            daily_report_import_id: parent.0,
-            imported_at: parent.4.clone(),
-            lines: std::iter::from_fn(|| summary_lines.next_if(|line| line.0 == parent.0))
-                .map(|line| line.1)
-                .collect(),
-        })
-        .collect();
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+    let summary_imports = split_summary_lines_by_parent(
+        parents.iter().map(|parent| (parent.0, parent.4.clone())),
+        summary_lines,
+    );
 
     Ok(Some(OfficialDailyReportRow {
         source_import_count: parents.len() as i64,
@@ -1446,6 +1440,28 @@ pub fn get_completed_daily_report_aggregate(
         department_lines,
         summary_imports,
     }))
+}
+
+/// Z001 の行を、親（手順 1 の順の `(id, imported_at)`）ごとに 1 件の取込みへ分ける（行の無い親は空のまま）。
+/// 親 id で分け、親と行の並びの一致に依らない。親に無い id の行は読まない（24 §14.21 手順 6）。
+fn split_summary_lines_by_parent(
+    parents: impl IntoIterator<Item = (i64, String)>,
+    lines: Vec<(i64, OfficialDailySummaryLineRow)>,
+) -> Vec<OfficialDailySummaryImportRow> {
+    // 取込みの中の順は行の並び（sort_order ASC, id ASC）のまま push する
+    let mut lines_by_parent: std::collections::HashMap<i64, Vec<OfficialDailySummaryLineRow>> =
+        std::collections::HashMap::new();
+    for (parent_id, line) in lines {
+        lines_by_parent.entry(parent_id).or_default().push(line);
+    }
+    parents
+        .into_iter()
+        .map(|(id, imported_at)| OfficialDailySummaryImportRow {
+            daily_report_import_id: id,
+            imported_at,
+            lines: lines_by_parent.remove(&id).unwrap_or_default(),
+        })
+        .collect()
 }
 
 /// 指定日の completed 日報取込みの id と、配下の Z001・Z002・Z005 の全行を足さずに返す（24 §14.21a）
@@ -1596,6 +1612,31 @@ pub fn get_monthly_official_department_totals(
 
     rows.collect::<Result<Vec<_>, _>>()
         .map(Some)
+        .map_err(|e| DbError::QueryFailed(e.to_string()))
+}
+
+/// 指定期間の completed 日報取込みのある日を重複なしの昇順で取得する
+///
+/// 24-io-csv-import-repo.md §14.22a
+pub fn get_monthly_official_report_dates(
+    conn: &DbConnection,
+    date_from: &str,
+    date_to: &str,
+) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT report_date
+             FROM daily_report_imports
+             WHERE status = 'completed' AND report_date BETWEEN ?1 AND ?2
+             ORDER BY report_date ASC",
+        )
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+    let rows = stmt
+        .query_map([date_from, date_to], |row| row.get(0))
+        .map_err(|e| DbError::QueryFailed(e.to_string()))?;
+
+    rows.collect::<Result<Vec<String>, _>>()
         .map_err(|e| DbError::QueryFailed(e.to_string()))
 }
 
@@ -3273,6 +3314,46 @@ mod tests {
     }
 
     #[test]
+    fn test_get_monthly_official_report_dates_req502_distinct_completed_in_range() {
+        // REQ-502 / FUNC-14.22a / UI-09b-D10: completed の日を重複なし・範囲内で返す
+        let (_dir, conn) = setup_test_db();
+        seed_daily_report_import(&conn, "2026-03-01", "dates-01", "completed");
+        seed_daily_report_import(&conn, "2026-03-23", "dates-23", "completed");
+        seed_daily_report_import(&conn, "2026-03-24", "dates-24a", "completed");
+        seed_daily_report_import(&conn, "2026-03-24", "dates-24b", "completed");
+        seed_daily_report_import(&conn, "2026-03-31", "dates-31", "completed");
+        seed_daily_report_import(&conn, "2026-03-25", "dates-25", "rolled_back");
+        seed_daily_report_import(&conn, "2026-02-28", "dates-0228", "completed");
+        seed_daily_report_import(&conn, "2026-04-01", "dates-0401", "completed");
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert_eq!(
+            dates,
+            ["2026-03-01", "2026-03-23", "2026-03-24", "2026-03-31"]
+        );
+    }
+
+    #[test]
+    fn test_get_monthly_official_report_dates_req502_empty_month() {
+        // REQ-502 / FUNC-14.22a: 取込みの無い月は空の Vec（error にしない）
+        let (_dir, conn) = setup_test_db();
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert!(dates.is_empty());
+    }
+
+    #[test]
+    fn test_get_monthly_official_report_dates_req502_same_day_rollback_and_completed() {
+        // REQ-502 / FUNC-14.22a: 同じ日に rolled_back と completed があればその日を返す
+        let (_dir, conn) = setup_test_db();
+        seed_daily_report_import(&conn, "2026-03-10", "same-day-rolled", "rolled_back");
+        seed_daily_report_import(&conn, "2026-03-10", "same-day-completed", "completed");
+
+        let dates = get_monthly_official_report_dates(&conn, "2026-03-01", "2026-03-31").unwrap();
+        assert_eq!(dates, ["2026-03-10"]);
+    }
+
+    #[test]
     fn test_get_monthly_official_department_totals_null_department_req502() {
         // REQ-502: 月次売上公式部門集計
         // FUNC-14.22: department_id NULL の部門名行も落とさず集計する
@@ -3692,6 +3773,46 @@ mod tests {
             .map(|import| import.daily_report_import_id)
             .collect();
         assert_eq!(ids_b, day_b);
+    }
+
+    #[test]
+    fn test_completed_daily_report_aggregate_req501_summary_imports_split_by_parent_id() {
+        // REQ-501 / 24 §14.21 手順 6: 行を親 id で分け、親と行の並びの一致に依らない。親に無い id の行は読まない
+        let line = |label: &str| OfficialDailySummaryLineRow {
+            label: label.to_string(),
+            quantity_hundredths: None,
+            count: Some(1),
+            amount: Some(1),
+        };
+        let parents = [(10, "t1"), (20, "t2"), (30, "t3")]
+            .map(|(id, imported_at)| (id, imported_at.to_string()));
+        let lines = vec![
+            (20, line("b1")),
+            (10, line("a1")),
+            (99, line("x")),
+            (20, line("b2")),
+            (10, line("a2")),
+        ];
+
+        let imports = split_summary_lines_by_parent(parents, lines);
+        let actual: Vec<(i64, &str, Vec<&str>)> = imports
+            .iter()
+            .map(|import| {
+                (
+                    import.daily_report_import_id,
+                    import.imported_at.as_str(),
+                    summary_labels(import),
+                )
+            })
+            .collect();
+        assert_eq!(
+            actual,
+            vec![
+                (10, "t1", vec!["a1", "a2"]),
+                (20, "t2", vec!["b1", "b2"]),
+                (30, "t3", vec![]),
+            ]
+        );
     }
 
     fn settlement_no_of(conn: &DbConnection, id: i64) -> Option<i64> {

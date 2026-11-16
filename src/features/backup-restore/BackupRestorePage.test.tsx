@@ -44,6 +44,12 @@ vi.mock("@/lib/bindings", () => ({
     getEffectiveBackupDir: vi.fn(),
     restoreBackup: vi.fn(),
     inspectBackup: vi.fn(),
+    checkOffsiteBackup: vi.fn(),
+    getOffsiteBackupStatus: vi.fn(),
+    prepareOffsiteMedium: vi.fn(),
+    resetOffsiteState: vi.fn(),
+    stopOffsiteBackup: vi.fn(),
+    checkBackupDirChoice: vi.fn(),
   },
 }));
 
@@ -55,6 +61,9 @@ const mockListBackups = vi.mocked(commands.listBackups);
 const mockGetEffectiveBackupDir = vi.mocked(commands.getEffectiveBackupDir);
 const mockRestoreBackup = vi.mocked(commands.restoreBackup);
 const mockInspectBackup = vi.mocked(commands.inspectBackup);
+const mockCheckOffsite = vi.mocked(commands.checkOffsiteBackup);
+const mockGetOffsiteStatus = vi.mocked(commands.getOffsiteBackupStatus);
+const mockCheckBackupDirChoice = vi.mocked(commands.checkBackupDirChoice);
 const mockOpen = vi.mocked(open);
 const mockToastSuccess = vi.mocked(toast.success);
 
@@ -154,6 +163,20 @@ function mockDefaultCommands() {
   mockRestoreBackup.mockResolvedValue(ok(null));
   mockInspectBackup.mockResolvedValue(ok(makeInspection()));
   mockOpen.mockResolvedValue(null);
+  mockCheckOffsite.mockResolvedValue(ok({ kind: "not_prepared" as const }));
+  mockGetOffsiteStatus.mockResolvedValue(
+    ok({
+      prepared: false,
+      last_success_at: null,
+      last_success_label: null,
+      days_since_last_success: null,
+      stale: false,
+      attached: [],
+      last_failure_kind: null,
+      local_backup_old: false,
+    }),
+  );
+  mockCheckBackupDirChoice.mockResolvedValue(ok(null));
 }
 
 async function openRestoreDetail(user: ReturnType<typeof userEvent.setup>) {
@@ -692,4 +715,32 @@ it("⑮ SC4: 確定済みの操作説明を全文表示する", () => {
       "アプリのデータ全体をまとめて保存し、必要なときに元に戻すためのページです。自動バックアップの時刻を設定したり、今すぐ手動でバックアップを作成したり、保存先を選んだりできます。過去のバックアップから復元すると現在の記録は元に戻せませんが、復元の前には自動で今の状態のバックアップが作られます。",
     ),
   ).toBeInTheDocument();
+});
+
+describe("控えを選んで確かめる の file 名の表示 (REQ-901 / UI-11b-D15・§68.9)", () => {
+  it("REQ-901 / §68.9: 作成日時が取れない file は日時を作り出さず file 名を出す", async () => {
+    const user = userEvent.setup();
+    mockDefaultCommands();
+    mockOpen.mockResolvedValueOnce("/media/usb/inventory.db");
+    mockInspectBackup.mockResolvedValue(
+      ok(makeInspection({ file_name: "inventory.db", created_at: null })),
+    );
+    renderWithClient(<BackupRestorePage />);
+
+    await user.click(await screen.findByRole("button", { name: "控えを選んで確かめる" }));
+    expect(await screen.findByText("inventory.db の控え")).toBeInTheDocument();
+    expect(mockInspectBackup).toHaveBeenCalledWith({ backup_path: "/media/usb/inventory.db" });
+
+    await user.click(screen.getByRole("button", { name: "復元の確認へ進む" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "元に戻せません" });
+    expect(
+      within(dialog).getByText(
+        "inventory.db の控えに戻します。この控えより後に記録した内容は消えます。",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "inventory.db の控えに戻す" }),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Invalid Date|1月1日 0:00|1月1日 00:00/);
+  });
 });
