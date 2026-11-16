@@ -45,6 +45,29 @@ describe("return exchange request builder (UI-03 / REQ-202)", () => {
     });
   });
 
+  it("REQ-202 / UI-03-D23 (U1): レジでの戻し方が未選択なら field error にして request を作らない", () => {
+    const built = buildReturnExchangeRequest(
+      createValues({ registerProcessed: null }),
+      "ret-key-1",
+      { receiptImagePath: null },
+    );
+
+    expect(built.request).toBeNull();
+    expect(built.errors).toEqual({ registerProcessed: "レジでの戻し方を選んでください" });
+  });
+
+  it.each([true, false])(
+    "REQ-202 / UI-03-D23 (U3): 選んだ戻し方 %s をそのまま register_processed にする",
+    (registerProcessed) => {
+      const built = buildReturnExchangeRequest(createValues({ registerProcessed }), "ret-key-1", {
+        receiptImagePath: null,
+      });
+
+      expect(built.errors).toEqual({});
+      expect(built.request?.register_processed).toBe(registerProcessed);
+    },
+  );
+
   it("REQ-202 blocks return with out direction before submit", () => {
     const built = buildReturnExchangeRequest(
       createValues({

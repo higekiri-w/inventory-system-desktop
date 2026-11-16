@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/patterns/PageHeader";
 import { PageShell } from "@/components/patterns/PageShell";
 import { useExportFile } from "@/lib/hooks/useExportFile";
 import { TabsHeader } from "@/components/sales/TabsHeader";
+import { useTodayDate } from "@/features/daily-sales/lib/date-nav";
 import {
   Table,
   TableBody,
@@ -30,9 +31,11 @@ import { DepartmentTable } from "./components/DepartmentTable";
 import { ExportBar } from "./components/ExportBar";
 import { ModeTabs } from "./components/ModeTabs";
 import { MonthNavigator } from "./components/MonthNavigator";
+import { OfficialReportDays } from "./components/OfficialReportDays";
 import { ProductRankingTable } from "./components/ProductRankingTable";
 import { SummaryCardsBar } from "./components/SummaryCardsBar";
 import { useMonthlySalesReport } from "./hooks/useMonthlySalesReport";
+import { computeReportDays } from "./lib/compute-report-days";
 import { formatYearMonth } from "./lib/format-month-label";
 import type { MonthlySalesSearch, SortColumn, SortDirection } from "./types";
 
@@ -45,6 +48,7 @@ export interface MonthlySalesPageProps {
 
 export function MonthlySalesPage({ search, onSearchChange }: MonthlySalesPageProps) {
   const currentMonth = useMemo(() => formatYearMonth(new Date()), []);
+  const today = useTodayDate();
 
   const month = search.month ?? currentMonth;
   const mode: SalesMode = search.mode ?? "by_product";
@@ -112,7 +116,12 @@ export function MonthlySalesPage({ search, onSearchChange }: MonthlySalesPagePro
 
           {query.data && derived && (
             <>
-              <OfficialDepartmentTotalsSection rows={query.data.official_department_totals} />
+              <OfficialDepartmentTotalsSection
+                rows={query.data.official_department_totals}
+                reportDates={query.data.official_report_dates}
+                month={month}
+                today={today}
+              />
 
               {query.data.items.length === 0 ? (
                 // 意図的差分③: bare div → EmptyState 標準 UI（catalog ⑥）。既存 2 文を title + description に正規移植（文言維持）
@@ -148,8 +157,14 @@ export function MonthlySalesPage({ search, onSearchChange }: MonthlySalesPagePro
 
 function OfficialDepartmentTotalsSection({
   rows,
+  reportDates,
+  month,
+  today,
 }: {
   rows: OfficialMonthlyDepartmentTotal[] | null;
+  reportDates: string[];
+  month: string;
+  today: string;
 }) {
   return (
     <section className="space-y-3" aria-labelledby="official-monthly-department-title">
@@ -158,9 +173,12 @@ function OfficialDepartmentTotalsSection({
           公式部門集計（レジ日報由来）
         </h2>
         <p className="text-sm text-muted-foreground">
-          日報取込み済み日の Z005 部門別売上合計です。
+          「取り込んだ日」に並ぶ日の Z005 部門別売上の合計です。
         </p>
       </div>
+
+      {/* 日の一覧は公式部門集計のある月だけ（null の月は下の note だけ。UI-09b-D11） */}
+      {rows !== null && <OfficialReportDays days={computeReportDays(month, reportDates, today)} />}
 
       {rows === null ? (
         <Alert variant="warning" role="status">

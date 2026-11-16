@@ -244,7 +244,7 @@ pub fn list_disposal_records(
 /// 入出庫履歴ハブ用に業務記録をヘッダ単位で取得する。
 ///
 /// 65-inventory-record-traceability.md §65.4 / TRACE-D1
-/// 入庫 / 返品・交換 / 手動販売 / 廃棄・破損 / CSV取込み / 棚卸しを横断して返す。
+/// 入庫 / 返品・交換 / 手動販売 / 廃棄・破損 / CSV取込み / 棚卸し / 振替（詰め替え・切り分け）を横断して返す。
 pub fn list_inventory_records(
     conn: &DbConnection,
     query: &InventoryRecordQuery,
@@ -368,6 +368,20 @@ pub fn list_inventory_records(
                 "DATE(COALESCE({header_alias}.completed_at, {header_alias}.started_at))",
             ),
             created_at_col: Some("started_at"),
+        },
+        // 振替（D-143、21 §10.5a）。件数と絞り込みは明細（減らす・増やすの両方）
+        RecordSpec {
+            record_type: "transfer_record",
+            header_table: "transfer_records",
+            header_alias: "tr",
+            item_table: "transfer_items",
+            item_alias_prefix: "tri",
+            item_fk_col: "transfer_record_id",
+            date_col: "transfer_date",
+            route_prefix: "/inventory/transfer/records",
+            status_expr: None,
+            date_expr: None,
+            created_at_col: None,
         },
     ];
 

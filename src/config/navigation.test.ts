@@ -42,6 +42,22 @@ describe("navigation config REQ-107 / UI-15", () => {
   });
 });
 
+describe("navigation config REQ-210 / UI-16", () => {
+  it("test_navigation_req210_ui16_active_at_inventory_transfer_after_disposal", () => {
+    // U1 / C-NAV（79 UI-16-D1・§79.7）: 入出庫の「廃棄・破損」の次に「詰め替え・切り分け」
+    const inventoryArea = navigation.find((area) => area.id === "inventory");
+    const ids = inventoryArea?.items.map((entry) => entry.id) ?? [];
+    expect(ids.indexOf("ui-16")).toBe(ids.indexOf("ui-05") + 1);
+    expect(inventoryArea?.items.find((entry) => entry.id === "ui-16")).toMatchObject({
+      label: "詰め替え・切り分け",
+      title: "詰め替え・切り分け",
+      description: "仕入れた品を別の商品にした数を移します",
+      status: "active",
+      to: "/inventory/transfer",
+    });
+  });
+});
+
 describe("navigation config sidebar pending links", () => {
   it("test_navigation_req101_ui01b_active_at_products_new", () => {
     // REQ-101: 商品登録画面への operator 到達導線

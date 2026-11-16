@@ -21,6 +21,7 @@ export interface ReturnExchangeRow {
 export type ReturnExchangeFormErrors = Partial<{
   returnDate: string;
   returnType: string;
+  registerProcessed: string;
   items: string;
   receipt: string;
   rows: Record<string, string>;
@@ -29,7 +30,8 @@ export type ReturnExchangeFormErrors = Partial<{
 export interface ReturnExchangeFormValues {
   returnDate: string;
   returnType: ReturnExchangeType;
-  registerProcessed: boolean;
+  // UI-03-D23: null は未選択（既定を置かない）。true = レジでバーコードを読んで戻した
+  registerProcessed: boolean | null;
   note: string;
   rows: ReturnExchangeRow[];
 }

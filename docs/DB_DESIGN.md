@@ -33,6 +33,8 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 | 9 | manual_sale_items | トランザクション | REQ-203 | 手動販売出庫明細（商品ごと） |
 | 10 | disposal_records | トランザクション | REQ-204 | 廃棄・破損記録ヘッダ |
 | 11 | disposal_items | トランザクション | REQ-204 | 廃棄・破損記録明細（商品ごと） |
+| 11a | transfer_records | トランザクション | REQ-210 | 振替（詰め替え・切り分け）の記録ヘッダ（D-143、migration v13） |
+| 11b | transfer_items | トランザクション | REQ-210 | 振替の記録明細（商品ごと。減らす / 増やす の向き） |
 | 12 | csv_imports | POS連携 | REQ-401 | CSV取込み履歴 |
 | 12a | csv_import_errors | POS連携 | REQ-401 | CSV取込みエラー・スキップ行 |
 | 12b | daily_report_imports | POS連携 | REQ-401 | 日報取込み履歴（Z001/Z002/Z005の束） |
@@ -59,7 +61,7 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 |---------|---------|---------|
 | マスタ | [db-design/master-tables.md](db-design/master-tables.md) | products, product_jan_aliases（proposed、D-122）, departments, suppliers |
 | PLU slot | [db-design/plu-tables.md](db-design/plu-tables.md) | plu_slots、PLU snapshot 用 app_settings key |
-| トランザクション | [db-design/transaction-tables.md](db-design/transaction-tables.md) | receiving_records/items, return_records/items, manual_sales/items, disposal_records/items |
+| トランザクション | [db-design/transaction-tables.md](db-design/transaction-tables.md) | receiving_records/items, return_records/items, manual_sales/items, disposal_records/items, transfer_records/items |
 | POS連携 | [db-design/pos-tables.md](db-design/pos-tables.md) | csv_imports, csv_import_errors, daily_report_imports, daily_report_summary_lines, daily_report_payment_lines, daily_report_department_lines, B-1/B-2パース仕様, sale_records |
 | 在庫追跡・棚卸し・システム | [db-design/tracking-system-tables.md](db-design/tracking-system-tables.md) | inventory_movements, price_history, stocktakes/items, stock_counts, operation_logs, app_settings |
 
@@ -107,8 +109,9 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 - products.tax_rate: CHECK(tax_rate IN ('10','8','0'))
 - products.stock_unit: CHECK(stock_unit IN ('pcs','sheet','hon','bag','box','kumi','set','ball','cho','m'))（D-113・D-128。vB〈v10〉で巻・cm を外した。[master-tables](db-design/master-tables.md) の「単位と原価の精度の契約」）
 - sale_records.source: CHECK(source IN ('auto','manual'))
-- inventory_movements.movement_type: CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake'))
-- inventory_movements.reference_type: CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake') OR reference_type IS NULL)
+- inventory_movements.movement_type: CHECK(movement_type IN ('sale_auto','sale_manual','receiving','return','disposal','stocktake','transfer'))（v13 で `'transfer'` を足した。D-143）
+- inventory_movements.reference_type: CHECK(reference_type IN ('csv_import','manual_sale','receiving_record','return_record','disposal_record','stocktake','transfer_record') OR reference_type IS NULL)（v13 で `'transfer_record'` を足した。D-143）
+- transfer_items.direction: CHECK(direction IN ('out','in'))（v13、D-143）
 - return_records.return_type: CHECK(return_type IN ('return','exchange'))
 - return_items.direction: CHECK(direction IN ('in','out'))
 - disposal_items.disposal_type: CHECK(disposal_type IN ('disposal','damage','other'))
@@ -136,6 +139,8 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - inventory_movements(reference_type, reference_id) — 元操作からの逆引き用
 - inventory_movements(product_code, business_date, phase, settlement_no) — `idx_inventory_movements_ledger`。記録から写しを求め直す並びの鍵（migration v9、D-118 の (a)）
 - stock_counts(product_code, id) — `idx_stock_counts_product_id`。商品ごとの効く計数を選ぶ（migration v9、D-118 の (a)）
+- transfer_records(idempotency_key) — UNIQUE。振替の再送の識別（migration v13、D-143）
+- transfer_items(transfer_record_id, product_code) — UNIQUE。記録ごとの明細と、同じ商品を 1 つの記録に 2 回入れない防御（migration v13、D-143）
 - stocktake_items(stocktake_id, product_code) — 棚卸し中の商品検索用
 - products(department_id) — 部門別商品一覧用
 - products(is_discontinued) — 廃番フィルタリング用
@@ -162,6 +167,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - return_create
 - manual_sale_create
 - disposal_create
+- transfer_create（D-143）
 - stocktake_start, stocktake_complete
 - plu_export
 - backup_create, backup_restore

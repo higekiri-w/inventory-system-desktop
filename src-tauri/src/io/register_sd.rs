@@ -99,6 +99,7 @@ pub enum RegisterSdError {
 /// `SEM_FAILCRITICALERRORS` にする（空の読取り機の口で Windows の error の dialog を出さない）。
 /// drop で元の値へ戻す（途中で返る経路を含む）。Windows 以外は何もしない。
 /// IO-11（`io::register_sd_move`）も使う（29 §29.9.1、IO-11-D3）
+/// MNT の PC の外の控え（71 §71.11.3）も同じ guard を使う。
 pub(crate) struct ErrorModeGuard {
     #[cfg(windows)]
     previous: Option<u32>,
@@ -142,6 +143,19 @@ impl Drop for ErrorModeGuard {
 /// 29 §29.7.4 手順 1・2（IO-09-D1）
 pub fn find_register_sd_roots() -> Result<Vec<RegisterSdRoot>, RegisterSdError> {
     let _guard = ErrorModeGuard::new();
+    let mut roots = Vec::new();
+    for drive in removable_drive_roots() {
+        if let Some(path) = folder_under(&drive) {
+            let volume_label = drive.to_string_lossy().trim_end_matches('\\').to_string();
+            roots.push(RegisterSdRoot { path, volume_label });
+        }
+    }
+    Ok(roots)
+}
+
+/// 取外し可能な drive の root（`E:\` の形）を並べる（29 §29.7.4 手順 1、71 §71.11.3 と共有）。
+/// 呼ぶ側が `ErrorModeGuard` を持つ。Windows 以外は空
+pub(crate) fn removable_drive_roots() -> Vec<PathBuf> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
@@ -160,18 +174,13 @@ pub fn find_register_sd_roots() -> Result<Vec<RegisterSdRoot>, RegisterSdError> 
             if unsafe { GetDriveTypeW(wide.as_ptr()) } != DRIVE_REMOVABLE {
                 continue;
             }
-            if let Some(path) = folder_under(Path::new(&drive)) {
-                roots.push(RegisterSdRoot {
-                    path,
-                    volume_label: format!("{letter}:"),
-                });
-            }
+            roots.push(PathBuf::from(drive));
         }
-        Ok(roots)
+        roots
     }
     #[cfg(not(windows))]
     {
-        Ok(Vec::new())
+        Vec::new()
     }
 }
 

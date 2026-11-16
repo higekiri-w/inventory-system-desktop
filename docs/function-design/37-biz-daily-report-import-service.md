@@ -168,10 +168,24 @@ struct DailyReportImport {
     imported_at: String,
     rolled_back_at: Option<String>,
     source_files_json: String,
+    settlement_no: Option<i64>, // 束の精算回数（IO-07-D5）。NULL は None（24 §14.2、TD-590）
+}
+
+// §37.6 の一覧の行（wire。UI-07-D19）
+struct DailyReportImportRow {
+    id: i64,
+    report_date: String,
+    source_filenames: Vec<String>, // source_files_json の各要素の filename（§37.6）
+    settlement_no: Option<i64>,    // 束の精算回数（IO-07-D5）。NULL（D-111 より前の取込み・精算回数の読めない手で選んだ束）は None
+    gross_amount: Option<i64>,
+    net_amount: Option<i64>,
+    status: String, // "completed" | "rolled_back"（DB の CHECK）
+    imported_at: String,
+    rolled_back_at: Option<String>,
 }
 ```
 
-`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。
+`DailyReportSourceKind` と `DailyReportSourceFile` は IO-07（§29.2）を所有元とする。CMD-12 はこの節のDTOを `specta::Type` 付きwire contractとして実装する。`DailyReportImport` は IO の行の型（[24](24-io-csv-import-repo.md) §14.2）で、wire に出さない（一覧の wire は `DailyReportImportRow`。`source_files_json` は §37.4 手順 6 の内部の保存の形なので UI に渡さない）。
 
 個数は commit まで 100 倍の整数（`quantity_hundredths`、IO-07-D2）で運び、wire DTO（`DailyReportDepartmentLinePreview.quantity`）だけを単位の数にする。commit は `CachedDailyReportPreview` の 100 倍の整数をそのまま保存し、wire の `f64` から戻さない（往復の丸めを作らない）。`DailyReportDepartmentLinePreview.quantity` の TypeScript の型は `number | null` のまま変わらない（specta は `i64` も `f64` も `number` にする）。
 
@@ -307,8 +321,10 @@ fn rollback_daily_report_import(
 fn list_daily_report_imports(
     conn: &DbConnection,
     query: ListDailyReportImportsQuery,
-) -> Result<PaginatedResult<DailyReportImport>, BizError>
+) -> Result<PaginatedResult<DailyReportImportRow>, BizError>
 ```
+
+**出力**（UI-07-D19）: IO-01 の `list_daily_report_imports`（[24](24-io-csv-import-repo.md) §14.20）の行を `DailyReportImportRow`（§37.2）に写す。`source_filenames` は `source_files_json` の各要素の `filename` を並びのまま取り出す（§37.3 の同じ日の取込みの要約〈`SameDateDailyReportImportSummary.source_filenames`〉と同じ関数を使い、規則を 2 つ持たない。`sd_relative_path`・`copy_path` 等のほかの key は読まない）。`source_files_json` を読めない行があれば、その文の `BizError::ImportError`（「既存日報のファイル情報を読み取れません」）で一覧全体を失敗にする（空の名前にして黙って通さない。行は本アプリだけが書くので、読めないのは壊れた DB のとき）。`settlement_no` は IO の行の値をそのまま写す（owner の決定 2026-11-03、repo 外の回答台帳 TD-590: 同じ日の取込みのうち BIZ-08-D4 の「前の取込み」〈同じ対象日・同じ精算回数〉を一覧の行から見分ける）。`bundle_hash`・`source_files_json`・`source_adapter`・`note` は返さない（UI が使わない内部の値。「日報の取込みの記録」〈[55](55-ui-csv-import.md) §55.12〉が使う値だけにする）。
 
 **検索条件**:
 - page / per_page
@@ -394,6 +410,7 @@ struct DailyReportSdCandidate {
     path_date: String,                     // folder と名前の日付（YYYY-MM-DD）
     report_date: Option<String>,           // 中身の日付（読めた束だけ）
     source_filenames: Vec<String>,         // 3 本の file 名（Z001→Z002→Z005。そろわない束はある分）
+    settlement_no: Option<i64>,            // 束の精算回数（手順 5 の IO-07 `parse_daily_report_bundle` の値。手順 7・8 が使う値と同じ）。手順 5 まで読めなかった束（`Incomplete`・形・大きさ・parse で外れた `Unreadable`）と精算回数の無い束は None。`SameSettlementImported` は手順 7 で Some のときだけなので必ず Some。wire に載せ、内部の並べ替えの値と同じ出所から作る（55 UI-07-D19。owner の決定 2026-11-03、repo 外の回答台帳 TD-592）
     status: DailyReportSdCandidateStatus,
 }
 
@@ -770,6 +787,9 @@ enum RegisterSdTidyFailure { // 画面の固定の文を選ぶだけ（55 UI-07-
 | 2026-11-02 | xz-bkup-move（起票、D-149） | §37.12（BIZ-08-D11 取り込んだ精算の Z を読取りの中で `XZ_BKUP` へ移す）と、§37.9 に足すもの（手順 2a・`app_data_dir`・`tidy_failure`）を proposed で足した。§37.9 の本文は runtime が直す。 |
 | 2026-11-02 | xz-bkup-move（Plan Review round 1 の是正、D-149） | §37.12 手順 2・3 と BIZ-08-D11 を、同じ精算の名前の組の Z001・Z002・Z005 の全部が hash で当たるときだけ組ごと移す形に直した（組の中は Z004 を先に、IO-11 の組の関数へ渡す）。§37.9 に足すものの `app_data_dir` を `Option` にし、得られなければ片付けを飛ばして `Some(Other)` にした。§37.10 の (b) の答えの行を合わせた。 |
 | 2026-11-02 | xz-bkup-move（実装、D-149） | §37.12 の「§37.9 に足すもの」を §37.9 の本文（シグネチャの `app_data_dir`、`DailyReportSdScan.tidy_failure`、手順 2a）へ移して消し、§37.10 の (b) の答えの行と §37.12 の proposed の注記を外した。 |
+| 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §37.2 に一覧の行の wire `DailyReportImportRow` を、§37.6 に出力（`source_filenames` の出所、`settlement_no`〈TD-590〉、読めない `source_files_json` は一覧全体の `ImportError`、内部の値を返さない）を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
+| 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §37.9 の `DailyReportSdCandidate` に `settlement_no`（手順 5 の値、TD-592）を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
+| 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §37.2 の `DailyReportImportRow`・`DailyReportImport.settlement_no`、§37.6 の出力、§37.9 の候補の `settlement_no` の proposed・未実装と「今の実装は…」の注記を外し、実装の記述にした。 |
 | 2026-11-11 | xz-bkup-move（Final Review の是正、PR #228） | §37.8 の非目的・BIZ-08-D3 の理由・BIZ-08-D5 の決定と理由・BIZ-08-D10 の決定の、SD を動かさない前提の文を、片付け（§37.12、D-149）のある今の振舞いに直した。§37.12 手順 4 に、止めたときの WARN に移せなかった file の相対 path を残すことを足した。 |
 | 2026-11-11 | xz-bkup-move（Final Review の closure の是正、PR #228） | §37.12 手順 4 の WARN の `not_moved` を、止めた組の残りだけでなく、止めた時点でまだ移っていない片付けの対象の全部（以後の組の全 file を含む。写しの失敗でも同じ）の元の相対 path にした。 |
 | 2026-11-11 | xz-bkup-move（Gated Amendment 1 の実装、PR #228） | §37.9 手順 3 の読まなかった file（`Unknown`）の診断ログを INFO・0 本なら出さない・絶対の root を出さない、と書き、出所を owner の決定（TD-649、名前の規則を ASCII に限る）と Coordinator の答え（path をログに残し専用の文を足さない）に書き分けた。§37.11 手順 2 の伸びうるかの判定の規則に、ASCII だけ（29 §29.7.5 手順 4 と同じ `(?i-u)`）を足した。手順 4 の `Unknown` の扱いを、手順 3 の診断ログと食い違って読めない言い方にした。 |

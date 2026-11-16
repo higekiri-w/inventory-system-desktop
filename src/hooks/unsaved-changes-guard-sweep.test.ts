@@ -15,6 +15,10 @@ const APPLIED_PAGES = [
     path: "src/features/return-exchange/ReturnExchangePage.tsx",
   },
   {
+    component: "StockTransferPage",
+    path: "src/features/stock-transfer/StockTransferPage.tsx",
+  },
+  {
     component: "ThresholdSettingsPage",
     path: "src/features/threshold-settings/ThresholdSettingsPage.tsx",
   },
@@ -26,6 +30,10 @@ const EXCLUDED_PAGES = [
   {
     component: "DailyReportImportPage",
     path: "src/features/daily-report-import/DailyReportImportPage.tsx",
+  },
+  {
+    component: "DailyReportImportRecordsPage",
+    path: "src/features/daily-report-import/DailyReportImportRecordsPage.tsx",
   },
   { component: "DailySalesPage", path: "src/features/daily-sales/DailySalesPage.tsx" },
   { component: "HomePage", path: "src/features/home/HomePage.tsx" },
@@ -60,6 +68,10 @@ const EXCLUDED_PAGES = [
   {
     component: "StocktakeRecordDetailPage",
     path: "src/features/inventory-records/StocktakeRecordDetailPage.tsx",
+  },
+  {
+    component: "TransferRecordDetailPage",
+    path: "src/features/inventory-records/TransferRecordDetailPage.tsx",
   },
   { component: "MonthlySalesPage", path: "src/features/monthly-sales/MonthlySalesPage.tsx" },
   { component: "OperationLogsPage", path: "src/features/operation-logs/OperationLogsPage.tsx" },
@@ -100,11 +112,12 @@ describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
       "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
+      "src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts",
       "src/hooks/useUnsavedChangesWarning.ts",
     ]);
   });
 
-  it("T17: 適用6画面の配線と全Page分類を明示manifestへ完全一致させる", () => {
+  it("T17: 適用7画面の配線と全Page分類を明示manifestへ完全一致させる", () => {
     for (const { component, path } of APPLIED_PAGES) {
       const source = readRepoFile(path);
       expect(source, `${component} must use the shared hook`).toMatch(

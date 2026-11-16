@@ -16,6 +16,7 @@ export const OPERATION_TYPE_LABELS: Partial<Record<string, OperationTypeLabel>> 
   return_create: { category: "入出庫", label: "返品・交換記録" },
   manual_sale_create: { category: "入出庫", label: "手動販売出庫記録" },
   disposal_create: { category: "入出庫", label: "廃棄・破損記録" },
+  transfer_create: { category: "入出庫", label: "詰め替え・切り分け記録" },
   csv_import: { category: "売上データ取込み", label: "売上データ取込み" },
   csv_import_failed: { category: "売上データ取込み", label: "売上データ取込み失敗" },
   csv_import_parse_failed: { category: "売上データ取込み", label: "売上データ解析失敗" },

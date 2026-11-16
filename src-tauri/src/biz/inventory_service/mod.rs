@@ -1,7 +1,7 @@
 //! BIZ-02: 在庫変動ロジック
 //!
 //! ARCHITECTURE.md タスク仕様 BIZ-02 + 31-biz-inventory-service.md §12 に基づく実装。
-//! apply_stock_change（共通在庫変動）+ 4業務関数（入庫/返品/手動販売/廃棄）。
+//! apply_stock_change（共通在庫変動）+ 5業務関数（入庫/返品/手動販売/廃棄/振替）。
 
 //! CMD-02〜05 が全シンボルを使用。
 
@@ -11,6 +11,7 @@ mod list;
 mod manual_sale;
 mod receiving;
 mod returns;
+mod transfer;
 
 #[cfg(test)]
 mod invariants;
@@ -40,6 +41,13 @@ pub use manual_sale::{create_manual_sale, ManualSaleCreateRequest, ManualSaleCre
 
 // 廃棄
 pub use disposal::{create_disposal, DisposalCreateRequest, DisposalCreateResult};
+
+// 振替（詰め替え・切り分け。D-143）
+pub use transfer::{
+    create_transfer, get_transfer_record, TransferCreateRequest, TransferCreateResult,
+};
+// 詳細の型は IO の型（21 §10.5a）。CMD が db を直に参照しないよう BIZ から出す
+pub use crate::db::transfer_repo::TransferRecordDetail;
 
 // 一覧取得
 #[allow(unused_imports)]
