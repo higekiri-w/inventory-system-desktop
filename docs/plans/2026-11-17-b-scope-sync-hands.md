@@ -63,7 +63,7 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 新しい (ii) の文（今の (ii) の箇条を丸ごと置き換える。前の 2 文は今と同じ）:
 
-> - (ii) lane の手の普通の正しさ。手で解いた path は両側（lane 側と main 側）の変更を落とさない。test を消す・skip する・弱めることをしない。lane の手のうち、L3 の版の lane の変更（Scope の予定 path に無いものを含む）と main 側の変更を重ねる直しと、main 側の test・docs の件数・名・参照・表示の値を L3 の版の lane に合わせる直し（その test が確かめない hook・module を止める mock を含む）は Scope と照らさない。それ以外（新しい assertion、test が期待する振舞いや文の契約を変える直し〈mock の返り値によるものを含む〉、削除）は承認済みの Scope（packet の `## Scope` 節。packet の無い R0〜R2 の lane は PR body の 5 行の「範囲」の行）と照らし、外なら Gated Amendment が通るまで不合格。どの commit で入れた手かは問わず、最後の結果で見る（TD-750・TD-751、D-155）。
+> - (ii) lane の手の普通の正しさ。手で解いた path は両側（lane 側と main 側）の変更を落とさない。test を消す・skip する・弱めることをしない。lane の手のうち、L3 の版の lane の変更（Scope の予定 path に無いものを含む）と main 側の変更を重ねる直しと、main 側の test・docs の件数・名・参照を L3 の版の lane に合わせる直し（その test が確かめない hook・module を止める mock を含む）は Scope と照らさない。それ以外（新しい assertion、test が期待する振舞いや文の契約を変える直し〈mock の返り値によるものを含む〉、削除）は承認済みの Scope（packet の `## Scope` 節。packet の無い R0〜R2 の lane は PR body の 5 行の「範囲」の行）と照らし、外なら Gated Amendment が通るまで不合格。どの commit で入れた手かは問わず、最後の結果で見る（TD-750・TD-751、D-155）。
 
 文が言わないこと（closure の読みの補い）:
 
