@@ -142,6 +142,16 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     });
   });
 
+  it("REQ-201 / UI-02-D7 / D-128: 明細の原価の列と欄の名に税抜を示す", async () => {
+    const user = userEvent.setup();
+    renderWithClient(<ReceivingPage />);
+
+    await addSingleProduct(user);
+
+    expect(screen.getByRole("columnheader", { name: "原価（税抜）" })).toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "P-001 の原価（税抜）" })).toBeInTheDocument();
+  });
+
   it("requires selection when product search returns multiple candidates", async () => {
     const user = userEvent.setup();
     mockSearchProducts.mockResolvedValue({
@@ -775,7 +785,7 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     });
     renderWithClient(<ReceivingPage />);
     await user.type(await screen.findByLabelText("入庫商品検索"), "C16-A{enter}");
-    const cost = await screen.findByLabelText("C16-A の原価");
+    const cost = await screen.findByLabelText("C16-A の原価（税抜）");
     expect(cost).toHaveValue(83.33);
     expect(cost).toHaveAttribute("inputmode", "decimal");
     expect(cost).toHaveAttribute("step", "0.01");
