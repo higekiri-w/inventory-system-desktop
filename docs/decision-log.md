@@ -1385,7 +1385,7 @@ Use concise ADR-style entries.
 - Decision: (1) `.claude/settings.json` から `ponytail@ponytail` の key を消し、user global の有効をそのまま効かせる（project で `true` にしない。marketplace は user global の local directory にしか無い）。`scripts/tests/claude-hooks.test.sh` は project が key を持たないことを確かめる。(2) `AGENTS.md` の「最小の実装（D-147）」に 2 句: docs・規則の文も同じで、言葉を足す前に置き換え・削除で足りないかを見る。実装以外（review・相談・探索）では、注入される最小の指示は修正案を小さく保つことに当て、調べる範囲・判定・必須の確かめは縮めない。1 句目は Writer の定義、2 句目は reviewer・reviewer-fable・consult-fable の定義に写す。(3) `docs/code_review.md` Final Review Protocol に 1 文: 言葉を足す修正案は、足さないと実際に起きる具体の失敗（どの agent・run・操作で何が起きるか）を示せるときだけ受ける。全部は受けないことと P3 だけで round を回さないことは既にある所（同じ節の「The implementer verifies every finding」、`docs/DEV_WORKFLOW.md` の Review Rules・Subagent Budget）が持つ。
 - Why: 戻さずに済む部分は正本に書き、注入の強さは plugin で保つ（TD-754 の (c)+(a)）。D-147 が切った理由（reviewer・相談役への「lazy」の注入）は、当て先を限る句を Codex も読む AGENTS.md と Claude の定義に置いて手当てする。
 - Alternatives: 切ったままにする（注入の強さが戻らない）; project で `true` にする（他の checkout で名を解けない）; `PONYTAIL_SUBAGENT_MATCHER` で Writer だけに入れる（Codex と main に効かず、設定が env に散る）; 裁定の規則を DEV_WORKFLOW に置く（`subagent-review-packet.md` が裁定の正本を code_review.md とする）。
-- Compatibility: review の本数・独立性、Final の観点、D-098 の安全の境界、Codex の発注の形は変えない。plugin は簡略化の comment を `shortcut:` と書かせるが、repo の慣習の `ponytail:`（AGENTS.md）が勝つ。
+- Compatibility: review の本数・独立性、Final の観点、D-098 の安全の境界、Codex の発注の形は変えない。
 - Guarantee range: 当て先を限る句は文で、注入の文との優先を機械で保証しない。project の key を消すと user global の有効が効くことは merge の後の session で観測する（packet の AC8）。
 - owner の決定（repo 外の回答台帳、要旨）: TD-753（長くすることは品質の改善と同じではない。D-147 は code にしか当たっていなかった）。TD-754（(c) 裁定の規則と「最小」を docs・規則の文に当てることを正本に書き、(a) ponytail をこの project で戻し、reviewer・相談役に当て先の 1 行を置く）。
 - Revisit: 戻した後の lane の review で、調べる範囲や必須の確かめが縮んだ指摘が出たとき。plugin の版が上がり注入の範囲が変わったとき。
