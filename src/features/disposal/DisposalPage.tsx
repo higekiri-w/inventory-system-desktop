@@ -461,7 +461,7 @@ export function DisposalPage() {
                   <TableHead>商品名</TableHead>
                   <TableHead>部門</TableHead>
                   <TableHead>現在庫</TableHead>
-                  <TableHead>原価</TableHead>
+                  <TableHead>原価（税抜）</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
               </TableHeader>

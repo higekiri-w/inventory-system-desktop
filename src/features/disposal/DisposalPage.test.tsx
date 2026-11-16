@@ -180,14 +180,37 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     });
   });
 
-  it("REQ-204 / UI-05-D8 / D-128: 明細の原価の列と欄の名に税抜を示す", async () => {
+  it("REQ-204 / UI-05-D8 / D-128: 候補の一覧と明細の原価の列、明細の欄の名に税抜を示す", async () => {
     const user = userEvent.setup();
+    mockSearchProducts.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          makeMockProductWithRelations({ product_code: "TX-A", name: "税抜確認 A" }),
+          makeMockProductWithRelations({ product_code: "TX-B", name: "税抜確認 B" }),
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
     renderWithClient(<DisposalPage />);
+    await user.type(await screen.findByLabelText("廃棄・破損商品検索"), "税抜{enter}");
+    const candidateTable = (await screen.findByText("TX-A")).closest("table");
+    if (candidateTable === null) throw new Error("expected table structure");
+    expect(
+      within(candidateTable).getByRole("columnheader", { name: "原価（税抜）" }),
+    ).toBeInTheDocument();
 
-    await addSingleProduct(user);
-
-    expect(screen.getByRole("columnheader", { name: "原価（税抜）" })).toBeInTheDocument();
-    expect(screen.getByRole("spinbutton", { name: "DP-001 の原価（税抜）" })).toBeInTheDocument();
+    const candidate = within(candidateTable).getByText("TX-A").closest("tr");
+    if (candidate === null) throw new Error("expected table structure");
+    await user.click(within(candidate).getByRole("button", { name: "廃棄・破損に追加" }));
+    const cost = await screen.findByRole("spinbutton", { name: "TX-A の原価（税抜）" });
+    const inputTable = cost.closest("table");
+    if (inputTable === null) throw new Error("expected table structure");
+    expect(
+      within(inputTable).getByRole("columnheader", { name: "原価（税抜）" }),
+    ).toBeInTheDocument();
   });
 
   it("REQ-204 requires explicit selection when multiple products match", async () => {
