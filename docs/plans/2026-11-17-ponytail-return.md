@@ -7,7 +7,7 @@ decision-log の番号: 本 lane は D-156 を予約する。`git grep -n -E "D-
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: ff4091764c4aa26ffea10d4cac2e61728bb2facf
 - Amendments: none
 
 ## Risk
