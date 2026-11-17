@@ -37,6 +37,28 @@ fn z001_with_lines(date: &str, lines: &[(&str, &str, &str, &str)]) -> DailyRepor
     source_file("Z001_260321.CSV", &text)
 }
 
+/// 9 行目（データの 1 行目）が 3 列の Z001。数でない parse の誤り（invalid_format）になる
+fn z001_with_three_column_row(date: &str) -> DailyReportInputFile {
+    source_file(
+        "Z001_260321.CSV",
+        &format!(
+            "{}\"101\",\"総売\",\"8\"\r\n\"201\",\"純売\",\"7\",\"11000\"\r\n",
+            daily_report_preamble(date)
+        ),
+    )
+}
+
+/// 現金の行の金額を替えた Z002
+fn z002_with_cash_amount(date: &str, amount: &str) -> DailyReportInputFile {
+    source_file(
+        "Z002_260321.CSV",
+        &format!(
+            "{}\"01\",\"現金\",\"7\",\"{amount}\"\r\n\"03\",\"クレジット\",\"1\",\"1000\"\r\n",
+            daily_report_preamble(date)
+        ),
+    )
+}
+
 fn z001(date: &str) -> DailyReportInputFile {
     z001_with_lines(
         date,
@@ -147,7 +169,7 @@ fn test_daily_report_req401_parse_preview_happy_path() {
 fn test_daily_report_req401_parse_error_logs_parse_failed() {
     // REQ-401 / BIZ-08-D1: IO parse detailはdiagnostic専用、operator境界は汎用に保つ
     let (_dir, conn) = setup_test_db();
-    let malformed_z001 = z001_with_lines("2026-03-21", &[("101", "総売", "not-a-number", "12000")]);
+    let malformed_z001 = z001_with_three_column_row("2026-03-21");
     let (result, diagnostic) = crate::test_tracing::capture(|| {
         parse_and_validate_daily_report(
             &conn,
@@ -168,11 +190,11 @@ fn test_daily_report_req401_parse_error_logs_parse_failed() {
     assert!(diagnostic.contains("filename=None"), "{diagnostic}");
     assert!(diagnostic.contains("line_no=Some(9)"), "{diagnostic}");
     assert!(
-        diagnostic.contains("error_type=invalid_number"),
+        diagnostic.contains("error_type=invalid_format"),
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("error_message=Z001の個数/件数列を変換できません"),
+        diagnostic.contains("error_message=日報CSVのデータ行が4列ではありません"),
         "{diagnostic}"
     );
     assert_eq!(count_rows(&conn, "daily_report_imports"), 0);
@@ -2454,7 +2476,7 @@ fn write_l3_daily_report_rollback_sd_tree() {
 }
 
 /// 37 BIZ-08-D2a から転記した期待の文（production の定数を import しない）
-const OVER_LIMIT_Z001_Z005_MESSAGE: &str = "Z001の金額列の値が大きすぎます。Z005の個数列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。";
+const OVER_LIMIT_Z001_Z005_MESSAGE: &str = "Z001の金額列の値が大きすぎます。Z005の個数列の値が大きすぎます。この日の日報は読めません。管理者に知らせてください。";
 
 fn z005_with_line(date: &str, quantity: &str, amount: &str) -> DailyReportInputFile {
     source_file(
@@ -2545,8 +2567,183 @@ fn test_daily_report_req401_settlement_mismatch_wins_over_over_limit() {
     match result {
         Err(BizError::ImportError(message)) => assert_eq!(
             message,
-            "Z001の金額列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。"
+            "Z001の金額列の値が大きすぎます。この日の日報は読めません。管理者に知らせてください。"
         ),
         other => panic!("expected over-limit import error, got {other:?}"),
     }
+}
+
+/// 37 BIZ-08-D2a・§37.9 手順 5 から転記した期待の文（production の定数を import しない）
+const INVALID_Z002_AMOUNT_MESSAGE: &str =
+    "Z002の金額列を変換できません。この日の日報は読めません。管理者に知らせてください。";
+
+/// Z002 の現金の金額が区切りの崩れた `1,23` の束（D-158 で invalid_number）
+fn malformed_amount_bundle(date: &str) -> Vec<DailyReportInputFile> {
+    vec![z001(date), z002_with_cash_amount(date, "1,23"), z005(date)]
+}
+
+fn parse_failed_summary(conn: &crate::db::DbConnection) -> String {
+    conn.query_row(
+        "SELECT summary FROM operation_logs WHERE operation_type = 'daily_report_parse_failed'",
+        [],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn test_daily_report_req401_invalid_number_names_column_without_raw_value() {
+    // REQ-401 / BIZ-08-D2a / D-158: 形の誤りは帳票と列を名指して管理者に知らせるよう伝え、値・行番号を出さない。
+    // 上限の越えが一緒なら上限の越えの列だけを名指す
+    let (_dir, conn) = setup_test_db();
+    match parse_and_validate_daily_report(&conn, malformed_amount_bundle("2026-03-21")) {
+        Err(BizError::ImportError(message)) => {
+            assert_eq!(message, INVALID_Z002_AMOUNT_MESSAGE);
+            for leaked in ["1,23", "9", "Z002_260321", "行"] {
+                assert!(!message.contains(leaked), "{leaked} in {message}");
+            }
+        }
+        other => panic!("expected invalid-number import error, got {other:?}"),
+    }
+    assert_eq!(parse_failed_summary(&conn), INVALID_Z002_AMOUNT_MESSAGE);
+
+    let (_dir, conn) = setup_test_db();
+    let result = parse_and_validate_daily_report(
+        &conn,
+        vec![
+            z001_with_lines(
+                "2026-03-21",
+                &[
+                    ("101", "総売", "8", "10000000000"),
+                    ("201", "純売", "7", "11000"),
+                ],
+            ),
+            z002_with_cash_amount("2026-03-21", "1,23"),
+            z005("2026-03-21"),
+        ],
+    );
+    match result {
+        Err(BizError::ImportError(message)) => assert_eq!(
+            message,
+            "Z001の金額列の値が大きすぎます。この日の日報は読めません。管理者に知らせてください。"
+        ),
+        other => panic!("expected over-limit import error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_daily_report_req401_rolled_back_lenient_import_rereads_as_invalid_number() {
+    // REQ-401 / D-158 / pos-tables §12b: 旧い緩い規則で取り込んだ束（合成の completed の行で再現）は
+    // 取り消せて、取消の後の同じ束の読み直しは数の規則で止まる（互換の限界。緩い受理は戻さない）
+    let (_dir, mut conn) = setup_test_db();
+    let files = malformed_amount_bundle("2026-03-21");
+    let parsed = crate::io::daily_report_parser::parse_daily_report_bundle(
+        files
+            .iter()
+            .map(
+                |file| crate::io::daily_report_parser::DailyReportSourceFile {
+                    filename: file.filename.clone(),
+                    bytes: file.bytes.clone(),
+                },
+            )
+            .collect(),
+    );
+    let id = sales_repo::insert_daily_report_import(
+        &conn,
+        &sales_repo::NewDailyReportImport {
+            report_date: "2026-03-21".to_string(),
+            source_adapter: "casio_sr_s4000".to_string(),
+            bundle_hash: parse::build_bundle_hash(&parsed.source_files),
+            source_files_json: "[]".to_string(),
+            gross_amount: Some(12000),
+            net_amount: Some(11000),
+            status: "completed".to_string(),
+            note: None,
+            settlement_no: Some(1),
+        },
+    )
+    .unwrap();
+    let rows = list_all(&conn);
+    assert_eq!(rows.len(), 1);
+    assert_eq!((rows[0].id, rows[0].status.as_str()), (id, "completed"));
+
+    rollback_daily_report_import(&mut conn, id).unwrap();
+    assert_eq!(list_all(&conn)[0].status, "rolled_back");
+
+    match parse_and_validate_daily_report(&conn, files) {
+        Err(BizError::ImportError(message)) => assert_eq!(message, INVALID_Z002_AMOUNT_MESSAGE),
+        other => panic!("expected invalid-number import error after rollback, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_req401_scan_number_error_unreadable_names_column() {
+    // REQ-401 / §37.9 手順 5 / D-127: 数の列の誤りで読めない束だけ、帳票・列を名指して管理者に知らせる文を持つ。
+    // 形の外れ・数でない誤り・別の精算の混在の束は理由を持たない
+    let (dir, conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    let malformed = with_settlements(malformed_amount_bundle("2026-03-21"), "0005");
+    let mut bom = bundle("2026-03-22", "0006", "12000");
+    bom[2].bytes = [b"\xEF\xBB\xBF".as_slice(), &bom[2].bytes].concat();
+    let format_error = with_settlements(
+        vec![
+            z001_with_three_column_row("2026-03-23"),
+            z002("2026-03-23"),
+            z005("2026-03-23"),
+        ],
+        "0007",
+    );
+    let mismatch = vec![
+        with_settlement(z001("2026-03-24"), "0008"),
+        with_settlement(z002_with_cash_amount("2026-03-24", "1,23"), "0009"),
+        with_settlement(z005("2026-03-24"), "0008"),
+    ];
+    put_bundle(&root, "XZ\\2026\\03", "21 .CSV", &malformed);
+    put_bundle(&root, "XZ\\2026\\03", "22 .CSV", &bom);
+    put_bundle(&root, "XZ\\2026\\03", "23 .CSV", &format_error);
+    put_bundle(&root, "XZ\\2026\\03", "24 .CSV", &mismatch);
+
+    let result = scan_selected(&conn, &root, day("2026-03-25")).unwrap();
+    let rows: Vec<(&str, DailyReportSdCandidateStatus, Option<&str>)> = result
+        .scan
+        .candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.source_filenames[0].as_str(),
+                candidate.status,
+                candidate.unreadable_reason.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "Z001_24 .CSV",
+                DailyReportSdCandidateStatus::Unreadable,
+                None
+            ),
+            (
+                "Z001_23 .CSV",
+                DailyReportSdCandidateStatus::Unreadable,
+                None
+            ),
+            (
+                "Z001_22 .CSV",
+                DailyReportSdCandidateStatus::Unreadable,
+                None
+            ),
+            (
+                "Z001_21 .CSV",
+                DailyReportSdCandidateStatus::Unreadable,
+                Some(INVALID_Z002_AMOUNT_MESSAGE)
+            ),
+        ]
+    );
+    let reason = rows[3].2.unwrap();
+    for leaked in ["1,23", "Z002_21", ".CSV"] {
+        assert!(!reason.contains(leaked), "{leaked} in {reason}");
+    }
+    assert!(result.snapshot.files_by_candidate.is_empty());
 }

@@ -1,5 +1,7 @@
 // IO層: ファイルI/O・フォーマット変換（DB非依存の純関数群）
 
+use std::sync::LazyLock;
+
 pub mod daily_report_parser;
 pub mod ej_parser;
 pub mod image_manager;
@@ -15,6 +17,18 @@ pub mod z004_parser;
 /// レジの SD の機種の folder（drive 直下からの 2 つの要素）。IO-09 と 71 MNT-01-D10 が共有する
 /// 唯一の定義（29 §29.7.4 手順 1、D-114）。要素ごとに `join` し、区切りを含む 1 つの文字列にしない
 pub(crate) const REGISTER_SD_FOLDER: [&str; 2] = ["CASIO", "SR500_550_4000"];
+
+/// 整数の形の規則（23 §13.4.1、D-103 の (1)、D-158）。Z004（IO-02）と日報（IO-07）が共有する唯一の検査。
+/// カンマなしの整数か正しい3桁区切りの整数だけに一致し、カンマを除いた文字列（符号を含む）を返す。
+/// trim しない: 前後の空白は呼ぶ側が値の全体に 1 回だけ除く（日報の個数の列は整数部だけを渡すので、
+/// 小数点の前の空白を受けない）
+pub(crate) fn strip_thousands_grouping(value: &str) -> Option<String> {
+    static INT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^-?(?:[0-9]+|[1-9][0-9]{0,2}(?:,[0-9]{3})+)$")
+            .expect("数値パターンのコンパイル失敗")
+    });
+    INT_RE.is_match(value).then(|| value.replace(',', ""))
+}
 
 #[cfg(test)]
 mod tests {

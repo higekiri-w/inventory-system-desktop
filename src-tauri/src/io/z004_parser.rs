@@ -7,7 +7,6 @@
 
 use sha2::{Digest, Sha256};
 use std::fmt;
-use std::sync::LazyLock;
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -406,15 +405,9 @@ fn parse_data_line(line: &str, line_no: usize) -> Result<Option<ParsedRow>, Pars
 /// 個数・金額の整数の読み取り（23 §13.4.1、SPEC-Z4A-D7）。
 /// カンマなしの整数か、正しい3桁区切りのカンマ付きの整数だけを受理する。
 pub(super) fn parse_z004_int(raw: &str) -> Option<i32> {
-    static INT_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"^-?(?:[0-9]+|[1-9][0-9]{0,2}(?:,[0-9]{3})+)$")
-            .expect("数値パターンのコンパイル失敗")
-    });
-    let trimmed = raw.trim();
-    if !INT_RE.is_match(trimmed) {
-        return None;
-    }
-    trimmed.replace(',', "").parse().ok()
+    crate::io::strip_thousands_grouping(raw.trim())?
+        .parse()
+        .ok()
 }
 
 /// layout A のメタ行から精算の識別メタを抽出する（ラベルは前後の空白を除いて完全一致）。

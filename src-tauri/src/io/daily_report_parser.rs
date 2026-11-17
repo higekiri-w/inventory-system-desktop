@@ -536,16 +536,13 @@ pub(super) enum NumberError {
 
 /// 金額・件数を整数で読む。絶対値が上限を越える値は `TooLarge`（IO-07-D6）
 pub(super) fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
-    let cleaned = clean_number(value);
-    if cleaned.is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    // 先に数の形（任意の符号 1 つ ＋ 1 桁以上の ASCII 数字。`parse::<i64>` が受ける形）を確かめる。
+    // 先に数の形（D-158 の整数の形の規則）を確かめる。
     // `parse` は桁あふれを後ろの文字より先に返すので、形を見ずに overflow を上限の越えにしない
-    let digits = cleaned.strip_prefix(['+', '-']).unwrap_or(&cleaned);
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(NumberError::Invalid);
-    }
+    let cleaned = crate::io::strip_thousands_grouping(trimmed).ok_or(NumberError::Invalid)?;
     let parsed = cleaned.parse::<i64>().map_err(|error| match error.kind() {
         std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
             NumberError::TooLarge
@@ -560,21 +557,22 @@ pub(super) fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError
 
 /// 個数を小数 2 桁までの 100 倍の整数で読む。浮動小数を通さない（IO-07-D2）。上限は IO-07-D6
 pub(super) fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, NumberError> {
-    let cleaned = clean_number(value);
-    if cleaned.is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    let (integer, fraction) = match cleaned.split_once('.') {
+    let (integer, fraction) = match trimmed.split_once('.') {
         Some((integer, fraction)) if (1..=2).contains(&fraction.len()) => (integer, fraction),
         Some(_) => return Err(NumberError::Invalid),
-        None => (cleaned.as_str(), ""),
+        None => (trimmed, ""),
     };
+    // 整数部は trim せずに D-158 の整数の形の規則に通す（小数点の前の空白は受けない）
+    let integer = crate::io::strip_thousands_grouping(integer).ok_or(NumberError::Invalid)?;
     let (negative, digits) = match integer.strip_prefix('-') {
         Some(digits) => (true, digits),
-        None => (false, integer),
+        None => (false, integer.as_str()),
     };
-    let all_digits = |text: &str| text.bytes().all(|byte| byte.is_ascii_digit());
-    if digits.is_empty() || !all_digits(digits) || !all_digits(fraction) {
+    if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(NumberError::Invalid);
     }
     let fraction_hundredths: i64 = format!("{fraction:0<2}")
@@ -615,10 +613,6 @@ fn number_error(
         ),
     };
     parse_error(Some(source), None, Some(line_no), error_type, &message)
-}
-
-fn clean_number(value: &str) -> String {
-    value.trim().replace([',', '￥', '¥', ' '], "")
 }
 
 /// 鍵はラベルだけで決める。「レコード」列は行の位置で鍵に使わない（IO-07-D4）
@@ -1209,6 +1203,135 @@ mod tests {
         assert_eq!(result.summary_lines[1].quantity_hundredths, None);
         assert_eq!(result.payment_lines[0].count, Some(7));
         assert_eq!(result.department_lines[0].count, None);
+    }
+
+    #[test]
+    fn test_parse_daily_report_req401_rejects_malformed_grouping_in_every_number_column() {
+        // REQ-401 / D-158 / D-103 (1): 3 帳票の 7 か所の数の列が全部、Z004 と同じ整数の形の規則を通る。
+        // 崩れた区切り・`¥`・数の中の空白・`+` は invalid_number、正しい 3 桁区切りは今の値で読む
+        type Column = (
+            usize,
+            DailyReportSourceKind,
+            i64,
+            &'static str,
+            bool,
+            fn(&DailyReportParseResult) -> Option<i64>,
+        );
+        let columns: [Column; 7] = [
+            (
+                0,
+                DailyReportSourceKind::Z001,
+                9,
+                "個数/件数",
+                true,
+                |r| r.summary_lines[0].quantity_hundredths,
+            ),
+            (1, DailyReportSourceKind::Z001, 9, "金額", false, |r| {
+                r.summary_lines[0].amount
+            }),
+            (
+                2,
+                DailyReportSourceKind::Z001,
+                10,
+                "個数/件数",
+                false,
+                |r| r.summary_lines[1].count,
+            ),
+            (3, DailyReportSourceKind::Z002, 9, "件数", false, |r| {
+                r.payment_lines[0].count
+            }),
+            (4, DailyReportSourceKind::Z002, 9, "金額", false, |r| {
+                r.payment_lines[0].amount
+            }),
+            (5, DailyReportSourceKind::Z005, 9, "個数", true, |r| {
+                r.department_lines[0].quantity_hundredths
+            }),
+            (6, DailyReportSourceKind::Z005, 9, "金額", false, |r| {
+                Some(r.department_lines[0].amount)
+            }),
+        ];
+        let s = settlement_line("0001");
+        let bundle = |index: usize, value: &str| {
+            let mut cells = ["3", "100", "7", "7", "100", "3", "100"];
+            cells[index] = value;
+            parse_daily_report_bundle(vec![
+                report_file(
+                    "Z001_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[
+                        ("0001", "総売", cells[0], cells[1]),
+                        ("0002", "純売", cells[2], "90"),
+                    ],
+                ),
+                report_file(
+                    "Z002_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "現金", cells[3], cells[4])],
+                ),
+                report_file(
+                    "Z005_01.CSV",
+                    "2026-09-29",
+                    &s,
+                    &[("0001", "部門A", cells[5], cells[6])],
+                ),
+            ])
+        };
+
+        for (index, source, line_no, column, is_quantity, read) in columns {
+            let mut invalid = vec!["0,123", "1,2,3", "¥1,234", "1 234", "+5"];
+            if is_quantity {
+                invalid.extend(["1 .5", "1\t.5", "1　.5", "1,234 .5"]);
+            }
+            for value in invalid {
+                let result = bundle(index, value);
+                let errors: Vec<_> = result
+                    .parse_errors
+                    .iter()
+                    .map(|error| {
+                        (
+                            error.source_file,
+                            error.line_no,
+                            error.error_type.as_str(),
+                            error.error_message.as_str(),
+                        )
+                    })
+                    .collect();
+                assert_eq!(
+                    errors,
+                    [(
+                        Some(source),
+                        Some(line_no),
+                        "invalid_number",
+                        format!("{source:?}の{column}列を変換できません").as_str()
+                    )],
+                    "{source:?} {column} {value:?}"
+                );
+            }
+
+            let mut valid = vec![("1,234", 1234), ("-12,345", -12345)];
+            if is_quantity {
+                valid = vec![
+                    ("1,234", 123400),
+                    ("-12,345", -1234500),
+                    ("1,234.5", 123450),
+                ];
+            }
+            for (value, expected) in valid {
+                let result = bundle(index, value);
+                assert!(
+                    result.parse_errors.is_empty(),
+                    "{source:?} {column} {value:?}: {:?}",
+                    result.parse_errors
+                );
+                assert_eq!(
+                    read(&result),
+                    Some(expected),
+                    "{source:?} {column} {value:?}"
+                );
+            }
+        }
     }
 
     #[test]
