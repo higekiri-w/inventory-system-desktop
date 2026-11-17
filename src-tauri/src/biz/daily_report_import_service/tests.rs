@@ -2632,6 +2632,25 @@ fn test_daily_report_req401_invalid_number_names_column_without_raw_value() {
 }
 
 #[test]
+fn test_daily_report_req401_invalid_number_same_column_named_once() {
+    // REQ-401 / BIZ-08-D2a / D-158: 同じ列の数の誤りが 2 行あっても、列の文は重複を除いて 1 回だけ出す
+    let (_dir, conn) = setup_test_db();
+    let date = "2026-03-21";
+    let z002_two_bad_amounts = source_file(
+        "Z002_260321.CSV",
+        &format!(
+            "{}\"01\",\"現金\",\"7\",\"1,23\"\r\n\"03\",\"クレジット\",\"1\",\"1,23\"\r\n",
+            daily_report_preamble(date)
+        ),
+    );
+    match parse_and_validate_daily_report(&conn, vec![z001(date), z002_two_bad_amounts, z005(date)])
+    {
+        Err(BizError::ImportError(message)) => assert_eq!(message, INVALID_Z002_AMOUNT_MESSAGE),
+        other => panic!("expected invalid-number import error, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_daily_report_req401_rolled_back_lenient_import_rereads_as_invalid_number() {
     // REQ-401 / D-158 / pos-tables §12b: 旧い緩い規則で取り込んだ束（合成の completed の行で再現）は
     // 取り消せて、取消の後の同じ束の読み直しは数の規則で止まる（互換の限界。緩い受理は戻さない）

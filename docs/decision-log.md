@@ -1404,7 +1404,7 @@ Use concise ADR-style entries.
 
 ## D-158: 日報（Z001・Z002・Z005）の数の列を Z004 と同じ整数の形の規則で読み、読めない列は帳票と列を名指して管理者に知らせる（2026-11-17）
 
-- Status: accepted（owner の決定、repo 外の回答台帳 TD-775〈2026-11-17、「そろえるべきだと思う」〉と TD-770〈differential test を始める〉。lane「日報の数の読取りをそろえる」〈Plan Packet `docs/plans/2026-11-17-number-parse-align.md`、PR #274〉）
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-775〈2026-11-17、「そろえるべきだと思う」〉と TD-770〈differential test を始める〉。lane「日報の数の読取りをそろえる」〈Plan Packet `docs/plans/2026-11-17-number-parse-align.md`、PR #274〉。Decision の (3)(4)〈管理者に知らせる文、SD の一覧の `unreadable_reason`〉は計画の review〈AI〉の指摘を Coordinator が受理したもの、TD-781 は未確認）
 - Context: 日報の数の読取り（IO-07）はカンマ・`¥`・`￥`・ASCII 空白をすべて除いてから読み、`1,23`・`0,123` を 123、`1 .5` を 1.5 と黙って別の数として読んでいた。Z004（IO-02）は D-103 の (1) でこの緩い除去を却下していた。手で選ぶ経路の数の形の誤りは汎用の文で、SD の一覧の「読めません」は理由を出さなかった。
 - Decision: (1) D-103 の (1) の整数の形の規則（`-?[0-9]+` か `-?[1-9][0-9]{0,2}(,[0-9]{3})+`）を日報の全部の数の列へ広げる。検査は `src-tauri/src/io/mod.rs` の 1 つの関数で、Z004 と日報が通る。前後の空白は値の全体に 1 回だけ除き、検査は trim しない（個数の列の整数部の中の空白を受けない）。区切りの崩れた値・`¥`/`￥`・数の中の空白・`+` は `invalid_number`。(2) Z004 との承認済みの差を 3 つ残す: A1 空の値は列ごとに `None`（Z005 の金額は必須）、A2 上限は IO-07-D6（Z004 は `i32`）、A3 個数の列は整数部の後に `.` + 1〜2 桁を受ける。2 つの parser に同じ入力の表を通す差分の test が差を固定する。(3) 手で選ぶ経路の `invalid_number` の文は BIZ-08-D2a を広げ、`number_too_large` が無ければ `invalid_number` の列を名指す。文の後半は `number_too_large` も含めて `この日の日報は読めません。管理者に知らせてください。` にする。(4) SD の一覧の候補に `unreadable_reason: Option<String>` を足し、数の列の誤りで `Unreadable` の束（`settlement_mismatch` の無い束）だけに (3) と同じ全文を入れる。全文は BIZ の 1 つの関数が作る。正本は 29 IO-07-D2・§29.5、23 §13.4.1、37 BIZ-08-D2a・§37.9 手順 5、55 UI-07-D15 (3)。
 - Why: 区切りの崩れた値を黙って別の数として読まない（TD-775、D-103 と同じ理由）。読めない原因をその画面で名指す（D-127）。SD と PC の写しは同じ bytes（SD-22）で店の手で直す道が無いので、直し方は名指さず管理者に知らせるよう伝える。
