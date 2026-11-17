@@ -1,0 +1,99 @@
+name: Windows observe
+
+# D-157: observe only. Cargo steps never fail the job, so Merge gate and helper merge stay unchanged.
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-observe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-observe-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  windows_observe:
+    name: Windows observe
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        # The Windows default shell is pwsh.
+        shell: bash
+        working-directory: src-tauri
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - id: test
+        name: cargo test
+        continue-on-error: true
+        timeout-minutes: 30
+        run: |
+          cargo test 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+
+      - id: clippy
+        name: cargo clippy --release
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          cargo clippy --release --all-targets -- -D warnings
+
+      - name: Report Windows observe
+        if: always()
+        env:
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          CLIPPY_OUTCOME: ${{ steps.clippy.outcome }}
+        run: |
+          failed="$(grep -E '^test .* FAILED$' "$RUNNER_TEMP/cargo-test.log" 2>/dev/null || true)"
+          {
+            echo "### Windows observe"
+            echo
+            echo "- cargo test: ${TEST_OUTCOME:-not run}"
+            echo "- cargo clippy --release: ${CLIPPY_OUTCOME:-not run}"
+            echo
+            echo "Failed tests:"
+            if [ -n "$failed" ]; then
+              printf '%s\n' "$failed" | sed 's/^/- /'
+            else
+              echo "- none in the cargo test log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$TEST_OUTCOME" = failure ]; then
+            echo "::warning title=Windows observe::cargo test failed"
+          fi
+          if [ "$CLIPPY_OUTCOME" = failure ]; then
+            echo "::warning title=Windows observe::cargo clippy --release failed"
+          fi
+          if [ -n "$failed" ]; then
+            while IFS= read -r line; do
+              echo "::warning title=Windows observe::$line"
+            done <<< "$failed"
+          fi
+          exit 0

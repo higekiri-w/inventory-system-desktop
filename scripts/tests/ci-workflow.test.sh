@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
 NPM_SECURITY_WORKFLOW="$REPO_ROOT/.github/workflows/npm-security-monitor.yml"
+WINDOWS_OBSERVE_WORKFLOW="$REPO_ROOT/.github/workflows/windows-observe.yml"
 NODE_VERSION_FILE="$REPO_ROOT/.node-version"
 PACKAGE_JSON="$REPO_ROOT/package.json"
 PR_TEMPLATE="$REPO_ROOT/.github/pull_request_template.md"
@@ -217,6 +218,60 @@ validate_public_actions_doc_contract() {
     grep -Fxq '## D-063' "$decision_log"
 }
 
+# D-157: Windows observe reports cargo results but never fails the job or joins Merge gate.
+validate_windows_observe() {
+    ruby - "$1" <<'RUBY'
+require "yaml"
+text = File.read(ARGV.fetch(0))
+workflow = YAML.safe_load(text, aliases: true)
+abort "observe must not use secrets" if text.include?("secrets.") || text.include?("GITHUB_TOKEN")
+abort "observe must not use npm or Node" if text.match?(/\bnpm\b|setup-node/)
+abort "observe must not retry or skip tests" if text.match?(/retry|--skip/i)
+abort "observe workflow name drifted" unless workflow["name"] == "Windows observe"
+triggers = workflow["on"] || workflow[true]
+abort "observe triggers drifted" unless triggers.is_a?(Hash) && triggers.keys.map(&:to_s).sort == %w[pull_request workflow_dispatch]
+pr = triggers.fetch("pull_request")
+abort "observe pull_request drifted" unless pr["branches"] == ["main"] && Array(pr["types"]).sort == %w[opened reopened synchronize]
+abort "observe paths drifted" unless pr["paths"] == ["src-tauri/**", ".github/workflows/windows-observe.yml"]
+abort "observe token must be read-only" unless workflow["permissions"] == {"contents" => "read"}
+abort "observe cancellation drifted" unless workflow.dig("concurrency", "cancel-in-progress") == true
+jobs = workflow.fetch("jobs")
+abort "observe must have exactly one job" unless jobs.length == 1
+job = jobs.values.first
+# The ruleset requires the context "Merge gate"; observe must never publish it.
+abort "observe job name drifted: #{job["name"].inspect}" unless job["name"] == "Windows observe"
+abort "observe must run on windows-latest" unless job["runs-on"] == "windows-latest"
+abort "observe job timeout drifted" unless job["timeout-minutes"] == 60
+abort "observe default shell must be bash" unless job.dig("defaults", "run", "shell") == "bash"
+steps = job.fetch("steps")
+uses = steps.map { |step| step["uses"] }.compact
+abort "observe actions drifted: #{uses.inspect}" unless uses == %w[actions/checkout@v6 dtolnay/rust-toolchain@stable actions/cache@v5]
+cache = steps.find { |step| step["uses"] == "actions/cache@v5" }
+paths = cache.dig("with", "path").to_s.lines.map(&:strip).reject(&:empty?)
+abort "observe cache paths drifted: #{paths.inspect}" unless paths == %w[~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/]
+{
+  "test" => 'cargo test 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"',
+  "clippy" => "cargo clippy --release --all-targets -- -D warnings",
+}.each do |id, command|
+  step = steps.find { |candidate| candidate["id"] == id }
+  abort "observe #{id} step is missing" unless step
+  abort "observe #{id} step can fail the job" unless step["continue-on-error"] == true
+  abort "observe #{id} step has no step timeout" unless step["timeout-minutes"].is_a?(Integer)
+  # The AC4 failure-path probe prepends a line, so require the command line, not the whole script.
+  abort "observe #{id} command drifted" unless step["run"].to_s.lines.map(&:strip).include?(command)
+end
+report = steps.last
+run = report["run"].to_s
+abort "observe report must run always" unless report["if"] == "always()"
+["GITHUB_STEP_SUMMARY", "::warning", "'^test .* FAILED$'", "cargo-test.log"].each do |needle|
+  abort "observe report lost #{needle}" unless run.include?(needle)
+end
+%w[steps.test.outcome steps.clippy.outcome].each do |needle|
+  abort "observe report lost #{needle}" unless report["env"].to_h.values.any? { |value| value.to_s.include?(needle) }
+end
+RUBY
+}
+
 # MG-D4: real PR PK5 and every former local workflow check remain wired on both routes.
 validate_parity() {
     ruby - "$1" "$2" "$3" <<'RUBY'
@@ -255,6 +310,7 @@ validate_job_graph "$WORKFLOW"
 validate_workflow_contract "$WORKFLOW"
 validate_node_contract
 validate_monitor_schedule "$NPM_SECURITY_WORKFLOW"
+validate_windows_observe "$WINDOWS_OBSERVE_WORKFLOW"
 # D-059 / SPEC-HOOK-01 / CH8: hosted workflow owns the inventory audit step.
 validate_claude_hook_audit ||
     fail "CH8 hosted Claude hook audit step is missing"
@@ -514,10 +570,43 @@ if validate_claude_hook_audit "$claude_hook_step_mutation" >/dev/null 2>&1; then
     fail "CH9 workflow validator accepted a missing Claude hook audit step"
 fi
 
+# D-157: every observe guarantee in the Test Plan rejects its mutant.
+reject_observe_mutant() {
+    assert_mutated "$WINDOWS_OBSERVE_WORKFLOW" "$2" "$1"
+    if validate_windows_observe "$2" >/dev/null 2>&1; then
+        fail "Windows observe validator accepted $1"
+    fi
+}
+observe_mutant() {
+    local out="$mutation_dir/$1.yml"
+    shift
+    sed "$@" "$WINDOWS_OBSERVE_WORKFLOW" > "$out"
+    printf '%s' "$out"
+}
+reject_observe_mutant windows-observe-no-continue "$(observe_mutant no-continue '/continue-on-error: true/d')"
+reject_observe_mutant windows-observe-no-report "$(observe_mutant no-report '/if: always()/d')"
+reject_observe_mutant windows-observe-no-tee "$(observe_mutant no-tee 's/ 2>&1 | tee "$RUNNER_TEMP\/cargo-test.log"//')"
+reject_observe_mutant windows-observe-no-tee-extract "$(observe_mutant no-tee-extract '/grep -E/s/FAILED/failed/')"
+reject_observe_mutant windows-observe-no-bash "$(observe_mutant no-bash '/shell: bash/d')"
+reject_observe_mutant windows-observe-no-step-timeout "$(observe_mutant no-step-timeout '/timeout-minutes: 30/d')"
+reject_observe_mutant windows-observe-merge-gate-name "$(observe_mutant merge-gate-name 's/^    name: Windows observe$/    name: Merge gate/')"
+reject_observe_mutant windows-observe-write-permission "$(observe_mutant write-permission 's/contents: read/contents: write/')"
+reject_observe_mutant windows-observe-secret "$(observe_mutant secret '/RUST_BACKTRACE: 1/a\  TOKEN: ${{ secrets.OBSERVE_TOKEN }}')"
+reject_observe_mutant windows-observe-skip "$(observe_mutant skip '/cargo test 2>&1/a\          cargo test -- --skip slow')"
+reject_observe_mutant windows-observe-retry "$(observe_mutant retry 's|uses: actions/cache@v5|uses: nick-fields/retry@v3|')"
+reject_observe_mutant windows-observe-target-cache "$(observe_mutant target-cache '\|~/.cargo/git/db/|a\            src-tauri/target/')"
+# The AC4 failure-path probe (Test Plan) must stay accepted so Merge gate passes on that head.
+observe_probe="$(observe_mutant failure-probe "/cargo test 2>&1/i\\          echo 'test observe_probe::synthetic ... FAILED' | tee \"\$RUNNER_TEMP/cargo-test.log\"; exit 1")"
+assert_mutated "$WINDOWS_OBSERVE_WORKFLOW" "$observe_probe" windows-observe-failure-probe
+validate_windows_observe "$observe_probe" >/dev/null 2>&1 ||
+    fail "Windows observe validator rejected the AC4 failure-path probe"
+
 reject_fixed "  push:"
 reject_fixed '      - "**/*.md"'
 require_fixed "  workflow_dispatch:"
 reject_fixed "paths-ignore:"
+# D-157: Windows runs only in windows-observe.yml, outside Merge gate.
+reject_fixed "windows-latest"
 
 # D-145 (9) (rewritten from requiring the Draft name guard): no Draft-specific aggregate name remains.
 reject_fixed "Draft (no merge evidence)"

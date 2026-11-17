@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 while IFS= read -r shell_file; do
     bash -n "$shell_file"
 done < <(rg --files --hidden scripts .codex/bin -g '*.sh' | sort)
-ruby -e "require 'yaml'; ARGV.each { |path| YAML.parse_file(path) }" .github/workflows/ci.yml .github/workflows/npm-security-monitor.yml
+ruby -e "require 'yaml'; ARGV.each { |path| YAML.parse_file(path) }" .github/workflows/ci.yml .github/workflows/npm-security-monitor.yml .github/workflows/windows-observe.yml
 bash scripts/tests/classify-changes.test.sh
 
 bash scripts/tests/check-command-drift.test.sh
