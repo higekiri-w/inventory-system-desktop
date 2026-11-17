@@ -61,6 +61,7 @@ const RELATED_ROUTES = {
   return_record: "/inventory/return/records/$recordId",
   manual_sale: "/inventory/manual-sale/records/$recordId",
   disposal_record: "/inventory/disposal/records/$recordId",
+  transfer_record: "/inventory/transfer/records/$recordId",
 } as const satisfies Partial<Record<string, string>>;
 
 function relatedRecordRoute(

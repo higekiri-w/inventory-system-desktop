@@ -277,9 +277,18 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     expect(within(rowA).getByLabelText("P-001 新売価")).toHaveValue(null);
     expect(within(rowB).getAllByText("—")).toHaveLength(2);
     await user.type(within(rowA).getByLabelText("P-001 新売価"), "1200");
-    expect(within(rowA).getByLabelText("P-001 新原価（案）")).toHaveValue(840);
+    expect(within(rowA).getByLabelText("P-001 新原価（税抜、案）")).toHaveValue(840);
     await user.type(within(rowB).getByLabelText("P-002 新売価"), "1200");
-    expect(within(rowB).getByLabelText("P-002 新原価（案）")).toHaveValue(300);
+    expect(within(rowB).getByLabelText("P-002 新原価（税抜、案）")).toHaveValue(300);
+  });
+
+  it("REQ-105 / SPEC-PRV-D4 / D-128: 新原価の列と欄の名に税抜を示す", async () => {
+    renderStateful();
+    const row = await screen.findByTestId("price-row-P-001");
+    expect(screen.getByRole("columnheader", { name: "新原価（税抜、案）" })).toBeInTheDocument();
+    expect(
+      within(row).getByRole("spinbutton", { name: "P-001 新原価（税抜、案）" }),
+    ).toBeInTheDocument();
   });
 
   it("新原価（案）を手で編集した後は新売価変更で上書きせず未編集なら追従する", async () => {
@@ -287,7 +296,7 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     renderStateful();
     const row = await screen.findByTestId("price-row-P-001");
     const selling = within(row).getByLabelText("P-001 新売価");
-    const cost = within(row).getByLabelText("P-001 新原価（案）");
+    const cost = within(row).getByLabelText("P-001 新原価（税抜、案）");
     await user.type(selling, "1200");
     expect(cost).toHaveValue(840);
     await user.clear(selling);
@@ -514,7 +523,7 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     renderStateful();
     const row = await screen.findByTestId("price-row-P-001");
     const selling = within(row).getByLabelText("P-001 新売価");
-    const cost = within(row).getByLabelText("P-001 新原価（案）");
+    const cost = within(row).getByLabelText("P-001 新原価（税抜、案）");
     const confirm = within(row).getByRole("button", { name: "P-001 を確定" });
 
     await user.type(selling, "1000000");
@@ -560,7 +569,7 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     ]);
     renderStateful();
     const row = await screen.findByTestId("price-row-P-BIG");
-    const cost = within(row).getByLabelText("P-BIG 新原価（案）");
+    const cost = within(row).getByLabelText("P-BIG 新原価（税抜、案）");
     const confirm = within(row).getByRole("button", { name: "P-BIG を確定" });
     await user.type(within(row).getByLabelText("P-BIG 新売価"), "2");
     expect(cost).toHaveValue(1999998);
@@ -604,7 +613,7 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     expect(row).not.toHaveTextContent("8,333");
     expect(within(row).getByText("83.3")).toBeInTheDocument();
     await user.type(within(row).getByLabelText("P-C15 新売価"), "110");
-    expect(within(row).getByLabelText("P-C15 新原価（案）")).toHaveValue(91);
+    expect(within(row).getByLabelText("P-C15 新原価（税抜、案）")).toHaveValue(91);
     await user.click(within(row).getByRole("button", { name: "P-C15 を確定" }));
     await waitFor(() => {
       expect(mockReviseProductPrice).toHaveBeenCalledWith({
@@ -616,7 +625,7 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
     });
     const zero = screen.getByTestId("price-row-P-ZERO");
     await user.type(within(zero).getByLabelText("P-ZERO 新売価"), "120");
-    expect(within(zero).getByLabelText("P-ZERO 新原価（案）")).toHaveValue(83.33);
+    expect(within(zero).getByLabelText("P-ZERO 新原価（税抜、案）")).toHaveValue(83.33);
   });
 
   it("本日の changed_at を持つ行だけ「最近改定」badge を icon + text で表示する", async () => {

@@ -69,6 +69,7 @@ function buildByProductReport(): MonthlySalesReport {
     ],
     prev_month_comparison: null,
     official_department_totals: null,
+    official_report_dates: [],
   };
 }
 
@@ -108,6 +109,7 @@ function buildByDepartmentReport(): MonthlySalesReport {
     ],
     prev_month_comparison: null,
     official_department_totals: null,
+    official_report_dates: [],
   };
 }
 

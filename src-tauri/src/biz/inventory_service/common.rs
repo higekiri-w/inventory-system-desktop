@@ -85,7 +85,7 @@ pub(crate) fn validate_business_date(date: &str) -> Result<(), BizError> {
 /// 商品の在庫を変動させる: movement を並びの鍵付きで INSERT し、その商品を記録から求め直す
 ///
 /// 引数の型（借りた transaction）で TX の内側に限る。TX は呼び出し元の create_* が管理する。
-/// 入出庫 4 業務だけが呼ぶ（Z004 の確定は movement を書いてから商品ごとに求め直す。31）。`stock_after` は、この呼出しが
+/// 入出庫 4 業務と振替の 5 つだけが呼ぶ（Z004 の確定は movement を書いてから商品ごとに求め直す。31）。`stock_after` は、この呼出しが
 /// INSERT した movement だけに、直後の求め直しの写しの値を書く（同じ要求の同じ商品の明細は途中の値）。
 ///
 /// 31-biz-inventory-service.md §12.2 と「計数の置き場と在庫の求め直しの契約」
@@ -407,6 +407,13 @@ mod tests {
 
         let (_dir, mut conn) = setup_test_db();
         create_test_product(&conn, "E1", 5);
+        // D-148: register_processed=true の返品が movement を作らないのは、Z004 の取込みが在庫を動かす商品
+        // （13 桁の JAN が 1 商品だけに当たり在庫連動）の明細だけなので、E1 にその JAN を持たせる
+        conn.execute(
+            "UPDATE products SET jan_code = '4901234567887' WHERE product_code = 'E1'",
+            [],
+        )
+        .unwrap();
         let date = "2026-04-07".to_string();
         create_receiving(
             &mut conn,

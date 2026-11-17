@@ -79,6 +79,7 @@ Track as follow-up:
 - Use [templates/subagent-review-packet.md](templates/subagent-review-packet.md) for review orders (R3/R4 and the R2 差分の review).
 - The reviewer is read-only and findings-only.
 - The implementer verifies every finding independently before fixing, rejecting, or deferring.
+- 言葉を足す修正案は、足さないと実際に起きる具体の失敗（どの agent・run・操作で何が起きるか）を示せるときだけ受ける（D-156）。
 
 ## External PR Review Request
 

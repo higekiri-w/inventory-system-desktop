@@ -17,6 +17,7 @@ import {
   PackageSearch,
   RotateCcw,
   ScrollText,
+  Scissors,
   Search,
   ShieldCheck,
   SlidersHorizontal,
@@ -192,6 +193,15 @@ export const navigation: readonly NavArea[] = [
         title: "廃棄・破損",
         to: "/inventory/disposal",
         icon: Trash2,
+        status: "active",
+      },
+      {
+        id: "ui-16",
+        description: "仕入れた品を別の商品にした数を移します",
+        label: "詰め替え・切り分け",
+        title: "詰め替え・切り分け",
+        to: "/inventory/transfer",
+        icon: Scissors,
         status: "active",
       },
       {

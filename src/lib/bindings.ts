@@ -127,6 +127,18 @@ export const commands = {
 	 */
 	getDisposalRecord: (recordId: number) => typedError<DisposalRecordDetail, CmdError>(__TAURI_INVOKE("get_disposal_record", { recordId })),
 	/**
+	 *  振替の記録を作成する
+	 *
+	 *  44-cmd-inventory.md §23.7a create_transfer
+	 */
+	createTransfer: (req: TransferCreateRequest) => typedError<TransferCreateResult, CmdError>(__TAURI_INVOKE("create_transfer", { req })),
+	/**
+	 *  振替の記録の詳細を返す
+	 *
+	 *  44-cmd-inventory.md §23.7a get_transfer_record
+	 */
+	getTransferRecord: (recordId: number) => typedError<TransferRecordDetail, CmdError>(__TAURI_INVOKE("get_transfer_record", { recordId })),
+	/**
 	 *  商品の在庫詳細を取得する（最終入庫日・最終販売日を含む）
 	 *
 	 *  44-cmd-inventory.md §23.8 get_stock_detail
@@ -354,6 +366,18 @@ export const commands = {
 	 *  DB を使わない。`quick_check` の間に画面を止めないよう main thread の外で動かす（§43.8.2 の「実行の thread」）。
 	 */
 	inspectBackup: (request: InspectBackupRequest) => typedError<BackupInspection, CmdError>(__TAURI_INVOKE("inspect_backup", { request })),
+	// USB メモリを PC の外の控えの保存先として用意する（§43.8.2）
+	prepareOffsiteMedium: (request: PrepareOffsiteMediumRequest) => typedError<OffsiteMediumView, CmdError>(__TAURI_INVOKE("prepare_offsite_medium", { request })),
+	// 用意した媒体へまだ写していない最新の backup を写す（§43.8.3）
+	checkOffsiteBackup: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("check_offsite_backup")),
+	// 「PC の外の控え」の card とホームの状態（§43.8.4）
+	getOffsiteBackupStatus: () => typedError<OffsiteBackupStatus, CmdError>(__TAURI_INVOKE("get_offsite_backup_status")),
+	// 読めない記録を作り直す。先に backup を作る（§43.8.6）
+	resetOffsiteState: () => typedError<OffsiteCheckResult, CmdError>(__TAURI_INVOKE("reset_offsite_state")),
+	// PC の外の控えをやめる。DB を使わない（§43.8.7）
+	stopOffsiteBackup: () => typedError<null, CmdError>(__TAURI_INVOKE("stop_offsite_backup")),
+	// 保存先に選ぼうとする folder を確かめる。DB を使わず、保存しない（§43.8.8）
+	checkBackupDirChoice: (request: BackupDirChoiceRequest) => typedError<null, CmdError>(__TAURI_INVOKE("check_backup_dir_choice", { request })),
 	/**
 	 *  バックアップから復元する（§43.9）
 	 *
@@ -403,6 +427,11 @@ export type AppSetting = {
 	key: string,
 	value: string,
 	updated_at: string,
+};
+
+// §43.8.8
+export type BackupDirChoiceRequest = {
+	selected_path: string,
 };
 
 /**
@@ -1124,6 +1153,8 @@ export type MonthlySalesReport = {
 	items: MonthlySaleItem[],
 	prev_month_comparison: MonthlySaleItem[] | null,
 	official_department_totals: OfficialMonthlyDepartmentTotal[] | null,
+	// completed の日報取込みのある日（YYYY-MM-DD、昇順、重複なし）。空 ⇔ official_department_totals が None（34 §19.4 手順 6）
+	official_report_dates: string[],
 };
 
 /**
@@ -1169,7 +1200,7 @@ export type MovementSourceLink = {
 };
 
 // 在庫変動種別（db-design/tracking-system-tables.md: inventory_movements.movement_type CHECK制約に対応）
-export type MovementType = "sale_auto" | "sale_manual" | "receiving" | "return" | "disposal" | "stocktake";
+export type MovementType = "sale_auto" | "sale_manual" | "receiving" | "return" | "disposal" | "stocktake" | "transfer";
 
 // レジ日報由来の部門別集計行
 export type OfficialDailyDepartmentLine = {
@@ -1223,6 +1254,32 @@ export type OfficialMonthlyDepartmentTotal = {
 	amount: number,
 	quantity: number | null,
 	count: number | null,
+};
+
+// 画面とホームが出す状態（§71.11.5）
+export type OffsiteBackupStatus = {
+	prepared: boolean,
+	last_success_at: string | null,
+	last_success_label: string | null,
+	days_since_last_success: number | null,
+	stale: boolean,
+	attached: OffsiteMediumView[],
+	last_failure_kind: OffsiteFailureKind | null,
+	local_backup_old: boolean,
+};
+
+// 確認の結果（§71.11.4。wire は `kind` で分ける tagged enum）
+export type OffsiteCheckResult = { kind: "not_prepared" } | { kind: "no_local_backup" } | { kind: "medium_missing" } | { kind: "up_to_date" } | { kind: "copied"; file_name: string; labels: string[] };
+
+// 最後の確認の失敗の種類（wire は snake_case）
+export type OffsiteFailureKind = "register_sd" | "not_removable" | "storage_full" | "verify_mismatch" | "io" | "state_unreadable" | "source_unverified" | "backup_dir_is_medium_folder";
+
+// 用意した媒体の見え方（§71.11.2）
+export type OffsiteMediumView = {
+	label: string,
+	drive_root: string,
+	// 媒体の `InventoryBackup\` の最新の正式名（reparse point の entry を除く）
+	newest_copy: string | null,
 };
 
 /**
@@ -1315,6 +1372,11 @@ export type PluRegisterSnapshotSummary = {
 	app_managed_count: number,
 	conflict_count: number,
 	release_pending_count: number,
+};
+
+// §43.8.2
+export type PrepareOffsiteMediumRequest = {
+	selected_path: string,
 };
 
 // フロントエンドに返すプレビューデータ
@@ -1584,7 +1646,7 @@ export type ReceivingRecordWithSupplier = {
 export type RecountReason = "undetermined_settlement" | "same_date_movement" | "conflicting_counts";
 
 // 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
-export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake";
+export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake" | "transfer_record";
 
 // §45.6a の応答
 export type RegisterSdScanResponse = {
@@ -1613,6 +1675,8 @@ export type ReturnCreateResult = {
 	created: boolean,
 	idempotent_replay: boolean,
 	stock_warnings: string[],
+	// この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送では記録の movement から作る。D-148 (3)）
+	stock_applied_product_codes: string[],
 };
 
 export type ReturnDirection = "in" | "out";
@@ -1982,6 +2046,59 @@ export type SupplierWithUsage = {
 	name: string,
 	product_count: number,
 	receiving_record_count: number,
+};
+
+// 振替の記録のリクエスト（31 §12.6b）
+export type TransferCreateRequest = {
+	idempotency_key: string,
+	// YYYY-MM-DD（詰め替え・切り分けた日）
+	transfer_date: string,
+	items: TransferItemInput[],
+};
+
+// 振替の記録の結果（廃棄の `DisposalCreateResult` と同じ形）
+export type TransferCreateResult = {
+	record_id: number,
+	created: boolean,
+	idempotent_replay: boolean,
+	stock_warnings: string[],
+};
+
+// 振替の明細の向き（transfer_items.direction の CHECK と同じ値の集合。D-061・D-064）
+export type TransferDirection =
+// 減らす商品（元）
+"out" |
+// 増やす商品（先）
+"in";
+
+export type TransferItemInput = {
+	product_code: string,
+	direction: TransferDirection,
+	// 正の整数。その商品の在庫の数量の単位（個数は 1 単位、長さは cm。SPEC-UNIT-D2）
+	quantity: number,
+};
+
+// 振替の記録の詳細
+export type TransferRecordDetail = {
+	id: number,
+	transfer_date: string,
+	// 今は常に `"active"`（取消は持たない）
+	status: string,
+	created_at: string,
+	// 減らす明細を先、同じ向きの中は明細の id の順
+	items: TransferRecordDetailItem[],
+	movements: MovementRecord[],
+};
+
+// 振替の記録の詳細の明細行
+export type TransferRecordDetailItem = {
+	id: number,
+	product_code: string,
+	product_name: string,
+	department_name: string,
+	stock_unit: ProductStockUnit,
+	direction: TransferDirection,
+	quantity: number,
 };
 
 export type UpdateSettingRequest = {

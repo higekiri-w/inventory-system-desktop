@@ -189,7 +189,7 @@ fn list_return_records(conn: &DbConnection, query: &ListQuery) -> Result<Paginat
 
 #### get_return_record_detail
 
-**関数要求**: 返品・交換記録詳細として、ヘッダ、明細、レシート画像パス、関連 `inventory_movements` を取得する。`register_processed=true` の記録は作成時に在庫を動かしていないため、movements が 0 件でも正常とする。
+**関数要求**: 返品・交換記録詳細として、ヘッダ、明細、レシート画像パス、関連 `inventory_movements` を取得する。作成時に在庫を動かした明細が無い記録（`register_processed=true` で、全部の明細が Z004 の取込みで在庫に戻る商品。D-148）は movements が 0 件でも正常とする。movement の商品コードは `create_return` の冪等の再送が `stock_applied_product_codes` を作るのにも使う（[31](31-biz-inventory-service.md) §12.4）。
 
 **シグネチャ**:
 ```
@@ -396,6 +396,81 @@ fn get_disposal_record_detail(
 3. IO は金額を計算しない（入庫の §10.2 と同じ）。`line_loss_cost_centi` は空、`total_loss_cost` は 0 で返し、BIZ が SPEC-UNIT-D6 で求めて埋める
 4. inventory_movements から `reference_type='disposal_record'` かつ `reference_id=record_id` かつ `is_voided=0` の行を取得する
 5. movements は BIZ 層で source link を補完するため、IO 層では `source=None` のまま返す
+
+### 10.5a transfer_repo — 振替（詰め替え・切り分け）リポジトリ（D-143）
+
+表は [transaction](../db-design/transaction-tables.md) の §11a-11b（migration v13、[22 §21](22-mnt-migration.md)）。新しい module `db::transfer_repo`（`src-tauri/src/db/transfer_repo.rs`）。在庫の変動は BIZ の `apply_stock_change` が `inventory_repo::insert_movement` で書き、この module は書かない。`inventory_repo` の `MovementType` に `Transfer`（`"transfer"`）、`ReferenceType` に `TransferRecord`（`"transfer_record"`）を足し、`parse_movement_type`・`parse_reference_type` に同じ値を足す（DB の CHECK と同じ値の集合。D-061・D-064）。入出庫履歴の一覧（下の `list_inventory_records`）は記録の種類の表に `transfer_record`（ヘッダ `transfer_records`・明細 `transfer_items`・日付 `transfer_date`・詳細の route `/inventory/transfer/records`）を 1 行足すだけで、件数は明細の数（入庫・廃棄と同じ）。一覧の振替専用の関数は作らない（作成の画面の「最近の振替」は `list_inventory_records` を種類で絞って読む。[79](79-ui-stock-transfer.md)）。
+
+#### insert_transfer_record
+
+**シグネチャ**:
+```
+fn insert_transfer_record(conn: &DbConnection, record: &NewTransferRecord) -> Result<i64, DbError>
+```
+
+**NewTransferRecord構造体**:
+- transfer_date: String
+- idempotency_key: String
+- request_fingerprint: String
+
+`idempotency_key` の UNIQUE に当たれば `DbError::DuplicateKey`（廃棄の `insert_disposal_record` と同じ。BIZ が再送の判定へ回す）。
+
+#### insert_transfer_item
+
+**シグネチャ**:
+```
+fn insert_transfer_item(conn: &DbConnection, item: &NewTransferItem) -> Result<(), DbError>
+```
+
+**NewTransferItem構造体**:
+- transfer_record_id: i64
+- product_code: String
+- direction: TransferDirection（`"out"` / `"in"`。generated enum、D-061）
+- quantity: i64（正の整数。向きは direction で持つ）
+
+#### find_transfer_by_idempotency_key
+
+**シグネチャ**:
+```
+fn find_transfer_by_idempotency_key(conn: &DbConnection, key: &str) -> Result<Option<(i64, String)>, DbError>
+```
+
+`(record_id, request_fingerprint)` を返す（§10.7 と同じ形）。
+
+#### get_transfer_record_detail
+
+**関数要求**: 振替の記録の詳細として、ヘッダ、明細、関連 `inventory_movements` を取得する。
+
+**シグネチャ**:
+```
+fn get_transfer_record_detail(
+    conn: &DbConnection,
+    record_id: i64,
+) -> Result<TransferRecordDetail, DbError>
+```
+
+**TransferRecordDetail構造体**:
+- id: i64
+- transfer_date: String
+- status: String（今は常に `"active"`。取消は持たない）
+- created_at: String
+- items: Vec<TransferRecordDetailItem>（減らす明細を先、同じ向きの中は明細の id の順）
+- movements: Vec<MovementRecord>
+
+**TransferRecordDetailItem構造体**:
+- id: i64
+- product_code: String
+- product_name: String
+- department_name: String
+- stock_unit: ProductStockUnit
+- direction: TransferDirection
+- quantity: i64
+
+**処理ステップ**:
+1. transfer_records のヘッダを record_id で取得する。存在しない場合は DbError::NotFound
+2. transfer_items を products / departments と JOIN し、商品名・部門名・単位を付ける（`parse_stock_unit`。一覧に無い値は読取りの error。SPEC-UNIT-D11）
+3. inventory_movements から `reference_type='transfer_record'` かつ `reference_id=record_id` かつ `is_voided=0` の行を取得する
+4. movements は BIZ 層で source link を補完するため、IO 層では `source=None` のまま返す
 
 ### 10.6 inventory_repo — movements集計（D-118 の (a) で外した）
 

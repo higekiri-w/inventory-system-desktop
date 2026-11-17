@@ -10,6 +10,7 @@ src-tauri/src/
     return_cmd.rs        -- 返品・交換コマンド（CMD-03）
     manual_sale_cmd.rs   -- 手動販売出庫コマンド（CMD-04）
     disposal_cmd.rs      -- 廃棄・破損コマンド（CMD-05）
+    transfer_cmd.rs      -- 振替（詰め替え・切り分け）コマンド（CMD-13、§23.7a。D-143）
     inventory_cmd.rs     -- 在庫照会コマンド（CMD-06）
   biz/
     inventory_service/
@@ -45,6 +46,8 @@ CMD-02〜05で発生しうるBizError:
 | NotFound(msg) | "not_found" | 存在しない商品コード |
 | IdempotencyConflict(msg) | "idempotency_conflict" | 同一冪等キーで異なるリクエスト |
 | DatabaseError(_) | "internal" | IO層エラー |
+
+CMD-13（振替、§23.7a）も同じ 4 つ（D-143）。
 
 CMD-06で発生しうるBizError:
 
@@ -216,7 +219,7 @@ struct ReceivingRecordWithSupplier {
 
 #### create_return
 
-**関数要求**: 返品・交換記録を作成する。register_processedフラグに応じて在庫を更新する
+**関数要求**: 返品・交換記録を作成する。明細ごとに、register_processed（レジで商品のバーコードを読んで戻したか）と商品の設定から BIZ が決めた明細の在庫を更新する（[31](31-biz-inventory-service.md) §12.4、D-148）
 
 **シグネチャ（Tauriコマンド）**:
 ```
@@ -252,6 +255,7 @@ struct ReturnCreateResult {
     created: bool,
     idempotent_replay: bool,
     stock_warnings: Vec<String>,
+    stock_applied_product_codes: Vec<String>, // この保存で在庫を動かした商品コード（昇順・重複なし。冪等の再送も同じ。D-148）
 }
 ```
 
@@ -288,7 +292,8 @@ return_type / direction の値域は generated enum が検査し、exchange片�
   "record_id": 3,
   "created": true,
   "idempotent_replay": false,
-  "stock_warnings": []
+  "stock_warnings": [],
+  "stock_applied_product_codes": ["HZ-0012", "HZ-0013"]
 }
 ```
 
@@ -475,7 +480,7 @@ fn list_inventory_records(
 **入力型**: BIZ層の `InventoryRecordQuery` をそのまま使用
 ```
 struct InventoryRecordQuery {
-    record_type: Option<String>,      // None | "all" | "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "csv_import" | "stocktake"
+    record_type: Option<String>,      // None | "all" | "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "transfer_record" | "csv_import" | "stocktake"（"transfer_record" は振替。§23.7a、D-143）
     date_from: Option<String>,        // YYYY-MM-DD
     date_to: Option<String>,          // YYYY-MM-DD
     record_id: Option<i64>,
@@ -553,7 +558,7 @@ struct ReceivingRecordDetail {
 
 #### get_return_record
 
-**関数要求**: 返品・交換記録詳細を取得し、明細、レジ戻し済み状態、レシート画像パス、関連在庫変動を表示できる形で返す。
+**関数要求**: 返品・交換記録詳細を取得し、明細、レジでの戻し方（register_processed）、レシート画像パス、関連在庫変動を表示できる形で返す。
 
 **シグネチャ（Tauriコマンド）**:
 ```
@@ -580,7 +585,7 @@ struct ReturnRecordDetail {
 }
 ```
 
-**処理ステップ**: get_receiving_record と同パターン。`register_processed=true` の記録は movements が 0 件でも正常に返す。
+**処理ステップ**: get_receiving_record と同パターン。この保存で在庫を動かした明細が無い記録（`register_processed=true` で、全部の明細が Z004 の取込みで在庫に戻る商品。D-148）は movements が 0 件でも正常に返す。
 
 ---
 
@@ -663,6 +668,64 @@ struct DisposalRecordDetailItem {
 3. Ok → DisposalRecordDetail をそのまま返す
 4. Err(BizError::NotFound) → CmdError.kind="not_found" に変換して返す
 5. Err(other) → CmdError に変換して返す
+
+---
+
+### 23.7a CMD-13: 振替（詰め替え・切り分け）コマンド群（D-143）
+
+BIZ は [31](31-biz-inventory-service.md) §12.6b、IO は [21](21-io-inventory-repo.md) §10.5a、画面は [79](79-ui-stock-transfer.md)。一覧の command は作らない: 作成の画面の「最近の振替」と入出庫履歴は `list_inventory_records`（§23.7）に `record_type: "transfer_record"` を渡して読む（§23.7 の `list_inventory_records` の受ける種別に `transfer_record` がある）。
+
+#### create_transfer
+
+**関数要求**: 振替の記録を作成し、減らす商品の在庫を減らし、増やす商品の在庫を増やす
+
+**シグネチャ（Tauriコマンド）**:
+```
+#[tauri::command]
+#[specta::specta]
+fn create_transfer(
+    state: State<AppState>,
+    req: TransferCreateRequest,
+) -> Result<TransferCreateResult, CmdError>
+```
+
+**入力型**: BIZ層の `TransferCreateRequest` をそのまま使用
+```
+struct TransferCreateRequest {
+    idempotency_key: String,
+    transfer_date: String,          // YYYY-MM-DD
+    items: Vec<TransferItemInput>,
+}
+struct TransferItemInput {
+    product_code: String,
+    direction: TransferDirection,   // "out" | "in"
+    quantity: i64,                  // 正の整数。在庫の数量の単位（長さは cm）
+}
+```
+
+**出力型**: BIZ層の `TransferCreateResult` をそのまま使用（`DisposalCreateResult` と同じ 4 field）
+
+**処理ステップ**: create_disposal と同パターン（`state.db.lock()` → `biz::inventory_service::create_transfer(&mut conn, req)`。`ValidationFailed` → `validation`、`NotFound` → `not_found`、`IdempotencyConflict` → `idempotency_conflict`。§23.3）
+
+#### get_transfer_record
+
+**関数要求**: 振替の記録の詳細を取得し、明細（向きと単位つき）と関連在庫変動を表示できる形で返す。
+
+**シグネチャ（Tauriコマンド）**:
+```
+#[tauri::command]
+#[specta::specta]
+fn get_transfer_record(
+    state: State<AppState>,
+    record_id: i64,
+) -> Result<TransferRecordDetail, CmdError>
+```
+
+**出力型**: IO の `TransferRecordDetail`（[21](21-io-inventory-repo.md) §10.5a。`stock_unit` は `ProductStockUnit`、`direction` は `TransferDirection`。SPEC-UNIT-D11）
+
+**処理ステップ**: get_disposal_record と同パターン（NotFound → `not_found`）
+
+**登録（§23.13）**: 2 つの command を `lib.rs` の `collect_commands!` と `generate_handler!` に足し、`cargo run --bin generate_bindings` で `src/lib/bindings.ts` を作り直す（`TransferCreateRequest`・`TransferItemInput`・`TransferCreateResult`・`TransferRecordDetail`・`TransferRecordDetailItem`・`TransferDirection` が出て、`MovementType` と `ReferenceType` の union に `"transfer"`・`"transfer_record"` が入る）。
 
 ---
 

@@ -21,6 +21,15 @@ import { dailyReportImportRecordsSearchSchema } from "./types";
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({ setTitle: vi.fn().mockResolvedValue(undefined) }),
 }));
+// 実の route tree は RootLayout の useAutoBackupCheck を mount で動かす（UI-11b-D16 の offsite の確認が
+// toast と offsite の status の invalidate を足す）。この画面の test の外なので hook を止める（隣の route の test と同じ）
+vi.mock("@/features/backup-restore/useAutoBackupCheck", () => ({
+  useAutoBackupCheck: () => undefined,
+  resumeAutoBackupCheck: vi.fn(),
+  suspendAutoBackupCheckAndWait: vi.fn().mockResolvedValue(undefined),
+  holdAutoBackupCheckForRestore: vi.fn(),
+  releaseAutoBackupCheckAfterRestore: vi.fn(),
+}));
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
   // root layout が描く

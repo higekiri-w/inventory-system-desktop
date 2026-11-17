@@ -48,7 +48,8 @@ const DIRECTION_LABELS: Record<string, string> = {
 };
 
 function formatRegisterProcessed(value: boolean): string {
-  return value ? "レジ戻し済み（CSV取込みで反映）" : "レジ未処理（この保存で反映）";
+  // UI-03-D23: 記録の値（レジでバーコードを読んで戻したか）
+  return value ? "バーコードで戻した" : "バーコードなし";
 }
 
 // 空備考は他の記録画面と同じ「—」で示す。空白だけの値も空として扱う。
@@ -135,7 +136,7 @@ export function ReturnRecordDetailPage({ recordId, returnTo }: ReturnRecordDetai
             </div>
           </div>
           <div>
-            <span className="text-muted-foreground">レジ戻し</span>
+            <span className="text-muted-foreground">レジでの戻し方</span>
             <div className="font-medium">{formatRegisterProcessed(detail.register_processed)}</div>
           </div>
           <div>
@@ -228,7 +229,7 @@ export function ReturnRecordDetailPage({ recordId, returnTo }: ReturnRecordDetai
           <EmptyState
             icon={PackageSearch}
             title="関連する在庫変動がありません"
-            description="レジ戻し済みの返品・交換はこの画面では在庫を動かしません"
+            description="レジでバーコードを読んで戻した記録で、どの商品も売上データ（Z004）の取込みで在庫に戻ります"
           />
         ) : (
           <MovementTable
