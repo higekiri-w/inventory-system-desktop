@@ -189,6 +189,9 @@ pub struct DailyReportSdCandidate {
     /// 束の精算回数（IO-07-D5、TD-592）。読めなかった束は None
     pub settlement_no: Option<i64>,
     pub status: DailyReportSdCandidateStatus,
+    /// 数の列の誤り（`invalid_number`・`number_too_large`）で `Unreadable` の束だけ Some。帳票・列を名指して
+    /// 管理者に知らせるよう伝える文（BIZ-08-D2a、§37.9 手順 5）。値・file 名・行番号を含まない
+    pub unreadable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, specta::Type)]

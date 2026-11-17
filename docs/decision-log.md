@@ -1401,3 +1401,14 @@ Use concise ADR-style entries.
 - Guarantee range: 当てはめは closure と owner の判断で、機械の保証でない。線の上で割れうる。照らす読み（予定 path でか振舞いでか）は D-154 の文から引き継ぎ、割れたら owner の裁定。
 - Compatibility: D-154 (4) が merge-evidence に置く B の基準のうち (ii) の Scope の照らしを置き換える（D-154 の Superseded in part の行）。ほかの D、集合・本数・helper は変えない。D-098 の安全の境界（古い証拠の拒否・独立 review）の運用を、通常の packet・PR の経路で緩める向きに改訂した。
 - Revisit: 照らさなかった手が merge の後で lane の振舞いと合わないと分かったとき。closure がまた割れたとき。
+
+## D-158: 日報（Z001・Z002・Z005）の数の列を Z004 と同じ整数の形の規則で読み、読めない列は帳票と列を名指して管理者に知らせる（2026-11-17）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-775〈2026-11-17、「そろえるべきだと思う」〉と TD-770〈differential test を始める〉。lane「日報の数の読取りをそろえる」〈Plan Packet `docs/plans/2026-11-17-number-parse-align.md`、PR #274〉。Decision の (3)(4)〈管理者に知らせる文、SD の一覧の `unreadable_reason`〉は計画の review〈AI〉の指摘を Coordinator が受理したもの、TD-781 は未確認）
+- Context: 日報の数の読取り（IO-07）はカンマ・`¥`・`￥`・ASCII 空白をすべて除いてから読み、`1,23`・`0,123` を 123、`1 .5` を 1.5 と黙って別の数として読んでいた。Z004（IO-02）は D-103 の (1) でこの緩い除去を却下していた。手で選ぶ経路の数の形の誤りは汎用の文で、SD の一覧の「読めません」は理由を出さなかった。
+- Decision: (1) D-103 の (1) の整数の形の規則（`-?[0-9]+` か `-?[1-9][0-9]{0,2}(,[0-9]{3})+`）を日報の全部の数の列へ広げる。検査は `src-tauri/src/io/mod.rs` の 1 つの関数で、Z004 と日報が通る。前後の空白は値の全体に 1 回だけ除き、検査は trim しない（個数の列の整数部の中の空白を受けない）。区切りの崩れた値・`¥`/`￥`・数の中の空白・`+` は `invalid_number`。(2) Z004 との承認済みの差を 3 つ残す: A1 空の値は列ごとに `None`（Z005 の金額は必須）、A2 上限は IO-07-D6（Z004 は `i32`）、A3 個数の列は整数部の後に `.` + 1〜2 桁を受ける。2 つの parser に同じ入力の表を通す差分の test が差を固定する。(3) 手で選ぶ経路の `invalid_number` の文は BIZ-08-D2a を広げ、`number_too_large` が無ければ `invalid_number` の列を名指す。文の後半は `number_too_large` も含めて `この日の日報は読めません。管理者に知らせてください。` にする。(4) SD の一覧の候補に `unreadable_reason: Option<String>` を足し、数の列の誤りで `Unreadable` の束（`settlement_mismatch` の無い束）だけに (3) と同じ全文を入れる。全文は BIZ の 1 つの関数が作る。正本は 29 IO-07-D2・§29.5、23 §13.4.1、37 BIZ-08-D2a・§37.9 手順 5、55 UI-07-D15 (3)。
+- Why: 区切りの崩れた値を黙って別の数として読まない（TD-775、D-103 と同じ理由）。読めない原因をその画面で名指す（D-127）。SD と PC の写しは同じ bytes（SD-22）で店の手で直す道が無いので、直し方は名指さず管理者に知らせるよう伝える。
+- Alternatives: 日報が `parse_z004_int` を呼ぶ（`i32` で日報の金額が入らず、形の誤りと上限の越えを分けられない）; 日報に同じ正規表現を写す（2 つの写しがずれる。今の食い違いと同じ形）; 共有の関数を `z004_parser.rs` に置く（日報の規則が Z004 の module に依る）; `DailyReportSdCandidateStatus` に数の誤りの値を足す（帳票・列の組ごとの値か別の構造が要り、画面が文を組んで文の正本が 2 か所になる）; `¥`・空白を受け続ける（手元の実データの Contract Probe で新しく拒む値が 0、PR #274 の comment）。
+- Guarantee range: 日報の 3 帳票の 7 か所の数の読取りは全部この規則を通る。旧い緩い規則で取り込んだ崩れた値の束は、SD の一覧で「取込み済み」から「読めません」（理由の文つき）に変わり、取り消すと同じ原本は読み直せない（取り消した行は `rolled_back` のまま残り、データは消えない。pos-tables §12b）。EJ（IO-08）の金額 token は対象外（backlog の保留に調べの候補）。
+- Compatibility: DB・migration・取込み済みの行、Z004 の受ける形・`i32`・error の文、command の登録は変えない。DTO は `DailyReportSdCandidate` に `Option` の field を 1 つ足すだけ（bindings は `string | null`）。D-103 は今も有効で、(1) を置き換えず範囲を広げるので Superseded の行は足さない。
+- Revisit: レジの日報に `¥`・数の中の空白・`+` の形が観測されたとき。数が読めずに止まる束が実際に出て、管理者に知らせる止まり方では足りないとき（TD-781 の確認を含む）。
