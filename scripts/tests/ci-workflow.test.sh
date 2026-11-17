@@ -264,9 +264,6 @@ end
 report = steps.last
 run = report["run"].to_s
 abort "observe report must run always" unless report["if"] == "always()"
-["GITHUB_STEP_SUMMARY", "::warning", "'^test .* FAILED$'", "cargo-test.log"].each do |needle|
-  abort "observe report lost #{needle}" unless run.include?(needle)
-end
 %w[steps.test.outcome steps.clippy.outcome].each do |needle|
   abort "observe report lost #{needle}" unless report["env"].to_h.values.any? { |value| value.to_s.include?(needle) }
 end
@@ -281,12 +278,17 @@ Dir.mktmpdir do |dir|
   File.write(summary, "")
   File.write(script, run)
   outcomes = {"${{ steps.test.outcome }}" => "failure", "${{ steps.clippy.outcome }}" => "success"}
-  env = report["env"].to_h.transform_values { |value| outcomes.fetch(value.to_s, value.to_s) }
+  # An expression this check cannot evaluate would run as a literal string and could hide a regression.
+  env = report["env"].to_h.transform_values do |value|
+    next value.to_s unless value.to_s.include?("${{")
+    outcomes.fetch(value.to_s) { abort "observe report env has an expression this check cannot evaluate: #{value}" }
+  end
   env = env.merge("RUNNER_TEMP" => dir, "GITHUB_STEP_SUMMARY" => summary)
   stdout, _stderr, status = Open3.capture3(env, "bash", "--noprofile", "--norc", "-eo", "pipefail", script, chdir: dir)
   abort "observe report must exit 0" unless status.success?
   abort "observe report summary lost the failed test name" unless File.read(summary).include?(failed)
   abort "observe report lost the per-test ::warning" unless stdout.include?("::warning title=Windows observe::#{failed}")
+  abort "observe report lost the cargo test outcome" unless File.read(summary).include?("- cargo test: failure") && stdout.include?("::warning title=Windows observe::cargo test failed")
 end
 RUBY
 }
@@ -618,6 +620,8 @@ reject_observe_mutant windows-observe-failure-probe "$(observe_mutant failure-pr
 reject_observe_mutant windows-observe-no-summary-name "$(observe_mutant no-summary-name '/printf/s/printf/:/')"
 reject_observe_mutant windows-observe-no-test-warning "$(observe_mutant no-test-warning 's/echo "::warning title=Windows observe::$line"/:/')"
 reject_observe_mutant windows-observe-shared-group "$(observe_mutant shared-group 's/group: windows-observe-/group: ci-/')"
+reject_observe_mutant windows-observe-unknown-outcome-expr "$(observe_mutant unknown-outcome-expr "s/TEST_OUTCOME: \${{ steps.test.outcome }}/TEST_OUTCOME: \${{ steps.test.outcome || 'skipped' }}/")"
+reject_observe_mutant windows-observe-no-outcome-warning "$(observe_mutant no-outcome-warning 's/echo "::warning title=Windows observe::cargo test failed"/:/')"
 
 reject_fixed "  push:"
 reject_fixed '      - "**/*.md"'
