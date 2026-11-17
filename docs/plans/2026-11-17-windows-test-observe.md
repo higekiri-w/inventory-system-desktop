@@ -23,20 +23,23 @@ Goal Invariant:
 
 ### 最小完了条件
 
-- `src-tauri/**` に触れる PR ごとに、`windows-latest` で `cargo test` と `cargo check --release` が走り、結果（成否と落ちた test の名）が PR の checks の画面から読める。
-- その job は失敗しても `Merge gate` の合否・helper の `status` と `merge` の判定を変えない（observe）。走っている間だけ helper の `merge` が待つことを docs に書く。
+- `src-tauri/**` に触れる PR ごとに、`windows-latest` で `cargo test` と `cargo clippy --release --all-targets -- -D warnings` が走り、結果（2 つの step の outcome と落ちた test の名）が run の summary と `::warning` の annotation に出る。
+- 結果は読まれる: `src-tauri/**` に触れる PR では、Coordinator が Ready の承認を求める返答に Windows observe の outcome と落ちた test の名を書く（job は緑のままなので、checks の一覧の色だけに頼らない）。昇格の数え方はその記録で行う。
+- cargo の step が落ちても（step の時間切れを含む）、job は成功で終わり、`Merge gate` の合否・helper の `status` と `merge` の判定を変えない（observe）。run の進行中は helper の `merge` が `PR not merge-clean` で止まる。同じ head なら run の完了の後に打ち直す（承認の取り直しも同期も要らない）ことを docs に書く。
+- 保証の例外: checkout・toolchain・cache の step の失敗と job の cancel（job の `timeout-minutes` の時間切れを含む）では job が失敗・cancel で終わり、helper の `merge` が止まる。戻し方は job の再実行で、test の retry ではない（落ちたのは test でない）ことを `docs/ci.md` に 1 文で書く。
 - 初回の結果と時間を測り、`docs/ci.md` に書く（`未実測` のままにしない）。昇格（enforce）の条件が `docs/ci.md` にある。
 
 ### 失敗定義
 
-- observe の job の失敗で helper の `merge` が止まる（`mergeable_state` が `clean` にならない）、または `Merge gate` が変わる。
-- 失敗が PR の画面で見えない（成功に見えて中身が落ちている）、または retry・skip で失敗を消す。
+- 保証の例外の外で observe の job が失敗し、helper の `merge` が止まる（run の完了の後も `mergeable_state` が `clean` にならない）、または `Merge gate` が変わる。
+- 失敗が PR の画面で見えない（summary・annotation に outcome と落ちた test の名が無い）、Ready の承認を求める返答に結果が書かれない、または retry・skip で失敗を消す。
+- 失敗の経路（意図的に落とした回）を一度も観測せずに observe の保証を主張する。
 - secret を使う・`permissions` が `contents: read` を超える・npm を使う。
 
 ### 非目的
 
 - `Merge gate`・`scripts/pr-gate.py`・`.github/workflows/ci.yml`・`scripts/ci/check-required-jobs.sh` の変更、enforce への昇格。
-- E2E（WebDriver）、Windows での clippy、frontend の build。
+- E2E（WebDriver）、frontend の build、`tauri build`（`custom-protocol` を有効にした release の build）。
 - Windows で落ちた test の修正（見つかれば別の lane。本 lane は名と原因の分類を PR の comment に残すまで）。
 
 Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や証跡作業が Goal Invariant を前進させない場合は、Goal を置き換えず簡略化・defer・削除する。
@@ -45,18 +48,18 @@ Priority: `Goal Invariant > Acceptance Criteria > supporting evidence`。AC や�
 
 - S1 `.github/workflows/windows-observe.yml`（新規）:
   - `name: Windows observe`。job の名は `Merge gate` にしない（ruleset が要る context と同じ名を持たせない）。
-  - `on`: `pull_request`（`branches: [main]`、`types: [opened, reopened, synchronize]`、`paths: ['src-tauri/**', '.github/workflows/windows-observe.yml']`）と `workflow_dispatch`。ci.yml の trigger（`.github/workflows/ci.yml:3-7`）に合わせ、`paths` だけを足す（required でない workflow なので、docs だけの PR で cold build と helper の待ちを起こさない）。
+  - `on`: `pull_request`（`branches: [main]`、`types: [opened, reopened, synchronize]`、`paths: ['src-tauri/**', '.github/workflows/windows-observe.yml']`）と `workflow_dispatch`。ci.yml の trigger（`.github/workflows/ci.yml:3-7`）に合わせ、`paths` だけを足す（required でない workflow なので、docs だけの PR で cold build と helper の `merge` の止まりを起こさない）。
   - `permissions: contents: read`、`concurrency: group: windows-observe-${{ github.event.pull_request.number || github.ref }}`・`cancel-in-progress: true`（ci.yml:9-14 と同じ形で group の名だけ変える）、`env` は ci.yml:16-18 と同じ 2 行。
-  - job 1 本: `runs-on: windows-latest`、`timeout-minutes: 60`（hang で runner を 6 時間占めない）、`defaults.run.working-directory: src-tauri`。steps は `actions/checkout@v6` → `dtolnay/rust-toolchain@stable` → `actions/cache@v5`（ci.yml の Rust の job と同じ 3 path・key・restore key。key は `runner.os` で Windows に分かれる）→ `cargo test`（`id: test`、`continue-on-error: true`）→ `cargo check --release`（`id: release`、`continue-on-error: true`。`src-tauri/src/main.rs:2` の `windows_subsystem` は Windows の release でだけ効く）→ 最後の step（`if: always()`）が 2 つの `steps.<id>.outcome` を `$GITHUB_STEP_SUMMARY` に表で書き、`failure` があれば `::warning title=Windows observe::<step> failed` を出す。retry しない。
+  - job 1 本: `runs-on: windows-latest`、`timeout-minutes: 60`（hang で runner を 6 時間占めない）、`defaults.run.shell: bash` と `defaults.run.working-directory: src-tauri`（Windows の既定の shell は `pwsh` で、bash の書き方の step が落ちるため。`bash` は `bash --noprofile --norc -eo pipefail {0}` で走る）。steps は `actions/checkout@v6` → `dtolnay/rust-toolchain@stable`（`components: clippy`。ci.yml:92-94 と同じ形）→ `actions/cache@v5`（ci.yml の Rust の job と同じ 3 path・key・restore key。key は `runner.os` で Windows に分かれる）→ `cargo test 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"`（`id: test`、`continue-on-error: true`、step の `timeout-minutes: 30`。`pipefail` で `cargo test` の exit を保つ）→ `cargo clippy --release --all-targets -- -D warnings`（`id: clippy`、`continue-on-error: true`、step の `timeout-minutes: 20`。release の構成の検査と Windows 専用の条件付きコンパイルの code の lint を兼ねる。理由と限界は S5）→ 最後の step（`if: always()`）が 2 つの `steps.<id>.outcome` と log の `^test .* FAILED$` に当たる行（落ちた test の名）を `$GITHUB_STEP_SUMMARY` に書き、`failure` の step ごとに `::warning title=Windows observe::<step> failed`、落ちた test ごとに `::warning` を出す。log が無い・一致が 0 件でも exit 0 で終わる書き方にする（report の step 自身が job を落とさない）。retry しない。step の時間の合計（30 + 20）は job の 60 より小さく、残りを checkout・toolchain・cache に当てる（値は `未実測` の初期値で、AC6 の実測で見直す）。
   - 秘密を使わない（`secrets.` も `GITHUB_TOKEN` の env も書かない）。npm・Node を使わない。
 - S2 `scripts/tests/run-workflow-tests.sh:8`: YAML の parse の列に `.github/workflows/windows-observe.yml` を足す。
 - S3 `scripts/tests/ci-workflow.test.sh`: observe の契約を確かめる関数を 1 つ足し、mutant で拒むことを確かめる（Test Plan）。
-- S4 `docs/ci.md`: `## Windows Observe` 節を足す（目的、observe であること、`Merge gate` の外である根拠、走っている間 helper の `merge` が待つこと、初回の時間、昇格の条件）。Cache Policy の「Rust 3 job」の行（`docs/ci.md:88`）に、Windows の job は OS の key で別の cache を持つことを 1 句で足す。CI-PUBLIC-D1 は変えない（`windows-latest` は public の repository の standard runner、下の事実）。
-- S5 `docs/decision-log.md`: 末尾に D-157（Status: owner の決定 TD-770、本 packet で起票。Context: hosted は全 job が `ubuntu-latest` で `cfg(windows)` の 29 か所を compile しない、記事の observe の考え。Decision: S1 の形、observe を step の `continue-on-error` で実装する理由〈helper の `mergeable_state == 'clean'`〉、昇格は別の R3。Alternatives: ci.yml に job を足す〈`check-required-jobs.sh` と `Merge gate` が変わる〉、job の `continue-on-error`〈check の結論が失敗のまま残るかを確かめていない〉、schedule だけ〈PR の L3 より前に見えない〉、paths を付けない〈docs の PR でも cold build と待ち〉。Guarantee range: Windows の runner の image と店の PC は同じでない。L3 を置き換えない。Revisit: 昇格の条件を満たしたとき、誤検知が出たとき、待ちが merge の運用を妨げたとき）。
+- S4 `docs/ci.md`: `## Windows Observe` 節を足す（目的、observe であること、`Merge gate` の外である根拠、run の進行中は helper の `merge` が止まり、同じ head なら完了の後に打ち直す〈承認の取り直しも同期も要らない〉こと、保証の例外と戻し方〈job の再実行は test の retry ではない〉の 1 文、「`src-tauri/**` に触れる PR では、Coordinator が Ready の承認を求める返答に Windows observe の outcome と落ちた test の名を書く。昇格の数え方はその記録で行う」の 1 文、初回の時間、昇格の条件）。Cache Policy の「Rust 3 job」の行（`docs/ci.md:88`）に、Windows の job は OS の key で別の cache を持つことを 1 句で足す。CI-PUBLIC-D1 は変えない（`windows-latest` は public の repository の standard runner、下の事実）。
+- S5 `docs/decision-log.md`: 末尾に D-157（Status: owner の決定 TD-770、本 packet で起票。Context: hosted は全 job が `ubuntu-latest` で Windows 専用の条件付きコンパイルの code を compile しない、記事の observe の考え。Decision: S1 の形、observe を step の `continue-on-error` で実装する理由〈helper の `mergeable_state == 'clean'`〉、job が緑のままなので結果を summary・annotation と Ready の承認を求める返答の記録で読む形、`cargo clippy --release --all-targets -- -D warnings` を使う理由〈`src-tauri/src/lib.rs` の `#[cfg(debug_assertions)]` の code は release で外れる。`docs/backlog.md:264` の `unused dependency tauri-specta` は開発用の Windows の release の build でだけ出た。Windows 専用の code は他のどこでも `-D warnings` を受けない〉と限界〈`src-tauri/Cargo.toml:25` の `tauri` は `custom-protocol` を有効にしないので、`tauri build` と同じ構成ではない〉、保証の例外〈checkout・toolchain・cache の失敗と job の cancel〉、昇格は別の R3。Alternatives: ci.yml に job を足す〈`check-required-jobs.sh` と `Merge gate` が変わる〉、job の `continue-on-error`〈check の結論が失敗のまま残るかを確かめていない〉、`cargo check --release` だけ〈Windows 専用の code の lint が無い〉、schedule だけ〈PR の L3 より前に見えない〉、paths を付けない〈docs の PR でも cold build と helper の止まり〉。Guarantee range: Windows の runner の image と店の PC は同じでない。L3 を置き換えない。Revisit: 昇格の条件を満たしたとき、誤検知が出たとき、run の進行中の止まりが merge の運用を妨げたとき）。
 
 Non-scope: `.github/workflows/ci.yml`、`scripts/pr-gate.py`、`scripts/ci/check-required-jobs.sh`、`scripts/ci/classify-changes.sh`、`.github/merge-gate-ruleset.json`、`src-tauri/**`。
 
-push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Workflows の権限を持たない）: 計画の commit と `plan-approve.sh` の commit は Coordinator が push する。S1〜S5 の実装の commit は `.github/workflows/**` を含むので、owner が owner の terminal で push する（Coordinator は push の command を返答に inline で渡す）。
+push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Workflows の権限を持たない）: 計画の commit と `plan-approve.sh` の commit は Coordinator が push する。S1〜S5 の実装の commit は `.github/workflows/**` を含むので、owner が owner の terminal で push する（Coordinator は push の command を返答に inline で渡す）。AC4 の意図的な失敗の回の一時の commit と、それを戻す commit も `.github/workflows/windows-observe.yml` に触れるので、それぞれ owner が owner の terminal で push する（順: 実装の commit → 一時の commit → 観測 → 戻す commit）。
 
 ## 確かめた事実（2026-11-17）
 
@@ -66,16 +69,19 @@ push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Wor
 - classifier: `.github/workflows/*` は `scripts/ci/classify-changes.sh:55` で full（`workflow=true` を含む）。分類の key は 9 つのままで、新しい key は要らない。
 - Runner と費用: <https://docs.github.com/en/actions/reference/runners/github-hosted-runners> の「Standard GitHub-hosted runners for public repositories」の表に `windows-latest` がある。billing の頁は「The use of standard GitHub-hosted runners is free:」の第 1 に「In public repositories」（同日 WebFetch）。CI-PUBLIC-D1（`docs/ci.md:45`）の内。
 - Cache Policy（`docs/ci.md:83-89`）: `target/` を保存しない、key は OS と `Cargo.lock` の hash。Windows の job は `runner.os` で別の key になり、Linux の 3 job の key を共有しない。
-- `cfg(windows)` は `src-tauri/src` に 29 か所（`grep -rn -c` で lib.rs 2・register_sd.rs 6・restore.rs 9・offsite.rs 8・backup.rs 4）、`windows-sys` は `src-tauri/Cargo.toml:48-49` の Windows の依存。`rusqlite` は `bundled`（`src-tauri/Cargo.toml:33`）で SQLite の system の依存は要らない。
+- helper は止まり、待たない: `scripts/pr-gate.py:1086` は `require(pr['mergeable'] is True and pr['mergeable_state'] == 'clean', 'PR not merge-clean')` で、その場で止まる（poll しない）。
+- shell: workflow-syntax の頁（同日 WebFetch）は `pwsh` の行に「This is the default shell used on Windows.」、`bash` の行に `bash --noprofile --norc -eo pipefail {0}` と「When specifying a bash shell on Windows, the bash shell included with Git for Windows is used.」。step の `timeout-minutes` は「The maximum number of minutes to run the step before killing the process.」。step の時間切れに `continue-on-error` が効いて job が成功で終わるかは頁に書いてなく、未確認。
+- release の構成: `src-tauri/src/lib.rs:263` ほかに `#[cfg(debug_assertions)]`（`rg -n debug_assertions src-tauri/src`）、`src-tauri/src/main.rs:2` は `cfg_attr(not(debug_assertions), windows_subsystem = "windows")`。`docs/backlog.md:264` は開発用の Windows の Rust 1.100.0 の `cargo check --release` でだけ `unused dependency tauri-specta` が出た記録。`src-tauri/Cargo.toml:25` は `tauri = { version = "2", features = [] }` で `custom-protocol` を有効にしない。`[features]` の表は無い（`rg -n '^\[features\]' src-tauri/Cargo.toml` が 0 件）ので、ci.yml:116 の `--all-features` を付けなくても同じ feature の集合。
+- Windows 専用の条件付きコンパイルの code は `src-tauri/src` の lib.rs・`io/register_sd.rs`・`mnt/restore.rs`・`mnt/offsite.rs`・`mnt/backup.rs` にある（`rg -l 'cfg\(windows\)' src-tauri/src`）。`windows-sys` は `src-tauri/Cargo.toml:48-49` の Windows の依存。`rusqlite` は `bundled`（`src-tauri/Cargo.toml:33`）で SQLite の system の依存は要らない。
 - 既存の workflow の YAML の parse は `scripts/tests/run-workflow-tests.sh:8` が file を名指しで並べる（新しい file は足さないと検査の外）。
 - 未実測: Windows の cold build と `cargo test` の時間、今の test が Windows で green か。
 
 ## Acceptance Criteria
 
-- AC1: lane の PR（S1 を含む head）で `Windows observe` の run が `windows-latest` で走り、PR の checks に出る。summary に `cargo test` と `cargo check --release` の outcome の表がある。
+- AC1: lane の PR（S1 を含む head）で `Windows observe` の run が `windows-latest` で走り、PR の checks に出る。summary に `cargo test` と `cargo clippy --release` の outcome と落ちた test の名（無ければ無いこと）がある。
 - AC2: 同じ head の `ci.yml` の run の `Merge gate` が、この workflow の有無と無関係に今の `check-required-jobs.sh` で出る（`git diff origin/main -- .github/workflows/ci.yml scripts/ci/check-required-jobs.sh scripts/pr-gate.py` が空）。
 - AC3: `python3 scripts/pr-gate.py status --pr N --packet docs/plans/2026-11-17-windows-test-observe.md` の blockers に Windows の run の話が出ない（run の前と後で同じ）。Coordinator が出力を PR の comment に残す。
-- AC4: Windows の run の進行中と完了の後に `gh api repos/higekiri-w/inventory-system-desktop/pulls/N --jq '.mergeable_state'` を引き、値を PR の comment に残す。完了の後（test が落ちていても）が `clean`（Draft の間は `draft` が返るなら、Ready の後の値で見る）。`clean` にならなければ実装を止め、計画を Gated Amendment で直す。
+- AC4: Windows の run の進行中と完了の後に `gh api repos/higekiri-w/inventory-system-desktop/pulls/N --jq '.mergeable_state'` を引き、値を PR の comment に残す。完了の後（test が落ちていても）が `clean`（Draft の間は `draft` が返るなら、Ready の後の値で見る）。加えて、意図的な失敗の回（Test Plan の「失敗の経路」）を 1 回行い、その head で (a) summary と annotation に `cargo test` の `failure` と合成の落ちた test の名が出る、(b) 後続の clippy と report の step が走る、(c) `Windows observe` の check run の conclusion が `success`、(d) 同じ head の `mergeable_state` が `clean`（`draft` が返るなら Ready の間の値）を PR の comment に残す。この回が未実施なら AC4 は未完了。`clean` にならなければ実装を止め、計画を Gated Amendment で直す。
 - AC5: 初回の結果（AC1 の run の `cargo test` の log から、green か、落ちた test の名と原因の分類〈Windows の挙動・test の前提・flaky の疑い〉）を PR の comment に残す。落ちた test は本 lane で直さず、backlog か別の lane の起票の候補として報告する。
 - AC6: `docs/ci.md` の `## Windows Observe` 節に AC1 の run の job の時間（GitHub の job の実行時間の値と run の URL）があり、`未実測` の語が節に無い。昇格の条件が書いてある。
 - AC7: `bash scripts/tests/ci-workflow.test.sh` と `bash scripts/tests/run-workflow-tests.sh` が PASS し、Test Plan の mutant を拒む。
@@ -83,17 +89,17 @@ push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Wor
 
 ## Design Readiness
 
-- 引用する設計正本（節まで）: `docs/ci.md` の Hosted Trigger Model・Public Standard-Runner Policy（CI-PUBLIC-D1）・Cache Policy・Required Check Impact、`docs/agent-guidance/merge-evidence.md`（MG-D2 の required jobs）、`docs/DEV_WORKFLOW.md` Implementation Rules（`cargo check --release`）。
+- 引用する設計正本（節まで）: `docs/ci.md` の Hosted Trigger Model・Public Standard-Runner Policy（CI-PUBLIC-D1）・Cache Policy・Required Check Impact、`docs/agent-guidance/merge-evidence.md`（MG-D2 の required jobs）、`docs/DEV_WORKFLOW.md` Implementation Rules（`:140` の Writer の `cargo check --release`）。
 - 必要な設計成果物: `docs/ci.md` の節と D-157 を本 PR で直す（updated in this PR、計画の固定の後）。
 - plan にしかない durable な判断の昇格先: observe の実装の形と昇格の条件 → D-157 と `docs/ci.md`。
-- 前提・制約と延期した design gap: `mergeable_state` が required でない check run の失敗・進行中をどう数えるかは AC4 で観測する。Windows の image と店の PC の差は L3 が持つ。clippy と E2E は延期。
-- 絶対保証の例外と抜け道: 主張しない。observe は Windows の失敗を見せるだけで、merge を止めない（見落とせば merge される）。
+- 前提・制約と延期した design gap: `mergeable_state` が required でない check run の失敗・進行中をどう数えるかは AC4 で観測する。Windows の image と店の PC の差は L3 が持つ。E2E と `tauri build`（`custom-protocol`）は延期。step の時間切れに `continue-on-error` が効くかは未確認。
+- 絶対保証の例外と抜け道: 主張しない。observe は Windows の失敗を見せるだけで、merge を止めない（見落としの抜け道は、Ready の承認を求める返答に結果を書く記録で狭める）。保証の例外は checkout・toolchain・cache の失敗と job の cancel で、helper の `merge` が止まり、job の再実行で戻す。
 - 計画の review に問う点:
   1. observe を step の `continue-on-error` と summary・warning で実装する形は、失敗を見せることと helper の `merge` を止めないことを両方満たすか。job の `continue-on-error` の方が見えやすく、`mergeable_state` も `clean` に保つなら、そちらを採るべきか。
   2. `paths` の filter（`src-tauri/**` と自身）は Goal に足りるか（`Cargo.lock` は `src-tauri` の下）。ci.yml が path filter を廃した理由（required の `Merge gate` を必ず出す）は required でないこの workflow に当たらない、という読みは正しいか。
-  3. 進行中の Windows の run で helper の `merge` が `PR not merge-clean` で止まる待ちを受けてよいか（受けないなら trigger を変える）。
-  4. 昇格の条件の案: Windows で落ちた test を別の lane で直した後、`src-tauri/**` に触れる PR の連続 5 run で誤検知 0（candidate。数は owner の判断）。昇格は ci.yml・`check-required-jobs.sh`・`Merge gate` を変える別の R3。
-  5. `cargo check --release` を入れる理由（`main.rs:2` の Windows の release だけの属性）は足りるか。clippy を外す判断は正しいか。
+  3. 進行中の Windows の run で helper の `merge` が `PR not merge-clean` で止まり、完了の後に打ち直す運用を受けてよいか（受けないなら trigger を変える）。
+  4. 昇格の条件の案: Windows で落ちた test を別の lane で直した後、`src-tauri/**` に触れる PR の連続 5 run で誤検知 0（candidate。数は owner の判断。数えるのは Ready の承認を求める返答の記録）。昇格は ci.yml・`check-required-jobs.sh`・`Merge gate` を変える別の R3。
+  5. `cargo clippy --release --all-targets -- -D warnings` で release の構成の検査と Windows 専用の code の lint を兼ねる形と、`tauri build` と同じでない限界の書き方は足りるか。
   6. この変更で不要になる記述・条件は無いか（例: `docs/DEV_WORKFLOW.md:140` の Writer の `cargo check --release` は、observe の段では残す）。
 - 判定: ready（問い 1〜3 の答えで S1 の trigger と実装の形が変わりうる）。
 
@@ -112,8 +118,11 @@ push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Wor
 
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
-| observe の job が merge を止めない | `cargo test`・`cargo check --release` の step から `continue-on-error: true` が消え、job が失敗して `mergeable_state` が `clean` でなくなる | CLI（mutant） | `ci-workflow.test.sh` の `validate_windows_observe` と mutant `windows-observe-no-continue` | step の `continue-on-error` を消す |
+| observe の job が merge を止めない | `cargo test`・`cargo clippy --release` の step から `continue-on-error: true` が消え、job が失敗して `mergeable_state` が `clean` でなくなる | CLI（mutant） | `ci-workflow.test.sh` の `validate_windows_observe` と mutant `windows-observe-no-continue` | step の `continue-on-error` を消す |
 | 失敗を見せる | 最後の step の `if: always()` か summary・`::warning` が消え、失敗が成功に見える | CLI（mutant） | 同 mutant `windows-observe-no-report` | report の step を消す・`if: always()` を外す |
+| 落ちた test の名を残す | `cargo test` の出力を `tee` で log に取らない、report が `FAILED` の行を拾わない | CLI（mutant） | 同 mutant `windows-observe-no-tee` | `| tee` を消す・report の `FAILED` の抽出を消す |
+| 既定の shell と step の時間切れ | `defaults.run.shell: bash` が消え `pwsh` で bash の書き方が落ちる、cargo の step の `timeout-minutes` が消えて job の時間切れ（cancel）になる | CLI（mutant） | 同 mutant `windows-observe-no-bash`・`windows-observe-no-step-timeout` | `shell: bash` を消す・step の `timeout-minutes` を消す |
+| 失敗の経路 | 初回が green で、失敗した step・job の結論・`mergeable_state` の組を一度も見ない | 手の観測（Coordinator、PR の comment） | AC4 の意図的な失敗の回 | 一時の commit の head で (a)〜(d) のどれかが出ない |
 | `Merge gate` の外 | job の名が `Merge gate` になる、ci.yml に Windows の job が入る | CLI（mutant） | 同 mutant `windows-observe-merge-gate-name` と ci.yml に `windows-latest` が無いこと | 名を `Merge gate` にする、ci.yml に `windows-latest` を書く |
 | 最小の権限・secret なし | `permissions` が `write` を含む、`secrets.` を参照する | CLI（mutant） | 同 mutant `windows-observe-write-permission`・`windows-observe-secret` | `contents: write` か `secrets.X` を足す |
 | retry・skip をしない | retry の action や `cargo test -- --skip` が入る | CLI（mutant） | 同 mutant `windows-observe-skip` | `--skip` か retry を足す |
@@ -121,4 +130,6 @@ push の順（`.local/checklists/env-facts.md` の E9: sandbox の token は Wor
 | YAML の形 | 新しい file が parse されない | CLI（既存の列に足す） | `run-workflow-tests.sh:8` の parse | file を列から落とす、YAML を壊す |
 | 実 runner の振舞い | Windows で走らない・`mergeable_state` が `clean` にならない | 手の観測（Coordinator、PR の comment） | AC1・AC3・AC4 | run が出ない、完了の後も `clean` でない |
 
-実装の順: 計画の固定の後、S1〜S5 を 1 つの commit にし、owner が push する（Scope の push の順）。run の後に AC4〜AC6 の値で `docs/ci.md` の時間を書く commit は docs だけなので Coordinator が push する。
+意図的な失敗の回: 実装の commit の run（AC1）の後、lane の PR の上に一時の commit を 1 つ積み、`windows-observe.yml` の test の step の `run` の先頭に `echo 'test observe_probe::synthetic ... FAILED' | tee "$RUNNER_TEMP/cargo-test.log"; exit 1` の 1 行を足して step を必ず落とす（後続の `cargo test` の行は残す）。観測（AC4 の (a)〜(d)）の後、その commit を戻す commit（`git revert`）を積む。`workflow_dispatch` の入力にしない理由: 既存の workflow に `inputs` の書き方が無く（`rg -n 'inputs' .github/workflows` が 0 件、ci.yml:4 と npm-security-monitor.yml:13 の `workflow_dispatch` は入力なし）、試すためだけの入力を残すと常設の足場になり（D-147）、`workflow_dispatch` の run は `pull_request` の trigger と別の経路で、PR の上の失敗の道と同じでない。一時の commit の head でも `ci.yml` の `Merge gate` が通る形にする（`ci-workflow.test.sh` の observe の検査を落とさない。落ちれば `mergeable_state` が required の失敗で `clean` でなくなり、観測が混ざる）。
+
+実装の順: 計画の固定の後、S1〜S5 を 1 つの commit にし、owner が push する（Scope の push の順）。意図的な失敗の回の一時の commit と戻す commit も owner が push する。run の後に AC4〜AC6 の値で `docs/ci.md` の時間を書く commit は docs だけなので Coordinator が push する。
