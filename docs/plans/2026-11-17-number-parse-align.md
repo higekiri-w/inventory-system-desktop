@@ -26,7 +26,7 @@ Goal Invariant:
 - 2 つの parser の数の読取りに同じ入力の表を通す差分の test が、行ごとの 3 つ（Z004・日報の整数・日報の個数）の正確な期待と違えば fail する（表に無い差、承認済みの差の消失、差の向きや error の種類の変化の全部）。
 - 手で選ぶ経路（「ファイルを選んで取り込む」）で数の列が読めないとき、利用者向けの文がどの帳票（= どの file。束は帳票ごとに 1 本）のどの列が読めないかと直し方を名指す（S4。値・file 名・行番号は出さない。BIZ-08-D1）。
 - SD 直読みの一覧で、数の列の誤り（`invalid_number`・`number_too_large`）で「読めません」になった行は、行の下に帳票・列と直し方の文を出す（S5。値・file 名・行番号は出さない。D-127）。ほかの理由の「読めません」（大きすぎる file・形の外れ・精算回数の無い束・別の精算の混在）は今のまま文を出さない。
-- 計画の固定の前の Contract Probe（Design Readiness の節）で、手元の実データの日報に新しく拒む値が 0。
+- 計画の固定の前の Contract Probe（AC9。手順と結果は PR #274 の comment）で、手元の実データの日報に新しく拒む値が 0。
 
 ### 失敗定義
 
@@ -148,39 +148,21 @@ Non-scope: `split_csv_fields`、EJ（`ej_parser.rs`）、Z004 の受ける形と
 - AC6（gate）: `cd src-tauri && cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings`、`cd src-tauri && cargo run --bin generate_traceability -- --check`、`npm run typecheck && npm run lint && npm run format:check` が exit 0。
 - AC7（docs）: S6 の正本の直しが Scope のとおり。`bash scripts/doc-consistency-check.sh` と `bash scripts/doc-consistency-check.sh --target plan docs/plans/2026-11-17-number-parse-align.md` が ERROR なし。
 - AC8（範囲）: `git diff origin/main --name-only` が Scope の file だけ。`cd src-tauri && cargo run --bin generate_bindings` の後の `src/lib/bindings.ts` の差分が `DailyReportSdCandidate` の `unreadable_reason` の 1 field（と生成の comment）だけ。
-- AC9（Contract Probe）: Design Readiness の「Contract Probe」の結果の欄が計画の固定の前に埋まり、新しく拒む値が 0。
+- AC9（Contract Probe）: 計画の固定の前に Coordinator が手元の実データ（レジの SD の写しの Z001・Z002・Z005）に今の規則と新しい規則を当て、帳票・列ごとの件数と新しく拒んだ値の位置だけを PR #274 の comment に置く（値・file 名は残さない。repo に入れない。DEV_WORKFLOW の Plan Packet Rules のとおり packet の節にしない）。新しく拒む値が 0。観測: `python3 -I .local/field-data/recount/probe-274-number-format.py <SD の写しの root>` の `new_reject_total 0`。
 
 ## Design Readiness
 
 - 引用する設計正本（節まで）: `docs/function-design/29-io-daily-report-parser.md` IO-07-D2・IO-07-D6・§29.4・§29.5、`docs/function-design/23-io-z004-parser.md` §13.4.1（SPEC-Z4A-D7）、`docs/function-design/37-biz-daily-report-import-service.md` BIZ-08-D1・D2・D2a・§37.7・§37.9 手順 5、`docs/function-design/45-cmd-daily-report-import.md` §45.6a・§45.8、`docs/function-design/55-ui-csv-import.md` UI-07-D15、`docs/db-design/pos-tables.md` §12b、`docs/decision-log.md` D-103・D-104・D-142、`docs/spec/requirements.md` REQ-401、AGENTS.md の「使い手に押しつけない（D-127）」。
 - 必要な設計成果物: updated in the implementation PR（S6）。本 commit に正本の直しを置かないのは、S4・S5 の文の採否・`¥` を受けない判断・A1〜A3 の表を計画の review と Contract Probe で確かめてから正本に書くため（2026-11-13-z001-row-guard と同じ置き方）。plan にしかない durable な判断（1 つの整数の形の規則・trim の置き場・承認済みの差・S4 と S5 の文・取消の後の互換の限界）は実装の PR で 29・23・37・45・55・pos-tables・D-158 へ昇格する。
-- 前提・制約と延期した design gap: (i) `¥`・空白・`+` を受けない根拠は、F4 の観測の不在に Contract Probe（下）の実測を足したもの。(ii) S4・S5 の文は行番号を出さない（BIZ-08-D1 と IO-07-D6 の「値・file 名・行番号を入れない」）。(iii) S5 の SD の直し方の文（「ファイルを選んで取り込む」で壊れていない日報ファイルを選ぶ）は Writer（AI）の案で、店の手元に壊れていない写し（CV17 の取込みの `EcrDatas` の写し等）があるかは確かめていない。
+- 前提・制約と延期した design gap: (i) `¥`・空白・`+` を受けない根拠は、F4 の観測の不在に Contract Probe（AC9）の実測を足したもの。(ii) S4・S5 の文は行番号を出さない（BIZ-08-D1 と IO-07-D6 の「値・file 名・行番号を入れない」）。(iii) S5 の SD の直し方の文（「ファイルを選んで取り込む」で壊れていない日報ファイルを選ぶ）は Writer（AI）の案で、店の手元に壊れていない写し（CV17 の取込みの `EcrDatas` の写し等）があるかは確かめていない。
 - 絶対保証の例外と抜け道: 「区切りの崩れた値を数として読まない」は日報の 3 帳票の 7 か所の呼出しが全部 S3 の 2 関数を通ること（F1 の呼出しの一覧）と T2 で見る。EJ は抜け道として残る（F7、非目的、D-158 の Guarantee range）。
 - 計画の review の固定の問いへの先回りの答え:
   - (1) 普通の一日: 店主が SD から読む・手で選ぶ、どちらでもレジの出した日報（正しい 3 桁区切りの金額）は今と同じ値で取り込まれる（F4・F5、Contract Probe、T2 の正しい区切りの行、既存の fixture の bundle の test）。SD の一覧の行の見た目は、数の誤りの「読めません」の行のほかは変わらない。
   - (2) 登録と生成: command・route は変えない。`DailyReportSdCandidate` に field を足すので `src/lib/bindings.ts` を再生成する（S5、AC8）。REQ-401 の test が増え、`90-traceability.md` を再生成する。画面の到達は既存の SD の一覧で、T6 が行に文が出ることを見る。
   - (3) 外の前提: 外の library・機器を足さない。`regex` は入れてある依存。レジの日報の数の形は F4 の記録と Contract Probe に依る。
-  - (4) データの安全: test は合成の data だけ。実 POS file・実 DB を読まない・commit しない（Contract Probe は Coordinator が手元で行い、件数だけを packet に書く）。取込み済みのデータは読み直さない（F6）。
+  - (4) データの安全: test は合成の data だけ。実 POS file・実 DB を読まない・commit しない（Contract Probe は Coordinator が手元で行い、件数だけを PR の comment に書く）。取込み済みのデータは読み直さない（F6）。
   - (5) 前提の出所: lane と「そろえる」は owner の決定（TD-775）、differential test は TD-770。案 (a)・(e) の選択・A1〜A3 の線引き・S4 と S5 の文は起票の Writer（AI）の推奨で、owner の決定ではない（S4 は D-127 と発注の「どの file・何行目・何列」から。行番号は BIZ-08-D1 と食い違うので出さない案にした）。S5 と取消の後の互換の限界は計画の review round 1（Codex・Opus、AI の review）の指摘を Coordinator が受理したもの。
-- 判定: ready（Contract Probe の結果を待つ。計画の review の問いは下の節）。
-
-### Contract Probe（計画の固定の前に Coordinator が行う）
-
-- 対象: Coordinator の手元の実データ（`.local/field-data` の日報の写しの Z001・Z002・Z005）。Writer と reviewer は読まない。
-- 手順: 各 file を CP932 で decode し、ヘッダ `レコード` の後の 4 列の行の第 3・4 列の値に、(今) `clean_number` の後の今の 2 関数の規則（F1）と、(新) 値の全体を 1 回 trim した後の S1 の規則（個数の列〈Z001 の総売の行の第 3 列、Z005 の第 3 列〉は整数部に S1 + `.` と 1〜2 桁の ASCII 数字、整数部は trim しない）を当てる。帳票・列ごとに「値の数（空でない値）・今受ける・新しく拒む（今受けて新で拒む）」の件数と、新しく拒んだ値の位置（帳票・列・行番号）だけを記録する。値と file 名は残さない。記録は repo に入れず、件数だけを下の欄に書く。
-- 合否: 新しく拒む = 0 で合格。1 つでもあれば計画を止めて契約（受けなくする値の範囲）へ戻す。
-
-| 帳票 | 列 | 値の数 | 今受ける | 新しく拒む |
-|---|---|---|---|---|
-| Z001 | 第 3 列（総売の行の個数） | | | |
-| Z001 | 第 3 列（ほかの行の件数） | | | |
-| Z001 | 第 4 列（金額） | | | |
-| Z002 | 第 3 列（件数） | | | |
-| Z002 | 第 4 列（金額） | | | |
-| Z005 | 第 3 列（個数） | | | |
-| Z005 | 第 4 列（金額） | | | |
-
-結果（Coordinator が記入）: 対象の file の数・実施日・新しく拒んだ位置（無ければ「なし」）を書く。
+- 判定: ready（Contract Probe は済み、新しく拒む 0〈AC9、PR #274 の comment〉。計画の review の問いは下の節）。
 
 この変更で不要になるもの（AGENTS.md「継ぎ足さない」）: `clean_number` と、`parse_optional_i64` の自前の符号と数字の検査（S3）、`parse_z004_int` の自前の正規表現（S2）、`number_too_large_message`（S4 の `number_column_text` に置き換え）、29 IO-07-D2 の `clean_number` の括弧書き、23 §13.4.1 の「日報側の規則は IO-07 が持ち、本書は変えない」と `clean_number` を指す却下案の文、37 §37.9 手順 5 の「利用者向けには出さない」、`plu-export-and-real-csv-verification.md:120` の「カンマ/¥除去」（S6）。足すのは共有の 1 関数、DTO の 1 field、画面の 1 つの段落と test だけ。
 
