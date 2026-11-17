@@ -15,13 +15,13 @@
   - 関門 4: 店の PC での MSI の予行演習 M9（[手順書](msi-distribution-runbook.md#確かめる項目) の M9。初回の導入の前）。
   - 関門 11: 取込み済みを `XZ_BKUP` へ移す (b) の lane（D-111 (1)(b)）（owner の決定 2026-11-02、repo 外の回答台帳 TD-570 で candidate から足した）。owner は v1.0 の前と答えていた（TD-296 の 11a）。backlog の「取込み済みの Z・EJ を `XZ_BKUP` へ移す操作（(b) の lane）」。
   - 関門 12: 日報・月次の画面の導入前受入（[56](function-design/56-ui-daily-sales.md) UI-09a-D13・[57](function-design/57-ui-monthly-sales.md) UI-09b-D9）（owner の決定 2026-11-02、repo 外の回答台帳 TD-570 で candidate から足した）。手順は [受入の手順書](daily-monthly-acceptance-runbook.md)（[packet](plans/2026-11-02-daily-monthly-acceptance.md)、owner の答え TD-578）。場は開発用の Windows で、店へ入れる版の MSI を開発の data folder を退避した後の空の DB に入れ、店の SD の写しを読んで綴りの紙と並べる（店の PC では行わない。O1）。初期投入の流れ 3 の前に終え、全部が合ったときだけ流れ 3 へ進む。下の precondition-dependent の go-live の検証の流れ（受入台本の第 2 版）には束ねない（O6）。backlog の「日報画面の Excel 印刷・バインダー代替受入判定」。
+  - 関門 14: PLU をレジへ書いてから導入する（owner の決定 2026-11-17、repo 外の回答台帳 TD-772。TD-462 の A）。前提の lane は backlog の「PLU の書出しの見直しの runtime」（D-117）と「JAN の別名の runtime」（D-122）で、どちらも未起票。PLU を書く前に次の訪店の C3（CV17 の画面の部門リンクの値。backlog の「PLU の部門リンクの値と 21 個目の部門」）が要る。backlog の「PLU をレジへ書く時期と D-070 の自動在庫連動」。
 - 関門（candidate、owner が選んで足す）:
   - 初期投入の手順（backlog の「初期投入の手順」）: 手順書は [initial-load-runbook.md](initial-load-runbook.md)（[PR #196](https://github.com/higekiri-w/inventory-system-desktop/pull/196)、[packet](archive/plans/2026-10-23-initial-load-procedure.md)）。残りは初回の導入の版の後の予行演習と店の PC での投入（手順書の流れ 2・流れ 3）で、CSV 作りと照合に Excel のある Windows と店の値札が要る（手順書の流れ 1、流れ 2 の手順 6。TD-437）。
   - デザインの刷新。owner は v1.0 の前に入れると決めた（TD-296）が、関門を決めた TD-345 より前の答えで、関門に足すかは owner が選ぶ。設計の lane は機能の関門が済んでから始める（owner の決定 2026-11-02、TD-569）。backlog の「デザインの刷新（v1.0 の前）」。
-  - PLU をレジへ書く時期（PLU を書く前の導入では Z004 の自動在庫連動はほとんど動かない）は、owner が次の訪店の C3（店の PC の CV17 の画面で部門リンクの値を確かめる、TD-459）の後に A / B / C から選び、B・C は D-070 の「初日から」を改める新しい D になる（TD-462）。backlog の「PLU をレジへ書く時期と D-070 の自動在庫連動」。
 - 関門（precondition-dependent）:
   - 共有 JAN の色違いの群と JAN の無い品の v1.0 の扱い。今は店内コードができるまで在庫連動の外（ADR SPEC-STK-CNT-D4、TD-296）。レジとリーダーの実機の確かめ（C1、次の訪店、TD-454）の後に owner が決める（TD-461）。backlog の「JAN の無い商品の店内コードと色ごとのバーコードの表」。
-  - Z004 の経路の受入台本の第 2 版と go-live の検証の流れ（D-070 の配布判定の入口条件。[受入台本](ACCEPTANCE_SCENARIO.md) の第 1 版は Z004 の経路を対象外とする）。台本の形は上の candidate の PLU をレジへ書く時期で決まる。backlog の「go-live の検証の流れ（受入台本の第 2 版）」。
+  - Z004 の経路の受入台本の第 2 版と go-live の検証の流れ（D-070 の配布判定の入口条件。[受入台本](ACCEPTANCE_SCENARIO.md) の第 1 版は Z004 の経路を対象外とする）。台本の形は PLU を書いてから導入する（関門 14）の形で決まる。backlog の「go-live の検証の流れ（受入台本の第 2 版）」。
 - 導入の後でよいと確かめたもの: ECR+ のサービス終了（2028 年 12 月末予定）、二重起動・途中の電源断（対策済み）、v8 より後の migration を足す lane の義務（初回の版の後から当たる）。
 
 ## 製品の未決判断
