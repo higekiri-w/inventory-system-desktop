@@ -529,13 +529,13 @@ pub fn quantity_hundredths_to_units(quantity_hundredths: i64) -> f64 {
 
 /// 数の読取りの誤り。形の誤り（`invalid_number`）と上限の越え（`number_too_large`）を分ける（IO-07-D6）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NumberError {
+pub(super) enum NumberError {
     Invalid,
     TooLarge,
 }
 
 /// 金額・件数を整数で読む。絶対値が上限を越える値は `TooLarge`（IO-07-D6）
-fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
+pub(super) fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
     let cleaned = clean_number(value);
     if cleaned.is_empty() {
         return Ok(None);
@@ -559,7 +559,7 @@ fn parse_optional_i64(value: &str) -> Result<Option<i64>, NumberError> {
 }
 
 /// 個数を小数 2 桁までの 100 倍の整数で読む。浮動小数を通さない（IO-07-D2）。上限は IO-07-D6
-fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, NumberError> {
+pub(super) fn parse_optional_hundredths(value: &str) -> Result<Option<i64>, NumberError> {
     let cleaned = clean_number(value);
     if cleaned.is_empty() {
         return Ok(None);
