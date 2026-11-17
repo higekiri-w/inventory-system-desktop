@@ -235,6 +235,8 @@ abort "observe pull_request drifted" unless pr["branches"] == ["main"] && Array(
 abort "observe paths drifted" unless pr["paths"] == ["src-tauri/**", ".github/workflows/windows-observe.yml"]
 abort "observe token must be read-only" unless workflow["permissions"] == {"contents" => "read"}
 abort "observe cancellation drifted" unless workflow.dig("concurrency", "cancel-in-progress") == true
+# A group shared with ci.yml would let the two workflows cancel each other.
+abort "observe concurrency group drifted" unless workflow.dig("concurrency", "group").to_s.start_with?("windows-observe-")
 jobs = workflow.fetch("jobs")
 abort "observe must have exactly one job" unless jobs.length == 1
 job = jobs.values.first
@@ -257,8 +259,7 @@ abort "observe cache paths drifted: #{paths.inspect}" unless paths == %w[~/.carg
   abort "observe #{id} step is missing" unless step
   abort "observe #{id} step can fail the job" unless step["continue-on-error"] == true
   abort "observe #{id} step has no step timeout" unless step["timeout-minutes"].is_a?(Integer)
-  # The AC4 failure-path probe prepends a line, so require the command line, not the whole script.
-  abort "observe #{id} command drifted" unless step["run"].to_s.lines.map(&:strip).include?(command)
+  abort "observe #{id} command drifted" unless step["run"].to_s.strip == command
 end
 report = steps.last
 run = report["run"].to_s
@@ -268,6 +269,24 @@ abort "observe report must run always" unless report["if"] == "always()"
 end
 %w[steps.test.outcome steps.clippy.outcome].each do |needle|
   abort "observe report lost #{needle}" unless report["env"].to_h.values.any? { |value| value.to_s.include?(needle) }
+end
+# Run the report as Actions does, on a synthetic failure log: the failed test must reach both outputs.
+require "open3"
+require "tmpdir"
+Dir.mktmpdir do |dir|
+  failed = "test some::name ... FAILED"
+  File.write(File.join(dir, "cargo-test.log"), "running 1 test\n#{failed}\n")
+  summary = File.join(dir, "summary.md")
+  script = File.join(dir, "report.sh")
+  File.write(summary, "")
+  File.write(script, run)
+  outcomes = {"${{ steps.test.outcome }}" => "failure", "${{ steps.clippy.outcome }}" => "success"}
+  env = report["env"].to_h.transform_values { |value| outcomes.fetch(value.to_s, value.to_s) }
+  env = env.merge("RUNNER_TEMP" => dir, "GITHUB_STEP_SUMMARY" => summary)
+  stdout, _stderr, status = Open3.capture3(env, "bash", "--noprofile", "--norc", "-eo", "pipefail", script, chdir: dir)
+  abort "observe report must exit 0" unless status.success?
+  abort "observe report summary lost the failed test name" unless File.read(summary).include?(failed)
+  abort "observe report lost the per-test ::warning" unless stdout.include?("::warning title=Windows observe::#{failed}")
 end
 RUBY
 }
@@ -595,11 +614,10 @@ reject_observe_mutant windows-observe-secret "$(observe_mutant secret '/RUST_BAC
 reject_observe_mutant windows-observe-skip "$(observe_mutant skip '/cargo test 2>&1/a\          cargo test -- --skip slow')"
 reject_observe_mutant windows-observe-retry "$(observe_mutant retry 's|uses: actions/cache@v5|uses: nick-fields/retry@v3|')"
 reject_observe_mutant windows-observe-target-cache "$(observe_mutant target-cache '\|~/.cargo/git/db/|a\            src-tauri/target/')"
-# The AC4 failure-path probe (Test Plan) must stay accepted so Merge gate passes on that head.
-observe_probe="$(observe_mutant failure-probe "/cargo test 2>&1/i\\          echo 'test observe_probe::synthetic ... FAILED' | tee \"\$RUNNER_TEMP/cargo-test.log\"; exit 1")"
-assert_mutated "$WINDOWS_OBSERVE_WORKFLOW" "$observe_probe" windows-observe-failure-probe
-validate_windows_observe "$observe_probe" >/dev/null 2>&1 ||
-    fail "Windows observe validator rejected the AC4 failure-path probe"
+reject_observe_mutant windows-observe-failure-probe "$(observe_mutant failure-probe "/cargo test 2>&1/i\\          echo 'test observe_probe::synthetic ... FAILED' | tee \"\$RUNNER_TEMP/cargo-test.log\"; exit 1")"
+reject_observe_mutant windows-observe-no-summary-name "$(observe_mutant no-summary-name '/printf/s/printf/:/')"
+reject_observe_mutant windows-observe-no-test-warning "$(observe_mutant no-test-warning 's/echo "::warning title=Windows observe::$line"/:/')"
+reject_observe_mutant windows-observe-shared-group "$(observe_mutant shared-group 's/group: windows-observe-/group: ci-/')"
 
 reject_fixed "  push:"
 reject_fixed '      - "**/*.md"'

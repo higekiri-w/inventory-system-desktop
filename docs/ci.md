@@ -102,7 +102,7 @@ D-157。ci.yml の job は全部 `ubuntu-latest` で、`cfg(windows)` の code �
 - 結果の読み手: `src-tauri/**` に触れる PR では、Coordinator が Ready の承認を求める返答に Windows observe の outcome と落ちた test の名を書く。昇格の数え方はその記録で行う。
 - helper の `merge`: 要るのは `mergeable_state == 'clean'`。run の進行中は helper の `merge` が止まりうる（未観測）。止まったら同じ head で完了の後に打ち直す（承認の取り直しも同期も要らない）。
 - 保証の例外: checkout・toolchain・cache の step の失敗と job の cancel（job の `timeout-minutes` の時間切れを含む）では job が失敗・cancel で終わり、helper の `merge` が止まる。戻し方は job の再実行で、落ちたのは test でないので test の retry ではない。cargo の step の時間切れ（step の `timeout-minutes`）も例外に置く。step の時間切れは、実際の時間切れを hosted で観測したら observe の側に戻す。
-- 初回の時間: 439 秒（job の実行時間、cold build。2026-11-17、PR #273 の run <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44076654226>）。
+- 初回の結果と時間: `cargo test` は failure（lib の unittests の実行 file が Windows で起動せず、lib の test は 0 本。既知の件は [backlog](backlog.md) の「初回の導入の前に開発用の bin を bundle から外す」の PR #188 の申し送り）、`cargo clippy --release` は failure（Windows でだけ使われない import・定数の 3 件）。別の lane で直すまで、どちらも毎回 failure で出る。job の実行時間は 439 秒（cold build。2026-11-17、PR #273 の run <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44076654226>）。
 - 昇格（enforce）の条件: Ready の承認を求める返答の記録で、`src-tauri/**` に触れる PR が続けて 10 本、誤検知（Windows の挙動でも test の前提の誤りでもない失敗、flaky の疑い）なしで通り、見つかった Windows の失敗が直っていること。昇格は別の R3 で、`Merge gate` と `check-required-jobs.sh` の変え方を計画する。
 
 ## Related Records

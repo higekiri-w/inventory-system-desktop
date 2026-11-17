@@ -1,6 +1,6 @@
 name: Windows observe
 
-# D-157: observe only. Cargo steps never fail the job, so Merge gate and helper merge stay unchanged.
+# D-157: observe only. continue-on-error absorbs cargo step failures, so Merge gate and helper merge stay unchanged (exceptions: docs/ci.md Windows Observe).
 on:
   workflow_dispatch:
   pull_request:
@@ -82,7 +82,7 @@ jobs:
             if [ -n "$failed" ]; then
               printf '%s\n' "$failed" | sed 's/^/- /'
             else
-              echo "- none in the cargo test log"
+              echo '- no "test ... FAILED" line in the cargo test log (a build error or a test binary that did not start has none; read the cargo test step log)'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$TEST_OUTCOME" = failure ]; then
