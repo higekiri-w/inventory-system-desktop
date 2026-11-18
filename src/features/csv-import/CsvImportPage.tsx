@@ -47,11 +47,12 @@ const DEFAULT_TAB: CsvImportTab = "daily-report";
 const Z004_TAB: CsvImportTab = "z004";
 
 export function CsvImportPage({ tab }: CsvImportPageProps) {
-  // §55.7: Z004 の取消の応答を待つ間と、日報の取込み・取消の応答を待つ間（UI-07-D15 (6)）は
-  // タブを切り替えない（router の遷移でなく blocker が効かず、選ばれていないタブは unmount されて flow ごと消える）
-  const [isRollingBack, setIsRollingBack] = useState(false);
+  // §55.7: Z004 の取込み・取消の応答を待つ間（UI-07-D18）と、日報の取込み・取消の応答を待つ間（UI-07-D15 (6)）は
+  // タブを切り替えない（router の遷移でなく blocker が効かず、選ばれていないタブは unmount されて flow ごと消え、
+  // native の window の close の止め〈UI-USW-D5〉も集合から外れる）
+  const [isZ004Blocking, setIsZ004Blocking] = useState(false);
   const [isDailyReportBlocking, setIsDailyReportBlocking] = useState(false);
-  const tabsLocked = isRollingBack || isDailyReportBlocking;
+  const tabsLocked = isZ004Blocking || isDailyReportBlocking;
   return (
     <PageShell>
       <PageHeader
@@ -90,7 +91,7 @@ export function CsvImportPage({ tab }: CsvImportPageProps) {
               取り込んだ記録を見る（取り消すときはここから）
             </Link>
           </p>
-          <CsvImportFlowPanel onRollingBackChange={setIsRollingBack} />
+          <CsvImportFlowPanel onBlockingChange={setIsZ004Blocking} />
         </TabsContent>
       </Tabs>
     </PageShell>
@@ -98,15 +99,16 @@ export function CsvImportPage({ tab }: CsvImportPageProps) {
 }
 
 function CsvImportFlowPanel({
-  onRollingBackChange,
+  onBlockingChange,
 }: {
-  onRollingBackChange: (isRollingBack: boolean) => void;
+  onBlockingChange: (isBlocking: boolean) => void;
 }) {
   const flow = useCsvImportFlow();
-  const { state, isRollingBack } = flow;
+  const { state } = flow;
+  const isBlocking = flow.isImporting || flow.isRollingBack;
   useEffect(() => {
-    onRollingBackChange(isRollingBack);
-  }, [isRollingBack, onRollingBackChange]);
+    onBlockingChange(isBlocking);
+  }, [isBlocking, onBlockingChange]);
 
   // error variant の currentStep は previousState を見る。reducer 側で recoverTo に応じて
   // previousState を構築するため、importing 中の失敗でも recoverTo="preview" なら previousState

@@ -12,6 +12,7 @@ import type {
 } from "@/lib/bindings";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { queryKeys } from "@/lib/query-keys";
+import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import {
@@ -730,5 +731,65 @@ describe("useDailyReportImportFlow_req401", () => {
       expect(result.current.state.status).toBe("idle");
     });
     expect(blocks()).toBe(false);
+  });
+
+  it("T12 REQ-401 / UI-USW-D5 / UI-07-D15 (6): 取込み中だけ close の止めに daily-report-import を入れ、取消の応答を待つ間は入れない", async () => {
+    let resolveCommit!: (
+      value: Awaited<ReturnType<typeof commands.commitDailyReportImport>>,
+    ) => void;
+    mockCommit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCommit = resolve;
+      }),
+    );
+    let resolveRollback!: (
+      value: Awaited<ReturnType<typeof commands.rollbackDailyReportImport>>,
+    ) => void;
+    mockRollback.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRollback = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+
+    await chooseAndConfirmThree(() => result.current);
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("preview");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    act(() => {
+      result.current.confirmImport(false);
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("importing");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual(["daily-report-import"]);
+
+    resolveCommit({ status: "ok", data: makeResult() });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("result");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    act(() => {
+      result.current.rollback(501);
+    });
+    await waitFor(() => {
+      expect(result.current.isRollingBack).toBe(true);
+    });
+    // 取消の応答を待つ間の止めは共有の取消の hook の daily-report-rollback だけ
+    expect(getWindowCloseGuardKinds()).toEqual(["daily-report-rollback"]);
+
+    resolveRollback({ status: "ok", data: makeRollback() });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("idle");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
   });
 });
