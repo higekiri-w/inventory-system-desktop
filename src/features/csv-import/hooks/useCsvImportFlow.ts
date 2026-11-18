@@ -11,6 +11,7 @@ import type { PickedFile } from "@/components/FilePicker";
 import { commands, CSV_IMPORT_FILE_SIZE_LIMIT, type RollbackResult } from "@/lib/bindings";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/invoke";
+import { useWindowCloseGuard } from "@/lib/window-close-guard";
 import { csvImportReducer } from "../reducer";
 import type { CsvImportState, ErrorRecoverTo } from "../types";
 import { useRollbackCsvImport } from "./useRollbackCsvImport";
@@ -67,11 +68,13 @@ export function useCsvImportFlow(): UseCsvImportFlowResult {
   const [rollbackResult, setRollbackResult] = useState<RollbackResult | null>(null);
   const queryClient = useQueryClient();
 
-  // §55.7 importing 中の常時 block + Tauri webview beforeunload 連動
+  // §55.7: importing の間は route の移動とリロード等の page の離脱（beforeunload）を止める。
+  // native の window の close は beforeunload を経ないので、同じ条件を close の止めにも渡す（UI-USW-D5）
   useBlocker({
     shouldBlockFn: () => state.status === "importing",
     enableBeforeUnload: () => state.status === "importing",
   });
+  useWindowCloseGuard("z004-import", state.status === "importing");
 
   const parseAndValidate = useMutation({
     mutationFn: (args: { fileBytes: number[]; filename: string }) =>

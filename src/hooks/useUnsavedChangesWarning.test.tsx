@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UnsavedChangesDialog } from "@/components/patterns/UnsavedChangesDialog";
 import { consumeMainNavScroll, markMainNavScroll } from "@/lib/main-nav-scroll";
+import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { useUnsavedChangesWarning } from "./useUnsavedChangesWarning";
 
 interface TestBlockerOptions {
@@ -161,5 +162,23 @@ describe("useUnsavedChangesWarning (UI-12/UI-USW-D1/D2 / SPEC-UISN-2/3)", () => 
     const normalized = source.replace(/\s+/g, " ");
 
     expect(normalized).toContain("onEscapeKeyDown={(event) => { event.preventDefault();");
+  });
+
+  it("T12 UI-USW-D1/D5: isDirty の間だけ native の window の close の止めに dirty を入れる", () => {
+    // useBlocker の mock の値（idle）に依らず、渡した isDirty で決まる
+    const { rerender, unmount } = renderHook(({ isDirty }) => useUnsavedChangesWarning(isDirty), {
+      initialProps: { isDirty: false },
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    rerender({ isDirty: true });
+    expect(getWindowCloseGuardKinds()).toEqual(["dirty"]);
+
+    rerender({ isDirty: false });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    rerender({ isDirty: true });
+    unmount();
+    expect(getWindowCloseGuardKinds()).toEqual([]);
   });
 });

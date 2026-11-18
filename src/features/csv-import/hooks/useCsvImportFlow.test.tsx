@@ -13,6 +13,7 @@ import {
   type RollbackResult,
 } from "@/lib/bindings";
 import { queryKeys } from "@/lib/query-keys";
+import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { useCsvImportFlow } from "./useCsvImportFlow";
 
@@ -494,5 +495,72 @@ describe("useCsvImportFlow UI-07 D-052-C8/C9", () => {
     expect(reportQuery).toHaveBeenCalledTimes(3);
     expect(mockRollback).toHaveBeenNthCalledWith(1, 401);
     expect(mockRollback).toHaveBeenNthCalledWith(2, 401);
+  });
+
+  it("T12 REQ-401 / UI-USW-D5 / 55 §55.7: importing の間だけ native の window の close の止めに z004-import を入れる", async () => {
+    let resolveCommit!: (value: Awaited<ReturnType<typeof commands.commitCsvImport>>) => void;
+    mockCommit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCommit = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result, unmount } = renderFlow(queryClient);
+
+    act(() => {
+      result.current.selectFile({ bytes: new Uint8Array([1]), filename: "sales.csv", size: 1 });
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("preview");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    act(() => {
+      result.current.confirmImport();
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("importing");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual(["z004-import"]);
+
+    resolveCommit({ status: "ok", data: makeResult() });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("result");
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+    unmount();
+  });
+
+  it("T12 REQ-401 / UI-USW-D5 / UI-07-D18: 取消の応答を待つ間だけ close の止めに z004-rollback を入れる", async () => {
+    let resolveRollback!: (value: Awaited<ReturnType<typeof commands.rollbackCsvImport>>) => void;
+    mockRollback.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRollback = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result, unmount } = renderFlow(queryClient);
+    await reachResult(result);
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+
+    act(() => {
+      result.current.rollback(401);
+    });
+    await waitFor(() => {
+      expect(result.current.isRollingBack).toBe(true);
+    });
+    // 取込みの止め（z004-import）は入れない
+    expect(getWindowCloseGuardKinds()).toEqual(["z004-rollback"]);
+
+    resolveRollback({ status: "ok", data: makeRollback() });
+    await waitFor(() => {
+      expect(result.current.isRollingBack).toBe(false);
+    });
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+    unmount();
   });
 });

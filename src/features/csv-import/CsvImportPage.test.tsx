@@ -183,6 +183,55 @@ describe("CsvImportPage_req401", () => {
     expect(screen.getByText("daily report req401 content")).toBeInTheDocument();
   });
 
+  it("T20 REQ-401 / 55 §55.7 UI-07-D18: Z004 の取込みの応答を待つ間はタブを切り替えられない", async () => {
+    // UI-USW-D5 の 8 (b): タブを切り替えると Z004 の flow が unmount され、native の window の close の止めが
+    // 集合から外れて、command の途中の × が確認なく閉じる。取消の応答を待つ間と同じく disabled で止める
+    const user = userEvent.setup();
+    const importingState = {
+      status: "importing" as const,
+      preview: {
+        file_info: {
+          filename: "Z004_0001.CSV",
+          settlement_date: "2026-03-21",
+          file_hash: "b".repeat(64),
+        },
+        matched_summary: { count: 1, total_amount: 500, warnings: [] },
+        error_summary: { count: 0, items: [] },
+        settlement_gaps: [],
+        settlement_date_after_today: false,
+        preview_created_at: "2026-03-21T10:00:00",
+      },
+      previewToken: "token-1",
+      filename: "Z004_0001.CSV",
+    };
+    const z004Tab = () => screen.getByRole("tab", { name: "商品別CSV取込み（Z004）" });
+    const dailyTab = () => screen.getByRole("tab", { name: "日報取込み" });
+
+    vi.mocked(useCsvImportFlow).mockImplementation(() =>
+      flow({ state: importingState, isImporting: true }),
+    );
+    const { unmount } = renderRoute("/csv-import?tab=z004");
+    await waitFor(() => {
+      expect(dailyTab()).toBeDisabled();
+    });
+    expect(z004Tab()).toBeDisabled();
+    await user.click(dailyTab());
+    expect(z004Tab()).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("取込み中…")).toBeInTheDocument();
+    expect(screen.queryByText("daily report req401 content")).toBeNull();
+    unmount();
+
+    // 取込みの応答が返った後は切り替えられる
+    vi.mocked(useCsvImportFlow).mockImplementation(() =>
+      flow({ state: importingState, isImporting: false }),
+    );
+    renderRoute("/csv-import?tab=z004");
+    expect(await screen.findByRole("tab", { name: "日報取込み" })).toBeEnabled();
+    await user.click(dailyTab());
+    expect(dailyTab()).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("daily report req401 content")).toBeInTheDocument();
+  });
+
   it("REQ-401: 同じ精算の別の版の拒否の Alert から、名指した取込みの詳細へ進める", async () => {
     // 55 UI-07-D18 の順 4 の拒否からの導線（Matrix U11）: link を出すかと ID は related_csv_import_id だけで決め、
     // 文から読まない。parseAndValidateCsv の拒否が実の flow を通って ErrorState に出る

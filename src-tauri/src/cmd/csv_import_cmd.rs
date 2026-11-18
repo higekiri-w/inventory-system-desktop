@@ -111,7 +111,9 @@ pub fn parse_and_validate_csv(
 /// プレビュー済みデータの取込みを確定する
 ///
 /// docs/function-design/41-cmd-pos.md §17.5 commit_csv_import
-#[tauri::command]
+// transaction の間に window の close を受けられるよう main thread の外で動かす（41 §17.2 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
 #[specta::specta]
 pub fn commit_csv_import(
     state: State<AppState>,
@@ -199,7 +201,9 @@ pub fn commit_csv_import(
 /// CSV取込みをロールバック（論理無効化）する
 ///
 /// docs/function-design/41-cmd-pos.md §17.5 rollback_csv_import
-#[tauri::command]
+// transaction の間に window の close を受けられるよう main thread の外で動かす（41 §17.2 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
 #[specta::specta]
 pub fn rollback_csv_import(
     state: State<AppState>,
@@ -308,6 +312,18 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_csv_cmd_req401_commit_and_rollback_run_off_main_thread() {
+        // REQ-401 / 41 §17.2「実行の thread」・UI-USW-D5 の 8: 進行中の止めがかかる 2 command は main thread で動かない
+        let commands = ["commit_csv_import", "rollback_csv_import"];
+        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（41 §17.2 が名指す 2 つ）を先に固定する
+        assert_eq!(commands.len(), 2);
+        crate::cmd::assert_commands_run_off_main_thread(
+            include_str!("csv_import_cmd.rs"),
+            &commands,
+        );
     }
 
     #[test]
