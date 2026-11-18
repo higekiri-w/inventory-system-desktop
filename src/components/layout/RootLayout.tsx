@@ -11,6 +11,7 @@ import { PrintUnsupportedNotice } from "@/features/daily-sales/components/PrintU
 import { ShortcutsDialog, useShortcutsDialog } from "@/features/shortcuts";
 
 import { Sidebar } from "./Sidebar";
+import { WindowCloseDialog } from "./WindowCloseDialog";
 
 /// UI-12 共通レイアウトのルート。
 /// 設計: docs/function-design/52-ui-shared-layout.md §52.1 / §52.5
@@ -72,6 +73,8 @@ export function RootLayout() {
       </div>
       <Toaster position="bottom-right" richColors closeButton duration={3000} />
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      {/* UI-USW-D5: native の window の close（×・Alt+F4）を止めたときの確認の窓 */}
+      <WindowCloseDialog />
       {/* UI-09a-D18: どの画面の Ctrl+P でも、白紙の代わりに印刷の案内を 1 行出す（印刷のときだけ） */}
       <PrintUnsupportedNotice />
       {import.meta.env.DEV && <TanStackRouterDevtools position="bottom-left" />}

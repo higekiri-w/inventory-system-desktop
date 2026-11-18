@@ -107,6 +107,7 @@ const scan: DailyReportSdScan = {
       source_filenames: ["Z001_21 .CSV", "Z002_21 .CSV", "Z005_21 .CSV"],
       settlement_no: 101,
       status: "NotImported",
+      unreadable_reason: null,
     },
     {
       candidate_key: "key-b",
@@ -115,6 +116,7 @@ const scan: DailyReportSdScan = {
       source_filenames: ["Z001_21A.CSV", "Z002_21A.CSV", "Z005_21A.CSV"],
       settlement_no: 101,
       status: "NotImported",
+      unreadable_reason: null,
     },
   ],
 };

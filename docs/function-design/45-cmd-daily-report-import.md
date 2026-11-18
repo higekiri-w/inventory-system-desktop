@@ -81,7 +81,7 @@ struct DailyReportPreviewResponse {
 **シグネチャ**:
 
 ```rust
-#[tauri::command]
+#[tauri::command(async)] // 下の「実行の thread」
 fn commit_daily_report_import(
     state: State<AppState>,
     app: tauri::AppHandle, // D-111 で足す。Tauri が注入し、wire（bindings の引数）は変わらない
@@ -91,6 +91,8 @@ fn commit_daily_report_import(
 ```
 
 `app` は Tauri が注入する。手順 3a の `app_data_dir` は command が test 用の `commit_daily_report_import_with_state`（`src-tauri/src/cmd/daily_report_import_cmd.rs`）を呼ぶ前に取り、解決済みの `app_data_dir: &Path` を引数で渡す（取れなければ cache に触れずに `internal`。test は一時 directory を渡す）。このため手順 3a は番号に反して手順 1 より前に行い、観測できる差は token が不正（手順 1〜3 の失敗）かつ `app_data_dir` を取れないときに、手順 1〜3 の error でなく手順 3a の `internal` が返る（期限切れの token も cache から消えない）ことだけである（`src-tauri/src/cmd/daily_report_import_cmd.rs` の `commit_daily_report_import`）。
+
+**実行の thread**: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。CMD-12 のほかの command の実行の thread は変えない。
 
 **処理ステップ**:
 1. preview_tokenのUUID形式を検証する。
@@ -105,7 +107,7 @@ fn commit_daily_report_import(
 ### 45.5 rollback_daily_report_import
 
 ```rust
-#[tauri::command]
+#[tauri::command(async)] // §45.4 の「実行の thread」
 fn rollback_daily_report_import(
     state: State<AppState>,
     daily_report_import_id: i64,
@@ -154,7 +156,7 @@ struct RegisterSdScanResponse {
 }
 ```
 
-候補の `DailyReportSdCandidate` は `settlement_no: Option<i64>`（37 §37.9）を持つ（55 UI-07-D19、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
+候補の `DailyReportSdCandidate` は `settlement_no: Option<i64>`（37 §37.9）を持つ（55 UI-07-D19、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）。数の列の誤りで `Unreadable` の束の理由の文 `unreadable_reason: Option<String>`（37 §37.9 手順 5、D-158）も持つ。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
 
 **処理ステップ**:
 1. `selected_path` を BIZ-08 の `DailyReportSdSelection`（37 §37.9。`None` → `Auto`、`Some` → `Selected(PathBuf)`）にする。CMD は IO-09 の型を使わない（`src-tauri/tests/architecture_test.rs` の LAYER_RULES で cmd → io は禁止）。空文字は `CmdError.kind="validation"`。
@@ -249,7 +251,7 @@ fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdE
 
 ### 45.8 生成bindings
 
-SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は `DailyReportImportRow`（§45.6、UI-07-D19）で、bindings に `DailyReportImport` の型と `source_files_json` 等の内部の値は出ない。`DailyReportSdCandidate` は `settlement_no`（§45.6a、TD-592）を持つ。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。preview の cache の `settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。精算回数を wire に出すのは一覧の行〈§45.6〉と SD の候補〈§45.6a〉だけ。37 §37.4 手順 6）。
+SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は `DailyReportImportRow`（§45.6、UI-07-D19）で、bindings に `DailyReportImport` の型と `source_files_json` 等の内部の値は出ない。`DailyReportSdCandidate` は `settlement_no`（§45.6a、TD-592）と `unreadable_reason`（§45.6a、37 §37.9。CMD は素通し、D-158）を持つ。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。preview の cache の `settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。精算回数を wire に出すのは一覧の行〈§45.6〉と SD の候補〈§45.6a〉だけ。37 §37.4 手順 6）。
 
 対象:
 - `parse_and_validate_daily_report`
@@ -276,3 +278,5 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`。精算回数を含む、TD-590）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §45.6a に候補の `settlement_no`（TD-592）、§45.8 にその再生成を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §45.3・§45.6・§45.6a・§45.8 の proposed・未実装の注記を外し、実装の記述にした（bindings は再生成）。§45.8 の wire に出さない精算回数を preview の cache の値と書き分けた。 |
+| 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §45.4 に「実行の thread」を足した（`commit_daily_report_import`・`rollback_daily_report_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§45.4・§45.5 のシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-15 | window-close-guard（実装、PR #250） | §45.4 の「実行の thread」の「未実装」の注を外し、§45.4・§45.5 の `commit_daily_report_import`・`rollback_daily_report_import` のシグネチャの属性を `#[tauri::command(async)]` に直した（wire と生成 bindings は変わらない。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |

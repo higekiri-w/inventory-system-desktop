@@ -412,6 +412,8 @@ function SdCandidateRow({
           </p>
         </div>
       )}
+      {/* UI-07-D15 (3): 数の列の誤りで読めない行は BIZ の文をそのまま出す（文字列で分岐しない） */}
+      {candidate.unreadable_reason !== null && <p>{candidate.unreadable_reason}</p>}
     </li>
   );
 }

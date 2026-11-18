@@ -71,6 +71,7 @@ function candidate(
     source_filenames: [`Z001_${key}.CSV`, `Z002_${key}.CSV`, `Z005_${key}.CSV`],
     settlement_no: settlementNo,
     status,
+    unreadable_reason: null,
   };
 }
 
@@ -251,6 +252,20 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       expect(within(item).queryByText(GUIDE)).not.toBeInTheDocument();
       expect(within(item).queryByRole("link")).not.toBeInTheDocument();
     }
+  });
+
+  it("REQ-401 / UI-07-D15 (3): an unreadable row with a reason shows the reason text, one without shows none", async () => {
+    // 37 §37.9 手順 5 から転記した文
+    const REASON =
+      "Z002の金額列を変換できません。この日の日報は読めません。管理者に知らせてください。";
+    await scanWith(
+      makeScan([
+        { ...candidate("A", "Unreadable"), unreadable_reason: REASON },
+        candidate("B", "Unreadable"),
+      ]),
+    );
+    expect(within(row("Z001_A.CSV")).getByText(REASON)).toBeInTheDocument();
+    expect(within(row("Z001_B.CSV")).queryByText(REASON)).not.toBeInTheDocument();
   });
 
   it("REQ-401 / UI-07-D15 (2)(3): read-done text and the summary text follow the state counts", async () => {
