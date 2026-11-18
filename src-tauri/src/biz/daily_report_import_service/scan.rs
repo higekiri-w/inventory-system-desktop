@@ -1,6 +1,8 @@
 //! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜9。手順 10 は PLU の runtime の lane）
 
-use crate::biz::daily_report_import_service::parse::{build_bundle_hash, log_parse_diagnostics};
+use crate::biz::daily_report_import_service::parse::{
+    build_bundle_hash, log_parse_diagnostics, number_column_message,
+};
 use crate::biz::daily_report_import_service::{
     DailyReportInputFile, DailyReportSdCandidate, DailyReportSdCandidateStatus, DailyReportSdScan,
     DailyReportSdScanResult, DailyReportSdScanSnapshot, DailyReportSdSelection,
@@ -216,6 +218,7 @@ fn read_group(
             source_filenames: source_filenames.clone(),
             settlement_no: None,
             status,
+            unreadable_reason: None,
         },
         files: Vec::new(),
     };
@@ -259,7 +262,16 @@ fn read_group(
     );
     if !parsed.parse_errors.is_empty() {
         log_parse_diagnostics(&parsed.parse_errors);
-        return Ok(fallback(DailyReportSdCandidateStatus::Unreadable));
+        // §37.9 手順 5: 数の列の誤りだけ帳票・列を名指す。別の精算の混在の束には付けない
+        let mut candidate = fallback(DailyReportSdCandidateStatus::Unreadable);
+        if !parsed
+            .parse_errors
+            .iter()
+            .any(|error| error.error_type == "settlement_mismatch")
+        {
+            candidate.wire.unreadable_reason = number_column_message(&parsed.parse_errors);
+        }
+        return Ok(candidate);
     }
     let bundle_hash = build_bundle_hash(&parsed.source_files);
 
@@ -299,6 +311,7 @@ fn read_group(
             source_filenames,
             settlement_no,
             status,
+            unreadable_reason: None,
         },
         files,
     })

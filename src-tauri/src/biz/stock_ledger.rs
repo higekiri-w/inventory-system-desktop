@@ -1239,4 +1239,239 @@ mod tests {
             assert_eq!(copy(&conn, "SL12-OTHER"), 77);
         }
     }
+
+    // ---- 性質の総当たり（小さな入力の全部の組合せ。DB を使わず derive_ledger を直に呼ぶ） ----
+
+    const DATES: [&str; 3] = ["2026-05-09", "2026-05-10", "2026-05-11"];
+    /// どの入力の日付よりも後の日付（性質 e の movement q）
+    const LATER: &str = "2026-05-12";
+
+    fn mv(id: i64, quantity: i64, date: &str, settlement_no: Option<i64>) -> LedgerMovementRow {
+        LedgerMovementRow {
+            id,
+            quantity,
+            business_date: date.to_string(),
+            phase: i64::from(settlement_no.is_some()),
+            settlement_no,
+            initial_stock: false,
+        }
+    }
+
+    fn count_row(id: i64, value: i64, fresh: bool, date: &str, seen: (i64, i64)) -> StockCountRow {
+        StockCountRow {
+            id,
+            count_value: value,
+            fresh,
+            business_date: date.to_string(),
+            seen_movement_id: fresh.then_some(seen.0),
+            seen_import_id: (fresh && seen.1 > 0).then_some(seen.1),
+            counted_at: format!("{date}T10:00:00"),
+        }
+    }
+
+    /// 日付 3 値、計数 0〜2 件（fresh / 既定、値 4・7）、入出庫の movement 0〜2 件（−2・+3）、
+    /// 精算 0〜2 件（その商品の Z004 の movement −1 か無し）の全部の組合せのうち、保存の経路で起きうるもの
+    /// （fresh な計数より先に保存した記録の日付 ≤ その今日 T、fresh どうしは T とカーソルが保存の順に増える、
+    /// 精算回数と精算日は同じ順）を `check` に渡し、回した件数を返す。
+    /// ponytail: 精算は 1 から欠け・取消・取り込み直し無しで振る。それらは例の test（L7・L11・L13）が持つ。
+    /// 総当たりに入れるなら精算回数の欠けと取消の印を足す
+    fn for_each_small_ledger(mut check: impl FnMut(&Ledger)) -> usize {
+        let mut movement_sets: Vec<Vec<(usize, i64)>> = vec![vec![]];
+        let mut settlement_sets: Vec<Vec<(usize, Option<i64>)>> = vec![vec![]];
+        for d1 in 0..3 {
+            for q1 in [-2, 3] {
+                movement_sets.push(vec![(d1, q1)]);
+                for d2 in 0..3 {
+                    for q2 in [-2, 3] {
+                        movement_sets.push(vec![(d1, q1), (d2, q2)]);
+                    }
+                }
+            }
+            for z1 in [None, Some(-1)] {
+                settlement_sets.push(vec![(d1, z1)]);
+                for d2 in d1..3 {
+                    for z2 in [None, Some(-1)] {
+                        settlement_sets.push(vec![(d1, z1), (d2, z2)]);
+                    }
+                }
+            }
+        }
+        let mut cases = 0;
+        for movement_set in &movement_sets {
+            for settlement_set in &settlement_sets {
+                // 1 件の計数の候補: (fresh, 日付, 値, (先に保存した movement の数 m, 精算の数 c))
+                let mut one = Vec::new();
+                for fresh in [false, true] {
+                    for date in 0..3 {
+                        for value in [4, 7] {
+                            if !fresh {
+                                one.push((fresh, date, value, (0, 0)));
+                                continue;
+                            }
+                            for m in 0..=movement_set.len() {
+                                for c in 0..=settlement_set.len() {
+                                    let before_ok = movement_set[..m].iter().all(|r| r.0 <= date)
+                                        && settlement_set[..c].iter().all(|r| r.0 <= date);
+                                    if before_ok {
+                                        one.push((fresh, date, value, (m, c)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let mut count_sets = vec![vec![]];
+                for a in &one {
+                    count_sets.push(vec![*a]);
+                    for b in &one {
+                        // b は a の後に保存: b が fresh なら a は b の今日以前、a も fresh ならカーソルが増える
+                        let ok = !b.0
+                            || (a.1 <= b.1 && (!a.0 || (a.3 .0 <= b.3 .0 && a.3 .1 <= b.3 .1)));
+                        if ok {
+                            count_sets.push(vec![*a, *b]);
+                        }
+                    }
+                }
+                for count_set in &count_sets {
+                    let mut ledger = Ledger::default();
+                    for (i, (date, quantity)) in movement_set.iter().enumerate() {
+                        ledger
+                            .movements
+                            .push(mv(i as i64 + 1, *quantity, DATES[*date], None));
+                    }
+                    for (i, (date, z004)) in settlement_set.iter().enumerate() {
+                        let no = i as i64 + 1;
+                        ledger.settlements.push(SettlementRow {
+                            import_id: no,
+                            machine_no: "0001".to_string(),
+                            settlement_no: no,
+                            settlement_date: DATES[*date].to_string(),
+                        });
+                        if let Some(quantity) = z004 {
+                            ledger
+                                .movements
+                                .push(mv(100 + no, *quantity, DATES[*date], Some(no)));
+                            ledger.linked_sale_imports.push(no);
+                        }
+                    }
+                    for (i, (fresh, date, value, (m, c))) in count_set.iter().enumerate() {
+                        ledger.counts.push(count_row(
+                            i as i64 + 1,
+                            *value,
+                            *fresh,
+                            DATES[*date],
+                            (*m as i64, *c as i64),
+                        ));
+                    }
+                    check(&ledger);
+                    cases += 1;
+                }
+            }
+        }
+        cases
+    }
+
+    fn movement_sum(ledger: &Ledger) -> i64 {
+        ledger.movements.iter().map(|m| m.quantity).sum()
+    }
+
+    #[test]
+    fn test_stock_ledger_req201_prop_no_counts_is_movement_sum() {
+        // REQ-201 / SPEC-STK-CNT-D2（効く計数が無ければ全ての有効な movement の和で、範囲は無い）/ 性質 a
+        let mut checked = 0;
+        for_each_small_ledger(|ledger| {
+            if !ledger.counts.is_empty() {
+                return;
+            }
+            checked += 1;
+            let got = derive_ledger(ledger).unwrap();
+            assert_eq!(got, derived(movement_sum(ledger), None, &[]), "{ledger:?}");
+        });
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn test_stock_ledger_req205_prop_input_order_does_not_matter() {
+        // REQ-205 / SPEC-STK-CNT-D2・D3（結果は記録の集合で決まり、入力の並びに依らない。窓と計数どうしは
+        // id・日付で決め、並びを使わない）/ 性質 b。各列は 2 件までなので、3 列を同時に逆順にすると
+        // どの列も恒等でない唯一の並べ替えになる（列ごとの 8 通りは同じ判定を 7 倍回すだけ）
+        for_each_small_ledger(|ledger| {
+            let mut shuffled = ledger.clone();
+            shuffled.counts.reverse();
+            shuffled.movements.reverse();
+            shuffled.settlements.reverse();
+            shuffled.linked_sale_imports.reverse();
+            assert_eq!(
+                derive_ledger(&shuffled).unwrap(),
+                derive_ledger(ledger).unwrap(),
+                "{ledger:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_stock_ledger_req205_prop_range_only_with_reason_and_contains_stock() {
+        // REQ-205 / SPEC-STK-CNT-D2（範囲は決まらない記録か衝突があるときだけ、写しは範囲の中）/ 性質 c。
+        // 保存の経路で起きうる入力は誤り（計数の前後の循環）にならない。件数は入力の空間を黙って縮めない印
+        let cases = for_each_small_ledger(|ledger| {
+            let got = derive_ledger(ledger).unwrap_or_else(|e| panic!("{e:?}: {ledger:?}"));
+            match got.range {
+                Some((low, high)) => {
+                    assert!(!got.recheck_reasons.is_empty(), "{got:?}: {ledger:?}");
+                    assert!(low <= got.stock && got.stock <= high, "{got:?}: {ledger:?}");
+                }
+                None => assert!(got.recheck_reasons.is_empty(), "{got:?}: {ledger:?}"),
+            }
+        });
+        assert_eq!(cases, 969_273);
+    }
+
+    #[test]
+    fn test_stock_ledger_req205_prop_fresh_count_after_everything_resolves() {
+        // REQ-205 / SPEC-STK-CNT-D3（解け方: 全ての記録の保存の後に、最後の日付 T で「入れ直す」と、
+        // 先に保存された全ての記録を含む数になり、要再確認が解ける）/ 性質 d
+        for_each_small_ledger(|ledger| {
+            // 値は判定に使わない。売り切れの 0（ADR の解け方）で入れ直す
+            let mut resolved = ledger.clone();
+            let manual = ledger
+                .movements
+                .iter()
+                .filter(|m| m.settlement_no.is_none());
+            resolved.counts.push(count_row(
+                ledger.counts.len() as i64 + 1,
+                0,
+                true,
+                DATES[2],
+                (manual.count() as i64, ledger.settlements.len() as i64),
+            ));
+            assert_eq!(
+                derive_ledger(&resolved).unwrap(),
+                derived(0, None, &[]),
+                "{ledger:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn test_stock_ledger_req205_prop_later_movement_shifts_stock_and_range() {
+        // REQ-205 / SPEC-STK-CNT-D2・D3（どの計数の日付より後の業務日で、最大の id の入出庫 q は、
+        // どの効く計数にも入らない。写しと範囲の両端が q だけ動き、理由は変わらない）/ 性質 e
+        for_each_small_ledger(|ledger| {
+            let before = derive_ledger(ledger).unwrap();
+            for q in [-2, 3] {
+                let mut after = ledger.clone();
+                after.movements.push(mv(1000, q, LATER, None));
+                let expected = DerivedStock {
+                    stock: before.stock + q,
+                    range: before.range.map(|(low, high)| (low + q, high + q)),
+                    recheck_reasons: before.recheck_reasons.clone(),
+                };
+                assert_eq!(
+                    derive_ledger(&after).unwrap(),
+                    expected,
+                    "q {q}: {ledger:?}"
+                );
+            }
+        });
+    }
 }

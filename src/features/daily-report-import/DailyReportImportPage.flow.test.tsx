@@ -140,7 +140,7 @@ describe("DailyReportImportPage flow_req401", () => {
   it("DailyReportImportPage shows over-limit column message and allows reselect (REQ-401)", async () => {
     // BIZ-08-D2a: 上限の越えは帳票と列を名指す文がそのまま出て、file を選び直せる（37 から転記）
     const message =
-      "Z001の金額列の値が大きすぎます。この日報ファイルは取り込めません。レジの日報ファイルを選び直してください。";
+      "Z001の金額列の値が大きすぎます。この日の日報は読めません。管理者に知らせてください。";
     const user = userEvent.setup();
     mockOpen.mockResolvedValueOnce([
       "C:\\tmp\\Z001_260321.CSV",

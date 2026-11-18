@@ -85,13 +85,25 @@ Ready後の修正はDraftへ戻し、旧greenを流用しない。base同期時�
 - actions/cache は `~/.cargo/registry/index/`、`~/.cargo/registry/cache/`、`~/.cargo/git/db/` の依存取得 cache だけを保存する。
 - `src-tauri/target/` と `~/.cargo/bin/` は保存しない。
 - key は OS + `src-tauri/Cargo.lock` hash、restore key は OS prefix を維持する。
-- Rust 3 job は同じ immutable key を使う。cold miss 時は first writer が保存し、他 job の同一 key save 競合は warning として受容する。job 別 key に分けて同じ依存 cache を三重保存しない。
+- Rust 3 job は同じ immutable key を使う（Windows observe の job は `runner.os` の key で別の cache を持つ）。cold miss 時は first writer が保存し、他 job の同一 key save 競合は warning として受容する。job 別 key に分けて同じ依存 cache を三重保存しない。
 - npm は既存 `actions/setup-node` の `cache: npm` を維持し、`node_modules/` は保存しない。
 - 10GB 上限再到達時は cache usage と key 数を確認し、target 等の build output を再追加しない。
 
 ## Required Check Impact
 
 requiredはGitHub Actions/15368由来の`Merge gate`。strict、PR必須、bypassなし、削除/force禁止を`.github/merge-gate-ruleset.json`に定義する。helperはcurrent main側のpolicyと実効rulesを照合し、PRが自分の必要reviewやpolicyを緩めない。設定はhelperから変更しない。
+
+## Windows Observe
+
+D-157。ci.yml の job は全部 `ubuntu-latest` で、`cfg(windows)` の code を compile しない。`.github/workflows/windows-observe.yml` は `src-tauri/**` か自身に触れる PR（と `workflow_dispatch`）で、`windows-latest` の上で `cargo test` と `cargo clippy --release --all-targets -- -D warnings` を流す。
+
+- observe（出すだけ）: 2 つの cargo の step は `continue-on-error: true` で、job は成功で終わる。結果（2 つの step の outcome と落ちた test の名）は run の summary と `::warning` の annotation に出す。retry・skip しない。
+- `Merge gate` の外: 別の workflow なので ci.yml の `merge_gate` の `needs` と `check-required-jobs.sh` の集合に入らず、helper の CI 根拠（ci.yml の run だけを読む）も変わらない。path filter はこの workflow だけに置く（required でないので、docs だけの PR で cold build と helper の止まりを起こさない）。
+- 結果の読み手: `src-tauri/**` に触れる PR では、Coordinator が Ready の承認を求める返答に Windows observe の outcome と落ちた test の名を書く。昇格の数え方はその記録で行う。
+- helper の `merge`: 要るのは `mergeable_state == 'clean'`。run の進行中は helper の `merge` が止まりうる（未観測）。止まったら同じ head で完了の後に打ち直す（承認の取り直しも同期も要らない）。
+- 保証の例外: checkout・toolchain・cache の step の失敗と job の cancel（job の `timeout-minutes` の時間切れを含む）では job が失敗・cancel で終わり、helper の `merge` が止まる。戻し方は job の再実行で、落ちたのは test でないので test の retry ではない。cargo の step の時間切れ（step の `timeout-minutes`）も例外に置く。step の時間切れは、実際の時間切れを hosted で観測したら observe の側に戻す。
+- 初回の結果と時間: `cargo test` は failure（lib の unittests の実行 file が Windows で起動せず、lib の test は 0 本。直す件は [backlog](backlog.md) の「Windows で lib の test の実行 file が起動しない件と、Windows でだけ出る clippy の 3 件を直す」）、`cargo clippy --release` は failure（Windows でだけ使われない import・定数の 3 件）。別の lane で直すまで、どちらも毎回 failure で出る。job の実行時間は 439 秒（cold build。2026-11-17、PR #273 の run <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44076654226>）。
+- 昇格（enforce）の条件: Ready の承認を求める返答の記録で、`src-tauri/**` に触れる PR が続けて 10 本（owner の決定、2026-11-17、repo 外の回答台帳 TD-783）、誤検知（Windows の挙動でも test の前提の誤りでもない失敗、flaky の疑い）なしで通り、見つかった Windows の失敗が直っていること。昇格は別の R3 で、`Merge gate` と `check-required-jobs.sh` の変え方を計画する。
 
 ## Related Records
 

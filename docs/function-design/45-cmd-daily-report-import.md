@@ -155,7 +155,7 @@ struct RegisterSdScanResponse {
 }
 ```
 
-候補の `DailyReportSdCandidate` は `settlement_no: Option<i64>`（37 §37.9）を持つ（55 UI-07-D19、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
+候補の `DailyReportSdCandidate` は `settlement_no: Option<i64>`（37 §37.9）を持つ（55 UI-07-D19、owner の決定 2026-11-03、repo 外の回答台帳 TD-592）。数の列の誤りで `Unreadable` の束の理由の文 `unreadable_reason: Option<String>`（37 §37.9 手順 5、D-158）も持つ。CMD は写さず素通しにし、bindings を再生成する（§45.8）。
 
 **処理ステップ**:
 1. `selected_path` を BIZ-08 の `DailyReportSdSelection`（37 §37.9。`None` → `Auto`、`Some` → `Selected(PathBuf)`）にする。CMD は IO-09 の型を使わない（`src-tauri/tests/architecture_test.rs` の LAYER_RULES で cmd → io は禁止）。空文字は `CmdError.kind="validation"`。
@@ -249,7 +249,7 @@ fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdE
 
 ### 45.8 生成bindings
 
-SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は `DailyReportImportRow`（§45.6、UI-07-D19）で、bindings に `DailyReportImport` の型と `source_files_json` 等の内部の値は出ない。`DailyReportSdCandidate` は `settlement_no`（§45.6a、TD-592）を持つ。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。preview の cache の `settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。精算回数を wire に出すのは一覧の行〈§45.6〉と SD の候補〈§45.6a〉だけ。37 §37.4 手順 6）。
+SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Type` deriveを維持し、`DailyReportDuplicateStatus` / `DailyReportDuplicateCheck` / `SameDateDailyReportImportSummary` / commit引数を含む `src/lib/bindings.ts` をgeneratorで再生成する。生成物の手編集は禁止する。D-111 の `scan_register_sd` / `parse_and_validate_daily_report_from_sd` は、`lib.rs` の specta の `collect_commands!`（今は `src-tauri/src/lib.rs` の `export_bindings_to`）と runtime の `tauri::generate_handler!`（同 `run`）の両方に登録し（どちらか一方だけだと、`scripts/check-command-drift.sh`〈`bash scripts/doc-consistency-check.sh` の Command registry drift、`D=` 宣言・`H=` generate_handler・`S=` collect_commands・`T=` bindings の 4 つの集合の一致〉が失敗する。件数は正本に書かず、この 4 つの集合が一致することだけを契約にする）、`DailyReportSdScan` / `DailyReportSdCandidate` / `DailyReportSdCandidateStatus` / `RegisterSdScanResponse` を含めて再生成する。一覧の出力の型は `DailyReportImportRow`（§45.6、UI-07-D19）で、bindings に `DailyReportImport` の型と `source_files_json` 等の内部の値は出ない。`DailyReportSdCandidate` は `settlement_no`（§45.6a、TD-592）と `unreadable_reason`（§45.6a、37 §37.9。CMD は素通し、D-158）を持つ。既存の command と DTO の wire は、`DailyReportSourceFileRequest` に省略可の `source_path`（§45.3）を足すほかは変えない（足す field は `#[serde(default)]` で、省いた呼出しは今どおり PC 上の file として通る。preview の cache の `settlement_no` と `source_files_json` の `sd_relative_path`・`copy_path` は内部の cache と DB だけで、wire に出さない。精算回数を wire に出すのは一覧の行〈§45.6〉と SD の候補〈§45.6a〉だけ。37 §37.4 手順 6）。
 
 対象:
 - `parse_and_validate_daily_report`
