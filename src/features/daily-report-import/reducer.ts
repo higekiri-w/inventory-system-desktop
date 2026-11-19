@@ -26,6 +26,9 @@ export function dailyReportImportReducer(
       return state;
     case "sd_list":
       if (action.type === "scan_started") return { status: "scanning" };
+      if (action.type === "bulk_started") {
+        return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
+      }
       if (action.type === "sd_candidate_selected") {
         return {
           status: "parsing",
@@ -36,6 +39,31 @@ export function dailyReportImportReducer(
             candidateKey: action.candidateKey,
           },
         };
+      }
+      return state;
+    case "bulk_importing":
+      if (action.type === "bulk_succeeded") {
+        return {
+          status: "bulk_result",
+          scan: state.scan,
+          scanToken: state.scanToken,
+          response: action.response,
+        };
+      }
+      // command の失敗（scan の期限切れ等）は一覧へ戻す（項目の失敗は応答の中）
+      if (action.type === "bulk_failed") {
+        return {
+          status: "error",
+          error: action.error,
+          recoverTo: "sd_list",
+          previousState: { status: "sd_list", scan: state.scan, scanToken: state.scanToken },
+        };
+      }
+      return state;
+    case "bulk_result":
+      if (action.type === "scan_started") return { status: "scanning" };
+      if (action.type === "bulk_started") {
+        return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
       }
       return state;
     case "parsing":

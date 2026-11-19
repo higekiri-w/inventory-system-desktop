@@ -86,6 +86,7 @@ function makeScan(
     candidates,
     skipped_unknown_count: skipped,
     tidy_failure: tidyFailure,
+    ej: null,
   };
 }
 

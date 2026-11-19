@@ -42,6 +42,7 @@ import {
   type DailyReportSeries,
 } from "./hooks/useDailyReportImportFlow";
 import { AdditionalImportConfirmDialog } from "../csv-import/components/AdditionalImportConfirmDialog";
+import { SdBulkImport, SdEjSummaryLine } from "./components/SdBulkImport";
 import {
   DailyReportRollbackConfirmDialog,
   formatMoney,
@@ -64,10 +65,32 @@ export function DailyReportImportPage({
       case "idle":
       case "scanning":
       case "sd_list":
+      case "bulk_importing":
+      case "bulk_result": {
+        const listed =
+          state.status === "sd_list" ||
+          state.status === "bulk_importing" ||
+          state.status === "bulk_result";
         return (
           <DailyReportSourceStep
             scanning={state.status === "scanning"}
-            scan={state.status === "sd_list" ? state.scan : null}
+            scan={listed ? state.scan : null}
+            busy={isBlocking}
+            // 一括の結果を出した後の一覧の状態は古いので、一覧の行は出さない（読み直すと今の状態で出る）
+            showCandidates={state.status !== "bulk_result"}
+            bulk={
+              listed ? (
+                <SdBulkImport
+                  scan={state.scan}
+                  busy={isBlocking}
+                  importing={state.status === "bulk_importing"}
+                  response={state.status === "bulk_result" ? state.response : null}
+                  ejManual={flow.ejImport}
+                  onBulkImport={flow.bulkImport}
+                  onChooseEjFiles={() => void flow.chooseEjFiles()}
+                />
+              ) : null
+            }
             scanError={flow.scanError}
             manualFiles={flow.manualFiles}
             pendingReplacement={flow.pendingReplacement}
@@ -84,6 +107,7 @@ export function DailyReportImportPage({
             onConfirmFiles={flow.confirmManualFiles}
           />
         );
+      }
       case "parsing":
         return <DailyReportParsingStep />;
       case "preview":
@@ -202,6 +226,9 @@ function scanSummary(scan: DailyReportSdScan): string | null {
 function DailyReportSourceStep({
   scanning,
   scan,
+  busy,
+  showCandidates,
+  bulk,
   scanError,
   manualFiles,
   pendingReplacement,
@@ -217,6 +244,11 @@ function DailyReportSourceStep({
 }: {
   scanning: boolean;
   scan: DailyReportSdScan | null;
+  /** 応答を待つ間（一括・手で選ぶ EJ。ボタンを押せない） */
+  busy: boolean;
+  showCandidates: boolean;
+  /** 55 UI-07-D17: 一覧の上の「まとめて取り込む」と結果 */
+  bulk: ReactNode;
   scanError: string | null;
   manualFiles: DailyReportManualFile[];
   pendingReplacement: DailyReportPendingReplacement | null;
@@ -241,7 +273,7 @@ function DailyReportSourceStep({
           <CardTitle>レジの SD から読む</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Button onClick={onScan} disabled={scanning}>
+          <Button onClick={onScan} disabled={scanning || busy}>
             {scanning && <Loader2 className="animate-spin text-ongoing" aria-hidden="true" />}
             {/* UI-07-D15 (2): 読取りの中で SD に書く（BIZ-08-D11）ので、抜かないことを読取りの間に言う */}
             {scanning ? "SD を読んでいます…終わるまで SD を抜かないでください" : "SD から読む"}
@@ -266,22 +298,29 @@ function DailyReportSourceStep({
                   <span>{TIDY_FAILURE_TEXT[scan.tidy_failure]}</span>
                 </p>
               )}
-              {summary && <p className="text-sm">{summary}</p>}
-              {scan.skipped_unknown_count > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  読まなかったファイル {scan.skipped_unknown_count.toLocaleString()} 件
-                </p>
-              )}
-              {scan.candidates.length > 0 && (
-                <ul className="divide-y rounded-md border" aria-label="SD の精算の一覧">
-                  {scan.candidates.map((candidate) => (
-                    <SdCandidateRow
-                      key={candidate.candidate_key}
-                      candidate={candidate}
-                      onConfirm={onConfirmCandidate}
-                    />
-                  ))}
-                </ul>
+              {bulk}
+              {showCandidates && (
+                <>
+                  {summary && <p className="text-sm">{summary}</p>}
+                  {scan.skipped_unknown_count > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      読まなかったファイル {scan.skipped_unknown_count.toLocaleString()} 件
+                    </p>
+                  )}
+                  {scan.candidates.length > 0 && (
+                    <ul className="divide-y rounded-md border" aria-label="SD の精算の一覧">
+                      {scan.candidates.map((candidate) => (
+                        <SdCandidateRow
+                          key={candidate.candidate_key}
+                          candidate={candidate}
+                          busy={busy}
+                          onConfirm={onConfirmCandidate}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                  <SdEjSummaryLine summary={scan.ej} />
+                </>
               )}
             </div>
           )}
@@ -289,7 +328,7 @@ function DailyReportSourceStep({
       </Card>
 
       <section className="space-y-3" aria-label="ファイルを選んで取り込む">
-        <Button variant="link" className="h-auto px-0" onClick={onChooseFiles}>
+        <Button variant="link" className="h-auto px-0" onClick={onChooseFiles} disabled={busy}>
           ファイルを選んで取り込む
         </Button>
         <SelectionErrorMessage message={selectionError} />
@@ -364,9 +403,11 @@ function DailyReportSourceStep({
 
 function SdCandidateRow({
   candidate,
+  busy,
   onConfirm,
 }: {
   candidate: DailyReportSdCandidate;
+  busy: boolean;
   onConfirm: (candidateKey: string) => void;
 }) {
   const status = CANDIDATE_STATUS[candidate.status];
@@ -390,6 +431,8 @@ function SdCandidateRow({
           {candidate.status === "NotImported" && (
             <Button
               size="sm"
+              variant="outline"
+              disabled={busy}
               onClick={() => {
                 onConfirm(candidate.candidate_key);
               }}

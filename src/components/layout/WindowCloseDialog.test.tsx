@@ -68,6 +68,18 @@ const BUSY_COPY = [
     description:
       "取消が終わるまでお待ちください。終わると閉じられます。いま閉じると、取り消せたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブの「取り込んだ日報の記録を見る」で、取消済みかを確かめてください。取消済みでなければ、もう一度取り消してください。",
   },
+  {
+    kind: "sd-bulk-import",
+    title: "取込みの途中です",
+    description:
+      "取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、どこまで取り込めたかをこの画面で確かめられなくなります。日報は 1 つずつ確定するので、一部だけが入っていることがあります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブで同じ SD を読み直し、「まとめて取り込む」が押せればもう一度押してください。取り込み済みの日報と控えは二重に入りません。",
+  },
+  {
+    kind: "ej-import",
+    title: "取込みの途中です",
+    description:
+      "取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブで同じ SD を読み直し、「まとめて取り込む」が押せれば押してください。結果に欠けか読めないファイルの文が残っていれば、「EJ のファイルを選んで取り込む」で同じファイルを選び直してください。取り込み済みの控えは二重に入りません。",
+  },
 ] as const satisfies readonly { kind: WindowCloseGuardKind; title: string; description: string }[];
 
 const DIRTY_TITLE = "編集内容が保存されていません";
@@ -195,6 +207,8 @@ describe("WindowCloseDialog (UI-12/UI-USW-D5)", () => {
       expect(event.preventDefault).toHaveBeenCalledTimes(1);
       const dialog = screen.getByRole("alertdialog", { name: title });
       expect(dialog).toHaveAccessibleDescription(description);
+      // TD-839: 閉じた後の案内で取込みの完了を言い切らない
+      expect(dialog).not.toHaveTextContent("取り込めています");
       await waitFor(() => {
         expect(within(dialog).getByRole("button", { name: "待つ" })).toHaveFocus();
       });
