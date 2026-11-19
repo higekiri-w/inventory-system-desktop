@@ -423,11 +423,13 @@ validate_result
 | is_voided | BOOLEAN | NOT NULL, DEFAULT 0 | 論理無効化フラグ。ロールバック時に1 |
 | created_at | TEXT | NOT NULL | 作成日時（YYYY-MM-DDTHH:MM:SS） |
 | stock_linked | INTEGER | NOT NULL, DEFAULT 0, CHECK(stock_linked IN (0,1)) | 取込みのときの在庫連動（v11、D-118 の b1。Z004 の確定だけが行の `pos_stock_sync` を書き、手動の売上ほかは 0） |
+| manual_sale_id | INTEGER | FK → manual_sales.id, NULLABLE、CHECK: `manual_sale_id IS NULL OR (source = 'manual' AND csv_import_id IS NULL)` | 手動販売の売上の行が元の手動販売を指す（proposed・未実装。入出庫の記録の取消の lane の migration〈見込みの版は v15、[22](../function-design/22-mnt-migration.md) §23〉が足し、index `idx_sale_records_manual_sale_id` を作る。D-163）。手動販売の保存（31 §12.5）が書き、Z004 の行は NULL。migration の前に保存した手動販売の行は NULL のまま（埋め戻さない） |
 
 ### 設計意図
 - **自動と手動を同じテーブルに統合した理由**: 売上レポート（日次・月次）では自動売上と手動売上をまとめて表示する。別テーブルだと毎回UNIONが必要になり、集計クエリが複雑になる。sourceカラムで区別すれば1テーブルで完結
 - **quantityがマイナスの理由（Z004実機検証結果）**: Z004のレジ戻し処理はマイナス値で出力される。そのまま取り込む。「5個売れて1個返品」の日は、quantity=5の行とquantity=-1の行の2行ができるか、ネットでquantity=4の1行になるかはZ004の出力形式次第。実機検証結果ではPLU別のネット値（販売-戻し）で出力されるため、1行にまとまる
 - **csv_import_idの理由**: ロールバック時にどの売上レコードを無効化するか特定するため
+- **manual_sale_idの理由**: 手動販売の記録の取消（[65](../function-design/65-inventory-record-traceability.md) §65.7.2、D-163）で、その記録の売上の行だけを無効にするため。日付・商品・数量・金額で探すと、同じ日に同じ品を同じ額で 2 回売ったときに取り違える
 
 ### 業務シナリオ例
 ```

@@ -2,7 +2,7 @@
 
 ## 計数の置き場と在庫の求め直しの契約（D-118。b1・b2 は実装済み）
 
-[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2・D6）の追跡の側。旧 ADR（時点証拠）の補正区分（completion / rollback_compensation / recount）・独立再実測の記録・移行の版の表示は持たない（置き換えた）。一般の業務記録の取消機能は同時に実装しない。b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入ったのは下の 2〜4 つ目の項（棚卸しの記録の詳細と入出庫の記録の一覧の棚卸しの件数）。1 つ目の項の在庫変動の履歴の計数の行は b2（[Plan Packet](../plans/2026-10-23-stocktake-count-runtime-b2.md)）で入った。
+[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md)（SPEC-STK-CNT-D2・D6）の追跡の側。旧 ADR（時点証拠）の補正区分（completion / rollback_compensation / recount）・独立再実測の記録・移行の版の表示は持たない（置き換えた）。入出庫の業務記録の取消（slice 5）は、記録の movement を無効にして求め直す形（[D-163](../decision-log.md)、§65.7.2）で、逆向きの movement を作らない。b1（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)）で入ったのは下の 2〜4 つ目の項（棚卸しの記録の詳細と入出庫の記録の一覧の棚卸しの件数）。1 つ目の項の在庫変動の履歴の計数の行は b2（[Plan Packet](../plans/2026-10-23-stocktake-count-runtime-b2.md)）で入った。
 
 - 計数は movement を作らない（D-118 の runtime から、棚卸しの確定の補正の movement〈`movement_type='stocktake'`〉は新しく作らない）。商品別の在庫変動の履歴には、計数を「数を確認（{数}、{日付}）」・「数を入れ直し（{数}、{日付}）」の行として movement と並びの鍵の順（新しい順）に混ぜて出す（読取りの合成。計数は `stock_counts` から読む。結果の型・並び・絞り込みは [44](44-cmd-inventory.md) の `list_movements`、表は [66](66-ui-stock-movements.md)）。
 - `stock_after` は記録を保存した時点の写しの値で、後入力で前に記録が入っても書き換えない（[tracking](../db-design/tracking-system-tables.md) の同名の契約）。鍵の順に並べ直した推移を求めて見せる機能は持たない（在庫変動の表は `stock_after` を保存した時点の値のまま出し、計数の行の「変動後在庫」は「—」。[66](66-ui-stock-movements.md)）。
@@ -22,7 +22,7 @@
 
 **関数要求**: 本書は単一関数ではなく、入出庫系の業務記録一覧・詳細、在庫変動履歴、操作ログ連携、取消/訂正をまたぐ完成形 contract を定義する。後続実装では本書の route、query、status、movement reference、cancel/correct 方針を個別 command / BIZ / IO / UI へ分割する。
 
-**シグネチャ**: 完成形の境界は `listInventoryRecords(query)`、`get*Record(id)`、`getCsvImportRecord(id)`、`getStocktakeRecord(id)`、`listMovements(query)`、`resolveMovementReference(referenceType, referenceId)`、`cancel*Record(id, reason, idempotencyKey)`、`correct*Record(id, reason, replacementReq, idempotencyKey)` を基準にする。実装 PR では既存 command 名との互換と生成 binding の具体型を確定する。
+**シグネチャ**: 完成形の境界は `listInventoryRecords(query)`、`get*Record(id)`、`getCsvImportRecord(id)`、`getStocktakeRecord(id)`、`listMovements(query)`、`resolveMovementReference(referenceType, referenceId)`、`cancelInventoryRecord(recordType, recordId, reason)`（§65.7.2、D-163。訂正の command は持たない）を基準にする。実装 PR では既存 command 名との互換と生成 binding の具体型を確定する。
 
 **処理ステップ**: §65.1 で役割を分け、§65.2 で設計判断を固定し、§65.3〜§65.5 で route / 一覧 / 詳細を定義し、§65.6〜§65.7 で DB / CMD / BIZ contract を置き、§65.8〜§65.10 で UI / 出力 / 実装スライスへ落とす。
 
@@ -43,9 +43,9 @@
 | REQ-206 / all | TRACE-D1 | 入出庫系の全記録は、作成画面内の直近表示だけでなく、一覧・詳細画面で後から参照できるようにする。 | 商業用在庫管理では月末確認、棚卸し、原因調査、入力ミス確認が必要。recent list だけでは過去記録を追えない。 |
 | REQ-207 / movement | TRACE-D2 | 在庫変動履歴の各行は `reference_type + reference_id` から元業務記録の詳細へ遷移できる。元業務記録詳細からも関連 `inventory_movements` を表示する。 | 片方向リンクだけでは「この在庫変動の根拠」と「この記録が動かした在庫」の相互確認ができない。 |
 | REQ-902 / logs | TRACE-D3 | 操作ログは監査・保守ログとして残し、業務記録・在庫変動履歴とは役割を分ける。 | operation_logs は柔軟な JSON ログであり、明細・金額・取消/訂正の正本にすると業務仕様が曖昧になる。 |
-| REQ-208 / cancel | TRACE-D4 | 業務記録の取消は物理削除しない。ヘッダを取消状態にし、取消理由を必須にし、逆方向の在庫変動を追加する。 | 在庫数だけ戻して元記録を消すと、なぜ在庫が戻ったか追えない。既存 movement を消す案は監査性が弱い。 |
-| REQ-208 / correction | TRACE-D5 | 訂正は「元記録を取消して新記録を作る」形にする。可能なら BIZ command で取消 + 新規作成を単一 TX にする。 | 既存明細を上書き更新すると、元の入力内容・在庫変動・帳面の根拠が失われる。 |
-| REQ-303 / ledger | TRACE-D6 | 取消/訂正に伴う在庫戻しは `inventory_movements` に追加行として残し、元 movement との関係を構造化する。 | `is_voided=1` は CSV rollback など「取込みを無効化する」用途に限定し、通常の業務取消は履歴を見せる。 |
+| REQ-208 / cancel | TRACE-D4 | 業務記録の取消は物理削除しない。ヘッダに取消の日時と理由（必須）を書き、記録の movement を無効にして求め直す（TRACE-D6）。明細・無効にした movement・売上の行は残す。 | 在庫数だけ戻して元記録を消すと、なぜ在庫が戻ったか追えない。記録の詳細・入出庫履歴の「取消済み」と操作ログで、いつ・なぜ取り消したかを追う。2026-11-20、D-163 で「逆方向の在庫変動を追加する」を置き換えた。 |
+| REQ-208 / correction | TRACE-D5 | 訂正は「元記録を取り消してから、作成の画面で正しい記録を入れ直す」2 つの操作にする。訂正の command・訂正の列は持たない。 | 既存明細を上書き更新すると、元の入力内容・在庫変動・帳面の根拠が失われる。取消と入れ直しを 1 つの TX にする案（2026-11-20 まで）は、1 台の PC で間に別の書込みが入っても在庫は求め直しで正しく、得るものが少ない（D-163）。 |
+| REQ-303 / ledger | TRACE-D6 | 業務記録の取消は、Z004 の取消（ADR SPEC-STK-CNT-D7）と同じく、その記録の movement を `is_voided=1` にし、その商品を同じ TX で求め直す。逆向きの movement は作らない。 | D-118 の後は在庫を記録から求め直すので、逆向きの movement は元の日付で同じ日の計数を要再確認にする（ADR の旧 H5）。無効にする形は要再確認を新しく作らず、Z004 の取消と規則が 1 つになる（D-163。2026-11-20 に「追加行として残す」を置き換えた）。 |
 | REQ-206 / UI | TRACE-D7 | Sidebar には作業画面とは別に「入出庫履歴」を置く。各作業画面の recent list には「すべての履歴を見る」導線を置く。 | 作成作業と調査作業は利用タイミングが違う。作成画面に検索・詳細・取消を詰め込むと日常入力が重くなる。 |
 | REQ-206 / export | TRACE-D8 | 業務記録一覧と詳細は、月末確認・会計・棚卸し確認用に CSV 出力と印刷/控えを持つ。 | 廃棄・破損のロス原価、入庫実績、手動販売、返品交換は店外説明や紙確認が必要になる。 |
 | REQ-206 / image | TRACE-D9 | 画像添付は返品・交換のレシート画像に限らず、廃棄・破損の破損品写真・廃棄根拠写真にも拡張できる設計にする。 | 画像は業務記録の補助証跡。操作ログや在庫変動履歴に直接持たせない。 |
@@ -89,7 +89,7 @@
 | 記録ID | 全業務記録 | ID exact match |
 | 商品コード / JAN / 商品名 | 全業務記録 | 明細 JOIN。商品名は部分一致。商品検索欄は共有 `SearchBar` の live 型（TRACE-D12）を使う。CSV取込みは `sale_records`（rollback 後の `is_voided=1` 行も履歴保持のため対象）、棚卸しは明細（`stocktake_items`）を検索母集団とする（D-118 の b1。進行中の棚卸しも明細で hit する） |
 | 部門 | 全業務記録 | 商品 master JOIN。完全な部門 master を選択肢に使う。CSV取込みは `sale_records`、棚卸しは明細（`stocktake_items`）から商品 master へ JOIN する（D-118 の b1） |
-| 状態 | 全業務記録 | slice 4d の現行正規化値は `active` / `canceled` / `in_progress`、filter は `all` / `active` / `canceled` / `in_progress`（表示は「すべて / 有効 / 取消済み / 進行中」）。条件は各 SELECT へ重複実装せず、`UNION ALL` 後の外側 derived table へ 1 回適用して WHERE に実反映する。`corrected` は slice 5 の将来完成形で使う取消/訂正の別軸であり、`in_progress` は CSV取込み / 棚卸しの正規化契約にのみ属する現行実装値（現行写像で実際に返すのは棚卸しのみ）として区別する |
+| 状態 | 全業務記録 | slice 4d の現行正規化値は `active` / `canceled` / `in_progress`、filter は `all` / `active` / `canceled` / `in_progress`（表示は「すべて / 有効 / 取消済み / 進行中」）。条件は各 SELECT へ重複実装せず、`UNION ALL` 後の外側 derived table へ 1 回適用して WHERE に実反映する。入庫・返品交換・手動販売・廃棄は header の `canceled_at` が NULL なら `active`、値があれば `canceled`（slice 5、D-163。`corrected` は持たない）。`in_progress` は CSV取込み / 棚卸しの正規化契約にのみ属する現行実装値（現行写像で実際に返すのは棚卸しのみ）として区別する |
 | 種別 | return / disposal / movement | return/exchange、disposal/damage/other、movement_type |
 | 理由キーワード | manual_sale / disposal / cancel | reason / note / cancel_reason |
 
@@ -136,6 +136,17 @@
 - 到達: 入出庫履歴（§65.8.1、種別「CSV取込み」）の行、在庫変動履歴の元記録の link（§65.8.2）、売上データ取込みの Z004 タブの「取り込んだ記録を見る」と、同じ精算の別の版の拒否（32 の表の順 4）の Alert の「取込みID {id} の記録を見る」（UI-07-D18）。新しい route や Sidebar の項目は作らない。
 - 理由: 取り込んだ後に結果の画面を離れてから誤った版に気づいても、アプリの中で取り消して正しい版を取り込み直せる（ADR D7、AGENTS.md の「使い手に押しつけない」、導入の前の関門の項目〈owner の決定、repo 外の回答台帳 TD-380〉）。置き場は §65.5（詳細で確認してから行う）と §65.8.1（一覧の行に取消を置かない）に従った。棄却: Z004 タブに取込みの履歴の一覧を足して行から取り消す案（§65.8.1 と合わず、入出庫履歴と同じ検索を 2 つ持つ）、専用一覧 `/csv-import/records`（§65.3 の完成形。横断検索で探せるので runway のまま）。
 
+## 65.5b 入出庫の記録の詳細からの取消（slice 5、D-163）
+
+§65.5 の取消 CTA の表示条件を、入庫・返品交換・手動販売・廃棄の詳細（`/inventory/receiving/records/$recordId`・`/inventory/return/records/$recordId`・`/inventory/manual-sale/records/$recordId`・`/inventory/disposal/records/$recordId`）に当てる。command は `cancelInventoryRecord`（§65.7.2）。振替の詳細には置かない（D-163 の Revisit）。
+
+- 表示: 状態が `active` の詳細の header の操作に「この記録を取り消す」を出す。取消済み（`canceled`）には出さず、header の下に「この記録は取消済みです」と取消の日時・理由を出す（状態の badge は文字の「取消済み」で、色だけにしない）。一覧（§65.8.1）・作業画面の recent list の行には置かない。取り消した記録の「関連する在庫変動」の節は空になり（無効にした movement は出さない。§65.8.2）、空の文を「取り消したので、この記録は在庫を動かしていません」にする。明細・原価・金額・備考は取消の前のまま出す。
+- 確認: dialog に、取り消すと「この記録で動いた在庫を元に戻します」、手動販売では加えて「{販売日} の日次売上と月次の売上から外れます」、全ての種類で「記録は消さずに『取消済み』で残ります。取消を元に戻す操作はありません。打ち間違いを直すときは、取り消した後に作成の画面で入れ直してください」「完了した棚卸しの評価額は変わりません（棚卸しの記録の詳細の参考の差に出ることがあります）」を出す。取消の理由の欄（必須。前後の空白を除いて空なら「取り消す」を押せない）を置く。
+- 成功: Toast「記録を取り消しました」と D-052 の記録の取消の entry（C25。入出庫履歴・記録の詳細・在庫・在庫変動の履歴・商品・日次と月次の売上・棚卸しの記録の詳細）の再取得で、詳細は取消済みの表示になる。取消で在庫が負になった商品があれば、作成の画面と同じ文（`negative_stock_warning_message`）を詳細に出す。
+- 失敗: Toast「取り消しに失敗しました。もう一度お試しください」（拒否の理由の文があればその文）を出し、dialog と理由の入力を残して同じ記録のまま再試行できる。既に取り消されていた（別の画面で取り消した）ときは拒否の文を出し、詳細を再取得して取消済みの表示にする。
+- 作業画面の recent list（入庫・返品交換・廃棄の画面の直近の一覧。手動販売は §65.8.1 の一覧の状態を読む）は、取消済みの行に「取消済み」を文字で出す。
+- 理由: 打ち間違いをアプリの中で直せるようにする（導入の前の関門 18、owner の決定 TD-833。AGENTS.md の「使い手に押しつけない」）。置き場は §65.5（詳細で確認してから行う）と §65.8.1（一覧の行に取消を置かない）に従い、CSV取込み（§65.5a）と同じ形にした。
+
 ## 65.6 DB 完成形
 
 既存スキーマは業務記録と movement の土台を持つが、取消/訂正/相互追跡には追加設計が必要である。
@@ -158,24 +169,14 @@ slice 4d の現行実装では、追加 2 種の status を次のように正規
 
 | フィールド | 型 | 意味 |
 |---|---|---|
-| status | TEXT | `active` / `canceled` / `corrected` |
-| canceled_at | TEXT NULL | 取消日時 |
-| cancel_reason | TEXT NULL | 取消理由。取消時は必須 |
-| correction_of_record_id | INTEGER NULL | この記録が訂正後なら元記録ID |
-| corrected_by_record_id | INTEGER NULL | この記録が訂正元なら訂正後記録ID |
+| canceled_at | TEXT NULL | 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。NULL なら有効 |
+| cancel_reason | TEXT NULL | 取消の理由。`canceled_at` と両方 NULL か両方あり（CHECK）、ありなら前後の空白を除いて空でない |
 
-訂正は同一記録種別内で行う。たとえば入庫記録の訂正後は新しい入庫記録を作り、元入庫記録に `status='corrected'` と `corrected_by_record_id` を入れる。
+状態は `canceled_at` の有無で決まり（NULL = `active`、あり = `canceled`。§65.4.1）、状態の列・訂正の列（2026-11-20 までの `status`・`correction_of_record_id`・`corrected_by_record_id`）は持たない（D-163。訂正は取り消してから入れ直す、TRACE-D5）。列と migration の正本は [transaction](../db-design/transaction-tables.md) の「取消の列」。手動販売の売上の行は `sale_records.manual_sale_id` で元の手動販売を指す（[POS](../db-design/pos-tables.md) §13）。
 
 ### 65.6.2 inventory_movements 拡張
 
-`inventory_movements` は在庫推移の台帳として、通常作成と取消戻しを区別できる構造を持つ。
-
-| フィールド | 型 | 意味 |
-|---|---|---|
-| movement_kind | TEXT | `create` / `cancel`。既定は `create` |
-| reversal_of_movement_id | INTEGER NULL | 取消戻し movement の場合、元 movement ID |
-
-取消時は元 movement を消さず、逆符号の movement を `movement_kind='cancel'` で追加する。`is_voided` は CSV rollback のように「取込み自体を無効化して通常履歴から隠す」用途に限定し、通常の業務取消には使わない。
+`inventory_movements` に列を足さない（D-163。2026-11-20 までの `movement_kind`・`reversal_of_movement_id` は持たない）。業務記録の取消は、CSV取込みの取消と同じく、その記録の movement を消さずに `is_voided=1` にする（TRACE-D6）。無効にした movement は在庫の求め直し・商品別の在庫変動の履歴・記録の詳細の関連 movement に出ない。
 
 ### 65.6.3 画像添付
 
@@ -212,17 +213,15 @@ UI-03 の既存 `return_records.receipt_image_path` は互換維持し、共通�
 
 ### 65.7.2 取消 / 訂正
 
-取消 command は業務記録ごとに分ける。BIZ 層が同一 TX で status 更新、逆 movement 作成、operation log 記録を行う。
+取消の command は 1 つ（`cancelInventoryRecord(recordType, recordId, reason)`、[44](44-cmd-inventory.md) §23.7b、BIZ は [31](31-biz-inventory-service.md) §12.6c）。`recordType` は `receiving_record`・`return_record`・`manual_sale`・`disposal_record` のどれか。BIZ 層が 1 つの TX で、header の取消の列、記録の movement の無効化と求め直し、操作ログ `inventory_record_cancel` を書く（D-163）。
 
-| Command | 処理 |
+| 記録 | 無効にするもの |
 |---|---|
-| `cancelReceivingRecord(id, reason, idempotencyKey)` | 入庫の在庫加算を逆方向に戻す |
-| `cancelReturnRecord(id, reason, idempotencyKey)` | 保存で作った movement（この保存で在庫を動かした明細。D-148）だけ逆方向に戻す。movement の無い記録は帳面取消のみ |
-| `cancelManualSaleRecord(id, reason, idempotencyKey)` | 在庫戻し + 手動 sale_records の取消扱い |
-| `cancelDisposalRecord(id, reason, idempotencyKey)` | 廃棄で減った在庫を戻す |
-| `correct*Record(id, reason, replacementReq, idempotencyKey)` | 元記録を `status='corrected'` にし、逆方向 movement と replacement の新規作成を同一 TX で行う |
+| 入庫・廃棄 | その記録の movement |
+| 返品・交換 | その保存で作った movement（この保存で在庫を動かした明細。D-148）。movement の無い記録は header の取消だけ |
+| 手動販売 | その記録の movement と、`manual_sale_id` で結んだ売上の行（`sale_records.is_voided=1`。日次・月次の売上から外れる） |
 
-取消済み・訂正済み記録の再取消は validation error にする。純粋な取消は `status='canceled'`、訂正は元記録を `status='corrected'` にして訂正先の有効記録を作る。訂正後記録の取消は許可するが、元記録との関係を詳細画面に表示する。
+取消済みの記録の再取消・無い記録・空の理由・対象の外の種類（CSV取込み〈§65.5a〉・棚卸し・振替）は拒む（validation error・not found）。取消の取消・明細ごとの取消・訂正の command は持たない（TRACE-D5）。
 
 ## 65.8 UI 完成形
 
@@ -248,7 +247,8 @@ UI-03 の既存 `return_records.receipt_image_path` は互換維持し、共通�
 - 変動後在庫
 - 元記録ラベル（例: 入庫記録 #42、廃棄・破損 #7、CSV取込み #12）
 - 詳細リンク
-- 取消戻しの場合は `取消` ラベルと元 movement への関係
+
+取り消した記録（§65.7.2）と取り消した CSV取込みの movement は無効なので出さない（D-163。後の行の変動後在庫は保存した時点の写しのまま）。
 
 初期在庫や legacy/corrupt row など `reference_type/reference_id` が欠ける movement は、行自体を表示し、元記録リンクだけを非表示にする。
 
@@ -294,7 +294,7 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
    - CSV取込みの明細母集団は `sale_records` とし、TRACE-D6 の履歴保持方針により rollback 後の `is_voided=1` 行も `item_count` / 代表商品へ含める。棚卸しの `item_count` は明細の数（D-118 の b1 で差異件数から置き換えた）。進行中の棚卸しは UI 上の代表商品を「-」とする（明細数は一覧に表示しない、L8-4）。
    - `business_date` は CSV取込みが `settlement_date`、棚卸しが `DATE(COALESCE(completed_at, started_at))`、記録日時は CSV取込みが `imported_at`、棚卸しが `started_at` を使う。
    - `/csv-import/records` / `/stocktake/records` の専用一覧 route と `listCsvImportRecords` / `listStocktakeRecords` は完成形契約のまま runway 残置とし、横断検索の充足を理由に削除しない。
-5. 取消 / 訂正 command と UI。
+5. 取消 command と UI（入庫・返品交換・手動販売・廃棄。§65.5b・§65.7.2、D-163。lane は [Plan Packet](../plans/2026-11-20-record-cancel.md)、導入の前の関門 18）。訂正は取消の後の入れ直しで、command を持たない。
 6. CSV出力 / 印刷 / 廃棄・破損画像添付。
 7. 操作ログ UI と業務記録リンク。
 
@@ -305,8 +305,8 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
 - REQ-206 / TRACE-D1: recent list とは別に、過去記録を検索・詳細表示できる。
 - REQ-207 / TRACE-D2: movement から元記録へ、元記録から movement へ相互遷移できる。
 - REQ-902 / TRACE-D3: operation_logs は業務記録の代替ではなく、関連記録リンク付き監査ログとして表示される。
-- REQ-208 / TRACE-D4/D5: 取消/訂正は物理削除せず、理由と状態と逆 movement を残す。
-- REQ-303 / TRACE-D6: 取消戻し movement は通常作成 movement と区別して表示できる。
+- REQ-208 / TRACE-D4/D5: 取消は物理削除せず、取消の日時と理由を残し、明細と無効にした movement・売上の行を残す。
+- REQ-303 / TRACE-D6: 取消は記録の movement を無効にして求め直し、在庫はその記録が無かった値になり、要再確認を新しく作らない。
 - REQ-206 / TRACE-D8/D9: CSV出力、印刷、画像添付は業務記録に紐づく。
 - REQ-206 / TRACE-D11: 一覧、作業画面の recent list、保存結果、操作ログの各 link が遷移元 URL を `returnTo` として送り、詳細から戻ると search state を含む各遷移元が復元される。欠落・不正な戻り先は遷移先の既定 hub（現行の業務記録詳細では `/inventory/records`）にフォールバックする。
 - REQ-206 / TRACE-D12: 商品検索欄は `debounceMs=200` の live 型で raw `q` と結線し、Enter 即時反映、IME 変換確定 Enter の誤発火防止、`q` 変更時の page reset を維持する。
@@ -335,3 +335,4 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
 | 2026-10-27 | stock-transfer の起票（D-143） | TRACE-D14（振替の記録の一覧・詳細・相互リンク）と、§65.1・§65.3 の振替の行を、runtime の前の設計として足した（[Plan Packet](../plans/2026-10-29-stock-transfer.md)） |
 | 2026-11-14 | window-close-guard（plan-first、PR #250） | §65.5a の「失敗」の止めに native の window の close（55 §55.7、UI_TECH_STACK UI-USW-D5）を足した。未実装の注は実装の PR で外す（D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §65.5a の「失敗」の close の止めの「未実装」の注を外した（詳細の取消は共有の hook `useRollbackCsvImport` が `z004-rollback` を close の止めに入れる。55 §55.7、UI_TECH_STACK UI-USW-D5。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-20 | record-cancel の起票（D-163、導入の前の関門 18） | 取消を記録の movement の無効化と求め直しにした: TRACE-D4・D5・D6、§65.0 のシグネチャ、§65.4.1 の状態、§65.5b（新設）、§65.6.1・§65.6.2・§65.7.2、§65.8.2、§65.10 の slice 5、§65.11。逆向きの movement・状態の列・訂正の列と command を外した。振替の取消は owner の未決（[Plan Packet](../plans/2026-11-20-record-cancel.md) の Q1） |

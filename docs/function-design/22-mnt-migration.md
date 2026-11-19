@@ -518,3 +518,20 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 **版の番号の取り直しと開発・試験 DB**: vT の版の番号は、merge の順で取り直すことがある（上の MNT-03-D22）。vT を記録した DB（例: L3 で版 13 の vT を通した開発・試験 DB）を、vT の番号と違う番号の build（main で取り直した後の build、並走の lane の L3 の build）で開く前に、vT の前の snapshot に戻す。戻さずに開くと、版 13 を記録した DB は版 12 までの build では `SchemaNewerThanApp` で開けず、後から版 13 を取った別の migration は版 13 が記録済みなので当たらない（`migrate` は今の版より大きいものだけを当てる）。番号の取り直しは runtime の変更なので、取り直した build の L3 は取り直しになる（`docs/DEV_WORKFLOW.md` L3）。逆向きの取り違えも同じ扱い: vT の前の snapshot を作る「今の版のアプリ」は vT を書く head の base（`origin/main`）の build で、snapshot の版はその build の `migrations()` の最大と等しい。DB の版が base の最大より大きい（別の lane の build〈例: 並走の lane の L3 の build〉が base に無い版を記録した）なら、その DB で snapshot を作らず vT も当てない。先にその lane の build で開く前に作った backup（その lane の migration の前の snapshot）に戻し、版が base の最大と等しくなってから進める（戻さずに進めると、別の lane の migration が記録した版の番号を vT が取っていても、記録済みなので vT が当たらない）。
 
 **テスト**（振替の lane の完了条件。test の名前と期待は packet の Test Plan の M の行）: 空の DB と、入庫・返品交換・手動販売・廃棄・初期在庫・Z004（`phase = 1`）の movement と計数・棚卸しの行を持つ直前の版の DB の両方で vT が成功し、各 movement の全列と id が同じで、`sqlite_sequence` が作り直しの前の値のまま（末尾の行を消した fixture で、次の INSERT の id が前の最大 + 1 にならない）。vT の後に `movement_type='transfer'`・`reference_type='transfer_record'` の行が入り、一覧に無い値（`movement_type='convert'`）が CHECK で拒まれる。`transfer_items` の `direction` の一覧に無い値・`quantity` の 0・同じ記録の同じ商品の 2 行目が拒まれる。手順 5 の確かめが失敗したとき（test の中で行を足す）に schema・値・版が何も変わらず、`MigrationFailed` の message が、詳細の部分（末尾の `: inventory_movements（…）` の括弧の中）を除いて手順 5 の vT の文と一字一句同じ（`作り直し`・`DB は変わっていません`・`前の版のアプリで開いて`・`開発者に知らせて` を含まない）。`migrations()` の版が 1 から欠けの無い昇順の連番である（packet の Test Plan の M7。番号の取り直しを忘れた欠けを CI で止める）。最新の版を期待する既存の test は版の数値・定数でなく `app_max_version()` と比べる（SD 直読みの runtime の packet が決めた形。その lane が先に入っていれば、その lane が直した test に従い、後なら本 lane が直す）。
+
+## 23. MNT-03 追加: 入出庫の記録の取消の列と、手動販売の売上の行の結びの migration（D-163、proposed・未実装）
+
+**MNT-03-D24 / D-163**: 入出庫の記録の取消の lane（Plan Packet `docs/plans/2026-11-20-record-cancel.md`、導入の前の関門 18）の migration（以下 vC）。列の意味の正本は [transaction](../db-design/transaction-tables.md) の §4-5 の「取消の列」と [POS](../db-design/pos-tables.md) §13 の `manual_sale_id`。節・ID・版の番号は起票の時点の見込み（2026-11-20 の main の最大は v13。PR #294 が v14 と §22・MNT-03-D23 を足す。導入の前の関門 16 の lane も次の版と §23・MNT-03-D24 を見込む）で、先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す（§21 と同じ規則、`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。欠けは §21 の連番の test が CI で止める）。description は `入出庫の記録の取消の列と手動販売の売上の結び（D-163）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v15.rs`（取り直したら版の番号に合わせる）。
+
+**手順**（1 つの transaction。表を作り直さないので `foreign_keys` は変えない。止まる検査は置かない: 足す列は全て NULL を許し、既存の行は全て新しい CHECK を通る）:
+
+1. `receiving_records`・`return_records`・`manual_sales`・`disposal_records` に `ALTER TABLE … ADD COLUMN canceled_at TEXT` と `ALTER TABLE … ADD COLUMN cancel_reason TEXT CHECK ((canceled_at IS NULL) = (cancel_reason IS NULL) AND (cancel_reason IS NULL OR length(trim(cancel_reason)) > 0))`
+2. `ALTER TABLE sale_records ADD COLUMN manual_sale_id INTEGER REFERENCES manual_sales(id) CHECK (manual_sale_id IS NULL OR (source = 'manual' AND csv_import_id IS NULL))`、`CREATE INDEX idx_sale_records_manual_sale_id ON sale_records(manual_sale_id)`
+3. schema_versions に記録して COMMIT する（MNT-03-D1 の共有の helper）
+
+- 値は変えない: 既存の行の新しい列は全て NULL（有効、売上の行は結ばれない）。求め直しの値は vC の前と同じ。vC の前に保存した手動販売は売上の行と結ばれないので、取消を拒む（31 §12.6c。本番の DB は無い。埋め戻さない: 同じ日に同じ品を同じ額で 2 回売った行を取り違えずに結ぶ規則が無い）。
+- DB の作り直しとの関係: 作り直しの起点でない。値のある開発・試験 DB（owner の PC の L3 用の DB を含む）にもそのまま当たる。
+
+**回復**: §16 の「回復」と同じ（vC が COMMIT した DB は vC を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vC の後に入れた記録と取消は戻らない）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
+
+**テスト**（取消の lane の完了条件。名前と期待は packet の Test Plan）: 空の DB と、4 つの記録・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・空白だけの理由・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。

@@ -729,6 +729,36 @@ fn get_transfer_record(
 
 ---
 
+### 23.7b 入出庫の記録の取消コマンド（D-163、proposed・未実装）
+
+BIZ は [31](31-biz-inventory-service.md) §12.6c、画面は [65](65-inventory-record-traceability.md) §65.5b。
+
+#### cancel_inventory_record
+
+**関数要求**: 入庫・返品交換・手動販売・廃棄の記録を、理由を付けて取り消す
+
+**シグネチャ（Tauriコマンド）**:
+```
+#[tauri::command]
+#[specta::specta]
+fn cancel_inventory_record(
+    state: State<AppState>,
+    record_type: ReferenceType,     // "receiving_record" | "return_record" | "manual_sale" | "disposal_record"（ほかは validation）
+    record_id: i64,
+    reason: String,
+) -> Result<RecordCancelResult, CmdError>
+```
+
+**出力型**: BIZ層の `RecordCancelResult { stock_warnings: Vec<String> }`
+
+**処理ステップ**: create_disposal と同パターン（`state.db.lock()` → `biz::inventory_service::cancel_inventory_record(&mut conn, record_type, record_id, &reason)`。`ValidationFailed` → `validation`、`NotFound` → `not_found`。§23.3）
+
+**詳細の DTO**: `get_receiving_record`・`get_return_record`・`get_manual_sale_record`・`get_disposal_record` の結果に `canceled_at: Option<String>`・`cancel_reason: Option<String>` を足し、`status` は `canceled_at` の有無で `"active"`・`"canceled"`。作成の画面の直近の一覧の `list_receivings`・`list_returns`・`list_disposals` の行に `canceled_at: Option<String>` を足す（65 §65.5b の recent list の「取消済み」）。`list_inventory_records` の 4 つの種類の `status` は `canceled_at` から決める（65 §65.4.1）。
+
+**登録（§23.13）**: `lib.rs` の `collect_commands!` と `generate_handler!` に足し、`cargo run --bin generate_bindings` で `src/lib/bindings.ts` を作り直す（`cancelInventoryRecord`・`RecordCancelResult` と上の DTO の field が出る）。
+
+---
+
 ### 23.8 CMD-06: 在庫照会コマンド群
 
 #### get_stock_detail
