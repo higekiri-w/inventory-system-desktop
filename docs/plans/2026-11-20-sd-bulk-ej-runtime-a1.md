@@ -7,7 +7,7 @@ wave に属さない単独の lane。出所は [backlog](../backlog.md) の「SD
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 14024e9c1d41d743f623e3298bad01d6204ab51b
 - Amendments: none
 
 ## Risk
