@@ -442,24 +442,24 @@ struct DailyReportSdScanSnapshot {
 7. 状態を決める: 同じ `bundle_hash` の `completed` があれば `Imported`。無く、`settlement_no` が `None` なら `Unreadable`（BIZ-08-D6。snapshot に入れない）。`Some` で同じ `report_date`・`settlement_no` の別 `bundle_hash` の `completed` があれば（24 §14.18a）`SameSettlementImported`。それ以外は `NotImported`。`rolled_back` だけの束は `NotImported`（取消の後の取り込み直しを今どおり許す）。
 8. 候補を `path_date` の新しい順、同じ日は精算回数の大きい順（読めない束は後ろ、その中は相対 path の順）に並べる。
 9. `NotImported` の束の 3 本の bytes を `snapshot.files_by_candidate` に入れる。
-10. 窓の中の Z004（`XZ` と `XZ_BKUP`。名前の規則に合うもの）を IO-09 `read_register_sd_file` で読み（上限は手順 5 と同じ）、`Io`・`TooLarge` の file と、手順 5 と同じ形の検査（IO-09-D4）で外れた file を除いて続け、残りの bytes を `snapshot.plu_register_z004s` に入れて返す（同じ bytes は 1 つにまとめる）。行数と中身の検査は BIZ-04 が IO-02 `parse_plu_register_snapshot` で行い、`ImportError` なら照合しない（前回を保つ。33 §16.3）。Z004 の中身の解釈と選択は BIZ-04（[33 §16.3](33-biz-plu-export-service.md)）が行い、ここでは読まない。CMD-12 は scan の成功の後に BIZ-04 `refresh_plu_register_snapshot_from_sd` へ渡す（[45 §45.6a](45-cmd-daily-report-import.md)）。DB への書込みはその BIZ-04 の TX で、本関数は DB へ書かない（D-117 (3)。Z004 の業務の取込み〈BIZ-03〉とは別）。本手順と snapshot の `plu_register_z004s` は PLU の書出しの見直しの runtime の lane（[backlog](../backlog.md) の同名の項目）が実装する。SD 直読みの runtime の lane（D-111）は手順 1〜9 を実装し、`plu_register_z004s` を持たない snapshot を返す（手順 9 の後に返す）。
+10. 窓の中の Z004（`XZ` と `XZ_BKUP`。名前の規則に合うもの）を IO-09 `read_register_sd_file` で読み（上限は手順 5 と同じ）、`Io`・`TooLarge` の file と、手順 5 と同じ形の検査（IO-09-D4）で外れた file を除いて続け、残りの bytes を `snapshot.plu_register_z004s` に入れて返す（同じ bytes は 1 つにまとめる）。行数と中身の検査は BIZ-04 が IO-02 `parse_plu_register_snapshot` で行い、`ImportError` なら照合しない（前回を保つ。33 §16.3）。Z004 の中身の解釈と選択は BIZ-04（[33 §16.3](33-biz-plu-export-service.md)）が行い、ここでは読まない。CMD-12 は scan の成功の後に BIZ-04 `refresh_plu_register_snapshot_from_sd` へ渡す（[45 §45.6a](45-cmd-daily-report-import.md)）。DB への書込みはその BIZ-04 の TX で、本関数は DB へ書かない（D-117 (3)。Z004 の業務の取込み〈BIZ-03〉とは別）。本手順と snapshot の `plu_register_z004s` は PLU の書出しの見直しの runtime の lane（[backlog](../backlog.md) の同名の項目）が実装する。SD 直読みの runtime（D-111）で実装したのは手順 1〜9 で、今の snapshot は `plu_register_z004s` を持たない（手順 9 の後に返す）。
 
-**preview への接続**: 利用者が `NotImported` の候補を選ぶと、CMD-12 が snapshot の 3 本を §37.3 `parse_and_validate_daily_report` に渡す。preview・commit・同日追加の確認・BIZ-08-D4 は手でファイルを選んだ経路と同じで、SD の経路だけに足す規則は BIZ-08-D6（精算回数のある束だけ）と BIZ-08-D5（写し）の 2 つ。同じ scan の中で同じ精算の別の bytes の束が 2 つ `NotImported` になる場合（SD-23 の未確認の前提〈原本と取込み後の file は同じ bytes〉が外れ、CV17 の取込みも使った場合）、先に取り込んだ方の後のもう一方は §37.3 手順 8 の BIZ-08-D4 で止まる。
+**preview への接続**: 利用者が `NotImported` の候補を選ぶと、CMD-12 が snapshot の 3 本を §37.3 `parse_and_validate_daily_report` に渡す。preview・commit・同日追加の確認・BIZ-08-D4 は手でファイルを選んだ経路と同じで、SD の経路だけに足す規則は BIZ-08-D6（精算回数のある束だけ）と BIZ-08-D5（写し）の 2 つ。同じ scan の中で同じ精算の別の bytes の束が 2 つ `NotImported` になる場合（原本と取込み後の file が同じ bytes であること〈SD-23。2026-10-31 に日報の 3 系列の 2 つの束で確かめた〉が外れ、CV17 の取込みも使った場合）、先に取り込んだ方の後のもう一方は §37.3 手順 8 の BIZ-08-D4 で止まる。
 
 **BIZ-08-D3（SD の候補の規則）**:
 
 - 決定: SD の `XZ` と `XZ_BKUP` の両方を窓の範囲で読み、精算ごとの束を中身の hash と精算回数で取込み済みと照らす。形の外れた file・そろわない束・名前の規則に合わない file は候補にしない（読まない、または読んでも取り込めない状態で示す）。
-- 理由: 精算の分は、アプリが取り込んだ後に `XZ_BKUP` へ移しても（BIZ-08-D11、§37.12。改名だけで bytes を変えない）、CV17 の取込みを誰かが続けても、`XZ` か `XZ_BKUP` のどちらかにある（列挙と読取りの IO-09 は SD を書き換えない。IO-09-D3）。`XZ_BKUP` の file は `EcrDatas` と同じ bytes（SD-22）なので、`EcrDatas` から取り込み済みの分は hash で `Imported` になる。SD から取り込む束は 3 本とも精算回数が読めてそろう束だけなので（BIZ-08-D6）、取込み前の原本と取込み後の file が同じ bytes であることは未確認の前提（SD-23）で、前提が外れて違う bytes でも、後から来た方は同じ精算回数の照合（BIZ-08-D4）で止まる。
+- 理由: 精算の分は、アプリが取り込んだ後に `XZ_BKUP` へ移しても（BIZ-08-D11、§37.12。改名だけで bytes を変えない）、CV17 の取込みを誰かが続けても、`XZ` か `XZ_BKUP` のどちらかにある（列挙と読取りの IO-09 は SD を書き換えない。IO-09-D3）。`XZ_BKUP` の file は `EcrDatas` と同じ bytes（SD-22）なので、`EcrDatas` から取り込み済みの分は hash で `Imported` になる。取込み前の原本と取込み後の file が同じ bytes であることは 2026-10-31 に日報の 3 系列の 2 つの束で確かめた（SD-23）。いつか違う bytes になっても、SD から取り込む束は 3 本とも精算回数が読めてそろう束だけなので（BIZ-08-D6）、後から来た方は同じ精算回数の照合（BIZ-08-D4）で止まる。
 - 棄却案: file 名・接尾字・連番で取込み済みを決める（SD-08、IO-09-D2）、`XZ` だけを読む（CV17 の取込みを使った日の分を落とす）、窓を設けず全期間を読む（毎回全期間の Z を読む）、選んだ候補を preview の時にもう一度 SD から読む（SD を preview の間ずっと差しておく必要があり、読み終えたらレジへ戻せない）。
-- 再検討: CV17 の日次の取込みを店がやめたと確かめられたとき（`XZ_BKUP` の窓を狭められる）。SD-23 の実機の前後比較（R-50、runtime の lane の L3 の前）が前提と違ったとき。
+- 再検討: CV17 の日次の取込みを店がやめたと確かめられたとき（`XZ_BKUP` の窓を狭められる）。
 
 **BIZ-08-D6（SD の経路は精算回数のある束だけを取り込む）**:
 
 - 決定: SD の経路（scan の候補と、そこから入る preview・commit）では、3 本とも精算回数が読めて値がそろう束（`settlement_no` が `Some`）だけを取り込める。`None` の束は scan で `Unreadable`、preview（§37.3 手順 4）と commit（§37.4 手順 2a）で `ImportError`（固定の文）にする。手で選んだ束の扱い（`None` も取り込める）は変えない。
-- 理由: `None` の束を SD から取り込むと DB の `settlement_no` が NULL になり、後で CV17 が移した別の bytes・精算回数ありの同じ精算が、hash でも BIZ-08-D4 でも止まらず、同日追加の確認だけで二重に保存される。SD にあるのはレジの原本で CV17 の書出し（layout B）ではなく、`XZ_BKUP` の Z は全件が layout A の形だった（SD-24）ので、正規の SD の束は止まらない見込み（取込み前の `XZ` の原本も、CV17 が移して複製するだけなので `EcrDatas` の file と同じ bytes・同じ形・同じ精算回数であることは未確認の前提。29 §29.7.2 の SD-23）。
+- 理由: `None` の束を SD から取り込むと DB の `settlement_no` が NULL になり、後で CV17 が移した別の bytes・精算回数ありの同じ精算が、hash でも BIZ-08-D4 でも止まらず、同日追加の確認だけで二重に保存される。SD にあるのはレジの原本で CV17 の書出し（layout B）ではなく、`XZ_BKUP` の Z は全件が layout A の形だった（SD-24）ので、正規の SD の束は止まらない見込み（取込み前の `XZ` の原本も 3 本とも精算回数が読めてそろい、取込み後の file と同じ bytes だった。2026-10-23・10-31、29 §29.7.2 の SD-23）。
 - 棄却案: `None` の束も SD から取り込み、後の照合を対象日と合計の一致で行う（同じ日の 0 円の精算などで誤る）、`None` の束を警告つきで取り込む（利用者が確認すると二重になりうる）、scan だけで止める（preview・commit に別の経路で来た cache を通す）。
 - 保証の範囲: 手で選んだ `None` の束（layout B、D-111 より前の取込み）は照合されないので、同じ精算の SD の束と別の bytes なら同日追加の確認で通りうる（D-111 の Guarantee range。layout B は CV17 の明示書出しだけが作り、店は基本使わない）。
-- 再検討: 実機の前後比較（packet の Contract Probe P1、runtime の lane の L3 の前）で、取込み前の `XZ` の原本が取込み後の file と違う bytes だと分かったとき（原本の精算回数が読めない・値が違う可能性があるので、L3 の前に BIZ-08-D4 と本 guard を見直す）。店の CV17 の取込みが原本の中身を書き換えると分かったときも同じ。
+- 再検討: 店の CV17 の取込みが原本の中身を書き換えると分かったとき（原本の精算回数が読めない・値が違う可能性があるので、BIZ-08-D4 と本 guard を見直す。2026-10-31 の比較〈29 §29.7.2 の SD-23〉では書き換えていなかった）。
 
 **BIZ-08-D5（読んだ原本の写しを PC に残す、owner 決定 2026-10-06）**:
 
@@ -472,7 +472,7 @@ struct DailyReportSdScanSnapshot {
 
 ### 37.10 SD の締めの一括取込み（BIZ-08-D7・D8・D10、D-121、proposed・未実装）
 
-本節と §37.11 は D-121 の設計で、runtime は後続の lane（[backlog](../backlog.md) の「SD の一括取込みと EJ の控えの runtime（A）」「Z004 を SD の一括取込みに入れる runtime（B）」）。§37.3〜§37.9 の D-111 の契約（SD 直読みの runtime が実装する）は書き換えない。後続の runtime が §37.9 の snapshot と CMD-12 の scan に足すものは下の「§37.9 に足すもの」に置く（SD 直読みの runtime の merge の後に足す）。
+本節と §37.11 は D-121 の設計で、runtime は後続の lane（[backlog](../backlog.md) の「SD の一括取込みと EJ の控えの runtime（A）」「Z004 を SD の一括取込みに入れる runtime（B）」）。§37.3〜§37.9 の D-111 の契約（SD 直読みの runtime で実装済み）は書き換えない。後続の runtime が §37.9 の snapshot と CMD-12 の scan に足すものは下の「§37.9 に足すもの」に置く。
 
 **関数要求**: 1 回の SD の読取り（§37.9 の scan）で見つけた取り込める日報の束・Z004・EJ を、利用者の 1 回の操作でまとめて取り込む（CV17 の代替、repo 外の回答台帳 TD-265）。各項目は今の取込みの関数（日報は §37.3・§37.4、Z004 は [32](32-biz-csv-import-service.md) の D-118 の新契約、EJ は §37.11）をそのまま順に呼び、項目ごとの結果を返す。
 
@@ -795,3 +795,4 @@ enum RegisterSdTidyFailure { // 画面の固定の文を選ぶだけ（55 UI-07-
 | 2026-11-11 | xz-bkup-move（Final Review の closure の是正、PR #228） | §37.12 手順 4 の WARN の `not_moved` を、止めた組の残りだけでなく、止めた時点でまだ移っていない片付けの対象の全部（以後の組の全 file を含む。写しの失敗でも同じ）の元の相対 path にした。 |
 | 2026-11-11 | xz-bkup-move（Gated Amendment 1 の実装、PR #228） | §37.9 手順 3 の読まなかった file（`Unknown`）の診断ログを INFO・0 本なら出さない・絶対の root を出さない、と書き、出所を owner の決定（TD-649、名前の規則を ASCII に限る）と Coordinator の答え（path をログに残し専用の文を足さない）に書き分けた。§37.11 手順 2 の伸びうるかの判定の規則に、ASCII だけ（29 §29.7.5 手順 4 と同じ `(?i-u)`）を足した。手順 4 の `Unknown` の扱いを、手順 3 の診断ログと食い違って読めない言い方にした。 |
 | 2026-11-17 | number-parse-align（実装、PR #274、D-158） | BIZ-08-D2a を `invalid_number` へ広げ、文の後半を `この日の日報は読めません。管理者に知らせてください。` に置き換えた（§37.7 の行も）。§37.9 の候補に `unreadable_reason` を足し、手順 5 で数の列の誤りの束に同じ文を入れるようにした（[Plan Packet](../plans/2026-11-17-number-parse-align.md)）。 |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | §37.9 の BIZ-08-D3・D6 と preview への接続の SD-23 を、確かめた事実（2026-10-23・10-31、日報の 3 系列）に置き換え、前後比較を待つ再検討を外した（精算回数の照合は残す）。§37.9 手順 10・§37.10 の「SD 直読みの runtime が実装する」を実装済みの形にした |

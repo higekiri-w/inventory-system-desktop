@@ -26,7 +26,7 @@
 | 取込みトラック | 既定 | CMD | 保存先 | 用途 |
 |---|---|---|---|---|
 | 日報取込み | 既定 | CMD-12 `scanRegisterSd` / `parseAndValidateDailyReportFromSd` / `parseAndValidateDailyReport` / `commitDailyReportImport` / `rollbackDailyReportImport` | `daily_report_imports`, `daily_report_*_lines` | 公式日報サマリ、支払集計、部門別売上 |
-| 商品別CSV取込み（Z004） | PLU運用後の別トラック | CMD-07 `parseAndValidateCsv` / `commitCsvImport` / `rollbackCsvImport` | `csv_imports`, `csv_import_errors`, `sale_records`, `inventory_movements` | 商品別売上、`pos_stock_sync`在庫増減・rollbackは実装済み。IO-02は従来shape + 店舗採取layout Aを受理 |
+| 商品別CSV取込み（Z004） | PLU運用後の別トラック | CMD-07 `parseAndValidateCsv` / `commitCsvImport` / `rollbackCsvImport` | `csv_imports`, `csv_import_errors`, `sale_records`, `inventory_movements` | 商品別売上、`pos_stock_sync`在庫増減・rollbackは実装済み。IO-02は店舗採取layout Aを受理（parser が読む従来shapeは精算回数・マシンNo. を持たず、BIZ-03 が取り込まない。32 の新契約の表の 1） |
 
 #### 日報取込みの利用者フロー
 
@@ -37,13 +37,12 @@
    - 予備の経路「ファイルを選んで取り込む」（UI-07-D16）: native file dialog で Z001/Z002/Z005 を選び、CMD-12 `parseAndValidateDailyReport` を呼ぶ。SD が読めないとき・窓より前の過去の分・PC の `EcrDatas` の写しから取り込むときに使う（SD の上の file を選んでも、SD の入力として扱う。UI-07-D16）。ファイルは 1 つずつ選び足し・個別に外せる（UI-07-D16）。読み取り失敗、サイズ超過は toast に加え、ファイル選択ボタン直下に destructive 系テキスト + アイコンで1スロット表示する。
 3. プレビューに対象日、3ファイル名、総売上/純売上、支払集計、部門別集計、部門未対応warningを表示する。
 4. 同一bundle取込み済みはブロック。同じ精算を別のファイルから取込み済み（BIZ-08-D4）と、SD の束で精算回数を確かめられないもの（BIZ-08-D6。一覧では「読めません」で、通常はここまで来ない）もブロックし、BIZ の固定の文を出す。同一日別bundleは既存分を残す追加確認を出す。
-5. 第2スライスでは取込み結果に「日次売上を見る」CTAを表示し、`/reports/daily?date={reportDate}`（取込み対象日）へ遷移する。日次/月次売上画面では日報集計を公式表示し、商品別明細とは混ぜない。
+5. 取込み結果に「日次売上を見る」CTAを表示し、`/reports/daily?date={reportDate}`（取込み対象日）へ遷移する。日次/月次売上画面では日報集計を公式表示し、商品別明細とは混ぜない。
 6. 取消は日報取込みの論理rollbackであり、在庫数は変わらないことを結果画面に明示する。取消の入口は 2 つ: 取込みの結果の画面の「取り消す」と、結果の画面を離れた後の「日報の取込みの記録」の行の「取り消す」（§55.12 UI-07-D19）。どちらも同じ確認と取消の後の処理を使う。
 
 #### 既存Z004 UIの扱い
 
-- 既存 `CsvImportPage` / `useCsvImportFlow` / reducer はZ004商品別CSV取込みトラックとして維持できる。
-- 画面文言「Z004形式の売上CSV」は既定主動線から外し、「商品別CSV取込み（Z004）」などPLU後の用途が分かる名称へ変更する。
+- `CsvImportPage` の「商品別CSV取込み（Z004）」タブが Z004 商品別CSV取込みトラック（`useCsvImportFlow` / reducer）で、既定のタブ（日報取込み）とは分ける。
 - Z004トラックは、PLU登録後にZ004が商品別売上として取得できることを実機確認してから運用主導線に出す。
 
 #### UI判断 ID
@@ -511,21 +510,9 @@ DB ロック競合等の `internal` も、解析・取込みの失敗では他�
 
 `src/features/csv-import/reducer.ts` は副作用ゼロの純関数。9 action × 6 state = 54 組合せのテスト（13 個の valid 遷移 + 41 個の invalid 遷移網羅）は 7-7 着手後の最優先 retroactive 追加対象とした。今は `src/features/csv-import/reducer.test.ts` ほかの test がある（[53-ui-home.md §53.9 非目的](53-ui-home.md) と同方針）。
 
-#### Windows native cargo tauri dev での手動 10 項目シナリオ
+#### 実機と実データでの確かめ
 
-memory `tauri2-linux-ime-limitation.md` 準拠、Phase 2 以降 Windows native ビルド前提。詳細は実装プラン [2026-05-13-phase-2-ui-07.md §7.3](../archive/plans/2026-05-13-phase-2-ui-07.md) を参照。
-
-要約: 基本動線 2 項目 (ファイル選択 / SJIS-UTF-8 自動判定) + 合成 fixture 主 6 項目 (PreviewStep / 件数 / OK commit / 進捗 / SuccessStep / ホーム invalidation) + 実 PLU 副 1 項目 (ErrorStep) + UI 単独 1 項目 (useBlocker) の 10 項目を実機で確認する。
-
-#### 検証データ戦略 (2026-05-15 確定)
-
-本 PR では実機 Casio SR-S4000 の Z004 売上日報の本物データが取得不能 (user 店舗で PLU 未登録のため Z004 売上日報を書き出しても 4231 行全空テンプレ、運用上 Phase 4 UI-08 PLU 書出し完成 → 1 日運用 → 翌日取得が必要)。このため Phase 2 完了 gate は以下 3 データ源で分担する:
-
-- **合成 fixture 主** (正常系 6 項目): 要求仕様書 SP-401-02 + R122 構造から逆算で合成 Z004 売上日報 fixture を作成
-- **実 PLU 設定書出し 副** (異常系 1 項目): 手元の実 `Z004_260311PLU(商品).CSV` (`docs/research/real-csv/` 配下、PLU 設定書出し = 4231 行全空テンプレ、要求仕様書 R128 異形式エラー扱い + R119 未登録枠除外フロー) で実証
-- **UI 単独** (useBlocker 1 項目): 実機データ不要
-
-本物 Z004 売上日報での最終確認は Phase 4 UI-08 完成後に持ち越し (memory `casio-sr-s4000-z-prefix-reference.md` Z004 二態区分通り)。rollback / cache 期限切れ等の retroactive 検証項目は E2E テスト整備後 ([UI_TECH_STACK.md §7.2](../UI_TECH_STACK.md) Phase 2 完了時 8-9 判定) に追加。詳細手順は実装プラン [2026-05-13-phase-2-ui-07.md §7.3](../archive/plans/2026-05-13-phase-2-ui-07.md) 参照。
+実物の Z004（layout A）は 2026-07-06 の店の採取で得た（[実機確認リスト](../plu-export-and-real-csv-verification.md) の CSV-03・CSV-04・CSV-11）。実 Z004 の取込み、販売で在庫が減り返品で戻ること、日次 / 月次売上への反映は、owner の Windows L3（PR #81、2026-08-18。同 CSV-05・CSV-09・CSV-10）で確かめた。自動 test は合成 fixture を使い、実データを repo に入れない。
 
 #### 非目的
 
@@ -613,3 +600,4 @@ memory `tauri2-linux-ime-limitation.md` 準拠、Phase 2 以降 Windows native �
 | 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §55.7 の止める範囲の「閉じて失うのは結果の通知だけ」を、「閉じる」で閉じた時点が commit の前か後かで分けて書き直し（窓の文は、記録に無ければもう一度取り込むこと・取消済みでなければもう一度取り消すことも言う）、取込みの確定と取消の command を main thread の外で動かすこと（UI-USW-D5 の 8）を足した。UI-07-D18 の段落に、Z004 タブは取込み中もタブを切り替えられないことを足した。未実装の注は実装の PR で外す |
 | 2026-11-14 | window-close-guard（main の取込みの後、PR #250） | §55.12（UI-07-D19）の「取消の実行と後」の括弧「native の window の close は保証しない」を、§55.11 と同じ形（止める範囲に native の close を含め、未実装の注）に直した |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §55.7・§55.11・§55.12 の「未実装」の注を外した。ガードの hook 4 つが `useBlocker` と同じ条件を `useWindowCloseGuard` に渡し、Z004 タブは取込み中もタブを切り替えられない（`CsvImportPage` へ上げる値は `isImporting \|\| isRollingBack`）（UI_TECH_STACK UI-USW-D5、D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | Z004 トラックの行（従来shapeは BIZ-03 が拒む）、利用者フロー手順 5・既存 Z004 UI の扱いを今の実装に合わせ、§55.10 の 2026-05 の手動シナリオと検証データ戦略を実データでの確かめ（PR #81）に置き換えた |
