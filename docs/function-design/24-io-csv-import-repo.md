@@ -252,7 +252,7 @@ fn find_blocking_import_by_file_hash(conn: &DbConnection, file_hash: &str) -> Re
 
 ### 14.7 find_imports_by_settlement_date
 
-**関数要求**: settlement_date で有効な csv_imports を全件検索する。同日追加確認の snapshot と commit 時の再検証に使用する。
+**関数要求**: settlement_date で有効な csv_imports を全件検索する。呼ぶのは test だけ（同日追加の確認は D-118 の b1 で Z004 から外れ、production の呼出しは無い。関数を外すかは code の lane）。
 
 **シグネチャ**:
 ```
@@ -262,8 +262,6 @@ fn find_imports_by_settlement_date(conn: &DbConnection, date: &str) -> Result<Ve
 **処理ステップ**:
 1. SQL実行: `SELECT * FROM csv_imports WHERE settlement_date = ? AND status IN ('completed','completed_partial') ORDER BY imported_at DESC, id DESC`
 2. 結果を Vec\<CsvImport\> で返す（0件なら空 Vec）
-
-`settlement_date` は group key であり uniqueness key ではない。呼出側は全件を追加確認表示と active ID snapshot に使い、先頭1件へ縮退してはならない。
 
 **エラーハンドリング**:
 - SQL実行失敗 → DbError::QueryFailed(詳細)
@@ -838,3 +836,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-11-04 | 月次の画面に取り込んだ日を出す（実装、関門 12 の前提 B） | §14.22a `get_monthly_official_report_dates` を実装し、「未実装」の注記を外した（[packet](../plans/2026-11-03-monthly-imported-days.md)）。 |
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235、55 UI-07-D19） | §14.2 の `DailyReportImport` に `settlement_no` を足し（owner の決定 TD-590。D-111 の時の「足さない」を置き換えた）、§14.16・§14.17・§14.18・§14.20 の 4 つの SELECT の末尾に列を足した。この型を wire に出さないことにした（一覧の wire は BIZ-08 の `DailyReportImportRow`）。 |
 | 2026-11-14 | z001-row-guard（実装） | §14.21 手順 6 に、行を親 id で分け並びの一致に依らないこと、親に無い id の行を読まないことを書いた（[Plan Packet](../plans/2026-11-13-z001-row-guard.md)）。 |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §14.7 の関数要求を、呼ぶのが test だけの今の形に直し、同日追加の確認の文を外した。 |
