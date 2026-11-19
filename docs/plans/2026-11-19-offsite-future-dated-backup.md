@@ -105,7 +105,7 @@ runtime（計画の固定の後）:
   - `status_with` の `local_backup_old` を同じ関数（`today`）で決める。`list_backups` の `Err` は今どおり false。
   - `status_with` は、写した日と控えの日付の古い方が `today` より後の成功の記録を無いものとして扱う（`last_success_at`・`last_success_label`・`days_since_last_success` が `None`、`prepared` なら `stale = true`）。状態の file は読むだけ。
   - 意図した簡略化は `ponytail:` comment に書く（日付で比べ時刻を見ない。広げる条件は MNT-01-D12 の見直し契機）。
-  - test（下の Test Plan の T1〜T7）。`mod tests` に別の `now` の `Env` を作る小さい helper を 1 つ足してよい。
+  - test（下の Test Plan の T1〜T7、AC7 の入力）。`mod tests` に別の `now` の `Env` を作る小さい helper を 1 つ足してよい。
 - `docs/function-design/71-mnt-backup.md`: MNT-01-D12 の見出しの proposed の注記を外す。実装で文と食い違った所があれば同じ commit で直す。
 - `docs/function-design/90-traceability.md`: generator で作り直す（`cd src-tauri && cargo run --bin generate_traceability`。手で編集しない）。
 - `docs/backlog.md`: 「backup に、PC の外のコピーと復元の実証が運用として設計されていない」の項目で、この lane が済ませる「(b)（PR #194）の申し送り」の行を外し、「導入の前の関門」の段の「残り:」から「先の日付の backup の件（下の「(b)（PR #194）の申し送り」）」を外す（同じ PR で行い、merge の後の宿題にしない）。一覧の「最新」の印が先の日付の file に付く件を、残りとして 1 行置く（出所: 本起票の調べ〈AI〉。owner の確認の前の要件にしない）。
@@ -124,8 +124,8 @@ Non-scope: `src-tauri/src/mnt/backup.rs`（`list_backups`・`cleanup_old_backups
 - AC4（時計が戻る）: 正しい時計で写した後に時計を 10 日戻すと、その日付の `offsite_status` は成功の 3 項目が `None`・`stale = true`。その後にその日付の控えを PC の中に置くと、媒体が見えない確認は `MediumMissing`（状態を変えない）、差し直した確認は `Copied`（その日付の file）。媒体に前の写し（戻した時計では先の日付の名前）と今写した file の両方があり、状態の file の成功の記録は `at` が戻した時計の時刻、`file_name` がその日付の file で、`stale = false`。
 - AC5: `local_backup_old` は、先の日付の file と 10 日前の file がある dir で `true`、先の日付の file と 2 日前の file で `false`、先の日付の file だけで `true`。
 - AC6: 成功の記録の日数は、写した日が 5 日先・控えの日付が 1 日前なら 1、写した日が 1 日前・控えの日付が 5 日先なら 1（どちらも今どおり古い方から数え、`stale = false`）。両方が 1 日先なら記録なしの扱い（`stale = true`）、両方が今日なら 0。`offsite_status` の前後で状態の file の bytes が同じ。
-- AC7: 既存の test が期待値を変えずに全部 PASS する（`mnt::offsite`・`mnt::backup`・`cmd::settings_cmd`。特に `test_offsite_status_req901_d8_local_backup_old`・`test_offsite_status_req901_d8_stale_boundary_three_days`・`test_offsite_req901_d8_stale_clears_only_after_new_copy`・`test_check_offsite_req901_d8_retention_keeps_newest_and_foreign_files` の case 1・case 2）。`git diff --stat origin/main...HEAD` に `src/**`・`src-tauri/src/cmd/**`・`src-tauri/src/mnt/backup.rs` が出ない。
-- AC8: mutation を実装に注入し、当たる test が red になることを確かめて PR に書く: (m1) 写す元を一覧の先頭に戻す → T1・T3・T4、(m2) 写す元の日付の比較を「今日より前」にする → T1（`NoLocalBackup` になる）、(m3) `local_backup_old` を一覧の先頭に戻す → T5、(m4) 先の日付の記録の扱いを外す → T3・T4・T6、(m5) 「両方が先」を「どちらかが先」にする → T6、(m6) 写す元の比べる先を `today + 1` にする → T1（明日の file が写る）、(m7) 手順 4g を名前の全部で数える今の形に戻す → T7 (a)、(m8) 手順 4g の比べる先を `today + 1` にする → T7 (c)、(m9) 手順 4g の今写した 1 本を消さない除外を外す → T7 (e)（今写した 1 本が媒体から消える）。
+- AC7: 既存の test が期待値を変えず、入力も reparse point の test の (3) のほかは変えずに全部 PASS する（`mnt::offsite`・`mnt::backup`・`cmd::settings_cmd`。特に `test_offsite_status_req901_d8_local_backup_old`・`test_offsite_status_req901_d8_stale_boundary_three_days`・`test_offsite_req901_d8_stale_clears_only_after_new_copy`・`test_check_offsite_req901_d8_retention_keeps_newest_and_foreign_files` の case 1・case 2）。`git diff --stat origin/main...HEAD` に `src/**`・`src-tauri/src/cmd/**`・`src-tauri/src/mnt/backup.rs` が出ない。
+- AC8: mutation を実装に注入し、当たる test が red になることを確かめて PR に書く: (m1) 写す元を一覧の先頭に戻す → T1・T3・T4、(m2) 写す元の日付の比較を「今日より前」にする → T1（`NoLocalBackup` になる）、(m3) `local_backup_old` を一覧の先頭に戻す → T5、(m4) 先の日付の記録の扱いを外す → T3・T4・T6、(m5) 「両方が先」を「どちらかが先」にする → T6、(m6) 写す元の比べる先を `today + 1` にする → T1（明日の file が写る）、(m7) 手順 4g を名前の全部で数える今の形に戻す → T7 (a)、(m8) 手順 4g の比べる先を `today + 1` にする → T7 (c)、(m9) 手順 4g の今写した 1 本を消さない除外を外す → T7 (e)（今写した 1 本が媒体から消える）、(m10) 手順 4g で link を数えるが消さない → AC7 の (3)。
 - AC9: `rg -n "proposed" docs/function-design/71-mnt-backup.md` に MNT-01-D12 の行が出ない。`rg -n "\(b\)（PR #194）の申し送り" docs/backlog.md` が 0 件。
 - AC10: `bash scripts/doc-consistency-check.sh` と `--target plan docs/plans/2026-11-19-offsite-future-dated-backup.md` が ERROR 0、`bash scripts/check-workflow-git.sh` が PASS、`cd src-tauri && cargo run --bin generate_traceability -- --check` が PASS。Rust の検証は `docs/DEV_WORKFLOW.md` の Verification Gates（hosted CI の `Merge gate`）。
 - AC11（媒体の掃除、`now()` = 2026-11-02。PC の中は `20261102_080000` の 1 本で、確認はどれも `Copied`）:
@@ -163,7 +163,7 @@ Non-scope: `src-tauri/src/mnt/backup.rs`（`list_backups`・`cleanup_old_backups
 | MNT-01-D12 (3) 消さない・書き換えない | 71 §71.11.7 | PC の中は足さない。媒体の上は (4) | T1（PC の中の file が残る）・T2・T6（前後の bytes）・T7（媒体の先の日付の名前の写しが残る） | 非対象 |
 | MNT-01-D12 (4) 媒体の掃除（先の日付の名前の写しを数えず消さない） | 71 §71.11.4 手順 4g、§71.11.7 | `offsite.rs` の `copy_to_medium` の手順 4g | T7 | 非対象 |
 | MNT-01-D8 保持（今日以前の名前の新しい 30 本。今写した file・規約外の file を消さない。削除の失敗は warn で続ける） | 71 §71.11.1 の `OFFSITE_KEEP`、§71.11.4 手順 4g とエラーの表の「掃除の失敗」、MNT-01-D8 の決定 | 今日以前の名前の中の数え方・今写した file の扱い・失敗の扱いは変えない | 既存 `test_check_offsite_req901_d8_retention_keeps_newest_and_foreign_files`（期待値を変えない。case 2 の 30 本は全部が明日以降の名前で、新しい規則では数える前に外れ、今写した file の除外を通らない。除外は T7 (e)）、T7 (b)・(d)・(e) | 非対象 |
-| MNT-01-D8 媒体の固定・reparse point（掃除の直前の確かめ直し、link を写しに数えず消さない） | 71 §71.11.3 | 変えない（手順 4g の確かめ直しと `official_copies` をそのまま通る） | 既存 `test_check_offsite_req901_d8_medium_swap_after_discovery_writes_nothing`・`test_check_offsite_req901_d8_reparse_points_are_not_followed` | 非対象 |
+| MNT-01-D8 媒体の固定・reparse point（掃除の直前の確かめ直し、link を写しに数えず消さない） | 71 §71.11.3 | 変えない（手順 4g の確かめ直しと `official_copies` をそのまま通る） | 既存 `test_check_offsite_req901_d8_medium_swap_after_discovery_writes_nothing`・`test_check_offsite_req901_d8_reparse_points_are_not_followed`。(3) の 60 日先の link は日付で外れるので今日の `120000` にする | 非対象 |
 | MNT-01-D8（手順 3a〜6、`stale` の 3 日の境界、日数は古い方から） | 71 §71.11.4・§71.11.5 | 変えない | 既存 `test_check_offsite_req901_d8_up_to_date_skips_copy`・`test_offsite_status_req901_d8_stale_boundary_three_days`・`test_offsite_req901_d8_stale_clears_only_after_new_copy`、T6 | 非対象 |
 | MNT-01-D8 用意の手順 6・作り直しの手順 7 | 71 §71.11.2・§71.11.5a | 変えない（同じ `check_body` を通る） | T1 の用意の case | 非対象 |
 | MNT-01-D8 `OffsiteMediumView.newest_copy` | 71 §71.11.2 | 変えない（先の日付の名前も返す。非目的） | 非対象（画面は使っていない） | 非対象 |
@@ -191,16 +191,16 @@ Rust の unit test（`src-tauri/src/mnt/offsite.rs` の `mod tests`。一時 dir
 | MNT-01-D12 (3)・(4)、MNT-01-D8 保持 | 先の日付の名前の写しが本当の日付の写しを押し出して消す。先の日付の名前の写しを消す。今日以前の名前の保持が変わる。今写した 1 本を消す。削除の失敗で止まる | unit（T7、表。AC11 の (a)〜(e) の組を固定する） | `test_check_offsite_req901_d12_retention_ignores_future_dated_copies` | 手順 4g を名前の全部で数える今の形に戻す（m7。(a) で今日より前の 5 本が消える）、先の日付の名前を数えるが消さない形にする（(a)）、先の日付の名前を消す（(a)・(c)）、比べる先を `today + 1` にする（m8。(c) で最も古い 1 本が消える）、今日の名前を数えない・日時で比べる（(b) で消えるはずの 1 本が残る）、削除の失敗を `Err` で返す（(d)）、今写した 1 本を消さない除外を外す（m9。(e) で確認は `Copied` のまま今写した 1 本が媒体から消える） |
 | MNT-01-D8・D11・D3・§71.6・§71.8 | 既存の振舞いが変わる | unit（既存） | Contract Ledger の既存の test | 期待値を変えないと通らない変更を入れる |
 
-状態の遷移（T3・T4 が持つ）: initial（先の日付の記録だけ → 成功の 3 項目が `None`・`stale`）、failure（媒体が見えない確認 → `MediumMissing`、状態を変えず `stale` のまま）、retry・success（同じ file のまま媒体が見える確認 → `Copied`、記録の `at` と `file_name` が置き換わる）、refetch（`offsite_status` → `Some(0)`・`stale = false`）、revisit（次の確認 → `UpToDate`、状態を変えない）、restart（時計が直った後の最初の `offsite_status` と確認の順。process の状態を持たないので、同じ file の状態から始める T3 がそのまま持つ）。操作の順は、時計を戻す → `offsite_status` を見る → 今日（T4 は戻した日付）の file を PC の中に置く → 媒体なしの確認 → 差し直した確認（file を置く前の確認は手順 2 の `NoLocalBackup` が先に返り、`MediumMissing` に届かない）。negative は T2・T6・T7 の (c)・(d)・(e)。mutation は AC8 の m1〜m9 を実装に注入して red を確かめる。
+状態の遷移（T3・T4 が持つ）: initial（先の日付の記録だけ → 成功の 3 項目が `None`・`stale`）、failure（媒体が見えない確認 → `MediumMissing`、状態を変えず `stale` のまま）、retry・success（同じ file のまま媒体が見える確認 → `Copied`、記録の `at` と `file_name` が置き換わる）、refetch（`offsite_status` → `Some(0)`・`stale = false`）、revisit（次の確認 → `UpToDate`、状態を変えない）、restart（時計が直った後の最初の `offsite_status` と確認の順。process の状態を持たないので、同じ file の状態から始める T3 がそのまま持つ）。操作の順は、時計を戻す → `offsite_status` を見る → 今日（T4 は戻した日付）の file を PC の中に置く → 媒体なしの確認 → 差し直した確認（file を置く前の確認は手順 2 の `NoLocalBackup` が先に返り、`MediumMissing` に届かない）。negative は T2・T6・T7 の (c)・(d)・(e)。mutation は AC8 を実装に注入して red を確かめる。
 
 ## Recovery
 
 - 消えた写しは戻らない: 手順 4g は媒体の file を `remove_file` で消す。誤った版が媒体の写しを消しても、アプリにも本 lane にも戻す手立ては無い。
-- 代わりになるもの: 失った世代と同じ中身の控えが PC の中か別の媒体に残る場合だけ、それが代わりになる（同じ名前でも中身が同じとは限らない。手で置いた規約の名前の file は掃除の対象で、中身は別でありうる、71 §71.11.7）。PC の中の backup は 71 §71.5 の規則で残る（PC の日付 − 名前の日付が保持日数〈既定 3 日〉以内の file）ので、それより古い世代は PC の中には無い。店の型 C（71 §71.11.6）で持ち帰っている 1 本には最後の入れ替えの時点までの写しが残るが、その媒体も差して写せば同じ掃除が動く。
-- 止め方（消しすぎる誤りが分かったとき）: 直した版を入れるまで、用意した USB メモリを全部抜く。全部を外している間、その媒体への写しと保持の削除は走らない（写しと手順 4g は見えている媒体にだけ動く。71 §71.11.4 手順 3・4）。PC の中の backup は媒体と関係なく作られ続ける（§71.8）。
+- 代わりになるもの: 失った世代と同じ中身の控えが PC の中か別の媒体に残る場合だけ、それが代わりになる（同じ名前でも中身が同じとは限らない。手で置いた規約の名前の file は掃除の対象で、中身は別でありうる、71 §71.11.7）。PC の中の backup は 71 §71.5 の規則で残る。店の型 C（71 §71.11.6）で持ち帰っている 1 本には最後の入れ替えの時点までの写しが残るが、その媒体も差して写せば同じ掃除が動く。
+- 止め方（消しすぎる誤りが分かったとき）: 直した版を入れるまで、用意した USB メモリを全部抜く。全部を外している間、その媒体への写しと保持の削除は走らない（写しと手順 4g は見えている媒体にだけ動く。71 §71.11.4 手順 3・4）。
 - code の戻し方: 修正の PR で直すのを既定にする。本 lane の PR を revert した版も入れられる（DB・migration・状態の file の形・媒体の目印の形を変えないので、版を戻しても DB・状態の file・媒体はそのまま読める）。revert した版は名前の全部で 30 本を数える今の規則に戻るので、媒体に先の日付の名前の写しがある間は、次に写した時に本当の日付の写しが押し出されて消えうる（調べの S4 (a)）。
 - 消さなすぎる誤り（30 本を超えて残る）: 媒体の上の写しは失わない。媒体の空きが減り、足りなくなれば写しが `StorageFull` で失敗して知らせが出て、新しい世代はその媒体へ写らない。直した版でも満杯の媒体が戻るとは限らない（写しが空きの不足で失敗すれば手順 4g に届かず、先の日付の名前の写しは消さない）。満杯の媒体はそのまま保全し、空きのある別の USB メモリを既存の「この USB メモリを控えの保存先にする」で用意する（画面は変えない）。
-- 写す元・知らせの誤り（MNT-01-D12 (1)・(2)）: file を消さない経路で、失うのは「写しが遅れる・知らせが出る／出ない」。直した版の次の確認から正しい写す元で写しを試み、成功の記録の有効さは読取りのたびに決まり直す（記録の更新は 71 §71.11.4 手順 5・6。状態の file の形は変えないので、作り直しは要らない）。
+- 知らせの誤り（`status_with`）: file を消さない経路で、失うのは「知らせが出る／出ない」。成功の記録の有効さは読取りのたびに決まり直す（記録の更新は 71 §71.11.4 手順 5・6。状態の file の形は変えないので、作り直しは要らない）。写す元の誤りは上の止め方と Data Safety の「今の規則との関係」が受け持つ。
 - 本 lane の前に消えた写し: 今の main の版が消した媒体の写しは戻らない（71 MNT-01-D12 の Compatibility）。
 
 ## Data Safety
@@ -208,7 +208,7 @@ Rust の unit test（`src-tauri/src/mnt/offsite.rs` の `mod tests`。一時 dir
 - 手順 4g が消すもの: 媒体の `InventoryBackup\` の直下の、§71.3 の規約の名前の file（reparse point の entry を除く）のうち、名前の日付が今日以前で、新しい順に 30 本目より後の写しだけ（71 §71.11.4 手順 4g）。
 - 手順 4g が消さないもの: 名前の日付が今日より後の写し、今写した 1 本、目印、規約に合わない名前の file、reparse point の entry、`InventoryBackup\` の外の file。PC の中の DB・backup・状態の file には届かない（消す対象は媒体の `InventoryBackup\` の一覧から作り、PC の中の保存先が同じ folder のときは手順 3 が先に止める、MNT-01-D11）。
 - 今の規則との関係: 同じ媒体の状態から 1 回の掃除で比べると、新しい規則が残す写しは、名前の全部で数える今の規則が残す写しを必ず含む（先の日付の名前は全部残り、今日以前の名前の順位は下がらない）。写す元の選び方が変わるので、今の main では手順 4g に届かなかった媒体でも、写せた後に通常の保持の削除が動く（消す対象は 71 §71.11.4 手順 4g）。
-- 誤ったときに失うもの: 媒体の上の古い世代の写し（Recovery のとおり戻らない）。失う範囲は、誤って消えた写しのうち、同じ中身の控えが PC の中にも別の媒体にも残っていない世代。写す元・知らせの誤りは file を失わない。
+- 誤ったときに失うもの: 媒体の上の古い世代の写し（Recovery のとおり戻らない）。失う範囲は、誤って消えた写しのうち、同じ中身の控えが PC の中にも別の媒体にも残っていない世代。`status_with` の知らせの誤りは file を失わない。
 - 時計のずれと安全側: 時計が戻っている間は、本当の日付の写しを数えず消さない（残す側）。時計が先へ進んでいる間は、アプリからはその日付が今日なので今の規則と同じに数え、先へ進んだまま 30 本を超えて写せば前の写しは古い順に消える（今と同じ。本 lane は変えない）。
 - commit しないもの: 実の店の DB・backup・媒体の file・状態の file・診断ログ。test の入力は一時 directory の合成の控え（空の DB を `VACUUM INTO` した bytes と合成の名前）だけで、tracked の fixture を足さない。調べの一時の test は隔離した copy で流し、commit しない。
 - local だけの path: test の一時 directory（`tempfile`）と cargo の target。実機の USB メモリと PC の時計の変更は使わない（L3 なし）。
