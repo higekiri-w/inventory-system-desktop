@@ -518,3 +518,18 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 **版の番号の取り直しと開発・試験 DB**: vT の版の番号は、merge の順で取り直すことがある（上の MNT-03-D22）。vT を記録した DB（例: L3 で版 13 の vT を通した開発・試験 DB）を、vT の番号と違う番号の build（main で取り直した後の build、並走の lane の L3 の build）で開く前に、vT の前の snapshot に戻す。戻さずに開くと、版 13 を記録した DB は版 12 までの build では `SchemaNewerThanApp` で開けず、後から版 13 を取った別の migration は版 13 が記録済みなので当たらない（`migrate` は今の版より大きいものだけを当てる）。番号の取り直しは runtime の変更なので、取り直した build の L3 は取り直しになる（`docs/DEV_WORKFLOW.md` L3）。逆向きの取り違えも同じ扱い: vT の前の snapshot を作る「今の版のアプリ」は vT を書く head の base（`origin/main`）の build で、snapshot の版はその build の `migrations()` の最大と等しい。DB の版が base の最大より大きい（別の lane の build〈例: 並走の lane の L3 の build〉が base に無い版を記録した）なら、その DB で snapshot を作らず vT も当てない。先にその lane の build で開く前に作った backup（その lane の migration の前の snapshot）に戻し、版が base の最大と等しくなってから進める（戻さずに進めると、別の lane の migration が記録した版の番号を vT が取っていても、記録済みなので vT が当たらない）。
 
 **テスト**（振替の lane の完了条件。test の名前と期待は packet の Test Plan の M の行）: 空の DB と、入庫・返品交換・手動販売・廃棄・初期在庫・Z004（`phase = 1`）の movement と計数・棚卸しの行を持つ直前の版の DB の両方で vT が成功し、各 movement の全列と id が同じで、`sqlite_sequence` が作り直しの前の値のまま（末尾の行を消した fixture で、次の INSERT の id が前の最大 + 1 にならない）。vT の後に `movement_type='transfer'`・`reference_type='transfer_record'` の行が入り、一覧に無い値（`movement_type='convert'`）が CHECK で拒まれる。`transfer_items` の `direction` の一覧に無い値・`quantity` の 0・同じ記録の同じ商品の 2 行目が拒まれる。手順 5 の確かめが失敗したとき（test の中で行を足す）に schema・値・版が何も変わらず、`MigrationFailed` の message が、詳細の部分（末尾の `: inventory_movements（…）` の括弧の中）を除いて手順 5 の vT の文と一字一句同じ（`作り直し`・`DB は変わっていません`・`前の版のアプリで開いて`・`開発者に知らせて` を含まない）。`migrations()` の版が 1 から欠けの無い昇順の連番である（packet の Test Plan の M7。番号の取り直しを忘れた欠けを CI で止める）。最新の版を期待する既存の test は版の数値・定数でなく `app_max_version()` と比べる（SD 直読みの runtime の packet が決めた形。その lane が先に入っていれば、その lane が直した test に従い、後なら本 lane が直す）。
+
+## 22. MNT-03 追加: EJ の記録の文の表の migration（D-121）
+
+**MNT-03-D23 / BIZ-08-D9 / D-121**: SD の一括取込みと EJ の取込み（(A-1)、Plan Packet `docs/plans/2026-11-20-sd-bulk-ej-runtime-a1.md`）の migration（以下 vE）。列と CHECK の正本は [pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」、読み書きは [24](24-io-csv-import-repo.md) §14.25 と [37](37-biz-daily-report-import-service.md) §37.11。版の番号は v14（起票の 2026-11-20 の main の最大は v13）。版の番号の規則は §21 と同じ（先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録を取り直す。`migrations()` の版の連番の test がその head の CI で止める）。description は `EJ の記録の文の表（ej_records、D-121）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v14.rs`。
+
+**手順**（`MigrationKind::Sql`。実行器が BEGIN → SQL → schema_versions の INSERT → COMMIT を持つ）:
+
+1. `CREATE TABLE ej_records`（pos-tables の列・CHECK と `UNIQUE(machine_prefix, record_no)`）
+2. `CREATE INDEX idx_ej_records_printed_at ON ej_records(printed_at)`
+
+- 表を足すだけで既存の行を変えない。backfill・止める検査・表の作り直しは要らない。値のある開発・試験 DB にもそのまま当たり、作り直しの起点でない（§16 の「DB の作り直しと順」に足さない）。
+- 失敗は実行器の TX で戻り、版は記録されない（§3.2）。vE を適用した DB は vE を知らない旧版のアプリでは開けない（MNT-03-D11 の `SchemaNewerThanApp`）。旧版へ戻す手順は §16 の「回復」と同じ（更新の前の backup に戻す）。版の番号を取り直す前に vE を通した開発・試験 DB の扱いは §21 の「版の番号の取り直しと開発・試験 DB」と同じ。
+- `ej_records` は原価の列を持たないので、§16 の vB の起点の検査の対象の表にならない。DB の 1 file に入るので backup・restore の対象になる。
+
+**テスト**: 列と型と NULL の可否、`printed_at` の index と UNIQUE の index があること（`schema_v14::tests::test_req401_v14_creates_ej_records_with_index_and_unique`）、`mode`・`kind`・`settlement_report` の一覧に無い値と `record_no` の 5 桁・`machine_prefix` の 3 桁が CHECK で拒まれ、同じ `(machine_prefix, record_no)` の 2 回目が拒まれ、別の `machine_prefix` の同じ番号は通ること（`test_req401_v14_rejects_bad_values_and_duplicate_key`）。`migration.rs` の `expected_tables` に `ej_records` を足す。mode・kind の enum と CHECK の値の集合の parity は `finite_enum_contract_tests.rs`（D-061）。

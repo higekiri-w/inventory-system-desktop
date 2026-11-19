@@ -147,7 +147,7 @@ Z001/Z002/Z005 の1営業日分ファイル束を1つの日報取込みとして
 
 ### 冪等性・同日追加方針
 - `bundle_hash` が一致し `status='completed'` の取込みがある場合はブロックする。
-- `report_date` が一致し別 `bundle_hash` の `completed` がある場合は、既存全件を提示して追加確認を要求する。承認後も既存parentを変更せず、新規取込みだけを作る。
+- `report_date` が一致し別 `bundle_hash` の `completed` がある場合は、BIZ-08-D8（37 §37.10）が確認を残すとき（この束か同じ日の `completed` に `settlement_no` が無いとき）だけ、既存全件を提示して追加確認を要求する。精算回数のそろう束どうしは確認なしで取り込む。どちらも既存parentを変更せず、新規取込みだけを作る。
 - `report_date` と `settlement_no` が一致し別 `bundle_hash` の `completed` がある場合はブロックする（追加確認で通さない。BIZ-08-D4）。`settlement_no` が NULL の行・束は照合しない。SD から取り込む束は `settlement_no` を持つ束だけなので（BIZ-08-D6）、SD の経路の行は NULL にならない。CV17 が SD の原本を移して複製するだけで bytes を作り直さないことは 2026-10-31 に日報の 3 系列の 2 つの束で確かめた（29 §29.7.2 の SD-23）が、bytes の一致だけに頼らず精算回数でも照らして、同じ精算を二重に数えないための照合。
 - `rolled_back` の同一bundleは再取込み可能（重複の照合では止めない。読取りの規則〈29 IO-07、D-158〉で読めない束は読み直せない）。
 - `report_date` はgroup keyであってuniqueness keyではない。訂正は対象parent IDのrollbackと再取込みを明示した2操作で行う。
@@ -232,9 +232,9 @@ Z005由来の部門別売上を保存する。日次・月次レポートの部�
 
 ---
 
-## SD の一括取込みと EJ の控えの契約（proposed・未実装、D-121）
+## SD の一括取込みと EJ の控えの契約（D-121）
 
-EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 §37.11](../function-design/37-biz-daily-report-import-service.md)）。migration は後続の runtime の lane（backlog の「SD の一括取込みと EJ の控えの runtime（A）」）が、その時点の版の番号で足す。`sale_records`・`inventory_movements`・日報の表と結ばない（EJ は在庫と売上の集計に使わない。ADR SPEC-STK-CNT-D11）。原価の列を持たないので、原価の lane の vB の起点の検査（[22 §16](../function-design/22-mnt-migration.md)）の対象の表にならない。DB の 1 file に入るので backup・restore の対象になる。
+EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 §37.11](../function-design/37-biz-daily-report-import-service.md)）。migration は v14（[22 §22](../function-design/22-mnt-migration.md)、MNT-03-D23。`src-tauri/src/db/schema_v14.rs`）。保存は (A-1) の runtime で実装し、控えの閲覧（UI-09c）は backlog の (A-2) で未実装。`sale_records`・`inventory_movements`・日報の表と結ばない（EJ は在庫と売上の集計に使わない。ADR SPEC-STK-CNT-D11）。原価の列を持たないので、原価の lane の vB の起点の検査（[22 §16](../function-design/22-mnt-migration.md)）の対象の表にならない。DB の 1 file に入るので backup・restore の対象になる。
 
 ### ej_records カラム定義
 
@@ -243,7 +243,7 @@ EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 �
 | id | INTEGER | PK AUTOINCREMENT | 記録の ID |
 | machine_prefix | TEXT | NOT NULL, CHECK(length(machine_prefix) = 4) | 記録の見出しの 4 桁の欄（IO-08 の `number_prefix`。Z004 の machine_no と同じ値を観測） |
 | record_no | TEXT | NOT NULL, CHECK(length(record_no) = 6) | 記録の 6 桁の番号（IO-08 の `number`。先頭 0 を保つ）。UNIQUE(machine_prefix, record_no) |
-| printed_at | TEXT | NOT NULL, INDEX | 記録の日時（`YYYY-MM-DD HH:MM`、レジの時計のまま） |
+| printed_at | TEXT | NOT NULL, INDEX（`idx_ej_records_printed_at`） | 記録の日時（`YYYY-MM-DD HH:MM`、レジの時計のまま） |
 | mode | TEXT | NOT NULL, CHECK(mode IN ('normal','return','training','settlement','inspection','program','program1','program3','off','unrecognized')) | 見出しのモード欄（IO-08 の `EjMode`） |
 | kind | TEXT | NOT NULL, CHECK(kind IN ('sale','cancelled','cash_movement','receipt','settlement','inspection','settings','training','unclassified')) | 記録の種類（IO-08 の `EjRecordKind`） |
 | settlement_report | TEXT | NULLABLE, CHECK(settlement_report IN ('daily','plu','attendance')) | 精算票の帳票（kind = settlement だけ） |
@@ -283,10 +283,10 @@ EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 �
 1. 3ファイルの対象日が一致し、精算回数を読めたファイルどうしの精算回数が一致することを確認する（精算回数の比較は IO-07 が Stage 1 で行う。IO-07-D3。不一致は `settlement_mismatch` で commit 不可）。
 2. Z005の部門名を `departments.name` に照合する。未一致はエラーではなく警告にし、`department_id=NULL` でpreview可能にする。
 3. 必須集計行（総売上または純売上など、adapterが定義する最低限のサマリ）が欠ける場合はcommit不可エラーにする。
-4. `bundle_hash` でactive同一bundleを判定し、`report_date` でactive同日parent全件の追加確認snapshotを作る。
+4. `bundle_hash` でactive同一bundleを判定し、`report_date` でactive同日parent全件のsnapshotを作る（追加確認を要求するかは BIZ-08-D8 の判定。37 §37.10）。
 
 **Stage 3: Preview**
-- 表示内容: 対象日、読み込む3ファイル、総売上/純売上、支払集計、部門別集計、部門未対応警告、同一bundleブロックまたは同日別bundle追加確認。
+- 表示内容: 対象日、読み込む3ファイル、総売上/純売上、支払集計、部門別集計、部門未対応警告、同一bundleブロックまたは同日別bundle追加確認（BIZ-08-D8 が確認を残すときだけ）。
 - 利用者は「取り込む」「ファイルを選び直す」「追加確認」を選べる。同日別bundleでは既存active parentを全件表示する。
 - previewは30分有効のtokenでCMD層cacheに保持する。Z004のpreview cacheと同じAppStateを使ってよいが、型は分ける。
 
@@ -462,3 +462,4 @@ CSV取込み: 2026/03/21の精算データ
 | 2026-10-31 | 日報の紙の runtime（実装、D-120） | §12d の「同じ日の取込みをまたいで足す鍵」の proposed の注記を外した。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §12 のケース2・Stage 2 の共有 JAN と在庫連動の判定・Stage 3 の表示・Stage 4 の停止中の旧本体を、D-118 の b1 の今の契約（32 への参照）に置き換えた。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | §12b と B-1 の前の SD-23 を確かめた事実に置き換え、B-1 の行構造・ヘッダ日付抽出（従来shape）を 23 への参照と BIZ-03 が拒むことに置き換えた |
+| 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | 「SD の一括取込みと EJ の控えの契約」の proposed の注記を外し、migration v14（22 §22）と index の名前を書いた（閲覧は (A-2)、未実装）。「冪等性・同日追加方針」の 2 行目と B-2 の Stage 2 手順 4・Stage 3 の同日別bundleの追加確認を BIZ-08-D8 の判定への参照にした。 |
