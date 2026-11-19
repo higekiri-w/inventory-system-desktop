@@ -1459,8 +1459,20 @@ mod tests {
         };
 
         let error = restore_backup_with_ops(conn, &backup_path, &db_path, &ops).unwrap_err();
-        assert!(matches!(error, RestoreError::Unrecoverable(_)));
+        eprintln!("B12 error: {error:?}");
         let paths = RestorePaths::new(&db_path);
+        if matches!(error, RestoreError::Recovered(_)) {
+            // 診断（Windows の B12。packet の S3 (a)）: 元の DB の行と遺物を log に出す
+            drop(reader);
+            match db::open_existing_database(db_path.to_str().unwrap()) {
+                Ok(reopened) => eprintln!("B12 reopened: {:?}", supplier_names(&reopened)),
+                Err(open_error) => eprintln!("B12 reopen failed: {open_error:?}"),
+            }
+            assert_no_restore_artifacts(&paths);
+            eprintln!("B12 no restore artifacts");
+            panic!("expected Unrecoverable: {error:?}");
+        }
+        assert!(matches!(error, RestoreError::Unrecoverable(_)), "{error:?}");
         assert!(paths.main.exists());
         assert!(paths.wal_backup.exists() && paths.manifest.exists());
         drop(reader);
