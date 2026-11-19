@@ -9,19 +9,20 @@ pub const PAGINATION_MAX_PER_PAGE: u32 = 200;
 /// PLUメモリ全体の上限数（カシオ SR-S4000 の仕様）
 pub const PLU_EXPORT_LIMIT: usize = 5000;
 
-/// SR-S4000 の工場出荷時配分（取説確認済み）で通常PLUが使用しているメモリ数。
+/// SR-S4000 の工場出荷時配分（取説確認済み）で通常PLUに割り当てられたメモリの枠数（登録している件数ではない）。
 ///
 /// SR-S4000 の PLU 総枠 5000 は通常PLUとスキャニングPLUで共有される。
-/// 本来は通常PLUをSD/CV17へ書き込んだ結果の件数から導く値であり、店舗operator向け設定ではない。
-/// 2026-07-02 field gate では通常PLU 216枠使用により、スキャニングPLU開始が217として観測された。
+/// スキャニングPLUの開始メモリNo.はこの枠の次（217）。開始は CV17 の設定（取説 5.7.2）で変えられるが、
+/// 店は変えていない（D-117 (7)）。店が通常PLUに登録しているのは試しの 2 件だけで、開始は登録の件数から決まらない。
+/// 2026-07-02 field gate でスキャニングPLUの開始 217 を観測した。
 pub const DEFAULT_STANDARD_PLU_MEMORY_COUNT: usize = 216;
 
-/// 通常PLU使用数からスキャニングPLUの開始メモリNo.を求める。
+/// 通常PLUの枠数からスキャニングPLUの開始メモリNo.を求める。
 pub const fn scanning_plu_memory_start(standard_plu_count: usize) -> usize {
     standard_plu_count + 1
 }
 
-/// 通常PLU使用数からスキャニングPLUの実効書出し上限を求める。
+/// 通常PLUの枠数からスキャニングPLUの実効書出し上限を求める。
 pub const fn scanning_plu_export_limit(standard_plu_count: usize) -> usize {
     PLU_EXPORT_LIMIT.saturating_sub(standard_plu_count)
 }
