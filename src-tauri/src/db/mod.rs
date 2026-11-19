@@ -23,7 +23,10 @@ pub mod transfer_repo;
 mod schema_v1;
 mod schema_v10;
 #[cfg(test)]
-pub(crate) use schema_v10::{insert_pre_vb_product, VB_VERSION};
+pub(crate) use schema_v10::VB_VERSION;
+// 外から使うのは debug build だけの test module（lib.rs の bindings_generation_tests）
+#[cfg(all(test, debug_assertions))]
+pub(crate) use schema_v10::insert_pre_vb_product;
 mod schema_v11;
 mod schema_v12;
 mod schema_v13;

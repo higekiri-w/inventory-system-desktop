@@ -683,11 +683,7 @@ mod tests {
     // CMD-12-D1（D-111）: scan cache と SD からの preview、写しの失敗の再試行
     // -----------------------------------------------------------------------
 
-    use crate::biz::daily_report_import_service::{
-        DailyReportSdCandidateStatus, DailyReportSdScanSnapshot,
-    };
-
-    const SOURCE_COPY_FAILED_TEXT: &str = "SD から読んだファイルの写しを PC に保存できなかったため、取り込みませんでした。PC の空き容量を確かめて、もう一度取り込んでください。";
+    use crate::biz::daily_report_import_service::DailyReportSdScanSnapshot;
 
     /// 合成の Z001 / Z002 / Z005 の bytes（layout A、CP932、CRLF）
     fn z_bytes(kind: &str, date: &str, settlement: &str) -> Vec<u8> {
@@ -794,7 +790,10 @@ mod tests {
     #[cfg(unix)]
     fn test_req401_copy_failure_keeps_preview_token_for_retry() {
         // REQ-401 / BIZ-08-D5 / §45.7: 写しの失敗は internal と固定の文で、同じ token で再試行できる
+        // この unix だけの test の中だけで使う名前（Windows の build で unused にしない）
+        use crate::biz::daily_report_import_service::DailyReportSdCandidateStatus;
         use std::os::unix::fs::PermissionsExt;
+        const SOURCE_COPY_FAILED_TEXT: &str = "SD から読んだファイルの写しを PC に保存できなかったため、取り込みませんでした。PC の空き容量を確かめて、もう一度取り込んでください。";
         let (dir, state) = app_state();
         let root = sd_tree(&dir.path().join("sd"), "2026-03-21", "0005");
         let scan =
