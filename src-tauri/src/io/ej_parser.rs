@@ -1454,24 +1454,24 @@ fn diagnostic(code: EjDiagnosticCode, line_no: Option<usize>) -> EjDiagnostic {
 // テスト
 // ===========================================================================
 
+/// 合成の EJ の組立て（test だけ。IO-08 の tests と BIZ-08 の EJ の取込み・L3 の入力物が使う。TD-296）
 #[cfg(test)]
-mod tests {
+pub(crate) mod synthetic {
     use super::*;
-    use EjDiagnosticCode::*;
 
     // fixture の名称・金額・日時・番号はすべて架空の値
-    const NAME_A: &str = "ｺﾞｳｾｲｱﾒ";
-    const NAME_B: &str = "ｶｸｳｸｯｷｰ";
-    const AT: &str = "2030-01-02 10:15";
+    pub(crate) const NAME_A: &str = "ｺﾞｳｾｲｱﾒ";
+    pub(crate) const NAME_B: &str = "ｶｸｳｸｯｷｰ";
+    pub(crate) const AT: &str = "2030-01-02 10:15";
 
-    fn sjis(text: &str) -> Vec<u8> {
+    pub(crate) fn sjis(text: &str) -> Vec<u8> {
         let (bytes, _, unmappable) = SHIFT_JIS.encode(text);
         assert!(!unmappable, "fixture に CP932 で表せない文字があります");
         bytes.into_owned()
     }
 
     /// 24 バイトまで右を空白で埋める。超えたら fixture の誤りとして panic する
-    fn row(text: &str) -> Vec<u8> {
+    pub(crate) fn row(text: &str) -> Vec<u8> {
         let mut bytes = sjis(text);
         assert!(
             bytes.len() <= LINE_WIDTH,
@@ -1481,12 +1481,12 @@ mod tests {
         bytes
     }
 
-    fn rows(lines: &[String]) -> Vec<Vec<u8>> {
+    pub(crate) fn rows(lines: &[String]) -> Vec<Vec<u8>> {
         lines.iter().map(|line| row(line)).collect()
     }
 
     /// 各行を CRLF で終える
-    fn crlf(rows: Vec<Vec<u8>>) -> Vec<u8> {
+    pub(crate) fn crlf(rows: Vec<Vec<u8>>) -> Vec<u8> {
         rows.into_iter()
             .flat_map(|mut bytes| {
                 bytes.extend_from_slice(b"\r\n");
@@ -1495,16 +1495,16 @@ mod tests {
             .collect()
     }
 
-    fn file(lines: &[String]) -> Vec<u8> {
+    pub(crate) fn file(lines: &[String]) -> Vec<u8> {
         crlf(rows(lines))
     }
 
-    fn parse(lines: &[String]) -> EjParseResult {
+    pub(crate) fn parse(lines: &[String]) -> EjParseResult {
         parse_ej(&file(lines)).expect("Ok を期待しました")
     }
 
     /// 左と右の間を空白で埋めて 24 バイトにする
-    fn lr(left: &str, right: &str) -> String {
+    pub(crate) fn lr(left: &str, right: &str) -> String {
         let width = sjis(left).len() + sjis(right).len();
         assert!(
             width <= LINE_WIDTH,
@@ -1514,7 +1514,7 @@ mod tests {
     }
 
     /// 半角の `\`・数字・`,` を全角の `￥`・数字・`，` にする
-    fn zen(ascii: &str) -> String {
+    pub(crate) fn zen(ascii: &str) -> String {
         ascii
             .chars()
             .map(|c| match c {
@@ -1527,7 +1527,7 @@ mod tests {
     }
 
     /// `\1,234` / `-\100`
-    fn yen(amount: i64) -> String {
+    pub(crate) fn yen(amount: i64) -> String {
         let digits = amount.abs().to_string();
         let mut grouped = String::new();
         for (i, c) in digits.chars().enumerate() {
@@ -1539,36 +1539,36 @@ mod tests {
         format!("{}\\{grouped}", if amount < 0 { "-" } else { "" })
     }
 
-    fn header(mode: &str, at: &str, number: &str) -> Vec<String> {
+    pub(crate) fn header(mode: &str, at: &str, number: &str) -> Vec<String> {
         vec![
             format!("{mode}{}{at}", " ".repeat(5 - sjis(mode).len())),
             format!("{}0001-{number}", " ".repeat(13)),
         ]
     }
 
-    fn sep() -> String {
+    pub(crate) fn sep() -> String {
         "-".repeat(LINE_WIDTH)
     }
 
-    fn item(name: &str, amount: i64) -> String {
+    pub(crate) fn item(name: &str, amount: i64) -> String {
         lr(name, &yen(amount))
     }
 
-    fn qty(quantity: i64, unit_price: &str) -> String {
+    pub(crate) fn qty(quantity: i64, unit_price: &str) -> String {
         format!("  {quantity} 点   @{unit_price}")
     }
 
-    fn count(n: i64) -> String {
+    pub(crate) fn count(n: i64) -> String {
         lr("", &format!("{n} 点"))
     }
 
     /// 合計域の全角数字の行
-    fn wide(label: &str, amount: i64) -> String {
+    pub(crate) fn wide(label: &str, amount: i64) -> String {
         lr(label, &zen(&yen(amount)))
     }
 
     /// 区切りから後（点数・対象計・内税・合計・お預り・お釣）
-    fn totals(n: i64, total: i64) -> Vec<String> {
+    pub(crate) fn totals(n: i64, total: i64) -> Vec<String> {
         let tendered = (total / 1000 + 1) * 1000;
         vec![
             sep(),
@@ -1581,13 +1581,26 @@ mod tests {
         ]
     }
 
-    fn sale(mode: &str, number: &str, items: &[String], n: i64, total: i64) -> Vec<String> {
+    pub(crate) fn sale(
+        mode: &str,
+        number: &str,
+        items: &[String],
+        n: i64,
+        total: i64,
+    ) -> Vec<String> {
         [header(mode, AT, number), items.to_vec(), totals(n, total)].concat()
     }
 
-    fn ok_sale(number: &str) -> Vec<String> {
+    pub(crate) fn ok_sale(number: &str) -> Vec<String> {
         sale("", number, &[item(NAME_A, 120), item(NAME_B, 380)], 2, 500)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::synthetic::*;
+    use super::*;
+    use EjDiagnosticCode::*;
 
     fn settlement_body() -> Vec<String> {
         vec![

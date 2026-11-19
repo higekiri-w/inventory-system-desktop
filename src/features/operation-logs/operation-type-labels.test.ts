@@ -25,4 +25,13 @@ describe("operation type labels（UI-11c）", () => {
     const order = Object.keys(OPERATION_TYPE_LABELS);
     expect(order.indexOf("transfer_create")).toBe(order.indexOf("disposal_create") + 1);
   });
+
+  it("REQ-401 / 74 registry: ej_import は売上データ取込みの「レシートの控え（EJ）の取込み」で、日報取込み取消の次に並ぶ", () => {
+    expect(OPERATION_TYPE_LABELS.ej_import).toEqual({
+      category: "売上データ取込み",
+      label: "レシートの控え（EJ）の取込み",
+    });
+    const order = Object.keys(OPERATION_TYPE_LABELS);
+    expect(order.indexOf("ej_import")).toBe(order.indexOf("daily_report_rollback") + 1);
+  });
 });

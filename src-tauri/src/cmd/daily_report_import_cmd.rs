@@ -5,7 +5,8 @@
 use crate::biz::daily_report_import_service::{
     self, CachedDailyReportPreview, DailyReportImportResult, DailyReportImportRow,
     DailyReportInputFile, DailyReportPreviewData, DailyReportRollbackResult, DailyReportSdScan,
-    DailyReportSdSelection, ListDailyReportImportsQuery,
+    DailyReportSdScanSnapshot, DailyReportSdSelection, EjImportResult, EjSourceFile,
+    ListDailyReportImportsQuery, RegisterSdBulkOutcome, RegisterSdBulkSource,
 };
 use crate::biz::PaginatedResult;
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
@@ -319,6 +320,194 @@ fn commit_daily_report_import_with_state(
     }
 }
 
+/// §45.6c の応答（37 §37.10 の内部の型から CMD が変える）
+#[derive(Debug, serde::Serialize, specta::Type)]
+pub struct RegisterSdBulkResponse {
+    pub items: Vec<RegisterSdBulkItemDto>,
+}
+
+#[derive(Debug, serde::Serialize, specta::Type)]
+pub struct RegisterSdBulkItemDto {
+    pub source: RegisterSdBulkSource,
+    pub outcome: RegisterSdBulkOutcomeDto,
+}
+
+#[derive(Debug, serde::Serialize, specta::Type)]
+#[serde(tag = "type")]
+pub enum RegisterSdBulkOutcomeDto {
+    ImportedDailyReport(DailyReportImportResult),
+    ImportedEj(EjImportResult),
+    Skipped {
+        message: String,
+    },
+    NeedsIndividualConfirmation,
+    /// BizError に §45.7 の変換を当てた CmdError の kind と message
+    Failed {
+        kind: CmdErrorKind,
+        message: String,
+    },
+    NotAttempted,
+}
+
+/// §45.6c: 手で選んだ EJ（1 file 20MB まで）
+#[derive(Debug, serde::Deserialize, specta::Type)]
+pub struct EjFileRequest {
+    pub filename: String,
+    pub file_bytes: Vec<u8>,
+}
+
+// 写しと TX の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
+#[specta::specta]
+pub fn commit_register_sd_bulk_import(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    scan_token: String,
+) -> Result<RegisterSdBulkResponse, CmdError> {
+    let snapshot = scan_snapshot(&state, &scan_token)?;
+    // §45.6c 手順 2: 写しの置き場所（§45.4 手順 3a と同じ）
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| CmdError::internal("アプリデータの保存先を取得できませんでした", e))?;
+    commit_bulk_with_state(&state, &snapshot, &app_data_dir)
+}
+
+/// §45.6c 手順 1: scan の snapshot を取る（無い・30 分超は §45.6b 手順 2 と同じ kind・文）。snapshot は消さない
+fn scan_snapshot(
+    state: &AppState,
+    scan_token: &str,
+) -> Result<DailyReportSdScanSnapshot, CmdError> {
+    if uuid::Uuid::parse_str(scan_token).is_err() {
+        return Err(CmdError {
+            kind: CmdErrorKind::Validation,
+            message: "不正なトークンです".to_string(),
+            field: None,
+            error_id: None,
+            stocktake_recovery: None,
+            related_csv_import_id: None,
+        });
+    }
+    let cache = state
+        .register_sd_scan_cache
+        .lock()
+        .map_err(|error| CmdError::internal("キャッシュ取得エラー", error))?;
+    cache
+        .get(scan_token)
+        .filter(|snapshot| {
+            snapshot.created_at.elapsed().as_secs() <= constants::PREVIEW_CACHE_TTL_SECS
+        })
+        .cloned()
+        .ok_or_else(|| CmdError {
+            kind: CmdErrorKind::ImportError,
+            message: SCAN_EXPIRED_MESSAGE.to_string(),
+            field: None,
+            error_id: None,
+            stocktake_recovery: None,
+            related_csv_import_id: None,
+        })
+}
+
+/// §45.6c 手順 3: BIZ-08 を呼び、項目の `Failed` だけに §45.7 の変換を 1 か所で当てる
+fn commit_bulk_with_state(
+    state: &AppState,
+    snapshot: &DailyReportSdScanSnapshot,
+    app_data_dir: &Path,
+) -> Result<RegisterSdBulkResponse, CmdError> {
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    let result = daily_report_import_service::commit_register_sd_bulk_import(
+        &mut conn,
+        snapshot,
+        app_data_dir,
+    )
+    .map_err(CmdError::from)?;
+    let items = result
+        .items
+        .into_iter()
+        .map(|item| RegisterSdBulkItemDto {
+            source: item.source,
+            outcome: match item.outcome {
+                RegisterSdBulkOutcome::ImportedDailyReport(result) => {
+                    RegisterSdBulkOutcomeDto::ImportedDailyReport(result)
+                }
+                RegisterSdBulkOutcome::ImportedEj(result) => {
+                    RegisterSdBulkOutcomeDto::ImportedEj(result)
+                }
+                RegisterSdBulkOutcome::Skipped { message } => {
+                    RegisterSdBulkOutcomeDto::Skipped { message }
+                }
+                RegisterSdBulkOutcome::NeedsIndividualConfirmation => {
+                    RegisterSdBulkOutcomeDto::NeedsIndividualConfirmation
+                }
+                RegisterSdBulkOutcome::Failed(error) => {
+                    let error = CmdError::from(error);
+                    RegisterSdBulkOutcomeDto::Failed {
+                        kind: error.kind,
+                        message: error.message,
+                    }
+                }
+                RegisterSdBulkOutcome::NotAttempted => RegisterSdBulkOutcomeDto::NotAttempted,
+            },
+        })
+        .collect();
+    Ok(RegisterSdBulkResponse { items })
+}
+
+// TX の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
+#[specta::specta]
+pub fn import_ej_files(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    files: Vec<EjFileRequest>,
+) -> Result<EjImportResult, CmdError> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| CmdError::internal("アプリデータの保存先を取得できませんでした", e))?;
+    import_ej_files_with_state(&state, files, &app_data_dir)
+}
+
+/// §45.6c: 大きさを検証し、手で選んだ file は写さない（`sd_relative_path: None`）
+fn import_ej_files_with_state(
+    state: &AppState,
+    files: Vec<EjFileRequest>,
+    app_data_dir: &Path,
+) -> Result<EjImportResult, CmdError> {
+    if files
+        .iter()
+        .any(|file| file.file_bytes.len() > constants::CSV_IMPORT_FILE_SIZE_LIMIT)
+    {
+        return Err(CmdError {
+            kind: CmdErrorKind::Validation,
+            message: "ファイルサイズが上限(20MB)を超えています".to_string(),
+            field: None,
+            error_id: None,
+            stocktake_recovery: None,
+            related_csv_import_id: None,
+        });
+    }
+    let files = files
+        .into_iter()
+        .map(|file| EjSourceFile {
+            filename: file.filename,
+            sd_relative_path: None,
+            bytes: file.file_bytes,
+        })
+        .collect();
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    daily_report_import_service::import_ej_records(&mut conn, files, app_data_dir)
+        .map_err(CmdError::from)
+}
+
 // transaction の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
 // doc comment にしない（specta が doc comment を bindings.ts へ写す）。
 #[tauri::command(async)]
@@ -487,10 +676,15 @@ mod tests {
 
     #[test]
     fn test_daily_report_cmd_req401_commit_and_rollback_run_off_main_thread() {
-        // REQ-401 / 45 §45.4「実行の thread」・UI-USW-D5 の 8: 進行中の止めがかかる 2 command は main thread で動かない
-        let commands = ["commit_daily_report_import", "rollback_daily_report_import"];
-        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（45 §45.4 が名指す 2 つ）を先に固定する
-        assert_eq!(commands.len(), 2);
+        // REQ-401 / 45 §45.4「実行の thread」・§45.6c・UI-USW-D5 の 8: 進行中の止めがかかる 4 command は main thread で動かない
+        let commands = [
+            "commit_daily_report_import",
+            "rollback_daily_report_import",
+            "commit_register_sd_bulk_import",
+            "import_ej_files",
+        ];
+        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（45 §45.4・§45.6c が名指す 4 つ）を先に固定する
+        assert_eq!(commands.len(), 4);
         crate::cmd::assert_commands_run_off_main_thread(
             include_str!("daily_report_import_cmd.rs"),
             &commands,
@@ -726,6 +920,8 @@ mod tests {
         DailyReportSdScanSnapshot {
             created_at,
             files_by_candidate,
+            ej_files: Vec::new(),
+            ej_unreadable_files: Vec::new(),
         }
     }
 
@@ -857,6 +1053,71 @@ mod tests {
             &state,
             rescan.scan_token,
             rescan.scan.candidates[0].candidate_key.clone(),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+    }
+
+    // -----------------------------------------------------------------------
+    // CMD-12-D2（§45.6c）: 一括取込みと手で選ぶ EJ（Test Plan K1〜K3）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_req401_bulk_rejects_invalid_and_expired_scan_token() {
+        // REQ-401 / CMD-12-D2 §45.6c 手順 1（Test Plan K1）: 不正な UUID は validation、30 分超・無い token は §45.6b の文
+        let (_dir, state) = app_state();
+        let invalid = scan_snapshot(&state, "not-a-uuid").unwrap_err();
+        assert_eq!(invalid.kind, CmdErrorKind::Validation);
+        let token = uuid::Uuid::new_v4().to_string();
+        state.register_sd_scan_cache.lock().unwrap().insert(
+            token.clone(),
+            snapshot(Instant::now() - Duration::from_secs(31 * 60), "k"),
+        );
+        for token in [token, uuid::Uuid::new_v4().to_string()] {
+            let error = scan_snapshot(&state, &token).unwrap_err();
+            assert_eq!(error.kind, CmdErrorKind::ImportError);
+            assert_eq!(error.message, SCAN_EXPIRED_MESSAGE);
+        }
+    }
+
+    #[test]
+    fn test_req401_bulk_copy_failure_item_is_internal_with_fixed_text() {
+        // REQ-401 / CMD-12-D2・§45.7（Test Plan K2）: 項目の SourceCopyFailed は internal と §45.7 の固定の文
+        // （io の種類・Display を文に入れない）
+        let (dir, state) = app_state();
+        let root = sd_tree(&dir.path().join("sd"), "2026-03-21", "0005");
+        let scan =
+            scan_register_sd_with_state(&state, Some(root.display().to_string()), today(), None)
+                .unwrap();
+        let snapshot = scan_snapshot(&state, &scan.scan_token).unwrap();
+        let app = dir.path().join("app-as-file");
+        std::fs::write(&app, b"x").unwrap();
+        let response = commit_bulk_with_state(&state, &snapshot, &app).unwrap();
+        match &response.items[0].outcome {
+            RegisterSdBulkOutcomeDto::Failed { kind, message } => {
+                assert_eq!(*kind, CmdErrorKind::Internal);
+                assert_eq!(
+                    message,
+                    "SD から読んだファイルの写しを PC に保存できなかったため、取り込みませんでした。PC の空き容量を確かめて、もう一度取り込んでください。"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        // snapshot は消さない（同じ token でやり直せる）
+        assert!(scan_snapshot(&state, &scan.scan_token).is_ok());
+    }
+
+    #[test]
+    fn test_req401_import_ej_files_rejects_over_limit() {
+        // REQ-401 / CMD-12-D2 §45.6c（Test Plan K3）: 手で選ぶ EJ の 20MB + 1 は validation
+        let (dir, state) = app_state();
+        let error = import_ej_files_with_state(
+            &state,
+            vec![EjFileRequest {
+                filename: "EJ260321_0001.TXT".to_string(),
+                file_bytes: vec![b' '; constants::CSV_IMPORT_FILE_SIZE_LIMIT + 1],
+            }],
+            dir.path(),
         )
         .unwrap_err();
         assert_eq!(error.kind, CmdErrorKind::Validation);

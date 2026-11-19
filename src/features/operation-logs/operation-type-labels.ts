@@ -25,6 +25,7 @@ export const OPERATION_TYPE_LABELS: Partial<Record<string, OperationTypeLabel>> 
   daily_report_import_failed: { category: "売上データ取込み", label: "日報取込み失敗" },
   daily_report_parse_failed: { category: "売上データ取込み", label: "日報解析失敗" },
   daily_report_rollback: { category: "売上データ取込み", label: "日報取込み取消" },
+  ej_import: { category: "売上データ取込み", label: "レシートの控え（EJ）の取込み" },
   stocktake_start: { category: "棚卸し", label: "棚卸し開始" },
   stocktake_complete: { category: "棚卸し", label: "棚卸し確定" },
   plu_export: { category: "PLU書出し", label: "PLU書出し" },

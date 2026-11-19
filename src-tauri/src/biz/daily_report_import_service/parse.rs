@@ -202,9 +202,13 @@ pub fn parse_and_validate_daily_report_with_sd_lookup(
             })
         })
         .collect::<Result<Vec<_>, BizError>>()?;
+    // BIZ-08-D8: 精算回数のある束は、同じ日の completed（`same_date`）が全部精算回数を持てば確認なし。
+    // 同じ値は上の BIZ-08-D4 で止まっている。取り消した取込みは `same_date` に入らない
+    let settled_same_date =
+        settlement_no.is_some() && same_date.iter().all(|item| item.settlement_no.is_some());
     let status = if blocking.is_some() {
         DailyReportDuplicateStatus::AlreadyImported
-    } else if same_date_imports.is_empty() {
+    } else if same_date_imports.is_empty() || settled_same_date {
         DailyReportDuplicateStatus::NoDuplicate
     } else {
         DailyReportDuplicateStatus::AdditionalImportConfirmationRequired

@@ -290,3 +290,287 @@ fn write_b1_l3_fixtures() {
         dir.display()
     );
 }
+
+/// SD の一括取込みと EJ の取込み（(A-1)。packet の S9 と `## L3`）の入力物。
+/// 合成の SD の folder `sd-a`・`sd-b`・`sd-c` と手で選ぶ EJ を L3 の日 T から作る。日報は tracked の
+/// `tests/fixtures/daily-report/` の 3 本の日付と精算回数の行を置き換え、EJ は IO-08 の合成の組立てで作る（TD-296）。
+/// 読み戻しに BIZ-08 の scan と一括取込みを使うので、層の検査（test だけの cross-layer）のため cfg(test) の module に置く
+#[cfg(test)]
+mod sd_bulk {
+    use crate::biz::daily_report_import_service::{
+        commit_register_sd_bulk_import, import_ej_records, scan_register_sd_daily_reports,
+        DailyReportSdCandidateStatus, DailyReportSdScanResult, DailyReportSdSelection,
+        EjSourceFile, RegisterSdBulkOutcome, RegisterSdEjSummary,
+    };
+    use crate::db::test_support::setup_test_db;
+    use crate::db::DbConnection;
+    use crate::io::ej_parser::synthetic::{file as ej_bytes, header, item, totals, NAME_A, NAME_B};
+    use crate::io::REGISTER_SD_FOLDER;
+    use chrono::{Days, NaiveDate};
+    use std::path::{Path, PathBuf};
+
+    /// 日報の束（T からの日数・精算回数・名前の接尾字）
+    const SD_A_BUNDLES: [(i64, &str, char); 3] =
+        [(-1, "0001", ' '), (0, "0002", ' '), (0, "0003", 'A')];
+    const SD_C_BUNDLE: (i64, &str, char) = (1, "0004", ' ');
+
+    fn day_at(day: NaiveDate, offset: i64) -> NaiveDate {
+        if offset < 0 {
+            day - Days::new(offset.unsigned_abs())
+        } else {
+            day + Days::new(offset as u64)
+        }
+    }
+
+    /// tracked の 3 本の対象日と精算回数の行を置き換えた bytes（Z001・Z002・Z005 の順）
+    fn bundle(date: NaiveDate, settlement: &str) -> Vec<(&'static str, Vec<u8>)> {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/daily-report");
+        ["Z001", "Z002", "Z005"]
+            .into_iter()
+            .map(|kind| {
+                let bytes = std::fs::read(base.join(format!("{kind}_260321.CSV"))).unwrap();
+                let (text, _, errors) = encoding_rs::SHIFT_JIS.decode(&bytes);
+                assert!(!errors);
+                let settlement_line = "\"精算回数    \",\"0001\"";
+                assert_eq!(text.matches("2026-03-21").count(), 1, "{kind}");
+                assert_eq!(text.matches(settlement_line).count(), 1, "{kind}");
+                let text = text
+                    .replace("2026-03-21", &date.format("%Y-%m-%d").to_string())
+                    .replace(
+                        settlement_line,
+                        &format!("\"精算回数    \",\"{settlement}\""),
+                    );
+                (kind, encoding_rs::SHIFT_JIS.encode(&text).0.into_owned())
+            })
+            .collect()
+    }
+
+    /// 合成の取引の記録（番号は 6 桁、時刻は day の 10:00 + 分）
+    fn ej_records(day: NaiveDate, numbers: std::ops::RangeInclusive<u32>) -> Vec<String> {
+        numbers
+            .map(|number| {
+                let at = format!("{} 10:{:02}", day.format("%Y-%m-%d"), number % 60);
+                [
+                    header("", &at, &format!("{number:06}")),
+                    vec![item(NAME_A, 120), item(NAME_B, 380)],
+                    totals(2, 500),
+                ]
+                .concat()
+            })
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
+    fn ej_name(day: NaiveDate, seq: Option<u16>) -> String {
+        match seq {
+            Some(seq) => format!("EJ{}_{seq:04}.TXT", day.format("%y%m%d")),
+            None => format!("EJ{}.TXT", day.format("%y%m%d")),
+        }
+    }
+
+    fn put(root: &Path, relative: &str, bytes: &[u8]) {
+        let path = relative
+            .split('\\')
+            .fold(root.to_path_buf(), |path, part| path.join(part));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    fn put_bundle(root: &Path, day: NaiveDate, (offset, settlement, suffix): (i64, &str, char)) {
+        let date = day_at(day, offset);
+        for (kind, bytes) in bundle(date, settlement) {
+            let relative = format!(
+                "XZ\\{}\\{kind}_{}{suffix}.CSV",
+                date.format("%Y\\%m"),
+                date.format("%d")
+            );
+            put(root, &relative, &bytes);
+        }
+    }
+
+    fn sd_root(base: &Path) -> PathBuf {
+        REGISTER_SD_FOLDER
+            .iter()
+            .fold(base.to_path_buf(), |path, part| path.join(part))
+    }
+
+    /// `out` の下に sd-a・sd-b・sd-c と ej-manual を書き、手で選ぶ EJ の path を返す
+    fn write_sd_bulk_files(out: &Path, day: NaiveDate) -> PathBuf {
+        let before = day_at(day, -1);
+        let next = day_at(day, 1);
+        // sd-a: T−1 と T（精算 2 回）の束、`XZ` の伸びる EJ（最後が保留）、`XZ_BKUP` の EJ（000104〜000105 が欠け）、LF の読めない EJ
+        let sd_a = sd_root(&out.join("sd-a"));
+        std::fs::create_dir_all(sd_a.join("XZ_BKUP")).unwrap();
+        for bundle in SD_A_BUNDLES {
+            put_bundle(&sd_a, day, bundle);
+        }
+        put(
+            &sd_a,
+            &format!("XZ\\{}", ej_name(day, None)),
+            &ej_bytes(&ej_records(day, 106..=108)),
+        );
+        put(
+            &sd_a,
+            &format!("XZ_BKUP\\{}", ej_name(before, Some(1))),
+            &ej_bytes(&ej_records(before, 101..=103)),
+        );
+        // CR を全部外して LF だけにする（CP932 の 2 byte 目に CR は無い）
+        let lf: Vec<u8> = ej_bytes(&ej_records(before, 104..=105))
+            .into_iter()
+            .filter(|byte| *byte != b'\r')
+            .collect();
+        put(
+            &sd_a,
+            &format!("XZ_BKUP\\{}", ej_name(before, Some(2))),
+            &lf,
+        );
+        // 手で選ぶ EJ: 欠けの 000104〜000105（CRLF。名前は連番つきなので最後まで入る）
+        let manual = out.join("ej-manual").join(ej_name(before, Some(2)));
+        std::fs::create_dir_all(manual.parent().unwrap()).unwrap();
+        std::fs::write(&manual, ej_bytes(&ej_records(before, 104..=105))).unwrap();
+        // sd-b: 同じ束と `XZ_BKUP` の EJ だけ
+        let sd_b = sd_root(&out.join("sd-b"));
+        std::fs::create_dir_all(sd_b.join("XZ_BKUP")).unwrap();
+        for bundle in SD_A_BUNDLES {
+            put_bundle(&sd_b, day, bundle);
+        }
+        put(
+            &sd_b,
+            &format!("XZ_BKUP\\{}", ej_name(before, Some(1))),
+            &ej_bytes(&ej_records(before, 101..=103)),
+        );
+        // sd-c: T+1 の束と、T+1 の記録まで伸びた `XZ` の EJ
+        let sd_c = sd_root(&out.join("sd-c"));
+        std::fs::create_dir_all(sd_c.join("XZ_BKUP")).unwrap();
+        put_bundle(&sd_c, day, SD_C_BUNDLE);
+        let grown = [ej_records(day, 106..=108), ej_records(next, 109..=110)].concat();
+        put(
+            &sd_c,
+            &format!("XZ\\{}", ej_name(day, None)),
+            &ej_bytes(&grown),
+        );
+        manual
+    }
+
+    fn scan(
+        conn: &DbConnection,
+        out: &Path,
+        folder: &str,
+        today: NaiveDate,
+    ) -> DailyReportSdScanResult {
+        scan_register_sd_daily_reports(
+            conn,
+            DailyReportSdSelection::Selected(out.join(folder)),
+            today,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn statuses(result: &DailyReportSdScanResult) -> Vec<DailyReportSdCandidateStatus> {
+        result
+            .scan
+            .candidates
+            .iter()
+            .map(|candidate| candidate.status)
+            .collect()
+    }
+
+    fn summary(
+        new_count: i64,
+        held_count: i64,
+        unreadable_file_count: i64,
+    ) -> Option<RegisterSdEjSummary> {
+        Some(RegisterSdEjSummary {
+            new_count,
+            held_count,
+            conflict_count: 0,
+            unreadable_file_count,
+        })
+    }
+
+    /// `## L3` の表の順（L3-1 → L3-3 → L3-1b → L3-2 の 2 回）に読み戻し、表の数と同じことを確かめる
+    fn assert_l3_flow(out: &Path, manual: &Path, day: NaiveDate) {
+        use DailyReportSdCandidateStatus::{Imported, NotImported};
+        let today = day_at(day, 2);
+        let (_dir, mut conn) = setup_test_db();
+        let app = out.join("app");
+        // L3-1
+        let a = scan(&conn, out, "sd-a", today);
+        assert_eq!(statuses(&a), [NotImported; 3]);
+        assert_eq!(a.scan.ej, summary(5, 1, 1));
+        let bulk = commit_register_sd_bulk_import(&mut conn, &a.snapshot, &app).unwrap();
+        assert_eq!(bulk.items.len(), 4);
+        assert!(bulk.items[..3]
+            .iter()
+            .all(|item| matches!(item.outcome, RegisterSdBulkOutcome::ImportedDailyReport(_))));
+        let RegisterSdBulkOutcome::ImportedEj(ej) = &bulk.items[3].outcome else {
+            panic!("{:?}", bulk.items[3].outcome);
+        };
+        assert_eq!((ej.inserted_count, ej.held_count), (5, 1));
+        assert_eq!(ej.unreadable_files, [ej_name(day_at(day, -1), Some(2))]);
+        let gaps: Vec<(&str, &str)> = ej
+            .gaps
+            .iter()
+            .map(|gap| (gap.from_no.as_str(), gap.to_no.as_str()))
+            .collect();
+        assert_eq!(gaps, [("000104", "000105")]);
+        // L3-3
+        let manual_file = EjSourceFile {
+            filename: manual.file_name().unwrap().to_string_lossy().into_owned(),
+            sd_relative_path: None,
+            bytes: std::fs::read(manual).unwrap(),
+        };
+        let filled = import_ej_records(&mut conn, vec![manual_file], &app).unwrap();
+        assert_eq!((filled.inserted_count, filled.gaps.len()), (2, 0));
+        // L3-1b: 押せない（日報は全部取込み済み、EJ の 4 つの数が 0）
+        let b = scan(&conn, out, "sd-b", today);
+        assert_eq!(statuses(&b), [Imported; 3]);
+        assert_eq!(b.scan.ej, summary(0, 0, 0));
+        // L3-2 の 1 回目: T の最後が入り、保留は T+1 の最後の 1 件
+        let c = scan(&conn, out, "sd-c", today);
+        assert_eq!(statuses(&c), [NotImported]);
+        assert_eq!(c.scan.ej, summary(2, 1, 0));
+        let bulk = commit_register_sd_bulk_import(&mut conn, &c.snapshot, &app).unwrap();
+        assert!(matches!(
+            bulk.items[0].outcome,
+            RegisterSdBulkOutcome::ImportedDailyReport(_)
+        ));
+        // L3-2 の 2 回目: 保留だけ
+        let again = scan(&conn, out, "sd-c", today);
+        assert_eq!(statuses(&again), [Imported]);
+        assert_eq!(again.scan.ej, summary(0, 1, 0));
+    }
+
+    #[test]
+    fn test_l3_fixtures_req401_sd_bulk_inputs_read_back() {
+        // REQ-401 / packet S9（Test Plan の L3 の入力物）: 固定の T で作り、scan と一括取込みで読み戻すと `## L3` の数
+        let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let manual = write_sd_bulk_files(dir.path(), day);
+        assert_l3_flow(dir.path(), &manual, day);
+    }
+
+    #[test]
+    #[ignore = "INVENTORY_L3_DAY（YYYY-MM-DD）と INVENTORY_L3_OUT（出力の folder）を与えて手元で実行する"]
+    fn write_sd_bulk_l3_fixtures() {
+        // (A-1) の L3 の前に Coordinator が走らせる。T+1 の束を未来の日付にしないため、T は L3 の日の前日より前にする
+        let day = std::env::var("INVENTORY_L3_DAY").expect("INVENTORY_L3_DAY が未設定です");
+        let day = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+            .ok()
+            .filter(|parsed| parsed.format("%Y-%m-%d").to_string() == day)
+            .expect("INVENTORY_L3_DAY は YYYY-MM-DD で与えてください");
+        let out = std::env::var_os("INVENTORY_L3_OUT").expect("INVENTORY_L3_OUT が未設定です");
+        let out = Path::new(&out);
+        let manual = write_sd_bulk_files(out, day);
+        // 読み戻しは別の一時 folder の写しで行い、出力の folder に app の写しを残さない
+        let check = tempfile::tempdir().unwrap();
+        let check_manual = write_sd_bulk_files(check.path(), day);
+        assert_l3_flow(check.path(), &check_manual, day);
+        println!(
+            "(A-1) の L3 の入力物を {} に書きました（T = {day}。sd-a・sd-b・sd-c と、手で選ぶ EJ {}）",
+            out.display(),
+            manual.display()
+        );
+    }
+}
