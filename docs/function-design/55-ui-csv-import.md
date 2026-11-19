@@ -17,8 +17,6 @@
 - 要再確認は日本語の label と icon を併用し、色だけで示さない。範囲は「4〜5」の形で、長さの商品は m の形（SPEC-UNIT-D3）。
 - 取込みの確定と取消は停止 ADR の 5 つの入口と同じ b1 の配布の単位で新しい経路に繋いだ（SPEC-STK-CNT-D12）。要再確認の一覧の各行は「棚卸しの画面で入れ直す」から [73](73-ui-stocktake.md) の「今の数を入れる」（`/stocktake/` の search の `product`）へ進む。取消の結果は `idle` の画面の上に出し、続けて次のファイルを選べる（`useCsvImportFlow` の `rollbackResult`。次のファイルの選択で消える）。
 
-> **2026-08-01 evidence sync（2026-08-17 実態同期）**: UI-07 は「売上データ取込み」画面として、current operation の主動線を Z001/Z002/Z005 日報取込みに置く。既存の Z004 CSV import UI はPLU登録後の商品別売上・`pos_stock_sync`在庫増減・rollbackを実装済みの別トラックとして残し、IO-02は従来shapeと2026-07-06店舗採取layout Aを受理する。日報取込みは [37-biz-daily-report-import-service.md](37-biz-daily-report-import-service.md) / [45-cmd-daily-report-import.md](45-cmd-daily-report-import.md) を呼び、`sale_records` / `inventory_movements` を作らない。
-
 ### 55.0 REQ-401再設計ターゲット
 
 #### 画面構成
@@ -512,7 +510,7 @@ DB ロック競合等の `internal` も、解析・取込みの失敗では他�
 
 #### 実機と実データでの確かめ
 
-実物の Z004（layout A）は 2026-07-06 の店の採取で得た（[実機確認リスト](../plu-export-and-real-csv-verification.md) の CSV-03・CSV-04・CSV-11）。実 Z004 の取込み、販売で在庫が減り返品で戻ること、日次 / 月次売上への反映は、owner の Windows L3（PR #81、2026-08-18。同 CSV-05・CSV-09・CSV-10）で確かめた。自動 test は合成 fixture を使い、実データを repo に入れない。
+実物の Z004（layout A）は 2026-07-06 の店の採取で得た（[実機確認リスト](../plu-export-and-real-csv-verification.md) の CSV-03・CSV-04・CSV-11）。実 Z004 の取込み、販売で在庫が減り返品で戻ること、日次 / 月次売上への反映は、owner の Windows L3（PR #81、2026-08-18。同 CSV-05・CSV-09・CSV-10）で確かめた。b1（2026-10-23）の後の取込みの経路は合成の Z004 だけで L3 しており、実 Z004 での通しは未確認。自動 test は合成 fixture を使い、実データを repo に入れない。
 
 #### 非目的
 
@@ -600,4 +598,4 @@ DB ロック競合等の `internal` も、解析・取込みの失敗では他�
 | 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §55.7 の止める範囲の「閉じて失うのは結果の通知だけ」を、「閉じる」で閉じた時点が commit の前か後かで分けて書き直し（窓の文は、記録に無ければもう一度取り込むこと・取消済みでなければもう一度取り消すことも言う）、取込みの確定と取消の command を main thread の外で動かすこと（UI-USW-D5 の 8）を足した。UI-07-D18 の段落に、Z004 タブは取込み中もタブを切り替えられないことを足した。未実装の注は実装の PR で外す |
 | 2026-11-14 | window-close-guard（main の取込みの後、PR #250） | §55.12（UI-07-D19）の「取消の実行と後」の括弧「native の window の close は保証しない」を、§55.11 と同じ形（止める範囲に native の close を含め、未実装の注）に直した |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §55.7・§55.11・§55.12 の「未実装」の注を外した。ガードの hook 4 つが `useBlocker` と同じ条件を `useWindowCloseGuard` に渡し、Z004 タブは取込み中もタブを切り替えられない（`CsvImportPage` へ上げる値は `isImporting \|\| isRollingBack`）（UI_TECH_STACK UI-USW-D5、D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
-| 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | Z004 トラックの行（従来shapeは BIZ-03 が拒む）、利用者フロー手順 5・既存 Z004 UI の扱いを今の実装に合わせ、§55.10 の 2026-05 の手動シナリオと検証データ戦略を実データでの確かめ（PR #81）に置き換えた |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | Z004 トラックの行（従来shapeは BIZ-03 が拒む）、利用者フロー手順 5・既存 Z004 UI の扱いを今の実装に合わせ、§55.10 の 2026-05 の手動シナリオと検証データ戦略を実データでの確かめ（PR #81。b1〈2026-10-23〉の後の取込みの経路は合成の Z004 だけで L3 しており、実 Z004 での通しは未確認）に置き換え、「2026-08-01 evidence sync」の注記（本文と重なり、従来shapeの受理が表の行と食い違う）を消した |

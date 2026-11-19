@@ -270,7 +270,7 @@ EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 �
 **入力単位**:
 - 1営業日の日報取込みは `Z001`、`Z002`、`Z005` の3ファイルを必須束として扱う。
 - adapterはファイル名・内容からsourceを判定し、欠損、重複、未知sourceをPreview前にエラーにする。
-- CV17 1.1.1のZ001/Z002/Z005は、SD の `XZ_BKUP` とツール内部ディレクトリ常在ファイル（同じ bytes。取込み前の `XZ` の原本とも同じ bytes だった。29 §29.7.2 の SD-23）の layout A（7行プリアンブル、1行ヘッダ、4列データ行）と、エクスポート機能出力の layout B（先頭メタフィールド、ヘッダ、4列反復の連結）を両方サポートする。adapterはどちらも `record_code, label, quantity_or_count, amount` 系の4列行へ正規化してから内部行へ変換する。
+- CV17 1.1.1のZ001/Z002/Z005は、SD の `XZ_BKUP` とツール内部ディレクトリ常在ファイル（同じ bytes。取込み前の `XZ` の原本とも、同じ日の 2 つの束の 6 組で同じ bytes だった。29 §29.7.2 の SD-23）の layout A（7行プリアンブル、1行ヘッダ、4列データ行）と、エクスポート機能出力の layout B（先頭メタフィールド、ヘッダ、4列反復の連結）を両方サポートする。adapterはどちらも `record_code, label, quantity_or_count, amount` 系の4列行へ正規化してから内部行へ変換する。
 - 日付はsource/layoutにより `YYYY/M/D` または `YYYY-MM-DD` で出力されるため、IO-07で `YYYY-MM-DD` に正規化してからBIZ-08へ渡す。
 - 入力の標準はアプリがレジの SD から直接読む束（IO-09、BIZ-08 §37.9、D-111）。予備は利用者が選ぶ 3 ファイル（PC の `EcrDatas` の写しを含む。`XZ_BKUP` と同じ bytes）。
 - Excel帳票はsource of truthでも日別archiveでもない。店は今、SDからCV17へ取り込んだZ001/Z002/Z005を同じExcelファイル群へ毎日ほぼそのまま貼り付けて上書きするため、日別履歴は印刷・バインダーだけに残る。layout A/Bの受理はadapter互換性であってoperatorの選択肢ではない。sanitized版のExcelは数値突合に使わず、列構成・ラベル・行の並びの参照に限定する。
