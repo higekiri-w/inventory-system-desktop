@@ -7,7 +7,7 @@ decision-log の番号は仮に D-159 と書く（2026-11-19 の `origin/main` �
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 02149878d141709fb3cd47dcab35c4d7acfaa6fe
 - Amendments: none
 
 ## Risk
