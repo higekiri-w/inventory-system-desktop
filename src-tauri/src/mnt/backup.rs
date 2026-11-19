@@ -1694,9 +1694,9 @@ mod tests {
         let (dir, conn) = setup_test_db();
         let backup_dir = dir.path().join("backups");
         let now = fixed_now("120000");
-        let published = std::fs::canonicalize(dir.path())
+        let published = pin_to_volume(&backup_dir)
             .unwrap()
-            .join("backups")
+            .actual
             .join(name_at(now));
         let _failure = fail_metadata(&published);
         let result = create_backup_with(&conn, &backup_dir, &StdRestoreFileOps, now);
@@ -2208,7 +2208,26 @@ mod tests {
 
         let pinned = pin_to_volume(&configured).unwrap();
         assert_eq!(pinned.normalized, root.join("a/c/d"));
-        assert_eq!(pinned.actual, root.join("a/c/d"));
+        let expected = root.join("a/c/d");
+        if cfg!(windows) {
+            // 71 §71.4 (2): Windows の実体は Volume GUID の path で、prefix の後は同じ
+            assert!(
+                pinned.actual.to_string_lossy().starts_with(r"\\?\Volume{"),
+                "{}",
+                pinned.actual.display()
+            );
+            assert!(
+                pinned
+                    .actual
+                    .components()
+                    .skip(1)
+                    .eq(expected.components().skip(1)),
+                "{}",
+                pinned.actual.display()
+            );
+        } else {
+            assert_eq!(pinned.actual, expected);
+        }
 
         let result = create_backup(&conn, &configured).unwrap();
         assert_eq!(names_in(&root.join("a/c/d")), vec![result.file_name]);
@@ -2376,9 +2395,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let plain = dir.path().join("plain.db");
         app_db(&plain, |_| {});
+        // Windows: 実際に開く path に `?`（`\\?\` の prefix）・`#`・`%` が入る。`\` は区切り
+        #[cfg(windows)]
+        let odd = {
+            let odd = std::fs::canonicalize(dir.path())
+                .unwrap()
+                .join(r"d#1\50% done\x.db");
+            std::fs::create_dir_all(odd.parent().unwrap()).unwrap();
+            odd
+        };
         // Linux では `\` を含む 1 つの合法な名前（URI の解析は OS に依らない）
+        #[cfg(not(windows))]
         let odd_name = r"\\?\Volume{x}\d#1\50% done\x.db";
         // Linux の `\` は区切りでないので dir の下の 1 つの file 名になる（lint は Windows の区切りで見る）
+        #[cfg(not(windows))]
         #[allow(clippy::join_absolute_paths)]
         let odd = dir.path().join(odd_name);
         std::fs::rename(&plain, &odd).unwrap();
