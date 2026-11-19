@@ -533,6 +533,48 @@ describe("BackupRestorePage (UI-11b / QR-05 / REQ-901)", () => {
     expect(mockOpen).toHaveBeenCalledWith({ directory: true, multiple: false });
   });
 
+  it("REQ-901 / MNT-01-D3: 保存日数に 0 を入れて離れると、保存されず理由がその場に出る", async () => {
+    const user = userEvent.setup();
+    mockUpdateSetting.mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "validation",
+        message: "保存日数は 1 以上の整数で入れてください",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+
+    renderWithClient(<BackupRestorePage />);
+    const field = await screen.findByLabelText("保存日数");
+    await user.clear(field);
+    await user.type(field, "0");
+    await user.tab();
+
+    expect(await screen.findByText("保存日数は 1 以上の整数で入れてください")).toBeInTheDocument();
+    expect(mockUpdateSetting).toHaveBeenCalledWith({ key: "backup_retention_days", value: "0" });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(screen.queryByText("設定を保存しました")).not.toBeInTheDocument();
+    // 入れた値は欄に残し、その場で直せるようにする（time の欄と同じ作り）
+    expect(field).toHaveValue(0);
+  });
+
+  it("REQ-901 / MNT-01-D3: 保存日数に 7 を入れて離れると保存される", async () => {
+    const user = userEvent.setup();
+
+    renderWithClient(<BackupRestorePage />);
+    const field = await screen.findByLabelText("保存日数");
+    await user.clear(field);
+    await user.type(field, "7");
+    await user.tab();
+
+    await waitFor(() => {
+      expect(mockUpdateSetting).toHaveBeenCalledWith({ key: "backup_retention_days", value: "7" });
+    });
+    expect(await screen.findByText("設定を保存しました")).toBeInTheDocument();
+  });
+
   it("QR-05 REQ-901 shows effective backup dir returned by backend", async () => {
     renderWithClient(<BackupRestorePage />);
     await screen.findByRole("heading", { name: "バックアップ・復元" });

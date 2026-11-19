@@ -21,7 +21,7 @@ pub fn get_all_settings(conn: &DbConnection) -> Result<Vec<AppSetting>, BizError
 
 ## 38.3 upsert_setting
 
-**関数要求**: 指定キーの設定値を追加または更新する。
+**関数要求**: 指定キーの設定値を追加または更新する。`backup_retention_days`（バックアップの保存日数）だけは値を検査し、1 以上の整数でなければ保存しない（店の決定 TD-841。掃除 [71](71-mnt-backup.md) MNT-01-D3 は `0` で今日より前の控えを全部消し、数字でない値で黙って止まるため）。ほかの key は検査しない。
 
 **シグネチャ**:
 ```rust
@@ -33,10 +33,11 @@ pub fn upsert_setting(
 ```
 
 **処理ステップ**:
-1. `key` と `value` を `system_repo::upsert_setting` へ渡す。
-2. repository の成功結果を返す。
+1. `key` が `backup_retention_days` のとき、`value` が ASCII の数字だけ（空・前後の空白・`+`・`-`・小数・指数・全角を含まない）で、`i32` として読めて 1 以上であることを確かめる。外れたら保存せず `BizError::ValidationFailed("保存日数は 1 以上の整数で入れてください")` を返す。
+2. `key` と `value` を `system_repo::upsert_setting` へ渡す。
+3. repository の成功結果を返す。
 
-**エラーハンドリング**: `DbError` は `BizError::DatabaseError` へ変換する。
+**エラーハンドリング**: `DbError` は `BizError::DatabaseError` へ変換する。検査の拒否は CMD で `validation` になり、画面は今の error の表示の経路でその文を出す。
 
 ## 38.4 list_operation_logs
 
@@ -87,6 +88,7 @@ pub fn list_distinct_operation_types(
 ## 38.6 テスト
 
 - REQ-905: 初期設定一覧取得と設定 upsert の永続化を BIZ public 関数経由で検証する。
+- REQ-901 / MNT-01-D3: `backup_retention_days` は `0`・`-1`・空・`abc`・`1.5`・前後の空白・`+3`・指数・全角・`i32` の上限の外を拒否して保存せず、`1`・`3`・`30`・`i32` の上限を保存することを検証する。ほかの key は検査しないことを検証する。
 - REQ-902: strict ASCII `YYYY-MM-DD`、実在暦日、同日許可、範囲逆転の validation 契約を検証する。
 - REQ-902: repository error が `BizError::DatabaseError` へ変換されることを検証する。
 - REQ-902: operation type 一覧の repository 委譲を検証する。
