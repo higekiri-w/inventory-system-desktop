@@ -289,6 +289,25 @@ summary/payment/departmentのsourceは格納先から一意に決まるため行
 
 ### IO-10: SD から読んだ原本の写しの保存
 
-**タスク要求**: 取り込む束の file の生バイトを、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/{SD の相対 path}` に書く。同じ bytes があれば書かず、違う bytes があれば上書きせずに hash を付けた名前にする。保存先の directory を作ってから一時 file に書いて rename する。SD には書かない。業務ロジックなし（function-design は [29 §29.8](../function-design/29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）
+**タスク要求**: 取り込む束と、SD の中で `XZ_BKUP` へ移す組の file の生バイトを、アプリのデータ folder の `pos-sources/casio-sr-s4000/sd/{SD の相対 path}` に書く。同じ bytes があれば書かず、違う bytes があれば上書きせずに hash を付けた名前にする。保存先の directory を作ってから一時 file に書いて rename する。SD には書かない。業務ロジックなし（function-design は [29 §29.8](../function-design/29-io-daily-report-parser.md#298-io-10-sd-から読んだ原本の写しの保存d-111)）
 
-**理由**（D-111）: (a) の段階（SD 直読みの runtime の lane）では SD は動かさず、CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは BIZ-08-D5
+**理由**（D-111）: CV17 の取込みをやめると PC 側に原本の写しが無くなるため（owner 決定 2026-10-06、D-111）。いつ書くか・失敗の扱いは、取り込む束が BIZ-08-D5、移す組が BIZ-08-D11（移す前に書く。D-149 (3)）
+
+---
+
+### IO-11: レジの SD の `XZ` の Z を `XZ_BKUP` へ移す
+
+**タスク要求**: レジの SD の `XZ\yyyy\mm\` にある同じ精算の名前の Z の組（同じ folder・同じ日・同じ接尾字の Z001・Z002・Z004・Z005 のうち BIZ-08 が渡す 1〜4 本）を、CV17 の取込みと同じ形の名前（拡張子の前に `_nnnn`）で、組に共通の 1 つの連番を付けて `XZ_BKUP\yyyy\mm\` へ移す。移す先の folder が無ければ作り、file は既存の file を置き換えず、bytes を書かない改名で移す。1 本ずつ移して確かめ、失敗したら組の残りを移さない。DB を呼ばない。業務ロジックなし（function-design は [29 §29.9](../function-design/29-io-daily-report-parser.md#299-io-11-レジの-sd-の-xz-の-z-を-xz_bkup-へ移すd-149)）
+
+**理由**（D-149）: CV17 の取込みと同じ形で移せば、レジから見た SD の状態は CV17 を毎日使ったときと同じになり、店は CV17 の毎日の Z の取込みをやめられる。読むだけの module（IO-09）に書込みの API を足さず、別の module に置く（IO-09-D3）。どの組を・いつ・どの順で移すかは BIZ-08-D11（37 §37.12）
+
+**【データ構造】**
+
+入力: RegisterSdRoot（IO-09）、組の RegisterSdMoveItem[]{relative_path, expected_len}
+
+出力: RegisterSdGroupMove（moved[]〈移した先の相対 path、移した順〉, error?〈InvalidPath / NameRule / NoFreeSequence / Io / Verify〉）
+
+**【制御構造】**
+- 名前の規則・組の形・実体の path が root の下にあることを、SD に書く前に確かめる（IO-09-D5）
+- 置き換えない移動は `crate::io::move_no_replace`（71 §71.4.1 の操作。MNT-01 の上書きしない公開と共有）
+- 使う file system の API と crate の中の名前を許可の列に限る（IO-11-D3）

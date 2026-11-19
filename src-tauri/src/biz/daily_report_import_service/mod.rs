@@ -5,6 +5,7 @@ mod list;
 mod parse;
 mod rollback;
 mod scan;
+mod tidy;
 
 #[cfg(test)]
 mod tests;
@@ -178,6 +179,19 @@ pub struct DailyReportSdScan {
     pub candidates: Vec<DailyReportSdCandidate>,
     /// 名前の規則に合わず読まなかった file の数（IO-09-D2）
     pub skipped_unknown_count: i64,
+    /// 取り込んだ精算の Z を `XZ_BKUP` へ移せなかった理由（37 §37.12、BIZ-08-D11）。None = 移す物が無い・全部移せた・片付けない
+    pub tidy_failure: Option<RegisterSdTidyFailure>,
+}
+
+/// 37 §37.12: 片付けの失敗の種類。画面の固定の文を選ぶだけ（55 UI-07-D15 (7)）。数と path は診断ログ
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, specta::Type)]
+pub enum RegisterSdTidyFailure {
+    /// SD の側の書込みの失敗（IO-11 の Io・移した後の確かめの食い違い）
+    SdWrite,
+    /// IO-10 の写しの失敗
+    PcCopy,
+    /// DB の読取りの失敗、写しの置き場所を得られない、IO-11 の InvalidPath・NameRule・NoFreeSequence
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
