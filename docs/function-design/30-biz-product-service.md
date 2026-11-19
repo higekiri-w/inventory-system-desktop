@@ -16,7 +16,7 @@
 [共通規則](10-common-rules.md) SPEC-UNIT-D1・D5・D10・D11 の BIZ-01 の側。単位・原価の 1/100 円・上限・商品 CSV の単位と初期在庫と原価は現行の契約。
 
 - `stock_unit` は 10 個の code の `ProductStockUnit`（`ball` を含む。`決定（owner、D-113 J1）`）。create の検証は wire の enum のまま。update と商品 CSV の上書きは個数の単位どうしの変更だけを許す（下の 2 つの段）。`roll`・`cm` は開発・試験 DB の作り直しの起点（vB）で一覧から外した（D-119・D-128。共通規則 SPEC-UNIT-D1）。
-- （D-119。owner の決定 U2 = b）update と商品 CSV の上書きで、個数の種類の単位どうしの変更だけを許す（共通規則 SPEC-UNIT-D2）。`ProductUpdateRequest` に通常 field の `stock_unit: Option<ProductStockUnit>`（omitted / null は更新しない）を足し、`ProductUpdates.stock_unit` で UPDATE する。検査は §4.4 の手順 2 で（手順 2 の今の検査〈商品名・売価・原価・部門・取引先〉の後）、値を持ち今の単位と違うとき、今の単位と新しい単位がどちらも `stock_unit_kind` = `Count` でなければ `ValidationFailed("在庫単位は個数の単位どうしでだけ変えられます")`。値が今の単位と同じなら、省くのは `stock_unit` の SET と detail_json の key `stock_unit` だけ（通常の UPDATE とログ行は §4.4 の手順 5・6 の今の契約のまま。BIZ-01-D7 の「変更した」の規則）。在庫・明細・価格は変えない（個数の単位の価格の基準数量はどれも 1）。単位の変更は `plu_dirty` の理由にならない（PLU の file は単位を持たない。§4.4 の手順 4 の売価の変更・手順 4b の対象化だけが立てる）。操作ログは BIZ-01-D7 の規則で key `stock_unit` に `{"old": code, "new": code}` を書く（商品 CSV の上書きの経路も同じ形、下の上書きの段）。
+- （D-119。owner の決定 U2 = b）update と商品 CSV の上書きで、個数の種類の単位どうしの変更だけを許す（共通規則 SPEC-UNIT-D2）。`ProductUpdateRequest` に通常 field の `stock_unit: Option<ProductStockUnit>`（omitted / null は更新しない）を足し、`ProductUpdates.stock_unit` で UPDATE する。検査は §4.4 の手順 2 で（手順 2 の今の検査〈商品名・売価・原価・部門・取引先〉の後）、値を持ち今の単位と違うとき、今の単位と新しい単位がどちらも `stock_unit_kind` = `Count` でなければ `ValidationFailed("在庫単位は個数の単位どうしでだけ変えられます")`。値が今の単位と同じなら、省くのは `stock_unit` の SET と detail_json の key `stock_unit` だけ（通常の UPDATE とログ行は §4.4 の手順 5・6 の今の契約のまま。BIZ-01-D7 の「変更した」の規則）。在庫・明細・価格は変えない（個数の単位の価格の基準数量はどれも 1）。単位の変更は `plu_dirty` の理由にならない（PLU の file は単位を持たない。§4.4 の手順 4 の売価の変更・手順 4b の対象化・手順 4c の名称・部門・税率の変更だけが立てる）。操作ログは BIZ-01-D7 の規則で key `stock_unit` に `{"old": code, "new": code}` を書く（商品 CSV の上書きの経路も同じ形、下の上書きの段）。
 - 原価は `cost_price_centi`（1/100 円、`決定（owner、D-113 J2）`。原価の lane、D-128）。create・update・revise_product_price・CSV 取込みの検証は「0 以上、`99999999`（`999999.99` 円）以下」（[共通規則](10-common-rules.md) の「入力の上限と安全な整数の範囲」）。上限を超えたら `ValidationFailed("原価が大きすぎます")`（CSV は preview の行の error）。price_history の原価も 1/100 円。原価を書く操作ログは 2 つで全部: BIZ-01-D7 の商品修正のログと、`revise_product_price` の `product_price_revise` のログ（一括の価格改定と入庫の原価差分のダイアログ〈UI-02-D15〉から書く）。どちらも detail_json の原価の key は `cost_price_centi`、値は 1/100 円の整数（同じ key に円と 1/100 円が混ざると、後から区別できない。ログは書き換えない契約）。原価の 1/100 円は開発・試験 DB を作り直した起点で入れる（D-119、22 §16 の vB）ので、key `cost_price`（円）の記録はその DB に無く、読む側（[74](74-ui-operation-logs.md) §74.8）は `cost_price_centi` だけを知ればよい。
 - 売価・原価・初期在庫の上限（共通規則の同じ節）: create・update・revise_product_price・CSV 取込みの売価は 0 以上 `999999`（越えれば `売価が大きすぎます`）、原価は 1/100 円で 0 以上 `99999999`（`MAX_COST_PRICE_CENTI`。越えれば `原価が大きすぎます`）、create と CSV 取込みの初期在庫は 0 以上 `999999999`（越えれば `在庫数が大きすぎます`。`m` の行は cm にした後の値で比べる）。CSV は preview の行の error にし、commit は wire の行を信頼せず TX の中で同じ上限を確かめて、越えれば `ValidationFailed` で TX 全体を戻す。初期在庫の負は、create が `初期在庫は0以上で入力してください`、商品 CSV（preview の行の error と commit）が `初期在庫の値が不正です: '{値}'`。
 - 一括インポート（§4.8・§4.9）の任意列 `在庫単位` は、前後の空白を除いた値が 10 個の code か表示の語（`個` `枚` `本` `袋` `箱` `組` `セット` `玉` `丁` `m`）なら code に直す。空は `None`（INSERT で `pcs`、今どおり）。それ以外は preview の行の error `在庫単位が正しくありません: {値}`（commit も新規の行の単位を 10 個の code と確かめる）。vB で外した `cm`・`巻`・`roll` の行の error には、preview と commit の両方で `retired_stock_unit_hint` の直し方を添える（共通規則 SPEC-UNIT-D10）。
@@ -187,7 +187,7 @@ step 3〜5 の読み書きは呼び出し元の TX の中で行う。登録が�
 
 ### 4.4 update_product
 
-**関数要求**: 商品情報を更新する。売価/原価が変わった場合はprice_historyに記録し、売価変更時はplu_dirty=1にする。原価のみの変更では plu_dirty を立てない
+**関数要求**: 商品情報を更新する。売価/原価が変わった場合はprice_historyに記録し、売価・名称・部門・税率の変更時はplu_dirty=1にする（名称・部門・税率は D-160 (5)、未実装）。原価のみの変更では plu_dirty を立てない
 
 **シグネチャ**:
 ```
@@ -223,6 +223,8 @@ Rustでは通常fieldを `Option<T>`、clear可能fieldを `Option<Option<T>>` �
    - plu_target が Some で既存値 0 → 1 に変わる場合 → updatesにplu_dirty=trueを追加（レジ登録が新たに必要になったため）
    - 1 → 0 の場合は PLU の枠を変えない（BIZ-04 を呼ばない。枠は残り、書出しに出なくなる。[33 §16.6](33-biz-plu-export-service.md)）
    - CSV 上書き等の許可された経路で jan_code が変わる場合も、旧 JAN の枠を変えない。変更後の plu_target が 1 なら updatesにplu_dirty=trueを追加（新しい JAN のレジ登録が要るため）
+4c. **PLU の file の欄の変更チェック**（D-160 (5)。出所は AI の review、owner が採った〈TD-779 の 5〉。未実装: 今の code〈`src-tauri/src/biz/product_service.rs` の `update_product`〉は売価の変更と 0 → 1 だけで立てる。PLU の書出しの見直しの runtime が red の test から入れる）
+   - name・department_id・tax_rate のどれかが Some で既存値と異なる場合 → updatesにplu_dirty=trueを追加（PLU の file の `名称`・`部門リンク`・`課税方式` が変わり、書き出さないとレジの登録が古いまま残るため。[25 §12](25-io-plu-formatter.md)）
 5. **productsをUPDATE**
    - ProductUpdatesを構築してproduct_repo::update_product()を呼ぶ
 6. **操作ログ記録**
