@@ -31,15 +31,15 @@ SPEC-STK-CNT-D9・D10（[棚卸しの数の置き場と在庫の求め直しの 
 
 **バックアップ:**
 1. app_settingsからbackup_pathを取得
-2. SQLiteのバックアップAPIまたはファイルコピーでDBファイルを複製
+2. `VACUUM INTO` で作業名へ書き、共有の検査に通してから上書きしない公開で正式名にする（71 MNT-01-D7）
 3. ファイル名: inventory_backup_{YYYYMMDD_HHMMSS}.db
-4. backup_retention_daysより古いバックアップファイルを削除
+4. 自動バックアップのときだけ、backup_retention_days を超えた古いバックアップファイルを削除（手動では消さない。日数を確定できなければ消さない、71 MNT-01-D3）
 5. operation_logsに記録（operation_type='backup_create'）
 
 **リストア:**
 1. バックアップファイルの存在確認
 2. 現在のDBを一時退避（リストア失敗時の保険）
-3. バックアップファイルを現在のDBファイルに上書きコピー
+3. バックアップファイルを DB ファイルの名前へコピー（退避と中断からの戻し方は 71 §71.7 MNT-01-D1・D5）
 4. DB再接続 + PRAGMA再設定
 5. スキーママイグレーション実行（古いバックアップからの復元時にスキーマが古い可能性）
 6. operation_logsに記録（operation_type='backup_restore'）
@@ -52,7 +52,7 @@ SPEC-STK-CNT-D9・D10（[棚卸しの数の置き場と在庫の求め直しの 
 （正本は [71 §71.11〜§71.13](../function-design/71-mnt-backup.md)）
 
 **【制御構造】**
-- 自動バックアップ: app_settings.backup_enabled=1かつbackup_timeに達したら実行。アプリ起動中のみ
+- 自動バックアップ: app_settings.backup_enabled=1 のとき、起動時と 60 秒ごとの確認で、その日の backup が無ければ作り、backup_time を過ぎてその時刻より後の backup が無ければもう 1 本作る（71 §71.8）。アプリ起動中のみ
 - 手動バックアップ: 設定画面のボタンから即時実行
 - リストア中は全操作をブロック（DB接続を一度切断するため）
 

@@ -17,10 +17,10 @@ src-tauri/src/
     integrity_cmd.rs   -- 既存（CMD-11の整合性チェック部分）
   biz/
     system_service.rs  -- BIZ-09 設定・操作ログロジック（38-biz-system-service.md）
-  lib.rs               -- invoke_handler に8コマンドを追加
+  lib.rs               -- invoke_handler に 17 コマンドを登録（§43.11）
 ```
 
-**層経路（D-060）**: 層経路の正本は `ARCHITECTURE.md`「レイヤー間の呼び出し原則」。設定・操作ログ系 4 command は `biz::system_service`（BIZ-09）経由の標準経路、backup/restore 系 5 command は CMD→MNT 正規経路（DB 接続所有権の交換を要する保守 orchestration 限定）、画像保存は base64 decode（CMD の wire 型変換）+ BIZ validation で構成する。
+**層経路（D-060）**: 層経路の正本は `ARCHITECTURE.md`「レイヤー間の呼び出し原則」。設定・操作ログ系 4 command は `biz::system_service`（BIZ-09）経由の標準経路、backup/restore 系 12 command は CMD→MNT 正規経路（DB 接続所有権の交換を要する保守 orchestration 限定）、画像保存は base64 decode（CMD の wire 型変換）+ BIZ validation で構成する。
 
 **実装状態**: D-060 に基づき、設定・操作ログ系 4 command は BIZ-09 経由、画像保存は BIZ-02 経由で実装されている（packet: 2026-07-31-settings-service-boundary-design）。
 
@@ -285,7 +285,7 @@ fn restore_backup(
 2. `db_path = app_data_dir.join("inventory.db")`（ファイルパス。ディレクトリではない）
 3. DB Mutexのロックを取得
 4. `std::mem::replace` で現在の `DbConnection` を取り出す（一時的にin-memory接続を入れる）
-5. `match mnt::backup::restore_backup(old_conn, &backup_path, &db_path)` で分岐する。`Ok` / `Err` の処理・復旧再接続（no-create open）・kind 3 値 wire（`restore_failed_recovered` / `restore_failed_unrecoverable` / `restore_durability_unknown`）は本 doc で再規定しない — 復旧規則・分類の正本は 71-mnt-backup.md §71.7（MNT-01-D1/D4/D5、「CMD層での呼び出しパターン」）であり、CMD は同 § の呼び出しパターンを実行するのみで独自の規則を定義しない（D-060 (a)/(d)）
+5. `match mnt::backup::restore_backup(old_conn, &backup_path, &db_path)` で分岐する。`Ok` / `Err` の処理・復旧再接続（no-create open）・kind 3 値 wire（`restore_failed_recovered` / `restore_failed_unrecoverable` / `restore_durability_unknown`）は本 doc で再規定しない — 復旧規則・分類の正本は 71-mnt-backup.md §71.7（MNT-01-D1/D4/D5、「CMD 層の呼出し」）で、CMD の `handle_restore_failure`・`terminal_restore_error`（`settings_cmd.rs`）はそれを実装し、独自の規則を定義しない（D-060 (a)/(d)）
 6. **`?`で早期returnしてはならない**（Mutex内のdummy接続が残るため。71 §71.7「重要: 失敗時の契約」参照）
 
 **注意**: リストア中は他のコマンドがブロックされる（Mutexロック中）。単一ユーザーアプリのため問題なし。本 command の CMD→MNT 直接呼び出しは D-060 (a) の正規経路（DB 接続所有権の交換を要する保守 orchestration に該当）。
@@ -323,7 +323,7 @@ PR #164 以降、この文書の command はすべて `#[specta::specta]` を付
 
 ```
 .invoke_handler(tauri::generate_handler![
-    // ... 既存の21コマンド ...
+    // ... ほかの CMD の command ...
     // CMD-11 残り: 設定・ログ・バックアップ・画像
     cmd::settings_cmd::get_settings,
     cmd::settings_cmd::update_setting,
