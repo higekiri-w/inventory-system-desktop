@@ -65,7 +65,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. product_codeで既存商品を取得（存在しなければエラー）
 2. 入力バリデーション（登録時と同じルール）
 3. 売価または原価が変わる場合 → price_historyにINSERT（old/new両方記録）
-4. 売価が変わる場合 → plu_dirty=1にセット
+4. 売価・名称・部門・税率が変わる場合 → plu_dirty=1にセット（名称・部門・税率は D-160 (5)、未実装。30 §4.4 手順 4c）
 5. productsをUPDATE（updated_at更新）
 6. operation_logsに記録（operation_type='product_update', detail_jsonに変更前後）
 

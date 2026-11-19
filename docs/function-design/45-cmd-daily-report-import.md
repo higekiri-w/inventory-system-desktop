@@ -153,6 +153,7 @@ fn scan_register_sd(
 struct RegisterSdScanResponse {
     scan: DailyReportSdScan, // 37 §37.9
     scan_token: String,
+    plu_snapshot_skipped_older: bool, // 手順 2a。未実装（PLU の書出しの見直しの runtime、D-160 (4)）
 }
 ```
 
@@ -162,7 +163,7 @@ struct RegisterSdScanResponse {
 1. `selected_path` を BIZ-08 の `DailyReportSdSelection`（37 §37.9。`None` → `Auto`、`Some` → `Selected(PathBuf)`）にする。CMD は IO-09 の型を使わない（`src-tauri/tests/architecture_test.rs` の LAYER_RULES で cmd → io は禁止）。空文字は `CmdError.kind="validation"`。
 1a. §45.4 手順 3a と同じ取り方で `app_data_dir` を得る（D-149、BIZ-08-D11）。得られなければ error にせず `None` にする（診断 WARN）。BIZ が片付けを飛ばして `tidy_failure = Some(Other)` にし、読取りは続く（§45.4 の commit と違い、scan は写しを書かなくても読める）。`selected_path` が `Some` でも渡し、使うかは BIZ が決める（37 §37.9 手順 2a）。
 2. DB接続を取得し、BIZ-08 `scan_register_sd_daily_reports(conn, selection, PC の今日の日付, app_data_dir)` を呼ぶ。SD を読む間（窓の範囲の小さな file と照合。利用者は 1 人）は DB の Mutex を持ったままでよい。BIZ の片付け（37 §37.12）もこの中で行う（SD の書込みは数本の改名）。CMD は SD の書込みの規則を持たず（CMD-12-D1）、`DailyReportSdScan.tidy_failure`（`Option<RegisterSdTidyFailure>`、specta の enum で `"SdWrite" | "PcCopy" | "Other"`）を変えずに返す。
-2a. 成功時、同じ DB 接続を持ったまま BIZ-04 `refresh_plu_register_snapshot_from_sd(conn, &snapshot.plu_register_z004s)` を呼ぶ（PLU の占有の照合、[33 §16.3](33-biz-plu-export-service.md)、D-117 (3)）。`Err` は scan の失敗にせず、`tracing::warn!` で記録して手順 3 へ進む（response は変えない）。照合の後、`plu_register_z004s` を空にしてから手順 3 で snapshot を cache に入れる（Z004 の bytes を cache に残さない）。本手順は PLU の書出しの見直しの runtime の lane が実装する（37 §37.9 手順 10 と同じ lane）。今の実装は手順 1・1a・2・3・4 で（1a は D-149）、手順 2 の後に手順 3 へ進む。
+2a. 成功時、同じ DB 接続を持ったまま BIZ-04 `refresh_plu_register_snapshot_from_sd(conn, &snapshot.plu_register_z004s)` を呼ぶ（PLU の占有の照合、[33 §16.3](33-biz-plu-export-service.md)、D-117 (3)）。戻り値が `SkippedOlder` のときだけ response の `plu_snapshot_skipped_older` を `true` にする（`Refreshed`・`Unchanged`・`Err` は `false`。55 UI-07-D15 (8)、D-160 (4)）。`Err` は scan の失敗にせず、`tracing::warn!` で記録して手順 3 へ進む。照合の後、`plu_register_z004s` を空にしてから手順 3 で snapshot を cache に入れる（Z004 の bytes を cache に残さない）。本手順は PLU の書出しの見直しの runtime の lane が実装する（37 §37.9 手順 10 と同じ lane）。今の実装は手順 1・1a・2・3・4 で（1a は D-149）、手順 2 の後に手順 3 へ進む。
 3. 成功時、UUID の scan_token を作り、`register_sd_scan_cache` を空にしてから snapshot を入れる（同時に持つ scan は最新の 1 つだけ）。
 4. response を返す。
 

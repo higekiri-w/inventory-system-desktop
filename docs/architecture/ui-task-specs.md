@@ -278,7 +278,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 
 **【利用者操作フロー】**
 1. 未照合なら売上データ取込みで SD を一度読む導線を先に出す。最終照合日時は above the fold に 1 行で表示する
-2. Diff / Full を選び、対象件数、レジの設定を SD に書いてから CV17 で読む案内（Diff / Full とも、UI-08-D5）、保存後に必要なPCツール/SDカード/レジ操作を確認する
+2. Diff / Full を選び、対象件数、保存後に必要なPCツール/SDカード/レジ操作を確認する
 3. `prepare_plu_export` でTSVを生成し、Tauri native save dialog で保存先を選ぶ
 4. 保存失敗またはキャンセル時は `plu_dirty` を変更せず、再保存・再生成できる
 5. 保存成功後、画面上に「PCツールへ投入できない場合はこのまま再書出しできます」と表示する
@@ -291,7 +291,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - prepare は slot 予約を永続化し、再 prepare でも同じ memory No. を使う。confirm は reserved→active を exact memory No. で確定する
 - Diff / Full とも CV17 へ投入できる。失敗時はどちらかを書き出し直す（前に保存した file は取り込まない。保存の後の照合で枠が変わりうる）
 
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build の `src/features/plu-export/PluExportPage.tsx` は、利用者が `FilePicker`（`@/components/FilePicker`）で選んだ Z004 を `commands.importPluRegisterSnapshot`（CMD-08 の `import_plu_register_snapshot`）へ渡して占有を照合し、`get_plu_slot_summary` の件数の要約（`free_count`・`release_pending_count` ほか）を出し、`prepare_plu_export` の `over_limit_warning` を `overLimitWarning` に持つ。売上データ取込みの SD の読取りでの自動の照合はまだ無い（CMD-12 の `scan_register_sd` が無い）。操作フロー 1 の最終照合日時と操作フロー 2 の UI-08-D5 の SD の設定書込みの案内もまだ無い（今の画面は Z004 の「最終読込み日時」を出す）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build の `src/features/plu-export/PluExportPage.tsx` は、利用者が `FilePicker`（`@/components/FilePicker`）で選んだ Z004 を `commands.importPluRegisterSnapshot`（CMD-08 の `import_plu_register_snapshot`）へ渡して占有を照合し、`get_plu_slot_summary` の件数の要約（`free_count`・`release_pending_count` ほか）を出し、`prepare_plu_export` の `over_limit_warning` を `overLimitWarning` に持つ。売上データ取込みの SD の読取りでの自動の照合はまだ無い（CMD-12 の `scan_register_sd` は BIZ-04 を呼ばない）。操作フロー 1 の最終照合日時もまだ無い（今の画面は Z004 の「最終読込み日時」を出す）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### UI-09a/09b: 売上レポート画面群
 

@@ -371,7 +371,7 @@ fn list_daily_report_imports(
 
 ### 37.9 scan_register_sd_daily_reports（SD から読む候補、BIZ-08-D3）
 
-**関数要求**: レジの SD（IO-09、[29 §29.7](29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）から Z001 / Z002 / Z005 を読み、精算ごとの束を取込みの候補として、取込み済みかの状態つきで返す。読んだ bytes は返り値の snapshot に持ち、preview はその snapshot から作る（SD を読み終えたら抜いてよい。SD-18）。窓の中の Z004 も読み、PLU の占有の照合のために snapshot に持つ（手順 10、D-117 (3)）。DB へは書かない。
+**関数要求**: レジの SD（IO-09、[29 §29.7](29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）から Z001 / Z002 / Z005 を読み、精算ごとの束を取込みの候補として、取込み済みかの状態つきで返す。読んだ bytes は返り値の snapshot に持ち、preview はその snapshot から作る（SD を読み終えたら抜いてよい。SD-18）。窓の中の Z004 も読み、PLU の占有の照合のために snapshot に持つ（手順 10、D-117 (3)。未実装、手順 10 の末尾）。DB へは書かない。
 
 **シグネチャ**:
 
@@ -426,7 +426,7 @@ enum DailyReportSdCandidateStatus {
 struct DailyReportSdScanSnapshot {
     created_at: Instant,
     files_by_candidate: HashMap<String, Vec<DailyReportInputFile>>, // NotImported の束だけ
-    plu_register_z004s: Vec<Vec<u8>>, // 窓の中の Z004 の bytes（PLU の占有の照合へ渡す。D-117 (3)）
+    plu_register_z004s: Vec<Vec<u8>>, // 窓の中の Z004 の bytes（PLU の占有の照合へ渡す。D-117 (3)。未実装、手順 10）
 }
 ```
 
