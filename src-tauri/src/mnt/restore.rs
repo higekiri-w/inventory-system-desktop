@@ -1448,10 +1448,12 @@ mod tests {
              VALUES ('old-wal', '2026-07-18T00:00:01');",
         )
         .unwrap();
-        let reader = rusqlite::Connection::open(&db_path).unwrap();
-        reader
-            .execute_batch("BEGIN; SELECT COUNT(*) FROM suppliers;")
-            .unwrap();
+        // close の後も WAL を残す。別の接続を開いたままにすると、Windows では main の退避が共有違反（os error 32）で失敗し B12 に届かない
+        conn.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        )
+        .unwrap();
         drop(database_with_supplier(&backup_path, "new"));
         let ops = InjectedOps {
             busy_checkpoint: true,
@@ -1459,23 +1461,10 @@ mod tests {
         };
 
         let error = restore_backup_with_ops(conn, &backup_path, &db_path, &ops).unwrap_err();
-        eprintln!("B12 error: {error:?}");
         let paths = RestorePaths::new(&db_path);
-        if matches!(error, RestoreError::Recovered(_)) {
-            // 診断（Windows の B12。packet の S3 (a)）: 元の DB の行と遺物を log に出す
-            drop(reader);
-            match db::open_existing_database(db_path.to_str().unwrap()) {
-                Ok(reopened) => eprintln!("B12 reopened: {:?}", supplier_names(&reopened)),
-                Err(open_error) => eprintln!("B12 reopen failed: {open_error:?}"),
-            }
-            assert_no_restore_artifacts(&paths);
-            eprintln!("B12 no restore artifacts");
-            panic!("expected Unrecoverable: {error:?}");
-        }
         assert!(matches!(error, RestoreError::Unrecoverable(_)), "{error:?}");
         assert!(paths.main.exists());
         assert!(paths.wal_backup.exists() && paths.manifest.exists());
-        drop(reader);
         assert_eq!(
             reconcile_restore(&db_path).unwrap(),
             ReconcileState::Recovered
