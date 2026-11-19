@@ -331,7 +331,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 **【CMD呼び出し】**
 - 「棚卸し開始」→ CMD-10 start_stocktake
 - 一覧取得 → CMD-10 get_stocktake_items
-- カウント入力 → CMD-10 update_count（1件ずつ即保存）
+- カウント入力 → CMD-10 save_stock_count（1件ずつ即保存。「入れ直す」は fresh な計数）
 - 「確定」→ CMD-10 complete_stocktake
 
 ### UI-11a: 閾値設定画面

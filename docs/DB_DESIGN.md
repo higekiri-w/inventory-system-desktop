@@ -147,8 +147,8 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 
 ### stock_quantity整合性チェック（指摘#12対応）
 - **前提**: 全商品の在庫はシステム導入時の初期投入（REQ-104一括インポートまたはREQ-101個別登録）から履歴が始まる。初期投入時にinventory_movementsにmovement_type='receiving'で初期在庫レコードを作成し、全商品の履歴起点を保証する
-- **pos_stock_sync=0の商品**: CSV取込みで在庫を動かさない商品は、inventory_movementsにsale_autoの行が作られない。手動販売出庫や棚卸し補正でのみ在庫が変動する。整合性チェックはこれらの商品も含めて行う
-- **チェックタイミング**: CSV取込み完了時、棚卸し確定時、設定画面からの手動実行
+- **pos_stock_sync=0の商品**: CSV取込みで在庫を動かさない商品は、inventory_movementsにsale_autoの行が作られない。手入力の入出庫（入庫・返品交換・手動販売・廃棄・振替）と計数でのみ在庫が変わる。整合性チェックはこれらの商品も含めて行う
+- **チェックタイミング**: 棚卸し確定時、設定画面からの手動実行
 - **チェック方法**: 各商品について、記録（inventory_movements と stock_counts）から求め直した値と、products の写しの 4 項目（`stock_quantity`・`stock_recheck`・`stock_range_low`・`stock_range_high`）を突合する（[36](function-design/36-biz-integrity-check.md)。計数の無い商品では求め直しの値は `is_voided=0` の movement の和と同じ）
 - **差異発見時**: operation_logsに記録。画面に「在庫数に不整合があります」と警告表示。差異のある商品一覧を表示
 - **復旧方針**: 整合性の画面からの補正は、利用者に差異を提示し、保存している値を記録から求め直した値に合わせて補正する旨を確認する（文言正本は function-design/75-ui-integrity-check.md）。確定した場合のみ、写しを求め直しの結果（`recompute_stock`）へ直接更新する。inventory_movements への行追加はしない（挿入すると記録自体が変わり再チェックが収束しないため）。補正は同一TX内の integrity_fix 操作ログへ before/after 付きで必須記録する（BIZ-07-D2/D3、D-051、D-118）。例外は移行（migration v9 の手順 8、[22 §19](function-design/22-mnt-migration.md)）で、写しと記録の和の違う商品を同じ TX で直し、`trigger: migration` の integrity_fix 操作ログに残して、起動の後に整合性の画面で知らせる

@@ -168,6 +168,7 @@ Keep it factual and stable.
 - During stocktake, items received but not yet billed are excluded from the count; discarded items are subtracted from the count — 2026-08-15 owner原文 — `docs/evidence/issue-76/form-response-2026-08-15.sanitized.md`
   - 未会計の取り置きは数に入れる（取り置きは会計の前が多い）。取り寄せは先払いで、先払いの取り寄せ品がお渡し待ちの間に棚卸しになっても数えない。先払いの取り寄せは、受注の時点で JAN が分からないことがあるため、レジで部門キーで金額を打つ — 店主回答（owner 経由の質問票）2026-09-29
   - 棚卸しの途中の入荷のうち、問屋の締め・請求・支払いの周期で請求と支払いが翌年になるものは、12 月末の在庫に数えない。見分けは問屋の締め日 — 店主回答（owner 経由の質問票）2026-09-29
+- 入庫・返品を、品物が届く前（戻る前）にアプリへ先に入れることは「たまにある」（最近は）— 店主回答（owner 経由）2026-11-17（repo 外の回答台帳 TD-762）
 - Price revision: hand-correct the paper prior-year list's cost/price, re-tag the shelf price, then correct the PC copy of the prior-year list afterward — 2026-08-15 owner原文 — `docs/evidence/issue-76/form-response-2026-08-15.sanitized.md`
 - Price-revision notices: lists up to ~400 lines are worked through over several days, prioritizing high-volume items, without waiting for any listed effective date — 2026-08-21/22 owner原文 — `docs/evidence/issue-90/hearing-2026-08-21-22.sanitized.md`
 - A heavy stocktake year took about 1 week to transcribe onto the paper list, then 2-3 more days to transcribe into the PC — 2026-08-22 owner原文 — `docs/evidence/issue-90/hearing-2026-08-21-22.sanitized.md`
