@@ -209,7 +209,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 
 **タスク要求**: Z004ファイルを読み込み、売上記録の作成と在庫更新を4段階パイプラインで実行する
 
-**理由**: Z004はPLU登録後の商品別売上を表し、BIZ-03は`pos_stock_sync`に基づく在庫増減とロールバックまで実装済みである。ファイルフォーマットの癖（CP932/NEL/layout A/B）、マスタ未登録商品への対応、ロールバック可能性を考慮して段階的な処理パイプラインを使う。current operation の日報主入力（Z001/Z002/Z005）は BIZ-08 で扱う
+**理由**: Z004はPLU登録後の商品別売上を表し、BIZ-03は`pos_stock_sync`に基づく在庫連動とロールバックまで実装済みである。ファイルフォーマットの癖（CP932・改行の正規化・layout A。layout B は IO-02 が受けない）、マスタ未登録商品への対応、ロールバック可能性を考慮して段階的な処理パイプラインを使う。current operation の日報主入力（Z001/Z002/Z005）は BIZ-08 で扱う
 
 **【データ構造】**
 
@@ -218,11 +218,11 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 
 段階間受け渡しデータ:
 - ParseResult: settlement_date, parsed_rows[]{line_no, normalized_jan, name, quantity, amount}, parse_errors[]{line_no, error_type, error_message}
-- ValidateResult: matched_rows[]{line_no, product_code, quantity, amount, pos_stock_sync}, error_rows[]{line_no, normalized_jan, name, quantity, amount, error_type, error_message}, excluded_count
-- PreviewData: file_info{filename, settlement_date, file_hash}, matched_summary{count, total_amount}, error_summary{count, items[]}, duplicate_check_result
+- ValidateResult: matched_rows[]{line_no, normalized_jan, product_code, shared_jan, quantity, amount}（`pos_stock_sync` は持たず、確定の TX で取り直す。[32](../function-design/32-biz-csv-import-service.md) §15.2）, error_rows[]{line_no, normalized_jan, name, quantity, amount, error_type, error_message}, excluded_count
+- PreviewData: file_info{filename, settlement_date, file_hash}, matched_summary{count, total_amount, warnings}, error_summary{count, items[]}, settlement_gaps, settlement_date_after_today
 
 出力データ:
-- 取込み結果: csv_import_id, status('completed'/'completed_partial'), total_items, total_amount, skipped_count
+- 取込み結果: csv_import_id, status('completed'/'completed_partial'), total_items, total_amount, skipped_count, settlement_gaps, settlement_date_after_today, recheck_targets
 
 内部で扱うテーブル: csv_imports, csv_import_errors, sale_records, products, inventory_movements, operation_logs
 
@@ -239,46 +239,18 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **Stage 2: Validate**
 1. parsed_rowsの空レコード除外（JAN=0000...、quantity=0 and amount=0）
 2. 実データ行についてproducts.jan_codeで検索
-   - ヒット1件 → matched_rowsに追加。pos_stock_syncフラグをコピー
+   - ヒット1件 → matched_rowsに追加
    - ヒット0件 → 前の JAN の別名（D-122、proposed・未実装）があればその商品で matched_rows に追加、無ければ error_rowsに追加（error_type='unmatched_product'）
-   - ヒット複数件 → ORDER BY product_code ASCで先頭に紐付け
+   - ヒット複数件 → ORDER BY product_code ASCで先頭に紐付け（共有 JAN。売上だけ記録し、在庫連動の外に置く）
 3. Stage 1のparse_errorsもerror_rowsにマージ
 4. ValidateResultを構築
 
 **Stage 3: Preview（フロントエンドとの連携ポイント）**
-1. file_hashで重複チェック
-   - status IN ('completed','completed_partial') → ブロック
-   - status = 'rolled_back' → 許可
-2. settlement_dateで既存チェック
-   - 同じ日の別hash取込みが存在 → active import全件summaryと追加確認フラグを付与
-3. PreviewDataを構築してフロントエンドに返す
-4. **ここでフロントエンドからの利用者操作を待つ**
+1. 精算の識別と並びを検査する（同じ hash の active・同じ精算の別版・別のレジ・精算の順の食い違いを拒む。同じ精算日の別の精算は確認なしに進む。表と文は [32](../function-design/32-biz-csv-import-service.md) の「精算の識別と並び」）
+2. 知らせ（欠けた精算回数の区間、精算日が PC の今日より後）を付けて PreviewData を構築し、フロントエンドに返す
+3. **ここでフロントエンドからの利用者操作を待つ**
 
-**Stage 4: Commit**（以下の Commit とロールバックの手順は、現行 build では停止中の旧本体の記述。[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md)、[32](../function-design/32-biz-csv-import-service.md) §15.0）
-1. preview statusと `additional_import_confirmed` の組合せを検証する
-2. トランザクション内で同一file_hashを再検査し、続けて同日active import ID snapshotを再取得する。不一致は「同日の取込み状況が変わりました。再度プレビューしてください」で副作用なく止める
-3. 既存importを変更せず、トランザクション内で新規分だけ実行
-   - csv_importsにINSERT → import_idを取得
-   - matched_rowsの各行について:
-     - sale_recordsにINSERT（source='auto', csv_import_id=import_id, source_line_no=line_no）
-     - pos_stock_sync=1の場合:
-       - 在庫視点でquantityを変換（返品:sale_records.quantity<0→inventory_movements.quantity=+|quantity|、通常販売→inventory_movements.quantity=-quantity）
-       - inventory_movementsにINSERT（movement_type='sale_auto', reference_type='csv_import', reference_id=import_id）し、その商品を `recompute_stock` で求め直す（BIZ-02 の `apply_stock_change`）
-     - pos_stock_sync=0の場合 → sale_recordsのみ、在庫は動かさない
-   - error_rowsがある場合 → csv_import_errorsにINSERT
-   - csv_imports.status / total_items / total_amount / skipped_countを確定
-   - operation_logsに記録（operation_type='csv_import'）
-4. COMMIT
-
-**ロールバック処理:**
-1. csv_import_idで対象を特定
-2. トランザクション内で実行
-   - 関連するsale_recordsをis_voided=1に更新
-   - 関連するinventory_movementsをis_voided=1に更新
-   - is_voided=1にしたinventory_movementsの商品ごとに `recompute_stock` で求め直す（補償の movement は作らない）
-   - csv_imports.statusを'rolled_back'に更新
-   - operation_logsに記録（operation_type='csv_rollback'）
-3. 同一settlement_dateの他のactive importは変更しない
+**Stage 4: Commit と ロールバック**: 手順の正本は [32](../function-design/32-biz-csv-import-service.md) の冒頭の「確定（commit）」「取消（rollback）」と §15.4・§15.5。確定は 1 TX で精算の検査と JAN の候補を取り直し、csv_imports（精算の鍵つき）・sale_records（`stock_linked` つき）・在庫連動の行の inventory_movements（`sale_auto`）・csv_import_errors を書き、影響する商品を `recompute_stock` で求め直す。取消は対象の取込みID の sale_records・inventory_movements を void し、同じく求め直して status を 'rolled_back' にする（補償の movement は作らない。他の取込みは変えない）。
 
 **【制御構造】**
 - Stage 3→4の間に利用者の操作待ちがある。Preview結果はサーバ側キャッシュに保持し、フロントエンドはpreview_tokenのみを保持してcommit時に送り返す（有効期限30分）
@@ -321,7 +293,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. IO-07（POS日報bundleパーサー）を呼び出す
 2. parse_errors がある場合は commit 不可として中断し、`daily_report_imports` は作らない
 3. parse失敗は operation_logs に `daily_report_parse_failed` として汎用文言で記録する
-4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`、BIZ-08-D2）と数の上限の越え（`number_too_large`、BIZ-08-D2a。帳票と列を名指し、値を出さない）は固定の形の文にする
+4. parse errorのsource/filename/line/type/messageは開発者向けdiagnostic WARNへ構造化して記録し、利用者向けerrorとoperation logのraw detailには含めない（BIZ-08-D1）。精算回数の不一致（`settlement_mismatch`、BIZ-08-D2）と数の列の誤り（`invalid_number`・`number_too_large`、BIZ-08-D2a、D-158。帳票と列を名指し、値を出さない）は固定の形の文にする
 
 **Stage 2: Validate**
 1. Z001/Z002/Z005 の report_date が一致することを確認する
@@ -375,6 +347,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D1〜D8: Z004/日報の追加取込み、TX内snapshot再検証、per-import rollback、additive readを正本化。 |
 | 2026-11-11 | PR #236 | 集計契約の「将来のcoverage日数」を、月の取り込んだ日を返す今の契約（`official_report_dates`、34 §19.4 手順 6）を引く文に置き換えた。 |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | BIZ-03 の型・Stage 3・Stage 4・ロールバックの旧い手順（同じ日の追加の確認・停止中の旧本体）を 32 の今の契約への参照に置き換え、BIZ-06 の旧本体を 35 への参照に置き換えた。BIZ-08 の parse の誤りの文に `invalid_number`（D-158）を入れた。 |
 
 ---
 
@@ -457,48 +430,23 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 
 入力データ:
 - 棚卸し開始: なし（全商品を対象に自動生成）
-- カウント入力: stocktake_item_id, actual_count
-- 棚卸し確定: stocktake_id, force_fill（true=未入力をシステム在庫と同じとみなす。先決事項D-1、2026-04-12確定）
+- 計数の保存: product_code, count_value, fresh, business_date, stocktake_item_id?
+- 完了: stocktake_id
 
 出力データ:
 - 棚卸し一覧: [{product_code, name, department_name, system_stock, actual_count, difference, counted_at}], 進捗（入力済み/未入力件数）
-- 確定結果: total_cost（仕入原価総額）、差異があった商品一覧
+- 完了: total_cost（仕入原価総額）、total_items、integrity_result。検査に当たれば明細ごとの拒否の理由（`settlement_pending`・`recheck`・`uncounted`）
 
-内部で扱うテーブル: stocktakes, stocktake_items, products, inventory_movements, operation_logs
+内部で扱うテーブル: stocktakes, stocktake_items, stock_counts, products, inventory_movements（読取り）, csv_imports（読取り）, operation_logs
 
 **【処理構造】**
 
-**棚卸し開始:**
-1. 進行中の棚卸し（status='in_progress'）が存在するかチェック → 存在すればエラー（1件まで制約）
-2. stocktakesにINSERT（status='in_progress'）→ stocktake_idを取得
-3. 全商品（is_discontinued=0、または is_discontinued=1かつstock_quantity>0）について:
-   - stocktake_itemsにINSERT（system_stock=現在のproducts.stock_quantity, actual_count=NULL）
-4. is_discontinued=1 かつ stock_quantity=0 の商品 → actual_count=0として自動入力
-5. operation_logsに記録（operation_type='stocktake_start'）
+開始・計数の保存・完了の手順の正本は [35](../function-design/35-biz-stocktake-service.md) の冒頭の D-118 の節と §20.3〜§20.5（b1 で旧い数の上書きと在庫への上書きの確定・force_fill・自動の 0 の入力を置き換えた）。要点:
 
-**カウント入力:**
-1. stocktake_itemsのactual_countを更新、counted_at=現在日時
-2. 差異の表示は「現在のproducts.stock_quantity - actual_count」で動的計算（棚卸し中もCSV取込みで在庫が動くため）
-
-**棚卸し確定:**（棚卸しの開始・カウント入力・確定は、現行 build では停止中の旧本体の記述。[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md)、[35](../function-design/35-biz-stocktake-service.md) §20.0）
-1. 未入力（actual_count=NULL）の商品が残っていないかチェック → 残っていれば警告（確定を阻止、または「未入力はシステム在庫と同じとみなす」選択肢）
-2. トランザクション内で実行
-   - 各stocktake_itemについて:
-     - valuation_cost_price_centi = 現在のproducts.cost_price_centi をセット
-     - difference = products.stock_quantity - actual_count
-     - difference ≠ 0 の場合:
-       - inventory_movementsにINSERT（movement_type='stocktake', quantity=actual_count - products.stock_quantity, stock_after=actual_count, reference_type='stocktake', reference_id=stocktake_id）
-       - 補正の movement を足した後、その商品を `recompute_stock` で求め直す
-   - total_cost = 商品別の金額（valuation_cost_price_centi・評価数量〈現行の旧本体は actual_count、新方式は `max(補正後現在庫,0)`〉・価格の基準数量から1/100円で四捨五入）の合計を円未満で四捨五入（[35 §20.5a](../function-design/35-biz-stocktake-service.md#205a-評価額の計算価格の基準数量と店の丸め)）
-   - stocktakes.total_cost, completed_at, status='completed'を更新
-   - operation_logsに記録（operation_type='stocktake_complete', detail_jsonに差異件数・total_cost）
-3. COMMIT
-
-**【制御構造】**
-- 棚卸し中（status='in_progress'）のCSV取込みは許可（SP-205-09修正）。差異は動的計算で対応
-- 棚卸し中に新規商品が登録された場合 → BIZ-01の商品登録処理内でstocktake_itemsに自動追加
-- 進行中の棚卸しは1件まで。アプリ層でチェック
-- カウント入力は1件ずつ保存（中断再開対応）。トランザクション不要
+- 開始は進行中の棚卸しが無ければ header と全商品の明細を作る（進行中は1件まで）。棚卸し中の新規商品登録は明細を足す
+- 計数は `stock_counts` に足し（消さない・書き換えない）、在庫の写しを記録から求め直す（`recompute_stock`）
+- 完了は未計数・要再確認・取り込んでいない精算を検査し、通れば評価の原価と数量を固定して total_cost を求める（[35 §20.5a](../function-design/35-biz-stocktake-service.md#205a-評価額の計算価格の基準数量と店の丸め)）。在庫を動かす movement は作らない
+- 棚卸し中も入出庫と Z004 の取込みは止めない（計数に入るかは記録の並びで決まる。ADR SPEC-STK-CNT-D3）
 
 ---
 
