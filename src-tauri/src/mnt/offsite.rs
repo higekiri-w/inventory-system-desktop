@@ -1,4 +1,4 @@
-//! MNT-01-D8・D11: PC の外の控え（D-114、D-130）
+//! MNT-01-D8・D11・D12: PC の外の控え（D-114、D-130）
 //!
 //! docs/function-design/71-mnt-backup.md §71.11 に基づく実装。
 //! 用意した取外し可能な媒体（目印と PC 側の状態の両方で見分ける）へ、確かめ済みの最新の backup を
@@ -465,9 +465,9 @@ fn check_body(
     if state.media.is_empty() {
         return Ok(OffsiteCheckResult::NotPrepared);
     }
-    // 2. 写す元（正式名だけ）
+    // 2. 写す元（正式名だけ。先の日付の名前は選ばない、MNT-01-D12）
     let source = match list_backups(backup_dir) {
-        Ok(backups) => match backups.into_iter().next() {
+        Ok(backups) => match newest_up_to(backups, env.now.date()) {
             Some(source) => source,
             None => return Ok(OffsiteCheckResult::NoLocalBackup),
         },
@@ -659,10 +659,14 @@ fn copy_to_medium(
     }
     // 公開の後の失敗: 検査済みの正式名は残す
     env.ops.sync_parent(&published).map_err(medium_error)?;
-    // 4g. 掃除（確かめ直し。消せなければ warn で続ける）
+    // 4g. 掃除（確かめ直し。消せなければ warn で続ける）。先の日付の名前の写しは数えず消さない（MNT-01-D12）
     (env.observe)("before_cleanup");
     verify_medium(medium)?;
-    let mut copies: Vec<(String, PathBuf)> = official_copies(dir);
+    let today = env.now.date();
+    let mut copies: Vec<(String, PathBuf)> = official_copies(dir)
+        .into_iter()
+        .filter(|(name, _)| extract_date_from_backup(name).is_some_and(|date| date <= today))
+        .collect();
     copies.sort_by(|a, b| b.0.cmp(&a.0));
     for (name, path) in copies.into_iter().skip(OFFSITE_KEEP) {
         if name == file_name {
@@ -675,6 +679,14 @@ fn copy_to_medium(
     Ok(())
 }
 
+/// 写す元（§71.11.4 手順 2、MNT-01-D12）: 新しい順の一覧のうち、名前の日付が今日以前の最初の 1 本
+// ponytail: 日付だけで比べ、時刻を見ない（今日の名前は時刻が今より後でも選ぶ）。広げる条件は 71 MNT-01-D12 の見直し契機
+fn newest_up_to(backups: Vec<BackupInfo>, today: NaiveDate) -> Option<BackupInfo> {
+    backups.into_iter().find(|backup| {
+        extract_date_from_backup(&backup.file_name).is_some_and(|date| date <= today)
+    })
+}
+
 fn status_with(
     roots: &[PathBuf],
     app_data_dir: &Path,
@@ -682,8 +694,7 @@ fn status_with(
     today: NaiveDate,
 ) -> OffsiteBackupStatus {
     let local_backup_old = match list_backups(backup_dir) {
-        Ok(backups) => backups
-            .first()
+        Ok(backups) => newest_up_to(backups, today)
             .and_then(|newest| extract_date_from_backup(&newest.file_name))
             .is_none_or(|date| (today - date).num_days() >= OFFSITE_STALE_DAYS),
         // 原因を決めつけない（PC の中の一覧の失敗は画面の一覧が出す）
@@ -718,14 +729,19 @@ fn status_with(
         }
     };
     let prepared = !state.media.is_empty();
-    let last_success = state.last_success.as_ref();
-    let days_since_last_success = last_success.and_then(|record| {
+    let days_of = |record: &OffsiteCopyRecord| {
         let copied_on = NaiveDateTime::parse_from_str(&record.at, DATETIME_FORMAT)
             .ok()?
             .date();
         let content_on = extract_date_from_backup(&record.file_name).unwrap_or(copied_on);
         Some((today - copied_on.min(content_on)).num_days())
-    });
+    };
+    // 写した日と控えの日付の古い方が today より後の成功の記録は無いものとして扱う（MNT-01-D12。書き換えない）
+    let last_success = state
+        .last_success
+        .as_ref()
+        .filter(|record| days_of(record).is_none_or(|days| days >= 0));
+    let days_since_last_success = last_success.and_then(days_of);
     let attached = find_media(roots)
         .into_iter()
         .filter_map(|medium| {
@@ -1318,6 +1334,14 @@ mod tests {
             now: now(),
             ops: &StdRestoreFileOps,
             observe: &noop,
+        }
+    }
+
+    /// 別の時刻の `Env`（時計が先・時計が戻る、MNT-01-D12）
+    fn env_at(roots: &[PathBuf], now: NaiveDateTime) -> Env<'static> {
+        Env {
+            now,
+            ..std_env(roots)
         }
     }
 
@@ -2597,7 +2621,7 @@ mod tests {
 
         // (3) 掃除（手順 4g）: 規約の名前の link を写しに数えず・消さず、本物の 30 本を残す。
         // link の名前が最も古い case（数えると link が消える）と最も新しい case（数えると本物が 1 本消える）
-        for link_days in [-60, 60] {
+        for link_days in [-60, 0] {
             let fx = Fx::new();
             fx.prepare();
             put_backup(&fx.local, &name);
@@ -2933,6 +2957,343 @@ mod tests {
                 .unwrap();
         drop(conn);
         assert_eq!(std::fs::read(fx.state_file()).unwrap(), before);
+    }
+
+    // ---- 先の日付の backup（MNT-01-D12） ------------------------------------------
+
+    #[test]
+    fn test_check_offsite_req901_d12_skips_future_dated_source() {
+        // REQ-901 / MNT-01-D12 (1)・(3) / 71 §71.11.4 手順 2: 写す元は名前の日付が今日以前の最新（日付だけで比べる）
+        let today_late = name_on(today(), "235959");
+        let tomorrow = name_on(today() + chrono::Duration::days(1), "000000");
+        let fx = Fx::new();
+        fx.prepare();
+        put_backup(&fx.local, &today_late);
+        put_backup(&fx.local, &tomorrow);
+        assert_eq!(
+            fx.check(),
+            Ok(OffsiteCheckResult::Copied {
+                file_name: today_late.clone(),
+                labels: vec!["控え 1".to_string()],
+            })
+        );
+        assert_eq!(
+            names(&fx.medium()),
+            [today_late.clone(), MARKER_FILE.to_string()]
+        );
+        assert_eq!(
+            names(&fx.local),
+            [today_late.clone(), tomorrow.clone()],
+            "PC の中の明日の file は残る"
+        );
+        assert_eq!(fx.check(), Ok(OffsiteCheckResult::UpToDate));
+
+        // 用意（§71.11.2 手順 6）の最初の写しも同じ file を選ぶ
+        let fx = Fx::new();
+        put_backup(&fx.local, &today_late);
+        put_backup(&fx.local, &tomorrow);
+        assert_eq!(
+            fx.prepare().newest_copy.as_deref(),
+            Some(today_late.as_str())
+        );
+        assert_eq!(
+            names(&fx.medium()),
+            [today_late.clone(), MARKER_FILE.to_string()]
+        );
+        assert_eq!(fx.state().last_success.unwrap().file_name, today_late);
+    }
+
+    #[test]
+    fn test_check_offsite_req901_d12_only_future_dated_is_no_local_backup() {
+        // REQ-901 / MNT-01-D12 (1)・(3) / 71 §71.11.4 手順 2: 先の日付の file だけなら写さず・書かず・消さない
+        let fx = Fx::new();
+        fx.prepare();
+        put_backup(
+            &fx.local,
+            &name_on(today() + chrono::Duration::days(1), "000000"),
+        );
+        put_backup(
+            &fx.local,
+            &name_on(today() + chrono::Duration::days(30), "090000"),
+        );
+        let before = (snapshot(&fx.app), snapshot(&fx.root), snapshot(&fx.local));
+        assert_eq!(fx.check(), Ok(OffsiteCheckResult::NoLocalBackup));
+        assert_eq!(
+            (snapshot(&fx.app), snapshot(&fx.root), snapshot(&fx.local)),
+            before
+        );
+    }
+
+    /// 成功の 3 項目と `stale`（MNT-01-D12 の test が読む組）
+    fn success_of(status: &OffsiteBackupStatus) -> (Option<&str>, Option<&str>, Option<i64>, bool) {
+        (
+            status.last_success_at.as_deref(),
+            status.last_success_label.as_deref(),
+            status.days_since_last_success,
+            status.stale,
+        )
+    }
+
+    #[test]
+    fn test_offsite_req901_d12_clock_ahead_then_fixed_copies_and_clears_stale() {
+        // REQ-901 / MNT-01-D12 (1)・(2) / 71 §71.11.4 手順 2・5、§71.11.5: 時計が 30 日先のときに写す → 時計が直る
+        let ahead = now() + chrono::Duration::days(30);
+        let ahead_name = name_on(ahead.date(), "080000");
+        let fx = Fx::new();
+        fx.prepare();
+        put_backup(&fx.local, &ahead_name);
+        assert!(matches!(
+            check_with(&env_at(&fx.roots(), ahead), &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::Copied { .. })
+        ));
+        assert_eq!(fx.state().last_success.unwrap().file_name, ahead_name);
+
+        // initial: 時計が直った今日は、先の日付の記録を無いものとして知らせる（媒体が見えても見えなくても）
+        let absent = (None, None, None, true);
+        assert_eq!(success_of(&fx.status()), absent);
+        assert_eq!(
+            success_of(&status_with(&[], &fx.app, &fx.local, today())),
+            absent
+        );
+
+        // failure: 今日の控えを置いても、媒体が見えなければ状態を変えず知らせたまま
+        let name = today_name();
+        put_backup(&fx.local, &name);
+        let state_before = std::fs::read(fx.state_file()).unwrap();
+        assert_eq!(
+            check_with(&std_env(&[]), &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::MediumMissing)
+        );
+        assert_eq!(std::fs::read(fx.state_file()).unwrap(), state_before);
+        assert_eq!(success_of(&fx.status()), absent);
+
+        // retry・success: 差し直すと今日の file が写り、成功の記録が置き換わる
+        assert_eq!(
+            fx.check(),
+            Ok(OffsiteCheckResult::Copied {
+                file_name: name.clone(),
+                labels: vec!["控え 1".to_string()],
+            })
+        );
+        let success = fx.state().last_success.unwrap();
+        assert_eq!(
+            (success.at.as_str(), success.file_name.as_str()),
+            ("2026-11-02 09:00:00", name.as_str())
+        );
+        assert_eq!(
+            success_of(&fx.status()),
+            (Some("2026-11-02 09:00:00"), Some("控え 1"), Some(0), false)
+        );
+
+        // revisit: 次の確認は写さず、状態を変えない
+        let state_before = std::fs::read(fx.state_file()).unwrap();
+        assert_eq!(fx.check(), Ok(OffsiteCheckResult::UpToDate));
+        assert_eq!(std::fs::read(fx.state_file()).unwrap(), state_before);
+        assert_eq!(
+            names(&fx.medium()),
+            [name, ahead_name, MARKER_FILE.to_string()]
+        );
+    }
+
+    #[test]
+    fn test_offsite_req901_d12_clock_set_back_copies_backdated_backup() {
+        // REQ-901 / MNT-01-D12 (1)・(2) / 71 §71.11.4 手順 2・5、§71.11.5: 正しい時計で写す → 時計が 10 日戻る
+        let name = today_name();
+        let fx = Fx::new();
+        fx.prepare();
+        put_backup(&fx.local, &name);
+        assert!(matches!(fx.check(), Ok(OffsiteCheckResult::Copied { .. })));
+
+        let back = now() - chrono::Duration::days(10);
+        let back_name = name_on(back.date(), "080000");
+        let status_back = |roots: &[PathBuf]| status_with(roots, &fx.app, &fx.local, back.date());
+        let absent = (None, None, None, true);
+        assert_eq!(success_of(&status_back(&fx.roots())), absent);
+
+        put_backup(&fx.local, &back_name);
+        let state_before = std::fs::read(fx.state_file()).unwrap();
+        assert_eq!(
+            check_with(&env_at(&[], back), &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::MediumMissing)
+        );
+        assert_eq!(std::fs::read(fx.state_file()).unwrap(), state_before);
+        assert_eq!(success_of(&status_back(&[])), absent);
+
+        assert_eq!(
+            check_with(&env_at(&fx.roots(), back), &fx.app, &fx.local),
+            Ok(OffsiteCheckResult::Copied {
+                file_name: back_name.clone(),
+                labels: vec!["控え 1".to_string()],
+            })
+        );
+        assert_eq!(
+            names(&fx.medium()),
+            [back_name.clone(), name, MARKER_FILE.to_string()],
+            "前の写し（戻した時計では先の日付の名前）も残る"
+        );
+        let success = fx.state().last_success.unwrap();
+        assert_eq!(
+            (success.at.as_str(), success.file_name.as_str()),
+            ("2026-10-23 09:00:00", back_name.as_str())
+        );
+        assert_eq!(
+            success_of(&status_back(&fx.roots())),
+            (Some("2026-10-23 09:00:00"), Some("控え 1"), Some(0), false)
+        );
+    }
+
+    #[test]
+    fn test_offsite_status_req901_d12_local_backup_old_ignores_future_dated() {
+        // REQ-901 / MNT-01-D12 (1) / 71 §71.11.5 の local_backup_old: 先の日付の file を数えない
+        let cases: [(Option<i64>, bool); 3] = [(Some(10), true), (Some(2), false), (None, true)];
+        for (days, expected) in cases {
+            let fx = Fx::new();
+            fx.prepare();
+            put_backup(
+                &fx.local,
+                &name_on(today() + chrono::Duration::days(1), "000000"),
+            );
+            if let Some(days) = days {
+                put_backup(
+                    &fx.local,
+                    &name_on(today() - chrono::Duration::days(days), "120000"),
+                );
+            }
+            assert_eq!(fx.status().local_backup_old, expected, "{days:?}");
+        }
+    }
+
+    #[test]
+    fn test_offsite_status_req901_d12_future_record_is_treated_as_absent() {
+        // REQ-901 / MNT-01-D12 (2)・(3) / 71 §71.11.5: 写した日と控えの日付の両方が先の記録だけを無いものとし、
+        // 片方だけ先なら今までどおり古い方から数える。状態の file は書き換えない
+        let fx = Fx::new();
+        fx.prepare();
+        let medium_id = fx.state().media[0].medium_id.clone();
+        // (写した日, 控えの日付) は今日からの日数（正が先）
+        let cases: [((i64, i64), Option<i64>, bool); 4] = [
+            ((5, -1), Some(1), false),
+            ((-1, 5), Some(1), false),
+            ((1, 1), None, true),
+            ((0, 0), Some(0), false),
+        ];
+        for ((copied_ahead, content_ahead), days, stale) in cases {
+            let at = format!(
+                "{} 09:00:00",
+                (today() + chrono::Duration::days(copied_ahead)).format("%Y-%m-%d")
+            );
+            let mut state = fx.state();
+            state.last_success = Some(OffsiteCopyRecord {
+                at: at.clone(),
+                file_name: name_on(today() + chrono::Duration::days(content_ahead), "120000"),
+                medium_id: medium_id.clone(),
+                sha256: "0".repeat(64),
+            });
+            std::fs::write(fx.state_file(), serde_json::to_vec(&state).unwrap()).unwrap();
+            let before = std::fs::read(fx.state_file()).unwrap();
+            let status = fx.status();
+            let expected = match days {
+                Some(_) => (Some(at.as_str()), Some("控え 1"), days, stale),
+                None => (None, None, None, stale),
+            };
+            assert_eq!(
+                success_of(&status),
+                expected,
+                "{copied_ahead} {content_ahead}"
+            );
+            assert_eq!(std::fs::read(fx.state_file()).unwrap(), before, "書かない");
+        }
+    }
+
+    #[test]
+    fn test_check_offsite_req901_d12_retention_ignores_future_dated_copies() {
+        // REQ-901 / MNT-01-D12 (3)・(4)・MNT-01-D8 保持 / 71 §71.11.4 手順 4g:
+        // 名前の日付が今日以前の写しだけを数えて新しい 30 本を残し、今日より後の名前の写しは数えず消さない
+        let name = today_name();
+        let day = |offset: i64, hms: &str| name_on(today() + chrono::Duration::days(offset), hms);
+        let past = |oldest: i64| -> Vec<String> {
+            (-oldest..=-1).map(|offset| day(offset, "120000")).collect()
+        };
+        let setup = |on_medium: &[String]| {
+            let fx = Fx::new();
+            fx.prepare();
+            for copy in on_medium {
+                std::fs::write(fx.medium().join(copy), b"old copy").unwrap();
+            }
+            put_backup(&fx.local, &name);
+            fx
+        };
+        // 写した後の媒体 = 置いた写し − removed + 今写した 1 本 + 目印
+        let remaining = |on_medium: &[String], removed: &[String]| {
+            let mut expected: Vec<String> = on_medium
+                .iter()
+                .filter(|copy| !removed.contains(copy))
+                .cloned()
+                .collect();
+            expected.extend([name.clone(), MARKER_FILE.to_string()]);
+            expected.sort();
+            expected
+        };
+        let copied = Ok(OffsiteCheckResult::Copied {
+            file_name: name.clone(),
+            labels: vec!["控え 1".to_string()],
+        });
+
+        // (a) 先の日付の名前 30 本は今日より前の 5 本を押し出さない
+        let future: Vec<String> = (1..=30).map(|offset| day(offset, "120000")).collect();
+        // (b) 今日以前が 30 本ちょうどなら消えず、31 本なら最も古い 1 本だけ。今日の名前は時刻が今より後でも数える
+        let mut with_today_late = past(30);
+        with_today_late[29] = day(0, "235959");
+        // (c) 明日の 00:00:00 の名前は数えない（今日以前は 30 本ちょうど）
+        let with_tomorrow = [vec![day(1, "000000")], past(29)].concat();
+        // (e) 今写す file より時刻が後の今日の名前が 30 本あっても、今写した 1 本を消さない
+        let today_later: Vec<String> = (0..30)
+            .map(|minute| day(0, &format!("09{minute:02}00")))
+            .collect();
+        let cases: [(&str, Vec<String>, Vec<String>); 6] = [
+            ("a", [future, past(5)].concat(), vec![]),
+            ("b 29", past(29), vec![]),
+            ("b 30", past(30), vec![day(-30, "120000")]),
+            (
+                "b today 23:59:59",
+                with_today_late,
+                vec![day(-30, "120000")],
+            ),
+            ("c", with_tomorrow, vec![]),
+            ("e", today_later, vec![]),
+        ];
+        for (case, on_medium, removed) in cases {
+            let fx = setup(&on_medium);
+            assert_eq!(fx.check(), copied, "{case}");
+            assert_eq!(
+                names(&fx.medium()),
+                remaining(&on_medium, &removed),
+                "{case}"
+            );
+            assert_eq!(fx.state().last_success.unwrap().file_name, name, "{case}");
+        }
+
+        // (d) 消す対象の 2 本のどちらの削除が失敗しても、確認は Copied のままで、もう 1 本は消える
+        let on_medium = past(31);
+        for (failing, removed) in [(0, 1), (1, 0)] {
+            let fx = setup(&on_medium);
+            let ops = TestOps::failing(
+                "remove_file",
+                &on_medium[failing],
+                std::io::ErrorKind::PermissionDenied,
+            );
+            assert_eq!(
+                check_with(&env_with(&fx.roots(), &ops), &fx.app, &fx.local),
+                copied,
+                "{failing}"
+            );
+            assert_eq!(
+                names(&fx.medium()),
+                remaining(&on_medium, &on_medium[removed..=removed]),
+                "{failing}"
+            );
+            assert_eq!(fx.state().last_success.unwrap().file_name, name);
+        }
     }
 
     // ---- やめる（§71.11.5b） ---------------------------------------------------
