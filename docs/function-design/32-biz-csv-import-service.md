@@ -47,8 +47,6 @@
 
 SD の締めの一括取込み（[37 §37.10](37-biz-daily-report-import-service.md)、BIZ-08-D7）は、SD から読んだ Z004 を精算回数の昇順に、本節の preview の検査と確定をそのまま呼んで取り込む（runtime は backlog の「Z004 を SD の一括取込みに入れる runtime（B）」。本節の確定を入れる配布の単位の後）。上の表の拒否は、その file を飛ばして続ける。SD から読んだ file だけ、確定の TX の前に IO-10 の写しを書く（BIZ-08-D5 の引継ぎ。書けなければ確定しない）。ファイルを選ぶ経路（Z004 タブ）は写さず、ほかは変わらない。
 
-> **2026-08-01 evidence sync**: 本書は既存の Z004-only product-sales import pipeline の実装契約を記録する。current operation の日報主入力 `Z001`/`Z002`/`Z005` は [37-biz-daily-report-import-service.md](37-biz-daily-report-import-service.md) のBIZ-08で扱う。集計日報データは `daily_report_imports` / `daily_report_*_lines` に保存し、item-level `sale_records` / `inventory_movements` へ擬似展開しない。Z004側はsale_records作成、`pos_stock_sync`在庫増減、重複・rollbackまで実装済み。2026-07-06店舗採取layout AはIO-02が二形状対応済み（SPEC-Z4A-D1〜D7）。field readinessは実データend-to-end再検証（CSV-09/10）を待つ。
-
 ### 15.1 モジュール構成
 
 ```
@@ -68,6 +66,7 @@ src-tauri/src/
 
 - file_bytes: Vec\<u8\>（Z004ファイルの生バイト列）
 - filename: String（ファイル名。csv_imports.filename に記録する表示用）
+- today: String（CMD が渡す PC の今日。YYYY-MM-DD。知らせ (b) のため）
 
 #### ParseValidateResult構造体
 
@@ -75,6 +74,7 @@ src-tauri/src/
 - preview_token: String（UUID v4。CMD層がキャッシュキーとして使用）
 - matched_rows: Vec\<MatchedRow\>（CMD層がキャッシュに保存する。フロントエンドには返さない）
 - error_rows: Vec\<ErrorRow\>（同上）
+- settlement: CachedSettlement（parse の時点で順 1 を通った精算の識別メタ。CMD 層が CachedPreview に写す）
 
 #### PreviewData構造体
 
@@ -193,6 +193,8 @@ fn parse_and_validate(
      - NoDataLines → "Z004ファイルの解析に失敗しました: データ行がありません"
      - NoSettlementDate → "Z004ファイルの解析に失敗しました: 精算日を抽出できません"
    - Ok(parse_result) → parsed_rows が 0件かつ parse_errors が非空 → system_repo::insert_operation_log(conn, &NewOperationLog { operation_type: "csv_import_parse_failed", summary: "有効なデータがありません", detail_json: None }) → BizError::ImportError("有効なデータがありません")
+   - （2a）精算日が実在の日付でない → BizError::ImportError("精算日が不正な日付です: {settlement_date}")（今日より後は拒まず、手順 5b で知らせる）
+   - （2b）上の表の順 1（精算の識別メタ）。当たれば順 1 の文で BizError::ImportError
 3. **行数ガード**
    - parse_result.total_data_lines > constants::CSV_IMPORT_LINE_LIMIT → BizError::ImportError("データ行数が上限（10,000行）を超えています")
 4. **Stage 2: Validate**
@@ -211,23 +213,22 @@ fn parse_and_validate(
       - Option→String 変換規約: ParseError.raw_name/raw_quantity/raw_amount が None の場合、空文字列に変換する。None は error_type が invalid_format の場合にのみ発生する（フィールド分割前のエラーで値が取得できなかった）。Z004のフィールドは実運用で空文字にならないため、空文字はパース前エラーと判別可能。DB保存（csv_import_errors）は空文字のまま、UI表示時に error_type が invalid_format なら「(不明)」等に置換する
    d. 正常な行が全て 0 の file（matched_rows も error_rows も空）は拒まず、精算の識別メタだけを持つ取込みとして preview へ進む（上の「確定」）
 5. **Stage 3: Preview**
-   a. file_hash 重複チェック:
-      - sales_repo::find_blocking_import_by_file_hash(conn, &parse_result.file_hash) → Some → BizError::ImportError("このファイルは取込み済みです（取込みID: {id}、取込み日: {imported_at}）")
-   b. 精算の識別と並び（上の表の順 1・2・4・5。順 3 は 5a）と知らせ（欠けの区間、精算日が今日より後）。今日は CMD が渡す PC の今日。精算の識別メタを `CachedPreview.settlement` に保持する
+   a. 上の表の順 2〜5 を順に検査する（順 3 は file_hash の重複: sales_repo::find_blocking_import_by_file_hash → Some → BizError::ImportError("このファイルは取込み済みです（取込みID: {id}、取込み日: {imported_at}）")）。確定の TX と同じ 1 つの関数を使う
+   b. 知らせ（欠けの区間、精算日が今日より後）。今日は CMD が渡す PC の今日。精算の識別メタを `ParseValidateResult.settlement` で返す（CMD 層が `CachedPreview.settlement` に保持する）
    c. PreviewData 構築
       - matched_summary: count = matched_rows.len(), total_amount = matched_rows.iter().map(|r| r.amount as i64).sum(), warnings
       - error_summary: count = error_rows.len()（全件）。items は最大100件で、error_rows のうち error_type が invalid_jan の行を line_no の昇順で先に選び、残りの枠を他の行から line_no の昇順で埋める。選んだ items は line_no の昇順で並べる。error_rows 自体（commit・csv_import_errors へ渡す全件）の内容と順は変えない
-      - 理由: 商品コードの無い枠の売上（SPEC-Z4A-D8、D-103）と売上のある非JANの行は、商品を登録しても在庫に入らず、Z004 の commit の停止中（SPEC-STOP-D1）は取込み記録の詳細にも届かないため、プレビューのエラー詳細が唯一の知らせ先になる。error_rows は 4b の unmatched_product の行が先に並ぶため、先頭から切ると未登録 JAN の行が100件を超えたときにこれらの行が items から落ちる。種別だけで選び、文言では判別しない
+      - 理由: 商品コードの無い枠の売上（SPEC-Z4A-D8、D-103）と売上のある非JANの行は、商品を登録しても在庫に入らないため、取り込む前に気づける知らせ先はプレビューのエラー詳細になる。error_rows は 4b の unmatched_product の行が先に並ぶため、先頭から切ると未登録 JAN の行が100件を超えたときにこれらの行が items から落ちる。種別だけで選び、文言では判別しない
 6. **preview_token 生成**: UUID v4
-7. ParseValidateResult { preview_data, preview_token, matched_rows, error_rows } を返す
+7. ParseValidateResult { preview_data, preview_token, matched_rows, error_rows, settlement } を返す
    - CMD層がこの戻り値を受け取り、preview_tokenをキーとしてAppState.preview_cacheに保存する（17.5節参照）
 
 **エラーハンドリング**:
 - IO-02 parse失敗 → BizError::ImportError（operation_log記録後に変換）
 - 全行パースエラー → BizError::ImportError("有効なデータがありません")
-- 空レコード除外後0件 → BizError::ImportError("取込み対象のデータがありません")
 - サイズ上限超過 → BizError::ImportError
 - 行数上限超過（total_data_lines > constants::CSV_IMPORT_LINE_LIMIT）→ BizError::ImportError
+- 精算日が実在の日付でない・精算の識別と並びの拒否（上の表）→ BizError::ImportError（順 4 だけ BizError::SettlementConflict）
 - file_hash 重複ブロック → BizError::ImportError
 - DB読み取り失敗（マスタ照合等）→ BizError::DatabaseError(DbError)
 
@@ -236,6 +237,7 @@ fn parse_and_validate(
 req: CsvParseAndValidateRequest {
     file_bytes: [CP932バイト列...],
     filename: "Z004_260321",
+    today: "2026-03-21",
 }
 ```
 
@@ -265,6 +267,7 @@ Ok(ParseValidateResult {
         preview_created_at: "2026-03-21T19:30:00",
     },
     preview_token: "550e8400-e29b-41d4-a716-446655440000",
+    settlement: CachedSettlement { ... },
 })
 ```
 
@@ -501,11 +504,10 @@ pub fn preview_rollback_csv_import(
 **設計判断**:
 - HashMap の容量: 1人運用のため同時 preview 数は最大1件。HashMap 容量は問題にならない
 - **上限**: エントリ数上限10件（constants::PREVIEW_CACHE_LIMIT）。insert 前に len >= 10 なら最も古いエントリ（created_at が最小）を1件削除してから insert する（FIFO）。削除されたトークンで commit が呼ばれた場合、CMD層が「プレビューが見つかりません」CmdError を返す
-- 永続化しない理由: Preview データには matched_rows（商品在庫のスナップショットを含む）があり、時間が経つと実際の在庫と乖離する。再起動後は再度 parse_and_validate を実行するのが正しい
+- 永続化しない理由: Preview データの matched_rows は preview の時点の引き当て（商品・共有 JAN か）を持ち、時間が経つと商品の登録と乖離する（確定の TX は取り直して、違えば拒む）。再起動後は再度 parse_and_validate を実行するのが正しい
 - 30分の根拠: 利用者がプレビュー確認→取り込み判断に十分な時間。長すぎると在庫の乖離リスクが高まる
-- **commit失敗時**: CMD層は通常の失敗ではキャッシュを削除せず、同一tokenで再試行可能にする。ただしactive same-date snapshot不一致は同じpreviewでは解消できないため、CMD層がtokenを削除し、新しいpreviewを要求する
+- **commit失敗時**: CMD層は失敗・拒否ではキャッシュを削除しない（成功のときだけ削除。§15.4 の「TX失敗時」、[41](41-cmd-pos.md)）
 - **ライフサイクル規約まとめ**: (1) ワンタイム: commit 成功時に即削除、同一トークンでの再 commit は不可 (2) 揮発: アプリ再起動で全消失、再起動後のトークンは必ず無効 (3) トークン不存在（削除済み/再起動後/追い出し）: CmdError kind="import_error" message="プレビューが見つかりません。再度ファイルを選択してください" (4) 期限切れ: CmdError kind="import_error" message="プレビューの有効期限が切れました（30分）。再度ファイルを選択してください" → UIは「ファイル選択」画面に戻す導線を表示
-- **architecture/biz-task-specs.md との差異**: 関数設計でpreview_token方式に変更した。理由: Preview結果をフロントエンドに渡して再送信させると、データ量が大きく改ざんリスクもある。preview_token方式ではサーバ側キャッシュからmatched_rowsを復元するため安全。architecture/biz-task-specs.md と整合済み（本PR内で更新）
 
 **キャッシュの所有権**: Tauri の State\<Mutex\<HashMap\<...\>\>\> で管理。CMD層がlock→操作→unlockを行い、BIZ層にはキャッシュを渡さない（ロック区間最小化）。
 
@@ -550,3 +552,4 @@ enum BizError {
 | 2026-10-17 | JAN の別名の design lane（D-122） | §15.3 手順 4 b に、ヒット0件の行で前の JAN の別名を引く段と、引き当ての規則を preview と確定の取り直しで共有する文を足した（proposed・未実装） |
 | 2026-10-23 | stocktake-count-runtime-b1（D-118 の b1） | 冒頭の D-118 の節を現行に。§15.0 の停止の節を外し、§15.2 の型（知らせ・`recheck_targets`）と §15.3〜§15.5 の手順を精算の識別・確定の取り直し・求め直しの新しい経路に置き換えた（[Plan Packet](../archive/plans/2026-10-22-stocktake-count-runtime-b1.md)） |
 | 2026-10-25 | z004-rollback-entry（PR #197） | §15.6b（BIZ-03-D2）を現行に（取消の本体を `apply_rollback` に切り出し、取消と preview が呼ぶ。完了した棚卸しの判定は BIZ-06 の共有の関数）。冒頭の表の順 4 の文に取込みID を足し、`BizError::SettlementConflict` で返す（§15.10）（[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §15.2 の型に `CsvParseAndValidateRequest.today`・`ParseValidateResult.settlement` を足し、§15.3 の手順を実装の順（日付の検査と順 1 は parse の直後、順 2〜5 は 1 つの関数）に直した。全て 0 の file を拒む旧い行、停止中の理由、同日の snapshot の不一致で token を消す文、2026-08-01 の注記を外した。 |

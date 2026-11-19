@@ -11,8 +11,6 @@
 - preview token は確定の成功のときだけ消す（拒否・失敗では消さない）。今の同じ日の取込みの状況の変化を message の文字列で見て消す分岐は、同じ日の追加の確認を Z004 で使わなくなるので外す（2026-10-22、b1 の起票で決めた。preview の後に状況が変わった拒否は、同じ token で確定し直しても同じ拒否になり、30 分の期限で消える。message の文字列で分岐しない）。
 - commit と rollback は停止 ADR の 5 つの入口を外すのと同じ b1 の配布の単位で新しい経路に繋いだ（SPEC-STK-CNT-D12）。
 
-> **2026-06-30 REQ-401 redesign note**: 本書のCMD-07は既存Z004商品別CSV取込みのTauri command契約を記録する。current operation のZ001/Z002/Z005日報取込みは [45-cmd-daily-report-import.md](45-cmd-daily-report-import.md) のCMD-12で扱う。CMD-07へ日報bundleを追加しない。
-
 ### 17.1 モジュール構成
 
 ```
@@ -61,6 +59,8 @@ CSV取込みのPreviewキャッシュをAppStateに追加する。
 struct AppState {
     db: Mutex<Connection>,
     preview_cache: Mutex<HashMap<String, CachedPreview>>,  // BIZ-03用
+    daily_report_preview_cache: Mutex<HashMap<String, CachedDailyReportPreview>>,  // BIZ-08用（45）
+    register_sd_scan_cache: Mutex<HashMap<String, DailyReportSdScanSnapshot>>,  // SD の scan（45 CMD-12-D1）
 }
 ```
 
@@ -709,10 +709,10 @@ CMD-07/CMD-08が**やらないこと**を明示する。
 
 ---
 
-### 17.9 main.rs へのコマンド登録
+### 17.9 lib.rs へのコマンド登録
 
 ```
-// main.rs の invoke_handler に追加
+// lib.rs の collect_commands と invoke_handler の両方（下の段落）
 .invoke_handler(tauri::generate_handler![
     // CMD-01（既存）
     cmd::product_cmd::create_product,
@@ -730,6 +730,8 @@ CMD-07/CMD-08が**やらないこと**を明示する。
     // CMD-08（新規）
     cmd::plu_export_cmd::prepare_plu_export,
     cmd::plu_export_cmd::confirm_plu_export_saved,
+    cmd::plu_export_cmd::import_plu_register_snapshot,
+    cmd::plu_export_cmd::get_plu_slot_summary,
     cmd::plu_export_cmd::list_plu_dirty,
 ])
 ```
@@ -747,3 +749,4 @@ wire の型を変えたら `src/lib/bindings.ts` を generator で再生成す�
 | 2026-10-25 | z004-rollback-entry（PR #197） | CMD-07 に `preview_rollback_csv_import` を足し（§17.5、§17.9 の 2 面に登録）、§17.4 に順 4 の拒否の `SettlementConflict` → kind `import_error`・`related_csv_import_id` の行を足した（[Plan Packet](../plans/2026-10-23-z004-rollback-entry.md)） |
 | 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §17.2 に「実行の thread」を足した（`commit_csv_import`・`rollback_csv_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§17.5 の 2 つのシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §17.2 の「実行の thread」の「未実装」の注を外し、§17.5 の `commit_csv_import`・`rollback_csv_import` のシグネチャの属性を `#[tauri::command(async)]` に直した。source の検査の判定の本体は `src-tauri/src/cmd/mod.rs` の test 用の関数に置いた（wire と生成 bindings は変わらない。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §17.3 の AppState を実装の 4 つの field に、§17.9 の登録先を lib.rs にし、CMD-08 の登録に `import_plu_register_snapshot`・`get_plu_slot_summary` を足した。2026-06-30 の注記を外した。 |
