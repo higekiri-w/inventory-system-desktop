@@ -239,14 +239,14 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **Stage 2: Validate**
 1. parsed_rowsの空レコード除外（JAN=0000...、quantity=0 and amount=0）
 2. 実データ行についてproducts.jan_codeで検索
-   - ヒット1件 → matched_rowsに追加。pos_stock_syncフラグをコピー
+   - ヒット1件 → matched_rowsに追加
    - ヒット0件 → 前の JAN の別名（D-122、proposed・未実装）があればその商品で matched_rows に追加、無ければ error_rowsに追加（error_type='unmatched_product'）
    - ヒット複数件 → ORDER BY product_code ASCで先頭に紐付け（共有 JAN。売上だけ記録し、在庫連動の外に置く）
 3. Stage 1のparse_errorsもerror_rowsにマージ
 4. ValidateResultを構築
 
 **Stage 3: Preview（フロントエンドとの連携ポイント）**
-1. 精算の識別と並びを検査する（同じ hash の active・同じ精算の別版・精算回数の無い file・別のレジ・精算の順の食い違いを拒む。同じ精算日の別の精算は確認なしに進む。表と文は [32](../function-design/32-biz-csv-import-service.md) の「精算の識別と並び」）
+1. 精算の識別と並びを検査する（同じ hash の active・同じ精算の別版・別のレジ・精算の順の食い違いを拒む。同じ精算日の別の精算は確認なしに進む。表と文は [32](../function-design/32-biz-csv-import-service.md) の「精算の識別と並び」）
 2. 知らせ（欠けた精算回数の区間、精算日が PC の今日より後）を付けて PreviewData を構築し、フロントエンドに返す
 3. **ここでフロントエンドからの利用者操作を待つ**
 
@@ -431,10 +431,11 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 入力データ:
 - 棚卸し開始: なし（全商品を対象に自動生成）
 - 計数の保存: product_code, count_value, fresh, business_date, stocktake_item_id?
+- 完了: stocktake_id
 
 出力データ:
 - 棚卸し一覧: [{product_code, name, department_name, system_stock, actual_count, difference, counted_at}], 進捗（入力済み/未入力件数）
-- 完了: stocktake_id。結果は total_cost（仕入原価総額）。検査に当たれば明細ごとの拒否の理由（`settlement_pending`・`recheck`・`uncounted`）
+- 完了: total_cost（仕入原価総額）、total_items、integrity_result。検査に当たれば明細ごとの拒否の理由（`settlement_pending`・`recheck`・`uncounted`）
 
 内部で扱うテーブル: stocktakes, stocktake_items, stock_counts, products, inventory_movements（読取り）, csv_imports（読取り）, operation_logs
 
