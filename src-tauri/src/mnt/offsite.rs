@@ -348,16 +348,8 @@ fn prepare_with(
     selected: &Path,
 ) -> Result<OffsiteMediumView, OffsiteError> {
     let _lock = lock(env);
-    // 1. 選んだ path の drive の root
-    let root = drive_root(selected, &env.roots);
-    // 2. 取外し可能か
-    if !env
-        .roots
-        .iter()
-        .any(|candidate| same_root(candidate, &root))
-    {
-        return Err(OffsiteError::NotRemovable);
-    }
+    // 1. 選んだ path を含む取外し可能な drive の root。2. 無ければ取外し可能でない
+    let root = removable_root(selected, &env.roots).ok_or(OffsiteError::NotRemovable)?;
     let pinned_root = pin_to_volume(&root).map_err(|error| {
         tracing::warn!(root = %root.display(), error = %error, "媒体の root を固定できません");
         OffsiteError::Io
@@ -979,39 +971,20 @@ fn component_eq(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
     a == b
 }
 
-/// 選んだ path の drive の root（root の下の folder を選んでも root）
-#[cfg(windows)]
-fn drive_root(selected: &Path, _roots: &[PathBuf]) -> PathBuf {
-    use std::path::Component;
-    let mut root = PathBuf::new();
-    for component in selected.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
-            _ => break,
-        }
-    }
-    root
-}
-
-/// Windows 以外（test）: 注入した root の列のうち、選んだ path を含む最も長いもの
-#[cfg(not(windows))]
-fn drive_root(selected: &Path, roots: &[PathBuf]) -> PathBuf {
+/// 取外し可能な root の列（§71.11.3）のうち、component の列が選んだ path の先頭と等しい
+/// 最も長いもの（root の下の folder を選んでも root）
+fn removable_root(selected: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     roots
         .iter()
-        .filter(|root| selected.starts_with(root))
+        .filter(|root| {
+            let mut path = selected.components();
+            root.components().all(|part| {
+                path.next()
+                    .is_some_and(|other| component_eq(part.as_os_str(), other.as_os_str()))
+            })
+        })
         .max_by_key(|root| root.components().count())
         .cloned()
-        .unwrap_or_else(|| selected.to_path_buf())
-}
-
-#[cfg(windows)]
-fn same_root(a: &Path, b: &Path) -> bool {
-    a.as_os_str().eq_ignore_ascii_case(b.as_os_str())
-}
-
-#[cfg(not(windows))]
-fn same_root(a: &Path, b: &Path) -> bool {
-    a == b
 }
 
 /// root の直下のレジの SD の folder の path（MNT-01-D10）
@@ -1667,6 +1640,43 @@ mod tests {
         let result = prepare_with(&std_env(&[]), &fx.app, &fx.local, &fx.root);
         assert_eq!(result, Err(OffsiteError::NotRemovable));
         assert_eq!(snapshot(&fx.base), before, "何も書かない");
+    }
+
+    #[test]
+    fn test_prepare_offsite_req901_d8_root_match_is_per_component() {
+        // REQ-901 / MNT-01-D8 / 71 §71.11.2 手順 1・2: root は component ごとに比べ、Windows は ASCII の大文字小文字を区別しない
+        let fx = Fx::new();
+        let sibling = fx.base.join("E2");
+        std::fs::create_dir_all(&sibling).unwrap();
+        let before = snapshot(&fx.base);
+        let result = prepare_with(&std_env(&fx.roots()), &fx.app, &fx.local, &sibling);
+        assert_eq!(result, Err(OffsiteError::NotRemovable), "root の兄弟");
+        assert_eq!(snapshot(&fx.base), before, "何も書かない");
+
+        let result = prepare_with(
+            &std_env(&fx.roots()),
+            &fx.app,
+            &fx.local,
+            &fx.base.join("e"),
+        );
+        if cfg!(windows) {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert_eq!(result, Err(OffsiteError::NotRemovable));
+            assert_eq!(snapshot(&fx.base), before, "何も書かない");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_prepare_offsite_req901_d8_removable_root_takes_drive_letter_root() {
+        // REQ-901 / MNT-01-D8 / 71 §71.11.2 手順 1・2・§71.11.3: 本番の列（drive 文字の root）の形
+        let roots = [PathBuf::from(r"D:\"), PathBuf::from(r"E:\")];
+        let e = Some(PathBuf::from(r"E:\"));
+        assert_eq!(removable_root(Path::new(r"E:\"), &roots), e);
+        assert_eq!(removable_root(Path::new(r"e:\backup"), &roots), e);
+        assert_eq!(removable_root(Path::new(r"C:\Users\x"), &roots), None);
+        assert_eq!(removable_root(Path::new(r"\\?\E:\x"), &roots), None);
     }
 
     #[test]
