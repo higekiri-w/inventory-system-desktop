@@ -131,7 +131,7 @@
   2. **確定確認ダイアログに warning Alert（`border-warning bg-warning-soft text-warning-strong` + `AlertTriangle`）を `AlertDialogContent` 内へネストし、不可逆性を視覚的に強調する**。実装（PR #159）は `AlertDialogTitle` が「未入力の商品があります」という状態説明に留まり、取り消せないことを伝えていなかった。一次是正として `RestoreConfirmDialog`（`BackupRestorePage.tsx`）のタイトル強調パターンに倣い「棚卸しを確定します（取り消せません）」に統一したが、owner が Before/After 比較 Artifact を見た上で **warning Alert ネスト版の視認性を明示的に支持**（2026-07-08）。`AlertDialogTitle` は「棚卸しの確定」、`AlertDialogContent` 直下に常時 warning Alert を配置して `AlertTitle`「確定すると取り消せません」+ `AlertDescription` で不可逆性を伝える（UI-10-D4）。
   3. **結果画面の前回比較を、総額カードから独立したカードに分離**する。既存実装は `formatLastStocktake()` の1文をコストカード内に注記として同居させており、独立した情報として認識しにくい。
 - **Why**: L3 実機観察で「警告文言が小さく薄いグレーで正確な文言を記録できなかった」という指摘、および一覧に差異・カウント日時が出ないため実カウントとシステム在庫の乖離を目視で追えないという指摘。原因はコード確認の結果、①既存の design-system 警告パターン（`BackupRestorePage.tsx` の `RestoreConfirmDialog`）を踏襲していなかったこと、②本設計書（UI-10-D2〜D9 初版）が一覧の情報構造・確定ダイアログの文言強度をここまで具体的に指定していなかったこと、の両方に起因する。warning Alert ネストへの再変更は、タイトル強調のみの一次是正版と Artifact の warning Alert 版を owner が実際に見比べ、後者を明示的に選んだため（2026-07-08）。
-- **Rejected**: 差異列の色分け（正=success系・負=destructive系）（結果画面の `adjusted_items` テーブルが無色のプレーンテキストであり、進行中一覧だけに新しい色分け表現を導入すると同じ「差異」という概念の表現が画面間で割れる。DSR-01 の視覚言語継承を優先）。
+- **Rejected**: 差異列の色分け（正=success系・負=destructive系）（同じ「差異」という概念の表現が画面間で割れる。DSR-01 の視覚言語継承を優先）。
 - **Revisit trigger**: 結果画面の差異テーブル自体に色分けを導入する設計変更が別途入った場合、進行中一覧の差異列も合わせて見直す。`RestoreConfirmDialog`（`BackupRestorePage.tsx`）も同様に warning Alert ネスト版へ揃えるかは、他の不可逆操作ダイアログでも同じ視認性懸念が出た時に横展開を検討する（本 PR のスコープでは UI-10 のみ変更）。
 
 ### UI-10-D11: 連続 HID スキャンのためのフォーカス自動遷移（実装漏れの是正）
