@@ -98,7 +98,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | confirm_plu_export_saved | product_codes[], prepared_rows[memory_no] | BIZ-04 | PluExportConfirmResult（updated_count, confirmed_at） |
 | list_plu_dirty | なし | BIZ-04経由 | Vec\<ProductResponse\>（plu_target=1 かつ plu_dirty=1 の商品一覧。D-028） |
 
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`get_plu_slot_summary` が件数の要約（`src-tauri/src/biz/plu_export_service.rs` の `PluRegisterSnapshotSummary`。`free_count`・`release_pending_count` ほか）を返し、`prepare_plu_export` の結果（同じ file の `PluExportPreparedResult` と `src-tauri/src/cmd/plu_export_cmd.rs` の `PluExportPrepareResponse`）が `over_limit_warning` を持ち、利用者が選ぶ Z004 で占有を照合する `import_plu_register_snapshot`（`src-tauri/src/cmd/plu_export_cmd.rs`。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。CMD-12 の `scan_register_sd` はまだ無い。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
+> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`get_plu_slot_summary` が件数の要約（`src-tauri/src/biz/plu_export_service.rs` の `PluRegisterSnapshotSummary`。`free_count`・`release_pending_count` ほか）を返し、`prepare_plu_export` の結果（同じ file の `PluExportPreparedResult` と `src-tauri/src/cmd/plu_export_cmd.rs` の `PluExportPrepareResponse`）が `over_limit_warning` を持ち、利用者が選ぶ Z004 で占有を照合する `import_plu_register_snapshot`（`src-tauri/src/cmd/plu_export_cmd.rs`。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。CMD-12 の `scan_register_sd` は占有を照合しない（BIZ-04 を呼ばない）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### CMD-09: 売上集計コマンド群
 
