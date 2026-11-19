@@ -14,7 +14,7 @@
 - `save_stock_count` の `stocktake_item_id` は明細の商品と `product_code` が同じでなければ BIZ が書く前に `ValidationFailed`（35）。
 - CMD は PC の今日（`today`、ローカルの日付）を BIZ へ渡す（[35](35-biz-stocktake-service.md) の新契約。BIZ は時計を読まない）。UI から today を受けない。
 - StockCountSaveResult は保存した計数の `id`・`count_kind`（`default` / `fresh`）、求め直しの後の `stock`・`stock_range_low`・`stock_range_high`・`recount_reasons`（[40](40-cmd-product.md) の enum）、`later_count_exists`。
-- `complete_stocktake` の入力から `force_fill` を外す。拒否は [40 の回復型](40-cmd-product.md) の `completion_blocked`。
+- `complete_stocktake` の入力は `stocktake_id` だけ（PC の今日は CMD が渡す）。拒否は [40 の回復型](40-cmd-product.md) の `completion_blocked`。
 - get_stocktake_items / get_stocktake_record は、明細ごとに効く計数の値・種類・日付、写しの在庫と範囲、要再確認の理由、差異（35 の新契約の「読取り」）を BIZ から透過する。get_stocktake_record は完了の後の差（差のある明細と差の合計。35 の新契約の「完了」）も透過する。
 - `run_integrity_check` / `fix_integrity` の command の署名は変えず、結果の型（`IntegrityMismatch`・`StockAdjustment`）は [36](36-biz-integrity-check.md) の新契約の 4 項目と `differing_fields` を透過する（[75](75-ui-integrity-check.md)）。
 - b1 で新しい command の tauri / specta 属性、collect_commands への登録、旧い数の上書きの command の登録の削除、bindings の生成と全 caller / mock の切替を一緒に行った。
@@ -55,11 +55,11 @@ src-tauri/src/
 - 業務バリデーション、ビジネスロジックは持たない
 - wire の有限文字列を内部 enum へ変換する境界処理はCMD責務とする。変換後の値に対する業務条件はBIZだけが判定する
 
-**Phase 5 追加コマンドでのキャッシュ**: CMD-09/10/整合性コマンドは preview_cache を使用しない。DB接続のみ。
+**キャッシュ**: CMD-09/10/整合性コマンドは preview_cache を使用しない。DB接続のみ。
 
 ---
 
-### 22.3 BizError → CmdError 変換（Phase 5 追加分）
+### 22.3 BizError → CmdError 変換
 
 40-cmd-product.md 5.3節 と 41-cmd-pos.md 17.4節 の既存変換ルールに以下を追加:
 
@@ -299,7 +299,7 @@ fn complete_stocktake(
 1. state.db.lock() でDB接続を取得
 2. CompleteStocktakeRequest { stocktake_id, today: PC の今日 } を構築
 3. biz::stocktake_service::complete_stocktake(&mut conn, req) を呼ぶ
-4. Ok → StocktakeResult を返す（整合性チェック結果を含む。PR-5 で BIZ-07 統合後）
+4. Ok → StocktakeResult を返す（整合性チェック結果を含む）
 5. Err(BizError::StocktakeNotInProgress(msg)) → CmdError { kind: "stocktake_not_in_progress" }
 6. Err(BizError::StocktakeGuard { message, recovery }) → CmdError { kind: "stocktake_guard", stocktake_recovery: Some(recovery) }（code `completion_blocked`。[40](40-cmd-product.md)）
 7. Err(other) → CmdError に通常変換（合計金額の範囲の外ほかは "validation"）
@@ -404,8 +404,8 @@ fn commit_import(
 
 ### 22.7 CMD-11 部分: 整合性チェックコマンド
 
-CMD-11 のうち、BIZ-07 に対応する2コマンドのみ Phase 5 スコープ。
-設定・ログ・バックアップコマンドは Phase 6（MNT-01/MNT-02 依存）。
+CMD-11 のうち、BIZ-07 に対応する2コマンドを本書に置く。
+設定・ログ・バックアップコマンドは [43](43-cmd-settings-log.md)。
 
 #### run_integrity_check
 
@@ -449,26 +449,7 @@ fn fix_integrity(
 
 ### 22.8 lib.rs コマンド登録
 
-Phase 5 で以下のコマンドを invoke_handler に追加登録:
-
-```
-// CMD-01 追加（product_cmd.rs — 5.4節の既存設計 + import）
-create_product, update_product, toggle_discontinue, search_products, get_product,
-preview_import, commit_import,
-
-// CMD-09（sales_cmd.rs）
-get_daily_sales, get_monthly_sales, export_sales_csv,
-
-// CMD-10（stocktake_cmd.rs）
-start_stocktake, get_stocktake_items, complete_stocktake,
-
-// CMD-11 部分（integrity_cmd.rs）
-run_integrity_check, fix_integrity,
-```
-
-合計 16 コマンド（CMD-01: 7, CMD-09: 3, CMD-10: 4, CMD-11部分: 2）。
-
-2026-08-27 追記（65 slice 4c）: CMD-10 に `get_stocktake_record` を追加登録する。lib.rs の登録は `export_specta_bindings()` 内 `collect_commands![...]`（bindings 生成用）と `.invoke_handler(tauri::generate_handler![...])`（実行時 dispatch 用）の 2 箇所が必要（[41-cmd-pos.md](41-cmd-pos.md) §17.9 と同契約。collect_commands のみでは bindings は生成されるが IPC 実呼出しが「command not found」になる）。
+本書の command（CMD-09、CMD-10、CMD-11 の整合性の 2 本）は、lib.rs の `export_specta_bindings()` 内 `collect_commands![...]`（bindings 生成用）と `.invoke_handler(tauri::generate_handler![...])`（実行時 dispatch 用）の 2 箇所に登録する（[41-cmd-pos.md](41-cmd-pos.md) §17.9 と同契約。collect_commands のみでは bindings は生成されるが IPC 実呼出しが「command not found」になる）。
 
 ---
 
@@ -476,8 +457,8 @@ run_integrity_check, fix_integrity,
 
 | やらないこと | 理由 | 責務を持つモジュール |
 |------------|------|-----------------|
-| CMD-11 設定・ログ・バックアップ | MNT-01/MNT-02 依存（Phase 6） | Phase 6 で追加 |
-| preview_cache 操作 | Phase 5 コマンドは DB のみ | CMD-07（既存） |
+| CMD-11 設定・ログ・バックアップ | 本書の範囲の外 | [43](43-cmd-settings-log.md) |
+| preview_cache 操作 | 本書のコマンドは DB のみ | CMD-07（既存） |
 | 業務バリデーション | BIZ層の責務 | 各BIZサービス |
 
 ---

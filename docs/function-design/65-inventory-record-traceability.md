@@ -72,7 +72,7 @@
 | CSV取込み履歴一覧 | `/csv-import/records` | 精算日、取込み日時、取込みID、ファイル名、状態で検索 |
 | CSV取込み詳細 | `/csv-import/records/$importId` | 取込みサマリ、sale_records、エラー行、関連 movements、rollback 状態 |
 | 棚卸し履歴一覧 | `/stocktake/records` | 棚卸し日、棚卸しID、状態、差異件数、ロス/増加原価で検索 |
-| 棚卸し詳細 | `/stocktake/records/$stocktakeId` | stocktake_items（効く計数・差異・評価数量・ロス原価）、完了の後の差（参考）、確定/取消/再開状態（D-118 の b1。関連 movements の節は外した） |
+| 棚卸し詳細 | `/stocktake/records/$stocktakeId` | stocktake_items（効く計数・差異・評価数量・ロス原価）、完了の後の差（参考）、状態（進行中・完了） |
 | 振替の詳細 | `/inventory/transfer/records/$recordId` | 減らした商品・増やした商品の明細、関連 movements（TRACE-D14、D-143。振替だけの一覧 route は作らず、入出庫履歴ハブで種別を絞る） |
 | 在庫変動履歴 | `/stock/$code/movements` | 商品別。各 movement から元業務記録へリンク |
 | 操作ログ | `/settings/logs` | 監査・保守ログ。業務記録詳細への任意リンクを持てる |
@@ -233,7 +233,7 @@ UI-03 の既存 `return_records.receipt_image_path` は互換維持し、共通�
 - 上部: 日付範囲、種別、記録ID、商品検索、部門、状態（すべて / 有効 / 取消済み / 進行中）。商品検索は共有 `SearchBar` の live 型（`debounceMs=200`、TRACE-D12）とし、URL `q` の変更時は `page` を既定へ戻す。
 - 検索欄の近くに「商品・部門での絞り込みは、CSV取込みでは取込み明細、棚卸しでは差異のあった商品が対象です。」と常時表示する。
 - 結果: 記録種別、業務日付、代表商品、状態、記録日時、詳細ボタン。記録IDは一覧の表示列から外す（[UI 磨き batch 3 design](../archive/plans/2026-09-06-ui-polish-batch3-design.md) owner culling 確定、2026-09-06。§65.4.1 の記録ID exact match フィルタは維持）。状態列は「有効」「取消済み」に加えて「進行中」badge を表示し、色だけに依存しない。
-- `item_count` は一覧に表示しない（L8-4、owner 2026-09-15）。算出仕様は DTO として維持し、棚卸し以外の 5 種では明細行数、棚卸しでも明細の数を表す（D-118 の b1。補正の movement は作らない）。進行中の棚卸しは代表商品を「-」と表示する。完了した棚卸しで `item_count === 0` の場合の代表商品の「差異なし」の表示は旧い件数の定義のまま残っている（開始が対象 0 件を拒むので明細 0 件の棚卸しは通常起きない。直すかは b1 の範囲の外）。
+- `item_count` は一覧に表示しない（L8-4、owner 2026-09-15）。算出仕様は DTO として維持し、棚卸し以外の 5 種では明細行数、棚卸しでも明細の数を表す（D-118 の b1。補正の movement は作らない）。進行中の棚卸しは代表商品を「-」と表示する。完了した棚卸しで `item_count === 0` の場合は代表商品を「差異なし」と表示する（開始が対象 0 件を拒むので明細 0 件の棚卸しは通常起きない。[backlog](../backlog.md) の「棚卸しの runtime b1 の packet との食い違いの (4)」）。
 - 各行は詳細 route へ遷移する。行内に取消/訂正ボタンは置かず、詳細画面で確認してから行う。
 - 詳細 route へ遷移するリンクは DSR-18 / TRACE-D11 に従い、search state を含む遷移元 URL を `returnTo` に含める。この hub では現在の `/inventory/records` search state を送り、同じ送信義務を作業画面の recent list、保存結果、操作ログの関連記録 link にも適用する。詳細画面から戻ると各遷移元の状態を復元する。
 - **filter-empty reset action**（2026-08-03 batch B、[02-component-catalog.md](../design-system/02-component-catalog.md) ⑥）: §65.4.1 の検索条件（recordType / dateFrom / dateTo / q / recordId / departmentId / status）が既定値以外、かつ結果 0 件のときは EmptyState に「絞り込みを解除」ボタンを表示する。押下で上記検索条件と `page` をすべて既定値へ戻す。既定値のまま 0 件（記録が実在しない）のときは表示しない。
@@ -276,8 +276,6 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
 
 ## 65.10 実装スライス
 
-下記slice 4cの「snapshot差では定義しない」は現行実装の表示契約に限定する。D-118 の新方式では冒頭の proposed 節を正とし、計数は movement を作らず、差は 35 の新契約の「読取り」で求める。
-
 完成形は一度に実装しない。source docs は完成形を保持し、実装 PR は次の順で小さく切る。
 
 1. DB / BIZ / CMD traceability foundation: record status、detail query、movement_kind、reference resolution。
@@ -289,7 +287,7 @@ CSV は UTF-8 BOM 付きとし、既存 report export 方針に合わせる。�
    - UI-02 / UI-03 / UI-04 の recent list には「すべての履歴を見る」と detail 導線を置く。UI-04 は PR #115 時点では保存結果からの detail 導線のみだったが、作業画面間の一貫性のため後続 follow-up で recent list を追加する。履歴検索は `/inventory/records` に集約し、作成画面内に検索・取消・訂正を持ち込まない。
    - 返品・交換 detail の保存済み receipt image は初回横展開では添付有無と相対パス表示までとし、asset 表示・削除は画像添付 slice で扱う。
 4b. CSV取込み詳細: `getCsvImportRecord(id)` と `/csv-import/records/$importId` 詳細画面を追加し、在庫変動履歴「CSV取込み #n」元記録 link の 404（UI-06c-D7 の未実装 route 表示契約により operator へ露出）を解消する。既存4記録種別の詳細画面と同構造・read-only とし、このスライスでは取消の CTA を置かなかった（取消の入口は §65.5a）。一覧 `/csv-import/records` と `listCsvImportRecords(query)`、棚卸し詳細 route はこのスライスに含めない。横断検索は slice 4d で充足済み、専用一覧は runway 残置とする。backend 設計は [24-io-csv-import-repo.md](24-io-csv-import-repo.md) §14.13a / [32-biz-csv-import-service.md](32-biz-csv-import-service.md) §15.6a / [41-cmd-pos.md](41-cmd-pos.md) §17.5 を正とする。
-4c. 棚卸し詳細: `getStocktakeRecord(id)` と `/stocktake/records/$stocktakeId` 詳細画面を追加し、在庫変動履歴「棚卸し #n」元記録 link の 404（UI-06c-D7 の未実装 route 表示契約により operator へ露出。2026-08-26 遷移契約 sweep 起源、owner 裁定 2026-08-27 = slice 4b 同型の詳細先行実装）を解消する。既存 5 記録種別の詳細画面と同構造・read-only とし、取消/訂正 CTA は置かない（§65.5 の表示条件どおり、棚卸しの cancel / correct command は未実装のため非表示）。明細（差異）は補正 movement（確定時 live 在庫基準、[35-biz-stocktake-service.md](35-biz-stocktake-service.md) §20.5 / §20.6a 設計ノート）を正として表示し、`system_stock - actual_count` の snapshot 差では定義しない。status は既存 2 値（in_progress / completed）の正規化表示とし、§65.3 の「確定/取消/再開状態」のうち取消・再開は該当機能未実装のため表示対象外。一覧 `/stocktake/records` と `listStocktakeRecords(query)` はこのスライスに含めない。横断検索は slice 4d で充足済み、専用一覧は runway 残置とする。backend 設計は [20-io-product-repo.md](20-io-product-repo.md) §2.11a / [35-biz-stocktake-service.md](35-biz-stocktake-service.md) §20.6a / [42-cmd-sales-stocktake.md](42-cmd-sales-stocktake.md) §22.5 を正とする。
+4c. 棚卸し詳細: `getStocktakeRecord(id)` と `/stocktake/records/$stocktakeId` 詳細画面を追加し、在庫変動履歴「棚卸し #n」元記録 link の 404（UI-06c-D7 の未実装 route 表示契約により operator へ露出。2026-08-26 遷移契約 sweep 起源、owner 裁定 2026-08-27 = slice 4b 同型の詳細先行実装）を解消する。既存 5 記録種別の詳細画面と同構造・read-only とし、取消/訂正 CTA は置かない（§65.5 の表示条件どおり、棚卸しの cancel / correct command は未実装のため非表示）。明細（差異）は [35-biz-stocktake-service.md](35-biz-stocktake-service.md) §20.6a の設計ノートの差異（冒頭の「読取り」の差異。完了した棚卸しは完了の時点のカーソルで求める）を表示し、`system_stock - actual_count` の snapshot 差では定義しない。status は既存 2 値（in_progress / completed）の正規化表示とし、§65.3 の「確定/取消/再開状態」のうち取消・再開は該当機能未実装のため表示対象外。一覧 `/stocktake/records` と `listStocktakeRecords(query)` はこのスライスに含めない。横断検索は slice 4d で充足済み、専用一覧は runway 残置とする。backend 設計は [20-io-product-repo.md](20-io-product-repo.md) §2.11a / [35-biz-stocktake-service.md](35-biz-stocktake-service.md) §20.6a / [42-cmd-sales-stocktake.md](42-cmd-sales-stocktake.md) §22.5 を正とする。
 4d. `listInventoryRecords` 6 種対称化: 本 slice は step 4（「4種を業務日付 DESC、記録ID DESC で横断表示する」の記述）の `record_type` 母集団を 6 種へ拡張し、当該記述を supersede する。
    - `record_type` に `csv_import` / `stocktake` を加え、`all` は入庫 / 返品・交換 / 手動販売 / 廃棄・破損 / CSV取込み / 棚卸しの 6 種を横断する。
    - status は §65.6.1 の写像で `active` / `canceled` / `in_progress` に正規化する。filter は「すべて / 有効 / 取消済み / 進行中」の 4 値とし、条件を `UNION ALL` 後の外側 derived table へ 1 回だけ適用して WHERE に実反映する。

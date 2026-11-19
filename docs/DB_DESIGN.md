@@ -147,8 +147,8 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 
 ### stock_quantity整合性チェック（指摘#12対応）
 - **前提**: 全商品の在庫はシステム導入時の初期投入（REQ-104一括インポートまたはREQ-101個別登録）から履歴が始まる。初期投入時にinventory_movementsにmovement_type='receiving'で初期在庫レコードを作成し、全商品の履歴起点を保証する
-- **pos_stock_sync=0の商品**: CSV取込みで在庫を動かさない商品は、inventory_movementsにsale_autoの行が作られない。手動販売出庫や棚卸し補正でのみ在庫が変動する。整合性チェックはこれらの商品も含めて行う
-- **チェックタイミング**: CSV取込み完了時、棚卸し確定時、設定画面からの手動実行
+- **pos_stock_sync=0の商品**: CSV取込みで在庫を動かさない商品は、inventory_movementsにsale_autoの行が作られない。手入力の入出庫（入庫・返品交換・手動販売・廃棄・振替）と計数でのみ在庫が変わる。整合性チェックはこれらの商品も含めて行う
+- **チェックタイミング**: 棚卸し確定時、設定画面からの手動実行
 - **チェック方法**: 各商品について、記録（inventory_movements と stock_counts）から求め直した値と、products の写しの 4 項目（`stock_quantity`・`stock_recheck`・`stock_range_low`・`stock_range_high`）を突合する（[36](function-design/36-biz-integrity-check.md)。計数の無い商品では求め直しの値は `is_voided=0` の movement の和と同じ）
 - **差異発見時**: operation_logsに記録。画面に「在庫数に不整合があります」と警告表示。差異のある商品一覧を表示
 - **復旧方針**: 整合性の画面からの補正は、利用者に差異を提示し、保存している値を記録から求め直した値に合わせて補正する旨を確認する（文言正本は function-design/75-ui-integrity-check.md）。確定した場合のみ、写しを求め直しの結果（`recompute_stock`）へ直接更新する。inventory_movements への行追加はしない（挿入すると記録自体が変わり再チェックが収束しないため）。補正は同一TX内の integrity_fix 操作ログへ before/after 付きで必須記録する（BIZ-07-D2/D3、D-051、D-118）。例外は移行（migration v9 の手順 8、[22 §19](function-design/22-mnt-migration.md)）で、写しと記録の和の違う商品を同じ TX で直し、`trigger: migration` の integrity_fix 操作ログに残して、起動の後に整合性の画面で知らせる
@@ -185,7 +185,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - **plu_dirty / plu_exported_at の更新タイミング**: PLUファイル生成だけでは更新しない。UI-08で保存先を選び、PLUファイル保存後に利用者が「この書出しを未反映から外す」と明示確認した時点で、生成時の対象商品だけを `plu_dirty=0` にし、`plu_exported_at` に現在日時を記録する。
 - **plu_dirty の意味の限定（D-028）**: `plu_dirty` は `plu_target=1`（スキャニングPLU書出し対象）の商品についてのみ「レジ未反映」を意味する。`plu_target=0` の商品は `plu_dirty` の値にかかわらず PLU書出し抽出と UI-00 PLU未反映通知の対象外（抽出・通知クエリが `plu_target=1` 条件を持つ）。詳細は [db-design/master-tables.md](db-design/master-tables.md) plu_target 設計意図と decision-log D-028 を参照。
 - **永続 slot と再書出し（D-072 / SPEC-PLS-D1、D5）**: memory No. は `plu_slots` に JAN 単位で永続割当し、書出しごとに再採番しない。Diff / Full はどちらも CV17 へ投入できる。Full は対象の商品の app 管理 slot 全体、Diff は未反映対象を出力する。投入失敗時は Diff / Full の書出し直しで回復する（前に保存した file は取り込まない。保存の後の照合で枠が変わりうる。D-117）。外部登録と free slot は出力しない。アプリは枠を消さず（clear 行を書かない）、別の JAN に使い回さない（D-117 (1) の採用済みの方針。今の build は Clear 行を書き〈`PLU_CLEAR_ROW_ENABLED = true`〉、撤去は PLU の書出しの見直しの runtime。[33 §16](function-design/33-biz-plu-export-service.md) の冒頭の runtime の注記）。
-- **レジ反映の確認**: アプリはその場では確かめられない。次の締めの SD の読取りで Z004 の全スロットを照合すると（D-117 の採用済みの方針。今の build は PLU 書出しの画面で利用者が選ぶ Z004 で照合する）、レジに入ったコードと名称は分かる（`reserved → active`）が、単価・課税方式・部門リンクの反映は Z004 に無い（D-117 (7)、D-011 の前提の訂正）。`plu_exported_at` は「アプリ側でPLUファイルを保存済みにした日時」であり、PCツール受理やレジ反映の証明ではない。
+- **レジ反映の確認**: アプリはその場では確かめられない。次の締めの SD の読取りで Z004 の全スロットを照合すると（D-117 の採用済みの方針。今の build は PLU 書出しの画面で利用者が選ぶ Z004 で照合する）、レジに入ったコードは分かる（`reserved → active`。照合はコードだけを比べる）が、単価・課税方式・部門リンクの反映は Z004 に無い（D-117 (7)、D-011 の前提の訂正）。`plu_exported_at` は「アプリ側でPLUファイルを保存済みにした日時」であり、PCツール受理やレジ反映の証明ではない。
 - **画面上の注意表示**: UI-08の完了画面に「アプリで確認できるのはPLUファイル保存まで。PCツールへの取込み、SDカード書出し、レジ読込みは手動確認が必要」と常時表示する。
 
 ### D-3: CSV取込み中の排他制御（2026-03-29 確定）

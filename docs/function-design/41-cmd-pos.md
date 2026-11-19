@@ -593,7 +593,7 @@ struct PluExportConfirmResponse {
 
 #### import_plu_register_snapshot（CMD-08-D4。撤去の対象、D-117 (3)）
 
-占有は毎日の締めの SD の読取り（CMD-12 [§45.6a](45-cmd-daily-report-import.md) `scan_register_sd`）が BIZ-04 `refresh_plu_register_snapshot_from_sd` を呼んで照合する（[33 §16.3](33-biz-plu-export-service.md)）。店主が FilePicker で Z004 を選ぶこの command は撤去する。runtime の lane が code・specta の登録・bindings・UI・test と一緒に消す（SD を直接読む runtime の後。それまで code は今の形のまま）。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
+占有は毎日の締めの SD の読取り（CMD-12 [§45.6a](45-cmd-daily-report-import.md) `scan_register_sd`）が BIZ-04 `refresh_plu_register_snapshot_from_sd` を呼んで照合する（[33 §16.3](33-biz-plu-export-service.md)）。店主が FilePicker で Z004 を選ぶこの command は撤去する。runtime の lane が code・specta の登録・bindings・UI・test と一緒に消す（それまで code は今の形のまま）。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
 
 ```rust
 #[tauri::command]

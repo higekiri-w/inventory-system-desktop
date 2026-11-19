@@ -55,7 +55,7 @@
 | stock_quantity | INTEGER | NOT NULL, DEFAULT 0 | 在庫数（個 or 枚 or cm。長さの商品〈`m`〉は cm の整数） |
 | stock_unit | TEXT | NOT NULL, DEFAULT 'pcs' | 数量単位。10 個の code（CHECK。上の「単位と原価の精度の契約」） |
 | is_discontinued | BOOLEAN | NOT NULL, DEFAULT 0 | 廃番フラグ。1=廃番 |
-| plu_dirty | BOOLEAN | NOT NULL, DEFAULT 1 | PLU書出し必要フラグ。新規登録/売価変更でON、UI-08でTSV保存後に利用者が書出し済み確認した時点でOFF |
+| plu_dirty | BOOLEAN | NOT NULL, DEFAULT 1 | PLU書出し必要フラグ。新規登録/PLU の file の欄の変更（[30](../function-design/30-biz-product-service.md) §4.4 の手順 4〜4c）でON、UI-08でTSV保存後に利用者が書出し済み確認した時点でOFF |
 | plu_exported_at | TEXT | NULLABLE | 最後にアプリ側でPLU書出し済みにした日時。NULLなら未書出し。PCツール受理やレジ反映の証明ではない |
 | pos_stock_sync | BOOLEAN | NOT NULL, DEFAULT 1 | CSV取込みで在庫自動減算するか。0=しない（生地カテゴリ等） |
 | plu_target | BOOLEAN | NOT NULL, DEFAULT 0 | スキャニングPLU書出し対象か。0=対象外（JANなし商品、JANあり・使ってないグループコード商品、スポット特売品）。migration v3 で追加（D-028） |
@@ -71,8 +71,8 @@
 - **jan_code の形式 validation を DB に置かない理由（2026-08-11、JAN 専用欄正規化 change）**: JAN-8/13 + チェックディジット検証は手入力 create 経路の BIZ 保存時（BIZ-01-D1）と frontend（51 UI-01b-D17）、商品 CSV の取込みの preview と commit（BIZ-01-D10、2026-10-27、D-140）が所有し、DB CHECK は追加しない。既存 DB 行には非 JAN 値・非 13 桁値が実在し得るため（既存データ互換。BIZ-01-D10 より前の CSV の取込みは検証しなかった）、DB 制約は既存データの migration を強制してしまう。UNIQUE を付けない既存判断も不変。
 - **selling_price / cost_price_centi をINTEGERにした理由**: 浮動小数点の丸め誤差を避ける。売価は円の整数、原価はばらした商品の 1 個の原価を小数第 2 位まで持つので 1/100 円の整数（共通規則 SPEC-UNIT-D5）
 - **価格の基準数量（2026-09-25、[35 §20.5a](../function-design/35-biz-stocktake-service.md#205a-評価額の計算価格の基準数量と店の丸め) SPEC-STK-VAL-D1）**: selling_price / cost_price_centi は、在庫数量で「価格の基準数量」ぶんに対する価格である。基準数量は stock_unit で決まり、個数の 9 単位 = 1（1 個あたり）、`m` = 100（1 m あたり。[共通規則](../function-design/10-common-rules.md) SPEC-UNIT-D4）。反物などの長さ商品は在庫を cm で持ち、価格は値札・仕入れ伝票と同じ 1 m あたりで登録する（店は残り・仕入れ・値札をすべて m で扱う。レジでも数量 1 = 1 m で打てる、未運用）。基準数量の列は持たない（理由・不採用案・見直す条件は 35 §20.5a）。棚卸しの評価額、入庫の原価小計、廃棄のロス原価、手動販売の金額の初期値（[62](../function-design/62-ui-manual-sale.md) UI-04-D18）はこの基準数量で割る（共通規則 SPEC-UNIT-D6・D7）。棚卸し記録詳細のロス原価も BIZ が同じ基準数量で割る（D-118 の b1。[35](../function-design/35-biz-stocktake-service.md) §20.5a）
-- **plu_dirtyフラグの理由**: 「レジ登録データ作成」画面の差分書出しモード（REQ-402）で「前回以降に変更があった商品」を高速に抽出するため。売価変更・新規登録でON、TSV生成だけではOFFにせず、UI-08で保存後に利用者が書出し済み確認した時点でOFFにする（D-027）。
-- **plu_exported_atの理由**: plu_dirtyだけでは「未書出し」と「アプリ側では書出し済み」の区別がつかない。書出し済み確認日時を記録しておけば「最後にアプリでPLU TSVを作成・保存済みにしたのはいつか」が分かる。ただしPCツール受理やレジ側反映はこの値では証明しない（コードと名称の反映は次の締めの Z004 の照合で分かるが、単価などは分からない。D-117 (7)）。
+- **plu_dirtyフラグの理由**: 「レジ登録データ作成」画面の差分書出しモード（REQ-402）で「前回以降に変更があった商品」を高速に抽出するため。PLU の file の欄の変更（売価・名称・部門・税率・対象化・JAN。30 §4.4）と新規登録でON、TSV生成だけではOFFにせず、UI-08で保存後に利用者が書出し済み確認した時点でOFFにする（D-027）。
+- **plu_exported_atの理由**: plu_dirtyだけでは「未書出し」と「アプリ側では書出し済み」の区別がつかない。書出し済み確認日時を記録しておけば「最後にアプリでPLU TSVを作成・保存済みにしたのはいつか」が分かる。ただしPCツール受理やレジ側反映はこの値では証明しない（コードの反映は次の締めの Z004 の照合で分かるが、単価などは分からない。D-117 (7)）。
 - **pos_stock_syncの理由（指摘#9対応）**: REQ-401「生地カテゴリの在庫減算除外」の判定カラム。長さの単位（`m`）だけで判定すると長さの商品でもCSV連動したい商品が将来出たときに困る。明示的なフラグで制御する
 - **plu_targetの理由（D-028、2026-07-03）**: 「レジでスキャン販売する商品か」は JAN の有無と相関するが一致しない（JANあり・使ってないグループコード商品、valid JAN でも PLU 枠を割かないスポット特売品が現場に実在する）。jan_code からの純導出では表現できないため、pos_stock_sync と同型の明示フラグにする。UI-01b が jan_code の 13 桁数字判定から初期値を提案し、利用者が変更できる。DB DEFAULT は安全側の 0（レジ登録は opt-in）。plu_target=0 の商品は PLU 書出し抽出と UI-00 PLU未反映通知の対象外になり、部門売り + 手動販売出庫（UI-04）で扱う。インデックスは追加しない（plu_dirty との複合検索は数千行規模のためフルスキャンで十分）
 - **stock_quantityを商品テーブルに持つ理由**: 毎回inventory_movementsを集計するより、現在の在庫数をここにキャッシュしておく方が画面表示が速い。写しの 4 項目（`stock_quantity`・要再確認の印・範囲）が記録から求め直した値と合っているかは整合性チェックで突合する（D-118 の (a)）

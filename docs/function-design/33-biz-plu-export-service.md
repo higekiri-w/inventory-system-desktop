@@ -2,7 +2,7 @@
 
 > **D-072 / D-117 / REQ-907**: app 管理 slot は app、既存登録はレジを authority とする。毎日の締めの SD の読取りで Z004 の全スロットの占有を照合した後、JAN 単位の memory No. を永続予約し、Diff / Full とも CV17 へ投入できる（SPEC-PLS-D2、D3、D5）。アプリは枠を消さず（clear 行を書かない）、別の JAN に使い回さない（D-117 (1)）。
 >
-> **runtime の状態（2026-10-16）**: 本節は D-117 の後の形。code には撤去の対象（clear 行・`release_pending`・解放の trigger・Z004 を選ぶ command・件数の要約・`over_limit_warning`）がまだあり、後続の runtime の lane が code・migration・bindings・test と一緒に外す。占有の自動の照合（§16.3）は SD を直接読む runtime（D-111 の後続の lane）に依り、それまで code は今の FilePicker の経路を残す。
+> **runtime の状態（2026-10-16）**: 本節は D-117 の後の形。code には撤去の対象（clear 行・`release_pending`・解放の trigger・Z004 を選ぶ command・件数の要約・`over_limit_warning`）がまだあり、後続の runtime の lane が code・migration・bindings・test と一緒に外す。占有の自動の照合（§16.3）も同じ 1 本の lane が入れ（D-160 (1)）、それまで code は今の FilePicker の経路を残す。
 
 ### 16.1 モジュール構成
 
@@ -71,15 +71,21 @@ struct PluRegisterSnapshotSummary {
 pub fn refresh_plu_register_snapshot_from_sd(
     conn: &mut DbConnection,
     z004_files: &[Vec<u8>],
-) -> Result<Option<PluRegisterSnapshotSummary>, BizError>
+) -> Result<PluRegisterSnapshotRefresh, BizError>
+
+pub enum PluRegisterSnapshotRefresh {
+    Refreshed(PluRegisterSnapshotSummary),
+    SkippedOlder, // 選んだ Z004 の精算回数が key より小さくて照合しなかった（手順 2。D-160 (4)）
+    Unchanged,    // ほかの照合しないとき・使える Z004 が無いとき
+}
 ```
 
 1. 各 bytes の精算の識別メタ（IO-02 の `settlement_metadata` の `settlement_no`。[23](23-io-z004-parser.md) の「精算の識別メタ」。23 の型は文字列のまま変えない）を読み、BIZ-04 の中で 10 進の整数として読む（ASCII の数字だけで、`i64` に収まる値。前の 0 は許す）。読めない bytes・読めない値は使わない。
 2. 読めた中で `settlement_no` が最大の 1 本を選ぶ（同じ値が 2 本以上あれば、bytes が同じならどれでもよく、違えば照合しない。`tracing::warn!` で記録する）。精算日時や file 名の日付では選ばない（レジの時計に依らない）。選んだ 1 本の精算回数を、`app_settings` の key `plu_register_snapshot_settlement_no`（最後に照合した Z004 の精算回数、10 進の整数の文字列）と比べる: key が無ければ照合する。key の値より大きいときだけ照合する。小さければ照合しない（`tracing::warn!`、前回の照合を保つ。古い SD を読んだとき）。等しければ照合しない（既に写した観測。warn しない。同じ日に SD を読み直したとき、書込みの前のレジを写した Z004 で、confirm したばかりの枠を `missing_on_register` で未反映へ戻さないため）。key の値が整数として読めなければ照合しない（`tracing::warn!`）。
-3. 照合しないとき・使える Z004 が無いときは `Ok(None)`（何も変えない。前回の照合を保つ）。照合するときは下の `import_plu_register_snapshot` に bytes と精算回数を渡し、その結果を `Some` で返す。
-4. CMD-12 は `Err` を scan の失敗にしない（日報の候補の一覧は返す）。`tracing::warn!` で記録し、前回の照合を保つ。利用者に見えるのは UI-08 の最終照合日時（照合が古いときの警告を含む。UI-08-D11）だけである。
+3. 手順 2 で精算回数が key より小さくて照合しないときは `SkippedOlder`、ほかの照合しないとき・使える Z004 が無いときは `Unchanged`（どちらも何も変えない。前回の照合を保つ）。照合するときは下の `import_plu_register_snapshot` に bytes と精算回数を渡し、その結果を `Refreshed` で返す。
+4. CMD-12 は `Err` を scan の失敗にしない（日報の候補の一覧は返す）。`tracing::warn!` で記録し、前回の照合を保つ。`SkippedOlder` のときだけ、SD を読んだその場（売上データ取込みの読み終えた画面）で、照合しなかったことと理由（この SD の精算回数が前回の照合より小さい）を知らせる（[45 §45.6a](45-cmd-daily-report-import.md) 手順 2a、[55](55-ui-csv-import.md) UI-07-D15 (8)、D-160 (4)）。古い SD とレジの精算回数の戻りはアプリから見分けられない。ほかに利用者に見えるのは UI-08 の最終照合日時（UI-08-D11）だけである。
 
-照合済みの記録は、最後に照合した Z004 の精算回数（上の key）だけを持つ。レジの初期化・修理で精算回数が戻ると、その後の Z004 は key より小さいので照合が止まる。UI-08 の最終照合日時が古くなって警告で見え、開発者が key を消して照合を戻す（D-117 の Revisit。自動の脱出は持たない）。占有の照合は Z004 の取込み（`csv_imports`・売上・在庫）を作らない（D-118 で、旧 ADR〈時点証拠〉の資料の受領と全数読取りは作らないことになった）。占有の照合（[37](37-biz-daily-report-import-service.md) §37.9 の手順 10 で読んだ Z004 を BIZ-04 が照合する）の後に Z004 を取り込む順と TX の分け方は、37 §37.10（手順 3。Z004 の bytes を持つ `z004_files` は PLU の照合の後も残す）と BIZ-08-D7（D-121。項目ごとの TX、順は日報 → Z004 → EJ）が決めた。runtime は [backlog](../backlog.md) の「Z004 を SD の一括取込みに入れる runtime（B）」。停止 ADR の Z004 の業務 commit の停止（SPEC-STOP-D1）は、売上・在庫を作らない占有の照合に及ばない。
+照合済みの記録は、最後に照合した Z004 の精算回数（上の key）だけを持つ。レジの初期化・修理で精算回数が戻ると、その後の Z004 は key より小さいので照合が止まり、SD を読むたびに手順 4 の知らせが出る。開発者が key を消して照合を戻す（D-117 の Revisit。自動の脱出は持たない）。占有の照合は Z004 の取込み（`csv_imports`・売上・在庫）を作らない（D-118 で、旧 ADR〈時点証拠〉の資料の受領と全数読取りは作らないことになった）。占有の照合（[37](37-biz-daily-report-import-service.md) §37.9 の手順 10 で読んだ Z004 を BIZ-04 が照合する）の後に Z004 を取り込む順と TX の分け方は、37 §37.10（手順 3。Z004 の bytes を持つ `z004_files` は PLU の照合の後も残す）と BIZ-08-D7（D-121。項目ごとの TX、順は日報 → Z004 → EJ）が決めた。runtime は [backlog](../backlog.md) の「Z004 を SD の一括取込みに入れる runtime（B）」。停止 ADR の Z004 の業務 commit の停止（SPEC-STOP-D1）は、売上・在庫を作らない占有の照合に及ばない。
 
 #### import_plu_register_snapshot
 
@@ -159,7 +165,7 @@ prepare が返した exact `memory_no` / product_code set を **1 transaction** 
 - retry: 既に同じ結果へ遷移済みなら idempotent success とする。別 JAN / 別 status への変化は拒否する。
 - operation_logs: mode、product 件数、confirmed_at を記録し、実コードを記録しない。
 
-書出しと「未反映から外す」の 2 段は D-027 の理由で残す（CV17 の取込みに失敗しても、外すまでは同じ商品が差分に残る）。通常の経路では confirm で既に `active` なので、次の締めの照合は「同一コード × active」（維持）になり、反映したコードと名称が観測で裏づく。confirm をしなかった枠だけが、照合の「同一コード × reserved」で `reserved -> active` になる。単価・課税方式・部門リンクの反映は Z004 に無く、精算の前には分からないので、照合を「未反映から外す」の代わりにしない（D-117 (6)・(7)）。
+書出しと「未反映から外す」の 2 段は D-027 の理由で残す（CV17 の取込みに失敗しても、外すまでは同じ商品が差分に残る）。通常の経路では confirm で既に `active` なので、次の締めの照合は「同一コード × active」（維持）になり、反映したコードが観測で裏づく（照合はコードだけを比べる）。confirm をしなかった枠だけが、照合の「同一コード × reserved」で `reserved -> active` になる。単価・課税方式・部門リンクの反映は Z004 に無く、精算の前には分からないので、照合を「未反映から外す」の代わりにしない（D-117 (6)・(7)）。
 
 ### 16.6 商品の状態が変わったときの枠（BIZ-04-D6 / SPEC-PLS-D4、D-117 (1)）
 
@@ -202,7 +208,7 @@ fn list_plu_dirty(conn: &DbConnection) -> Result<Vec<Product>, BizError>
 
 - 保存キャンセル・保存失敗: 同じ mode を再 prepare すると予約済み memory No. を再利用する。
 - CV17 取込み失敗: Diff か Full を書き出し直す（前に保存した file は使わない。保存の後の SD の読取りの照合で枠が変わりうるため〈予約中の枠の `reservation_dropped`、対象の商品を持たない JAN の枠の external 化。§16.3〉。書き出し直しは sticky で同じ memory No. を使い、照合で枠が変わっていれば新しい枠を取る。`plu_dirty` は confirm まで残る〈D-027〉）。
-- DB の restore の後: 2 つの key（`plu_register_snapshot_at`・`plu_register_snapshot_settlement_no`）を消し、既存の gate（§16.3 の `register_snapshot_required`）で次の SD の読取りまで書出しを止める。runtime の lane が 71 §71.7 `restore_backup` に足す（本 lane は 71 を触らない。D-117 の Guarantee range と backlog の runtime の項目の写し）。
+- DB の restore の後: `plu_register_snapshot_at` だけを消し、既存の gate（§16.3 の `register_snapshot_required`）で次に照合するまで書出しを止める。`plu_register_snapshot_settlement_no` は消さない（restore で戻った backup の時点の精算回数が、それより古い SD の照合を restore の直後も止める。D-160 (7)）。runtime の lane が 71 §71.7 `restore_backup` に足す（本 lane は 71 を触らない。D-117 の Guarantee range と backlog の runtime の項目の写し）。
 - snapshot conflict: active slot を勝手に external / free へ変えず、商品を dirty にする（次の書出しでアプリのコードを書き直す）。
 - 占有の照合の失敗: BIZ-08 は IO-09-D4 の形の検査で外れた Z004 と読めない Z004 を除いて渡す（37 §37.9 手順 10）。行数と中身の検査は IO-02 `parse_plu_register_snapshot` が行い、`ImportError` なら照合しない。どちらも前回の照合を保ち、CMD-12 の scan は失敗にしない（§16.3）。
 - `NoFreeSlot`: 該当 JAN だけを excluded とし、既存 slot と他の生成行を保持する。

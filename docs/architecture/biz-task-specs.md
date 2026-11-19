@@ -65,7 +65,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. product_codeで既存商品を取得（存在しなければエラー）
 2. 入力バリデーション（登録時と同じルール）
 3. 売価または原価が変わる場合 → price_historyにINSERT（old/new両方記録）
-4. 売価が変わる場合 → plu_dirty=1にセット
+4. 売価・名称・部門・税率が変わる場合 → plu_dirty=1にセット（名称・部門・税率は D-160 (5)、未実装。30 §4.4 手順 4c）
 5. productsをUPDATE（updated_at更新）
 6. operation_logsに記録（operation_type='product_update', detail_jsonに変更前後）
 
@@ -482,7 +482,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 6. チェック実行の operation_logs 記録（operation_type='integrity_check', detail_jsonに不整合件数）はTX外 best-effort のまま（D-6準拠）。補正の記録はステップ5のTX内 'integrity_fix' ログが担う（2ログ分離）
 
 **【制御構造】**
-- チェックタイミング: CSV取込み完了時（自動）、棚卸し確定時（自動）、設定画面から手動実行
+- チェックタイミング: 棚卸し確定時（自動）、設定画面から手動実行
 - 画面からの補正は必ず利用者確認を挟む（移行の手順 8 だけが migration の TX の中で直し、操作ログと整合性の画面で知らせる。22 §19）
 - チェック中の他の操作は制限しない（読み取り専用クエリのため）
 

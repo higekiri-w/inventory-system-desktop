@@ -586,6 +586,7 @@ Use concise ADR-style entries.
 - Impact: v1.0 前プログラム D 系統に Z004 runway 一式が確定投入される。C3（MSI 配布判定）の入口条件に Z004 R3 完了 + 受入台本第2版 PASS が加わる。
 - Alternatives considered: gate 外 + 配布直後 fast-follow（配布は数週間早まるが、主要機能欠落のまま v1.0 を名乗ることを owner が否認）; 項5 まで裁定保留（着手が最も遅れるため否認）。
 - Revisit: Z004 R3 群の実装中に規模見積りが大幅超過し配布時期と衝突した場合（wave 運用の実測で判断）。
+- Superseded in part by: D-117（④ bulk onboarding。D-117 (2) で段階導入の道具を外した）
 
 ## D-071
 
@@ -1030,6 +1031,7 @@ Use concise ADR-style entries.
 - owner の決定（repo 外の回答台帳、要旨）: TD-267（PLU の clear を v1 に入れない。残る穴は黙ってずれなければよい）。TD-273（D7 = 占有は売上の SD の読取りから自動で取り、Z004 を選ぶ step は無くす。D8 = 割当て後・反映前のレジ側の変化は今の照合の該当の規則を残す。D10 = 占有の件数の要約の表示・常に false の警告の枝・レジのメモリ No. の表示を一緒に外す）。TD-274（D1 = 正本の置換えは CV17 の経路で進める。D5 = 段階導入の道具を外し、商品ごとの「レジで売る」欄は残す）。TD-277（CV17 は PLU を変えるとき〈新商品・値段の変更〉だけ、まとめて開く。毎日の売上の取込みは CV17 を使わない〈D-111 の (b) の lane までは D-111 の運用の制約どおり続く〉。SD の設定 file をアプリが作る経路は採らない）。TD-286（JAN を直すときに前の番号の現物を聞いて別名にする仕組み〈TD-284〉は本決定から外し、PLU runtime の lane より前の別の小さな設計 lane で、売上の取込み〈32〉・CSV・商品フォームとの継ぎ目まで含めて最初から設計する。Plan Review round 2 の 4 件〈reserved の枠の別名と CHECK、JAN を書く全経路での別名の消去、同じ前の JAN の共有の同時変更、回答の CMD・UI の境界〉を既知の要件として申し送る。backlog）。TD-288（CV17 の取込みに失敗したときは差分か全件を書き出し直すだけにし、前に保存した file は取り込まない。保存の後の SD の読取りの照合で枠が変わると、前の file がレジ側で変わった枠を上書きしうるため。書き出し直しは同じ memory No. を使い、`plu_dirty` は confirm まで残るので、前の file の方が良い場面が無い）。TD-285（売るのをやめた商品がレジに前の値段で残る限界を受け入れる。clear を戻す条件は空き枠が足りなくなったときとレジで売れないようにしたい商品が出たときで、そのときの事実で新しく設計する）。JAN の無い商品の店内コードの発行と色ごとのバーコードの表（D6、実機の確かめの後に別の lane）、部門リンクの値と 21 個目の部門（D9、店の答え待ち）は本決定に入れない（backlog）。
 - Revisit: clear（アプリがレジの枠を消す）を戻すのは、空き枠が足りなくなったとき（書出しの要修正に `no_free_slot` が出た、または空き枠が JAN を持つ PLU 対象の商品の数に近づいた。枠を使い回さないので売るのをやめた商品の枠が溜まる）と、レジで売れないようにしたい商品が出たとき（前の値段で売れる限界を受け入れられない商品）の 2 つ（owner 決定 TD-285）。そのときは、そのときの事実（レジ・CV17 の振舞い、取込みの扱い）に合わせて新しく設計する。レジの学習（未登録のバーコードのその場の登録）を使い始めるとき（レジ側の変化が増える）。精算回数がレジの初期化・修理で戻ったとき（照合が止まる。key を消して戻し、照合に使う Z004 の選び方を見直す）。CV17 を開かずに反映する経路が成り立つとき（2 段と Diff / Full を見直す）。2,000 行級の CV17 の取込みの時間と中止の残り方が分かったとき（Diff と Full を 1 つにできるか）。
 - Revisit への追記（2026-10-17、D-122）: JAN を直した商品の前の JAN の枠で売れた分を同じ商品へたどる経路（TD-284・TD-286）は D-122 が持つ（前の JAN の別名を商品の側の表に置き、枠の状態・照合・書出しは別名を読まず書かない）。本決定の枠の規則は変えない。
+- Superseded in part by: D-160（(3) の「SD を直接読む runtime に依り、それより前に入れない」と UI-08 の 3 日の警告、(6) の書くたびの SD 設定書込みの案内〈UI-08-D5〉、Guarantee range の「UI-08 の最終照合日時の警告で見え」〈SD を読んだ画面の知らせに置き換えた〉と restore の後に消す key〈`plu_register_snapshot_at` だけ〉）
 
 ## D-118: 棚卸しの数と売上の前後を精算の並びで決め、在庫数は記録から求め直す（時点証拠 ADR と D-116 の置換え）（2026-10-16）
 
@@ -1459,6 +1461,17 @@ Use concise ADR-style entries.
 - Guarantee range: Windows の MSVC の target。Windows の GNU は今のまま lib の test の実行 file に manifest が入らない。`target/` の cdylib の DLL にも manifest が入る（配らない）。Linux の test は文の形だけを見て、Windows の link の結果は見ない（Windows observe と L3 が持つ）。
 - Compatibility: 配る exe の manifest に linker の既定の `trustInfo`（`asInvoker`、`uiAccess='false'`）が増える（lane の L3-3 で確かめる）。icon・版の情報・`STATIC_VCRUNTIME` の扱いは tauri-build のまま変えない。D-137 の dev-tools の 2 行と同じ。
 - Revisit: tauri-build を上げるとき（既定の manifest の中身と `new_without_app_manifest` を見比べる）。配る exe の manifest に DPI の要素を足すとき（そのとき manifest の file を持つ形を比べる）。
+
+## D-160: PLU の書出しの見直しの runtime を 1 本にし、3 日の警告と書くたびの SD 設定書込みの案内を外し、古い精算回数で照合しなかったことは SD を読んだ画面で知らせ、商品の名称・部門・税率の変更でも未反映にする（2026-11-19）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-779〈2026-11-17〉の 1・2・4・5・6 と TD-831〈2026-11-19〉。lane「PLU の仕様の整理」〈仕様の見直しの PLU の群 (2)、TD-778〉で起票した。(5) の出所は AI の review〈仕様の見直し〉で、owner が採った。(7) はこの lane の技術の決め）
+- Context: D-117 は占有の自動の照合を SD を直接読む runtime の後に置いたが、その runtime は入った（PR #172。CMD-12 `scan_register_sd`）。UI-08 の 3 日の警告は、精算回数が戻って照合が止まったことを見せる手段も兼ねていた。商品の修正で名称・部門・税率を変えても `plu_dirty` が立たない（`src-tauri/src/biz/product_service.rs` の `update_product` は売価の変更と対象化だけ）。初回の PLU の書込みの置き場は決まっていなかった（Plans の関門 14）。restore の後に消す key は D-117 と backlog（D-117 の Final Review の P3、Fable #3）で食い違っていた。
+- Decision: (1)（TD-779 の 1）D-117 の runtime（backlog の「PLU の書出しの見直しの runtime」）は 1 本の lane で、占有の自動の照合（BIZ-04 `refresh_plu_register_snapshot_from_sd` と CMD-12 の配線）を含む。(2)（TD-779 の 2）初回の PLU の書込みは店の PC の DB から行い、書く前に SD の設定 file（`AUTOPGM\FILE092P.092`）を PC へ写す。初期投入の手順の流れ 3 の中の位置と手順は (1) の lane か手順書の改訂で決める。(3)（TD-779 の 4）UI-08 の最終照合日時の 3 日の警告と、書くたびの SD 設定書込みの案内（UI-08-D5）を外す。UI-08 は最終照合日時の 1 行と、未照合のときの導線を残す。(4)（TD-831）SD の Z004 の精算回数が前回の照合より小さくて照合しなかったときは、SD を読んだその場（売上データ取込みの読み終えた画面）で、照合しなかったことと理由（この SD の精算回数が前回の照合より小さい）を知らせる（33 §16.3 手順 4、45 §45.6a 手順 2a、55 UI-07-D15 (8)）。古い SD とレジの精算回数の戻りはアプリから見分けられないので、文は両方に当たる形にする。(5)（TD-779 の 5）商品の修正で名称・部門・税率を変えたら `plu_dirty=1` にする（30 §4.4 手順 4c）。(6)（TD-779 の 6）Diff と Full を 1 つにするかは、初回の書込みで CV17 の取込みの時間を測ってから決める（plu-export-and-real-csv-verification の PLU-27）。(7) DB の restore の後に消す key は `plu_register_snapshot_at` だけにし、`plu_register_snapshot_settlement_no` は消さない（33 §16.8）。
+- Why: (1) 依っていた runtime が入った。(4) 3 日の警告は日がたったことだけを言い、照合しなかった理由を言わない。照合しなかったことは、その読取りのその場で理由とともに知らせる（D-127）。(5) PLU の file は `名称`・`課税方式`・`部門リンク` を持ち（25 §12）、変えても書き出さないとレジの登録が古いまま残る。(7) restore で戻った精算回数の key は backup の時点の値で、それより古い SD の照合を restore の直後も止める。消すと、次に照合するまで key が無く、どの SD の Z004 でも照合する。最終照合日時を消せば、既存の gate が次に照合するまで書出しを止める。(2)(3)(6) は owner が推奨を採った（台帳に理由の原文は無い）。
+- Alternatives: (1) runtime を 2 本に分ける（TD-779 の 1）; (4) UI-08 の最終照合日時の 1 行だけで見せる（TD-831）; (7) 2 つの key を消す（restore の直後だけ古い SD の照合を止められない。Fable #3）。
+- Guarantee range: (3) の後、CV17 が読む SD の設定 file が、レジで後から変えた設定を持たなければ、その設定は書込みで消える（project-memory の設定の file の行き来。店の EJ には SD 設定書込みの正常終了がほぼ毎日残り、何が起こすかは未確認）。初回の前は (2) で写す（写しから戻す手順を実機で試した記録は無い、PLU-05）。(4) の知らせが出ても、新しい SD を読むか開発者が key を消すまで照合は止まったまま（D-117 の Revisit のまま、自動の脱出は持たない）。(5) は update の経路で、商品 CSV の上書きは今どおり上書きの行を `plu_dirty=1` にする。(7) の後、restore の時点と同じ精算の SD では照合しない（等しい）ので、書出しは次の締めの SD まで止まる。
+- Compatibility: docs だけ。code・migration・bindings・test は (1) の lane が入れる（今の code は (4)(5)(7) を持たない。(5) は red の test から）。wire の変更は CMD-12 の scan の response の `plu_snapshot_skipped_older` の 1 つと、BIZ-04 `refresh_plu_register_snapshot_from_sd` の戻り値の enum（33 §16.3）。(3) の 2 つは今の build に無い（ui-task-specs の UI-08 の「runtime の状態」）。D-117 の (1)(2)(4)(5)、(3) の照合の規則と gate、(6) の 2 段・Diff と Full・SD に書かないことは変えない（D-117 の Superseded in part の行）。
+- Revisit: (4) の知らせが続いて出るとき（レジの精算回数が戻った見込み。D-117 の Revisit の key の消去と照合に使う Z004 の選び方）。CV17 の取込みの時間が分かったとき（(6)）。
 
 ## D-161: repo の text の file は新しい clone で LF を既定とし、CSV は bytes のまま持つ（2026-11-20）
 
