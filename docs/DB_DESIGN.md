@@ -155,7 +155,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 
 ### ファイルパス保存方針（指摘#19対応）
 - receipt_image_path: アプリ管理下の相対パスで保存（例: images/receipts/2026-03-21_001.jpg）
-- バックアップパス（app_settings.backup_path）: 利用者が指定する絶対パス。デフォルトはアプリインストールフォルダ配下
+- バックアップパス（app_settings.backup_path）: 利用者が指定する絶対パス。未設定ならアプリのデータフォルダの `backups`（71 §71.9 `resolve_backup_dir`）
 - 画像ファイルの実体はアプリのデータフォルダ内に保存。DBにはパスのみ記録
 
 ### operation_type命名規約（指摘#14対応）

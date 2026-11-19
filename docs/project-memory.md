@@ -142,7 +142,7 @@ Keep it factual and stable.
 - No sales-record system other than the register; daily reports are register → Excel transcription → print only — owner回答2026-09-19
 - Single store, not multiple locations — owner回答2026-09-19
 - No multi-user/employee-account concept; effectively single-operator, low concurrency — owner回答2026-09-19
-- No off-PC or network backup destination is in use now — owner回答2026-09-19。owner は、PC の外の保存先はあったほうがよいとは思うとしたうえで、個人店の規模で Google Drive を使うのはセキュリティ面に不安が残り、AWS 等で小さいものがあればという留保を付けた — owner回答2026-09-19。外部に保存するなら置き場所は店 — owner回答2026-09-23。暗号化したクラウド保存は今は見送り、v1.0 に含めない方向（費用の懸念）— owner判断2026-09-23。クラウド保存の扱いは backup の設計 lane で判断する — Coordinator の扱い 2026-09-23
+- No off-PC or network backup destination is in use now — owner回答2026-09-19。導入では、アプリが USB メモリへ自動で写す PC の外の控えを型 C（2 本の入れ替え。1 本を差しっぱなし、1 本を owner が持ち帰る）で使い、「外部に保存するなら置き場所は店」（owner回答2026-09-23）はこれで見直した。USB は用意済みで、USB の控えは任意。クラウドは範囲外（外部のサービスに頼らない）— owner決定2026-10-08・2026-10-20・2026-10-22（repo 外の回答台帳 TD-196・TD-346・TD-381）— `docs/decision-log.md`（D-114）
 - No accounting/bookkeeping software; the Excel sheet above is the closest thing, and its operational adoption is unconfirmed — owner回答2026-09-19
 - No barcode label printer in the store; rejected earlier as impractical for a non-IT elderly-adjacent operator and because some items have no JAN — owner回答2026-09-19
 - No wheeled/mobile work table in the store — owner回答2026-09-19

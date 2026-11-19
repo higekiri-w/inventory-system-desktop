@@ -5,15 +5,16 @@
 ```
 src-tauri/src/
   mnt/
-    mod.rs        -- pub mod backup・pub mod offsite
-    backup.rs     -- バックアップ・リストア・自動チェック・控えの検査（本セクション、§71.12）
+    mod.rs        -- pub mod backup・pub mod offsite・mod restore
+    backup.rs     -- バックアップ・自動チェック・控えの検査（本セクション、§71.12）。restore の入口として、`restore_backup`（restore.rs の本体を呼ぶ wrapper）と `RestoreError` を restore.rs から、`open_existing_database` を db から公開する
+    restore.rs    -- リストアの本体と起動時の reconcile（§71.7、MNT-01-D1・D4・D5）
     offsite.rs    -- PC の外の控え（§71.11、MNT-01-D8・D11。D-114・D-130、runtime (b) で実装）
   db/
     system_repo.rs -- get_setting, upsert_setting, insert_operation_log を使用
   lib.rs          -- setup hook に check_auto_backup 呼び出しを追加
 ```
 
-バックアップの対象は DB の 1 file（`VACUUM INTO`）だけで、アプリのデータ folder のレシート画像（`images/`、IO-06）と SD から読んだ原本の写し（`pos-sources/`、IO-10・BIZ-08-D5、D-111）は入らない。restore はそれらの file を変えない。PC の外の控え（§71.11）も同じ DB の backup file だけを写す。写しを backup と PC の外の控えに含めないことは owner が決めた（D-114 の owner の決定 2。D-111 の未決 B を一部置き換えた、2026-10-08、repo 外の回答台帳 TD-197）。理由と見直し契機は D-114。
+バックアップの対象は DB の 1 file（`VACUUM INTO`）だけで、アプリのデータ folder のレシート画像（`images/`、IO-06）と SD から読んだ原本の写し（`pos-sources/`、IO-10・BIZ-08-D5、D-111）は入らない。restore はそれらの file を変えない。PC の外の控え（§71.11）も同じ DB の backup file だけを写す。写しを backup と PC の外の控えに含めないことは owner が決めた（D-114 の owner の決定 2。D-111 の未決 B を一部置き換えた、2026-10-08、repo 外の回答台帳 TD-197）。理由と見直し契機は D-114。レシート画像を含めないことも owner が決めた（D-162 の (2)、TD-690。返品の確かめは EJ の控え画面〈D-121〉が正の道で、写真は補助）。
 
 ---
 
@@ -304,42 +305,7 @@ fn restore_backup(
 - **CMD層が `?` で早期returnすると、Mutex内がdummy接続のまま残り、以降の全コマンドが失敗する**
 - CMD層は必ず `match` で処理する。`Err` パスの再接続は MNT-01-D4 に従う: 「退避復元済み」の場合のみ **no-create open** で再接続し、それ以外（状態不明/未復旧、または no-create 再接続の失敗）は unrecoverable（再起動誘導文言）を返す。create 能力のある `init_database` を復旧再接続に使ってはならない
 
-**CMD層での呼び出しパターン**（設計レベルの擬似コード。実装 PR1 の具体形は上記 `RestoreError` 3 variant + `CmdError.kind` 3 値）:
-```
-let mut guard = state.db.lock().map_err(|_| CmdError::internal(...))?;
-let dummy = rusqlite::Connection::open_in_memory().map_err(...)?;
-let old_conn = std::mem::replace(&mut *guard, dummy);
-let db_path = app_data.join("inventory.db");  // ファイルパス（ディレクトリではない）
-
-match mnt::backup::restore_backup(old_conn, &backup_path, &db_path) {
-    Ok(new_conn) => {
-        *guard = new_conn;
-        Ok(())
-    }
-    Err(restore_err) if restore_err.is_evacuation_restored() => {
-        // 退避復元済み: no-create open で再接続（空 DB を新規作成しない。MNT-01-D4）
-        match db::open_existing(&db_path) {  // SQLITE_OPEN_CREATE なしの open + PRAGMA 再設定
-            Ok(recovered) => {
-                *guard = recovered;
-                Err(CmdError::internal(&format!("バックアップの復元に失敗: {}", restore_err)))
-            }
-            Err(e2) => {
-                tracing::error!(error = %e2, "DB接続の復旧にも失敗");
-                Err(CmdError::internal(
-                    "バックアップの復元に失敗し、DB接続の復旧もできませんでした。アプリを再起動してください",
-                ))
-            }
-        }
-    }
-    Err(restore_err) => {
-        // 状態不明/未復旧: 再接続を試みず unrecoverable（68 §68.7 の terminal 分岐へ）
-        tracing::error!(error = %restore_err, "復元後の DB 状態が確定できません");
-        Err(CmdError::internal(
-            "バックアップの復元に失敗し、DB接続の復旧もできませんでした。アプリを再起動してください",
-        ))
-    }
-}
-```
+**CMD 層の呼出し**: `settings_cmd.rs` の `restore_backup` が Mutex の接続を `std::mem::replace` で dummy と入れ替えて `backup::restore_backup` に渡し、`Ok` なら新しい接続を guard に戻す。`Err` は `handle_restore_failure` が分ける: `RestoreError::Recovered` だけ `backup::open_existing_database`（`SQLITE_OPEN_CREATE` なしの open）で再接続し、成功なら `restore_failed_recovered`、失敗なら `restore_failed_unrecoverable`。`Unrecoverable`・`DurabilityUnknown` は再接続せず `terminal_restore_error` が `restore_failed_unrecoverable`・`restore_durability_unknown` にする（画面の分岐は 68 §68.7）
 
 **エラーハンドリング**:
 - バックアップファイル不在 → `RestoreError::Recovered`
@@ -446,6 +412,7 @@ entry error / filename filter の production-only / test-only 分岐が存在し
 - 決定: `cleanup_old_backups`（ファイル削除）を駆動する保持日数は、(a) `backup_retention_days` の読取が成功しかつ数値として parse できた、または (b) 設定行が存在しない（未設定 = 初期状態、既定 3 日を適用）、のどちらかの場合のみ確定とする。**DB error での読取失敗、および設定値はあるが数値として parse できない場合は、既定値へ fallback せず cleanup 自体をスキップ**して `tracing::warn!` を記録する（バックアップ作成の成否には影響させない）
 - Why: 読取失敗を既定 3 日へ潰すと、例えば 90 日保持を設定済みの利用者の設定読取だけが失敗したとき、4 日目以降のバックアップを誤って削除する（監査 P3-1 の中核経路）。cleanup の skip は「バックアップが溜まる」方向の安全な失敗であり、次回成功時に自然回復する
 - Rejected alternatives: 現行の `.ok().flatten().unwrap_or(3日)`（destructive fallback そのもの）/ parse 失敗も既定適用（未設定と設定破損を区別できず、破損時に削除が走る）
+- 保持日数（既定 3 日、PC の日付で消す）を今のまま使うことは owner が決めた（D-162 の (1)、TD-673）。書込みの時の検査（1 以上の整数だけ保存する）も決めた（D-162 の (3)、TD-841。実装は backlog の項目）
 - 見直し契機: 設定値の書込み時 validation（数値以外を保存不能にする）が導入され、parse 失敗経路が構造的に消えたとき
 
 ---
@@ -496,21 +463,21 @@ pub fn resolve_backup_dir(conn: &DbConnection, app_data: &Path) -> Result<PathBu
 
 | テスト名 | 検証内容 |
 |---------|---------|
-| `test_create_backup_mnt01_creates_file` | VACUUM INTO でバックアップファイルが生成される |
-| `test_create_backup_mnt01_filename_format` | ファイル名が `inventory_backup_YYYYMMDD_HHMMSS.db` 形式 |
-| `test_create_backup_mnt01_data_integrity` | バックアップDBに現在のデータが含まれる |
-| `test_create_backup_mnt01_logs_operation` | operation_type='backup_create' のログが記録される |
-| `test_cleanup_old_backups_mnt01_deletes_expired` | 保持日数超過ファイルが削除される |
-| `test_cleanup_old_backups_mnt01_keeps_recent` | 保持日数内のファイルが保持される |
-| `test_list_backups_mnt01_returns_sorted` | 新しい順でBackupInfoが返される |
-| `test_list_backups_mnt01_empty_dir` | 空ディレクトリで空Vecが返される |
-| `test_restore_backup_mnt01_replaces_data` | リストア後にバックアップ時点のデータに戻る |
-| `test_restore_backup_mnt01_nonexistent_file` | 存在しないファイルでNotFoundエラー |
-| `test_restore_backup_mnt01_runs_migration` | 古いバックアップ復元時にマイグレーションが実行される |
-| `test_check_auto_backup_mnt01_disabled` | backup_enabled=0 でスキップ |
-| `test_check_auto_backup_mnt01_no_backup_today` | 今日のバックアップなしで即実行 |
-| `test_check_auto_backup_mnt01_already_backed_up` | 今日のバックアップありでスキップ |
-| `test_check_auto_backup_mnt01_scheduled_time` | backup_time到達で2回目のバックアップ実行 |
+| `test_create_backup_req901_creates_file` | VACUUM INTO でバックアップファイルが生成される |
+| `test_create_backup_req901_filename_format` | ファイル名が `inventory_backup_YYYYMMDD_HHMMSS.db` 形式 |
+| `test_create_backup_req901_data_integrity` | バックアップDBに現在のデータが含まれる |
+| `test_create_backup_req901_logs_operation` | operation_type='backup_create' のログが記録される |
+| `test_cleanup_old_backups_req901_deletes_expired` | 保持日数超過ファイルが削除される |
+| `test_cleanup_old_backups_req901_keeps_recent` | 保持日数内のファイルが保持される |
+| `test_list_backups_req901_returns_sorted` | 新しい順でBackupInfoが返される |
+| `test_list_backups_req901_empty_dir` | 空ディレクトリで空Vecが返される |
+| `test_restore_backup_req901_replaces_data` | リストア後にバックアップ時点のデータに戻る |
+| `test_restore_backup_req901_nonexistent_file` | 存在しないファイルで `RestoreError::Recovered`（元の接続を壊さない） |
+| `test_restore_backup_req901_runs_migration` | 古いバックアップ復元時にマイグレーションが実行される |
+| `test_check_auto_backup_req901_disabled` | backup_enabled=0 でスキップ |
+| `test_check_auto_backup_req901_no_backup_today` | 今日のバックアップなしで即実行 |
+| `test_check_auto_backup_req901_already_backed_up` | 今日のバックアップありでスキップ |
+| `test_check_auto_backup_req901_scheduled_time` | backup_time到達で2回目のバックアップ実行 |
 | `test_check_auto_backup_req901_entry_error_propagates_without_creating_backup` | 個別entry errorをQueryFailedへ返し、create/cleanup副作用なし |
 | `test_create_backup_req901_metadata_error_propagates_without_success_log` | metadata errorをsize 0成功へ変換しない |
 | `test_list_backups_req901_metadata_error_propagates` | metadata errorでpartial/inaccurate listを返さない |
@@ -880,7 +847,7 @@ fn check_backup_dir_choice(selected: &Path) -> Result<(), OffsiteError>
 
 **MNT-01-D12: PC の日付より先の日付の backup は写す元と古さの判定に使わず、媒体の掃除で数えず消さず、先の日付の成功の記録は無いものとして知らせる**
 
-- 決定: (1) 写す元（§71.11.4 手順 2）と `local_backup_old`（§71.11.5）は、`list_backups` のうち名前の日付（§71.3）が今日（PC のローカル日付）以前の file の先頭で決める（`mnt::offsite` の同じ 1 つの関数）。(2) `offsite_status` は、写した日と写した控えの日付の両方が今日より後の成功の記録を、無いものとして返す（§71.11.5）。(3) 先の日付の file と記録を、アプリは PC の中でも媒体の上でも消さず・名前を変えず・書き換えない。PC の中の掃除（§71.5、MNT-01-D3）、一覧（§71.6）、今日の backup の判定（§71.8）は変えない。(4) 媒体の掃除（§71.11.4 手順 4g）は、名前の日付が今日以前の写しだけを数えて新しい `OFFSITE_KEEP` 本を残し、今日より後の名前の写しは数えず消さない（日付の比べ方は (1) と同じ）。今写した file を消さない規則（MNT-01-D8）は変えない
+- 決定: (1) 写す元（§71.11.4 手順 2）と `local_backup_old`（§71.11.5）は、`list_backups` のうち名前の日付（§71.3）が今日（PC のローカル日付）以前の file の先頭で決める（`mnt::offsite` の同じ 1 つの関数）。(2) `offsite_status` は、写した日と写した控えの日付の両方が今日より後の成功の記録を、無いものとして返す（§71.11.5）。(3) 先の日付の file と記録を、アプリは PC の中でも媒体の上でも消さず・名前を変えず・書き換えない。PC の中の掃除（§71.5、MNT-01-D3）、一覧（§71.6）、今日の backup の判定（§71.8）は変えない。(4) 媒体の掃除（§71.11.4 手順 4g）は、名前の日付が今日以前の写しだけを数えて新しい `OFFSITE_KEEP` 本を残し、今日より後の名前の写しは数えず消さない（日付の比べ方は (1) と同じ）。今写した file を消さない規則（MNT-01-D8）は変えない。D-114 の (1) の「新しい 30 本」はこの (4) で読む（D-162 の (7)）
 - Why: owner の決定（2026-11-19、repo 外の回答台帳 TD-816: PC の中の先の日付の file はそのままにし、先の日付の成功の記録は記録なしの扱いで今の「まだ写せていません」の文で知らせる。TD-820: 媒体の掃除も直し、先の日付の名前の写しは 30 本に数えず消さない）。PC の時計が先へ進んでから直ると、先の日付の名前の file が `list_backups` の先頭に残り続け、写し済みなら確認が毎回 `UpToDate` になって、PC の日付がその日付になるまで新しい backup が媒体へ写らない。日数も負になって `stale` が立たず、知らせも出ない。PC の時計が戻っている間も、本当の日付の最新が先頭に残って同じになる（起票の時に 3 つの筋を一時の test で再現した。packet の「調べ」）。PC の外の控えは黙って止まらないことが要る（MNT-01-D8 の Why）。先の日付の記録は「いつ写せたか」を言えないので、読めない記録と同じく知らせる側に倒す（§71.11.5）。(4) の理由: (1) で今日の backup が写るようになると、止まっていた手順 4g が写すたびに動く。名前の全部で 30 本を数えると、先の日付の名前の写しが本当の日付の写しを押し出す（媒体に先の日付の名前 30 本と今日より前の名前 5 本があると、今日の file が写った時に今日より前の 5 本が全部消えた。packet の「調べ」の S4 (a) の実測）。(4) の規則が残す写しは、名前の全部で数える規則が残す写しを必ず含む（先の日付の名前は全部残り、今日以前の名前の順位は先の日付の名前を除いても下がらない）
 - Rejected alternatives: 媒体の掃除は名前の全部で 30 本を数えるままにし、受けるリスクとして書く（TD-820 で採らなかった案。媒体に先の日付の名前の写しがあると、今日の backup が写るたびに本当の日付の写しが押し出されて消え、消えた写しは戻らない）／ 日数が負のときだけ `stale` にし、写す元は変えない（知らせは出るが写しは止まったままで、文は「USB メモリは差してありますが、写せません」になり直し方が外れる）／ 写す元だけ変え、先の日付の記録はそのまま使う（USB メモリが見えないままだと、PC の日付が記録の日付 + `OFFSITE_STALE_DAYS` 日になるまで知らせが出ない）／ 先の日付の file をアプリが消す・別の名前へ退避する（破壊的で、PC の中の掃除は今のままという owner の決定〈repo 外の回答台帳 TD-673〉と衝突する。時計が戻っているだけの間は、本当の日付の正しい backup を消すことになる）／ `list_backups` の中で除く（一覧と復元の画面から先の日付の file が消える）／ 名前でなく file の更新日時で新しさを決める（copy と媒体の file system で変わり、名前が日時の正本という §71.3 の規約を崩す）／ 時刻まで比べる（`offsite_status` は日付だけを受ける〈43 §43.8.4〉ので、写す元と古さの判定の規則が 2 つに割れる）／ 先の日付の記録のとき `UpToDate` で成功の記録を書き直す（写していない時刻を「写せた日時」に書く。§71.11.4 のエラーの表は、記録が古いままの `UpToDate` を次の写しまで知らせる側に置いている）／ 「PC の日付を確かめてください」の文を足す（画面の文と目視が要る。時計が今ずれているのか、前にずれていた跡なのかをアプリは見分けられない）
 - Compatibility: command・DTO の形・状態の file の形・`app_settings`・画面の文字列は変えない。`days_since_last_success` は負の値を返さなくなる（今は負を返しうるが、画面は `stale` のときしか日数を出さない）。状態の file の先の日付の記録は読めるまま残る。成功の記録の有効さは読取りの日と記録の `min(写した日, 控えの日付)` を比べて決め（§71.11.5）、記録の更新は §71.11.4 手順 5・6 に従う。媒体の上の写しは今ある file のまま始まり（この決定の前に消えた写しは戻らない）、先の日付の名前の写しがある媒体では 30 本より多く残る
@@ -939,8 +906,8 @@ PC の外の控えが「ある」だけでなく「戻せる」ことを、店�
 | 段 | いつ | だれ | 手順 | 合格 |
 |---|---|---|---|---|
 | 短い確かめ | 媒体を入れ替えるたび（店の型は C、§71.11.6。差しっぱなしだけの A なら月に 1 回） | owner（店主でもできる） | (1) 持ち帰っていた媒体を差した直後、アプリが今日の控えを写す前（差してから 60 秒の確認の前）に、バックアップ画面の「控えを選んで確かめる」→ 差した媒体の `InventoryBackup` の最新の file を選ぶ（持ち帰っている間の媒体の記憶を、媒体から読ませて確かめる）。確かめの間は 60 秒の確認が止まる（68 UI-11b-D15）ので、結果を見たら詳細を閉じて画面を `ready` に戻す（確認が再開する）。(2) card が「差してある控え: 控え N」と今日の日時になるのを待つ（再開から 60 秒以内）。A は (1) の代わりに、差してある媒体の最新の file を選ぶ | (1)「この控えは戻せます」と、作成日時がこの媒体を前に差していた最後の日（前回の入れ替えの日。A なら前の営業日）以降で、最後の記録がその日の作業と合う。(1) で 60 秒の写しが先に済んでいた場合は、最新が今日の控えになるので、2 番目に新しい file で (1) を見る。(2) card に今日の日時と、差した媒体の札 |
-| 通しの演習 | 運用を始める前（go-live の前）と、migration を含むアプリの更新の後 | owner | 店の PC とは別の PC に同じ版のアプリを入れ、「控えを選んで確かめる」で媒体の最新の控えを選び、確かめの結果を見てから 2 段の確認で戻し、ホーム・商品・日次売上の画面で最後の営業日の記録が見えることを確かめる。終わったらその PC のアプリのデータ folder を消す（店のデータを残さない） | 戻った後の画面で、最後の営業日の売上と商品の数が店の PC と合う |
+| 通しの演習 | 運用を始める前（go-live の前。関門 12 の受入とは別の日でよい）と、migration を含むアプリの更新の後 | owner | 初期投入の予行（[initial-load-runbook.md](../initial-load-runbook.md) の流れ 2）の data で、開発用の Windows で行う。流れ 2 の中のどこで流すか（取り込んだ後の手動バックアップと、その控えが媒体へ写ること）、PC の外の控えの媒体の用意、退避した data folder を戻してから流れ 2 を続けることは、関門 3 の残りの (4) の手順書が決める。それまでこの行だけでは流さない。流すときは、戻す前に商品の数を控え、アプリのデータ folder を退避し、同じ PC で「控えを選んで確かめる」で媒体の最新の控えを選び、確かめの結果を見てから 2 段の確認で戻す | 戻った後の画面で、商品の数（売上のある data なら最後の営業日の売上も）が、戻す前に控えた数と合う |
 | 本番の復元（PC を失ったとき） | — | owner | 新しい PC にアプリを入れて起動 → バックアップ画面の「控えを選んで確かめる」→ 媒体の最新の控え → 確かめの結果を見る → 2 段の確認 → 戻る → **バックアップ画面の「今すぐバックアップを作成」を押す**（新しい PC の起動時の自動 backup と復元の事前バックアップは空の DB の控えで、今日の backup と数えられ、押さないと媒体へ写る最新が空の控えになる）。押す前に「現在の保存先」が新しい PC の中の folder かを見て、古い PC の path（戻した DB の `backup_path`）なら「保存先を選ぶ」で選び直す →「この USB メモリを控えの保存先にする」で媒体を登録し直す（目印の `medium_id` と札の名前を引き継ぐ）。残っている控えはすべて登録し直してから、新しい USB メモリを用意する（先に新しい媒体を用意すると、後で登録し直す控えと札が重なる） | 戻った後、ホームの「PC の外の控え」の知らせが消える（次の確認で写る）。登録し直した後、「控えを選んで確かめる」で媒体の最新の控えを開き、商品の数と最後の記録の日時が戻した結果と合う（空の控えが写っていない） |
 
-- 店の PC で通しの演習（実際の復元）をしない: 復元は店の今のデータを控えの時点へ戻す破壊的な操作（UI-11b、D-032）で、演習のために店の記録を巻き戻さない
-- 別の PC に店のデータを置く間の扱い（消す時期）は owner の判断。repo に実データ・backup file を置かない（AGENTS.md の Safety）
+- 店の PC で通しの演習（実際の復元）をしない（演習の data と PC は TD-842、D-162）: 復元は店の今のデータを控えの時点へ戻す破壊的な操作（UI-11b、D-032）で、演習のために店の記録を巻き戻さない
+- 開発用の Windows に店のデータを置く間の扱い（消す時期）は owner の判断。repo に実データ・backup file を置かない（AGENTS.md の Safety）
