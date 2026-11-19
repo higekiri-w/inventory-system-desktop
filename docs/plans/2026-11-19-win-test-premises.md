@@ -7,7 +7,7 @@ decision-log の番号は D-161（D-160 は PR #292 が使った。`git show ori
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 267626d0426b67e4e9eb84e01900a6ca318fb2e4
 - Amendments: none
 
 ## Risk
