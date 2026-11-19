@@ -66,7 +66,7 @@
 - UI-08: PLU書出し画面（PluExportPage）— D-072 / D-117 / REQ-907 Design Phase 更新済み。毎日の SD の読取りでの Z004 占有の照合、永続 memory No.、`prepare_plu_export` / `confirm_plu_export_saved` 二段階契約、Diff / Full の CV17 投入、Windows native L3 は [function-design/67-ui-plu-export.md](function-design/67-ui-plu-export.md) を参照
 - UI-11b: バックアップ・復元画面（BackupRestorePage）— Design Phase 追加済み（実装済み）。QR-05 / REQ-901、PR #141 generated `commands.*`、復元前強制バックアップ、break-glass 例外、復元後 query cache clear、Windows native L3 は [function-design/68-ui-backup-restore.md](function-design/68-ui-backup-restore.md) を参照
 - UI-11a: 閾値設定画面（ThresholdSettingsPage、operator 名称「在庫少の基準」）— Design Phase 追加済み（実装済み）。QR系 / D-4、`/settings/thresholds` route、既存 `getSettings` / `updateSetting` 契約（新規 CMD なし）、在庫少基準 2 key 所有、整数 1〜99999 検証、部分失敗表示、Windows native L3 軽量 2 項目は [function-design/69-ui-threshold-settings.md](function-design/69-ui-threshold-settings.md) を参照
-- UI-10: 棚卸し画面（StocktakePage）— Design Phase 追加済み（実装済み）。REQ-205、`/stocktake` route、既存 CMD-10 4 コマンド（specta 化は実装 PR）+ 新規 `find_stocktake_item` / `get_last_completed_stocktake` 設計、検索/スキャン 1 発解決 + total_cost 主役の結果画面（計数の入れ直しと完了の確認は 73）、前回完了棚卸し比較、10-4a IPC channel 不採用確定、Windows native L3 5 項目は [function-design/73-ui-stocktake.md](function-design/73-ui-stocktake.md) を参照
+- UI-10: 棚卸し画面（StocktakePage）— Design Phase 追加済み（実装済み）。REQ-205、`/stocktake` route、CMD-10 の 11 command（42）、検索/スキャン 1 発解決 + total_cost 主役の結果画面（計数の入れ直しと完了の確認は 73）、前回完了棚卸し比較、10-4a IPC channel 不採用確定、Windows native L3 5 項目は [function-design/73-ui-stocktake.md](function-design/73-ui-stocktake.md) を参照
 - UI-11c: 操作ログ画面（OperationLogsPage）— Design Phase 追加済み（実装済み）。REQ-902 / TRACE-D3、`/settings/logs` route、既存 `listLogs` への `start_date`/`end_date` 拡張（JST 暦日 inclusive/exclusive、row/count predicate 同一性）、新規 `list_log_operation_types` + IO `find_distinct_operation_types`（保持中ログ全体の distinct 種別、現在ページ由来を禁止）、canonical operation_type 日本語ラベル registry、detail_json 既知field要約+折りたたみraw JSON+安全上限、関連業務記録リンクの明示 contract（許可リストと厳密な `record_id` 条件、入庫・返品交換・手動販売・廃棄の作成 producer は対応済み、csv_import / stocktake は別 follow-up）、範囲外page回復、empty 2系統、retry、REQ-902/905 traceability 是正、Windows native L3 8 項目は [function-design/74-ui-operation-logs.md](function-design/74-ui-operation-logs.md) を参照
 - UI-13: 在庫整合性検証画面（IntegrityCheckPage）— Design Phase 追加済み（実装済み）。REQ-904、`/settings/integrity` route、idle/running/completed lifecycle、generated `runIntegrityCheck` / `fixIntegrity`、operation log由来の直近確認日時、行単位選択 + 確認dialog、100件client-side paging、fix結果・skipped警告・retry選択保持、非色状態表示、Windows native L3 3項目は [function-design/75-ui-integrity-check.md](function-design/75-ui-integrity-check.md) を参照
 - UI request primitives: 入庫・返品交換・手動販売・廃棄request builderのdomain非依存primitive owner、既存wrapper互換、prefix / integer境界、timezone非依存test contractは [function-design/76-ui-request-primitives.md](function-design/76-ui-request-primitives.md) を参照
@@ -130,14 +130,14 @@ UI-06b は独立画面ではなく UI-06a への deep-link のため、専用の
 - [BIZ-03: Z004商品別CSV取込みパイプライン](function-design/32-biz-csv-import-service.md) — parse_and_validate, commit_csv_import, rollback_csv_import, preview_rollback_csv_import
 - [BIZ-04: PLU書出しロジック](function-design/33-biz-plu-export-service.md) — prepare_plu_export, confirm_plu_export_saved, list_plu_dirty
 - [BIZ-05: 売上集計ロジック](function-design/34-biz-sales-service.md) — get_daily_sales, get_monthly_sales
-- [BIZ-06: 棚卸しロジック](function-design/35-biz-stocktake-service.md) — start_stocktake, update_count, complete_stocktake
+- [BIZ-06: 棚卸しロジック](function-design/35-biz-stocktake-service.md) — start_stocktake, save_stock_count, zero_uncounted_items, complete_stocktake
 - [BIZ-07: 整合性チェックロジック](function-design/36-biz-integrity-check.md) — run_integrity_check, fix_integrity
 - [BIZ-08: 日報取込みロジック](function-design/37-biz-daily-report-import-service.md) — scan_register_sd_daily_reports, parse_and_validate_daily_report, commit_daily_report_import, rollback_daily_report_import
 
 ### CMD層（Tauriコマンド）
 - [CMD-01: 商品コマンド群](function-design/40-cmd-product.md) + 一括インポート
 - [CMD-07/08: POS連携コマンド群](function-design/41-cmd-pos.md) — Z004商品別CSV取込み(parse/commit/rollback/list), PLU書出し(export/list_dirty)
-- [CMD-09/10/11部分: 売上集計・棚卸し・整合性コマンド群](function-design/42-cmd-sales-stocktake.md) — 売上(daily/monthly), 棚卸し(start/items/count/complete), 整合性(check/fix)
+- [CMD-09/10/11部分: 売上集計・棚卸し・整合性コマンド群](function-design/42-cmd-sales-stocktake.md) — 売上(daily/monthly), 棚卸し(start/items/計数の保存/complete), 整合性(check/fix)
 - [CMD-02〜05: 入出庫コマンド群 / CMD-06: 在庫照会コマンド群](function-design/44-cmd-inventory.md) — 入庫/返品/手動販売/廃棄(create/list), 在庫照会(detail/low_stock/movements)
 - [CMD-11残り: 設定・ログ・バックアップ・画像コマンド群](function-design/43-cmd-settings-log.md) — settings CRUD, list_logs（UI-11c-D2/D3 期間拡張）, list_log_operation_types（新規、UI-11c-D4）, backup/restore, save_receipt_image
 - [CMD-12: 日報取込みコマンド群](function-design/45-cmd-daily-report-import.md) — Z001/Z002/Z005 daily report bundle SD scan/parse/commit/rollback/list

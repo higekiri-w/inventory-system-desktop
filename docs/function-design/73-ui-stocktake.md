@@ -58,12 +58,12 @@
 - **Revisit trigger**: BIZ-06 に明示的な resume/中止 API が追加された場合。
 - **契約監査追記（2026-07-08）**: PR #159 の契約監査で、継続表示ヘッダが本決定・UI-10-F1・73.10 Wording が明記する「開始日時」ではなく内部 `stocktake_id` を表示していた実装漏れが見つかった。バックエンド（`get_active_stocktake`）は `started_at` を返しているのに、`useStocktakeStatus` フックも `StocktakeProgressHeader` コンポーネントもこれを一切参照していなかった。`棚卸し中（ID: {stocktakeId}）` → `棚卸し中（開始日: {formatCountedAt(started_at)}）` に修正。
 
-### UI-10-D2: カウント主動線は検索/スキャン→数量入力→即保存、counted 済みへの上書き再入力を常時許可
+### UI-10-D2: カウント主動線は検索/スキャン→数量入力→即保存、数を直すのは「入れ直す」
 
-- **決定**: 主動線は「検索/HID スキャンで商品を特定 → 数量入力 → 1 件即保存」で、保存は `save_stock_count`（1 商品 1 TX。b1 で旧い数の上書きの command を置き換えた）。商品の特定は新規 CMD `find_stocktake_item({ stocktake_id, code })`（§73.8。`code` は商品コードまたは JAN の完全一致で該当明細を 1 発解決）で行う。counted 済み（`actual_count` が既に入っている）商品への再入力を、未入力商品と全く同じ導線・確認なしで常時許可する（上書き＝都度訂正の代替）。（b1 の注記: 同じ日付で「数を保存」から違う数を入れると要再確認〈ADR D3 の理由 3〉になるので、数を直す導線は「入れ直す」〈確認なし〉。欄の文は冒頭の D-118 の節）プレカウント専用の別機能は作らない。
-- **Why**: 現運用は部門キー売り中心で、CSV/PLU が未導入の間は商品単位のレジ販売が `sale_records` / `inventory_movements` に反映されない（D-025）。そのため「カウント後に売れた分の訂正」はシステム側にも訂正対象データが存在せず、operator が現物を見て再入力する以外に手段がない（issue #135 の訂正コメント 2026-07-07 で明示）。上書き保存を特別扱いすると、まさに一番必要な訂正導線に確認ダイアログという追加の摩擦を課すことになる。
-- **Rejected**: BIZ 確定ロジック側で `counted_at` 以降の在庫変動を自動織り込む（現運用では織り込むべき商品単位データ自体が存在しないため実装不能。将来 Z004/PLU 運用が始まったら再検討）。上書き時だけ確認ダイアログを挟む（都度訂正が前提の運用で毎回ダイアログを出すのは実質妨害になる。DSR-07 も可逆操作には確認なしを原則としており、数の保存は何度でも入れ直せる）。プレカウント専用モード（上書き入力で用が足りる）。クライアント側で全明細ページを順次取得して `product_code → stocktake_item_id` マップを構築する解決方式（数の保存の成功ごとに一覧 invalidation（§73.11）が走るため 1 件保存のたびに数千件・複数ページの再取得とマップ再構築が反復する。部門を跨いでスキャンする使い方にも弱い。薄い解決 CMD 1 本（BIZ wrapper 込み）の追加コストの方が明確に小さい）。
-- **Revisit trigger**: Z004/PLU 運用が始まり商品単位の販売データが `sale_records` に載るようになった時。
+- **決定**: 主動線は「検索/HID スキャンで商品を特定 → 数量入力 → 1 件即保存」で、保存は `save_stock_count`（1 商品 1 TX）。商品の特定は新規 CMD `find_stocktake_item({ stocktake_id, code })`（§73.8。`code` は商品コードまたは JAN の完全一致で該当明細を 1 発解決）で行う。計数済み（`actual_count` が既に入っている）商品の数を直すときは、同じ欄の「入れ直す」（fresh な計数。確認なし）で入れる。同じ日付で「数を保存」から違う数を入れると要再確認（ADR D3 の理由 3）になる（欄の文は冒頭の D-118 の節）。プレカウント専用の別機能は作らない。
+- **Why**: 数えた後に売れた・入れた分は、Z004 と入出庫の記録から窓で決まる（ADR D3）。決まらないときと数え違えたときは、棚を今見た数を「入れ直す」で入れる（保存の前の記録を全て含む数になる）。直す導線に確認ダイアログを挟むと、一番要る訂正に摩擦を課す。
+- **Rejected**: 入れ直す時だけ確認ダイアログを挟む（都度訂正が前提の運用で毎回ダイアログを出すのは実質妨害になる。DSR-07 も可逆操作には確認なしを原則としており、数の保存は何度でも入れ直せる）。プレカウント専用モード（入れ直しで用が足りる）。クライアント側で全明細ページを順次取得して `product_code → stocktake_item_id` マップを構築する解決方式（数の保存の成功ごとに一覧 invalidation（§73.11）が走るため 1 件保存のたびに数千件・複数ページの再取得とマップ再構築が反復する。部門を跨いでスキャンする使い方にも弱い。薄い解決 CMD 1 本（BIZ wrapper 込み）の追加コストの方が明確に小さい）。
+- **Revisit trigger**: 入れ直しの件数が運用で負担になったとき（ADR の Revisit Trigger の PLU の販売の行）。
 - **契約監査追記（2026-07-08、owner L3 実機発見）**: §73.5 は Design Phase 初版から「商品名で探したい場合は既存の商品検索（`commands.searchProducts`）で候補から選び、その `product_code` を使う」と明記していたが、実装から丸ごと漏れていた。owner が実機 L3 で「棚卸し中に新商品を登録し、その商品名で棚卸し検索欄に入力する」という自然な操作を行った際、`find_stocktake_item` は商品コード/JAN の完全一致のみ検索するため `None` を返し、「この商品は棚卸しの対象にありません」という誤解を招くメッセージが出た（一覧には UI-10-D9 の自動追加で実際に存在しているのに、検索では見つからないという矛盾した体験）。`resolveItem` を拡張し、`find_stocktake_item` が `None` を返した場合に `commands.searchProducts`（`ReceivingPage.tsx` の商品名検索と同じ経路・クエリ）へフォールバックする。0 件は既存の「対象にありません」文言、1 件は自動的にその `product_code` で `find_stocktake_item` を再実行して選択、複数件は候補テーブル（商品コード/商品名/部門 + 選択ボタン、`ReceivingPage.tsx` の候補表示パターンを踏襲）を表示する。T21/T22 追加。
 - **契約監査追記2（2026-07-08、Codex レビュー）**: 商品名検索欄に日本語 IME の変換確定 Enter でも `resolveItem` が発火する欠落があった（`event.nativeEvent.isComposing` guard 未実装）。`ReceivingPage.tsx` の商品検索欄には既にこの guard があり、今回追加した商品名検索フォールバックが「同じパターン」を謳う以上この点でも一致させる必要があった。検索欄・数量入力欄の両方の `onKeyDown` に `if (event.nativeEvent.isComposing) return;` を追加（数量欄は `inputMode="numeric"` だが全角数字入力等の IME 経由ケースへの防御として追加）。T23 追加。
 - **契約監査追記3（本 PR、UI ガッツリ整えターン disposition culling 起源）**: 3 点を是正する。①`selectItem` が対象切替時に `setFieldError(null)` を呼ばず、live 候補選択・商品名検索フォールバックの単一候補自動選択を経由した場合に前商品の数量 FieldError が残留していた（PR #27 L3 owner 観察 2026-09-02）。対象商品が切り替わる全経路の集約点である `selectItem` へ `setFieldError(null)` を追加して是正する。②§73.9 の「対象にありません」はエラー扱いにしない契約だが、実装は `role="alert"` + `text-destructive` の destructive 表示になっていた（doc↔実装 drift）。`role="status"` + `text-muted-foreground` + `Info` icon の情報系表示へ是正する（DSR-08/DSR-11 準拠）。③商品名検索フォールバック（`PRODUCT_NAME_SEARCH_QUERY`）が `is_discontinued: false` 固定のため、棚卸し item 母集団（廃番商品を含む、§73.1 issue #91 回答済み）と商品コード/JAN 完全一致検索（`find_stocktake_item`、母集団の制限なし）には存在する廃番商品が、名前検索経路だけ候補から漏れる非対称があった（PR #27 L3 owner 観察 2026-09-02）。名前検索フォールバックの `PRODUCT_NAME_SEARCH_QUERY`（棚卸し画面ローカル）は `is_discontinued: null`（`ProductSearchQuery` の `None` は「全件、フィルタなし」を意味する、`src-tauri/src/db/product_repo.rs` の `search_products` の `query.is_discontinued` 実読で確定）へ変更する。live 候補プレビュー（catalog ⑮）側は 5 画面共有の `useProductAddSuggest.ts` の default `PRODUCT_SEARCH_QUERY`（`is_discontinued: false`）を直接変更せず、新設の optional `queryOverrides`（catalog ⑮ SPEC-SUGGEST-D13、下記 docs 是正）で棚卸し画面だけ `{ is_discontinued: null }` を渡す（他 4 画面は default のまま廃番を除外し続ける）。両経路の候補行に廃番 Badge（catalog `02-component-catalog.md` の ③ テーブル の例と同型）を追記して是正する。
@@ -75,13 +75,12 @@
 - **Rejected**: 商品名/コード順や未入力優先ソートの追加（IO 層の `ORDER BY` 変更を伴う。主動線が検索/スキャンである以上、一覧の並び順を工夫する投資対効果が低い）。
 - **Revisit trigger**: 一覧を目視でスクロールして探す使い方が実際の運用で主動線になった場合。
 
-### UI-10-D4: 確定は常時確認ダイアログ（文言は未入力件数で分岐）、結果画面は total_cost が主役
+### UI-10-D4: 確定は常時確認ダイアログ、結果画面は total_cost が主役
 
-- **決定**: 確定 CTA「棚卸しを確定する」は 1 個（DSR-01）。押下時は**常に**確認ダイアログを挟む。`progress.uncounted_items > 0` なら「未入力の商品が{N}件あります。現在の在庫数で確定しますか？」（確認後 `force_fill=true`）、`uncounted_items === 0` なら「棚卸しを確定します。確定後は取り消せません。」（確認後 `force_fill=false`）。確定結果画面は `total_cost`（税理士報告値）を主役に、`adjusted_items` 差異一覧、`integrity_result`（None 時はフォールバック文言）を並べる。
-- **Why**: `complete_stocktake` は在庫を書き換える確定操作で、**確定の取り消し API が BIZ-06 に存在しない**。誤タップで確定した場合の回復手段は「新しい棚卸しを開始して全件数え直す」しかなく、数週間分の単独作業が失われる非対称に大きい損失になる。DSR-07（不可逆操作の直前確認）の対象として、儀式化の懸念より誤操作コストを優先する。未入力がある場合はさらに force_fill の意味（未入力を現在庫数とみなす）を説明する必要があるため、文言を分岐する。
-- **Rejected**: 全件入力済み時の確認なし直確定（誤タップ時の損失が数週間分の再カウントと非対称に大きく、確定取消 API がない。68-ui-backup-restore が復元操作に確認を課すのと同じ risk profile）。常時同一文言のダイアログ（未入力ありの場合は force_fill の意味説明が必要で、説明なしの汎用文言では判断材料にならない）。
+- **決定**: 確定 CTA「棚卸しを確定する」は 1 個（DSR-01）。押下時は**常に**確認ダイアログを挟む（title「棚卸しの確定」+ warning Alert「確定すると取り消せません」、本文「入力した内容で棚卸しを確定します。」と最後の精算の問い）。未計数・要再確認・取り込んでいない精算は BIZ が `completion_blocked` で拒み、画面は理由ごとの一覧と「0 にする」「残りをまとめて 0 にする」を出す。確定結果画面は `total_cost`（税理士報告値）を主役に、明細の数、在庫は動かない旨、`integrity_result`（None 時はフォールバック文言）を並べる。
+- **Why**: `complete_stocktake` は評価額を固定する確定操作で、**確定の取り消し API が BIZ-06 に存在しない**。誤タップで確定した場合の回復手段は「新しい棚卸しを開始して全件数え直す」しかなく、数週間分の単独作業が失われる非対称に大きい損失になる。DSR-07（不可逆操作の直前確認）の対象として、儀式化の懸念より誤操作コストを優先する。
+- **Rejected**: 全件入力済み時の確認なし直確定（誤タップ時の損失が数週間分の再カウントと非対称に大きく、確定取消 API がない。68-ui-backup-restore が復元操作に確認を課すのと同じ risk profile）。
 - **Revisit trigger**: BIZ-06 に確定取消（reopen）API が追加された場合、全件入力済み時の確認省略を再検討してよい。
-- **b1 で置き換えた（D-118）**: force_fill（未入力を現在庫数とみなす）と在庫を書き換える確定は無くなった。ダイアログは常に title「棚卸しの確定」+ warning Alert（「確定すると取り消せません」、本文「入力した内容で棚卸しを確定します。」と最後の精算の問い）。未計数・要再確認・取り込んでいない精算は BIZ が `completion_blocked` で拒み、画面は理由ごとの一覧と「0 にする」「残りをまとめて 0 にする」を出す。結果画面は `total_cost`・明細の数・在庫は動かない旨（補正の一覧は無い）。
 
 ### UI-10-D5: 前回完了棚卸しとの比較を軽量 CMD 1 本で追加する
 
@@ -99,10 +98,10 @@
 - **Rejected**: channel 経由の進捗表示（実装コストに見合う体験改善がない。§7.2 の再検討トリガ「UI-10 で channel 採用が決まったら CSV 取込みへ展開」はこの判定により不成立で閉じる）。
 - **Revisit trigger**: `complete_stocktake` が商品単位のバッチ処理に分割される設計変更が入った時。
 
-### UI-10-D7: specta 化は既存 4 + 新規 3、生 invoke 禁止を維持
+### UI-10-D7: CMD-10 は specta の bindings から呼び、生 invoke を禁止する
 
-- **決定**: 既存 4 コマンド（`start_stocktake` / `get_stocktake_items` / `update_count` / `complete_stocktake`）と新規 `get_active_stocktake` / `find_stocktake_item` / `get_last_completed_stocktake` の計 7 本に `#[specta::specta]` を付け、bindings を生成する（b1 で数の上書きの command を外し、計数の 4 command〈42 の D-118 の節〉を足した。実装 PR #159〈private archive〉で付けた。今は `src-tauri/src/cmd/stocktake_cmd.rs` の 11 本〈42 の CMD-10〉に属性があり、`src/lib/bindings.ts` に生成された関数がある。Design Phase の時点では既存 4 本に属性が無かった）。UI からの生 `invoke()` 直呼びは既存の禁止方針（ADR-004）を維持する。
-- **Why**: ADR-004 の生 invoke 禁止方針を UI-10 でも一貫させる。既存 4 本が specta 未対応のまま長期間放置されていた事実は本 Design Phase で顕在化したため、実装 PR の Rust 差分に明記する。
+- **決定**: CMD-10 の 11 command（[42](42-cmd-sales-stocktake.md) の CMD-10、`src-tauri/src/cmd/stocktake_cmd.rs`）に `#[specta::specta]` を付け、`src/lib/bindings.ts` に生成された関数から呼ぶ。UI からの生 `invoke()` 直呼びは禁止する（ADR-004）。
+- **Why**: ADR-004 の生 invoke 禁止方針を UI-10 でも一貫させる。
 - **Rejected**: 実装 PR 内での暫定的な生 invoke 経由実装（撤去忘れの前例＝ 7-5c fallback を再演する）。
 
 ### UI-10-D8: エラーは kind 別に専用ハンドリングする
@@ -111,7 +110,7 @@
 - **Why**: BIZ-06/CMD-10 は既に 3 つの意味あるエラー種別（`StocktakeInProgress` / `StocktakeNotInProgress` / `ValidationFailed`）を返すため、UI 側で汎用エラー表示にまとめると回復導線が失われる。
 - **Rejected**: 全エラーを共通の destructive Alert にまとめる（`stocktake_in_progress` は実は「継続表示に戻ればよいだけ」の非エラー的状況であり、汎用エラー表示では誤解を招く）。
 - **契約監査追記（2026-07-08）**: PR #159 の実装レビューで、UI-10-D11（フォーカス管理漏れ）を owner 確認質問で発見した後、73 全体を実装コードと突き合わせる監査を行った結果、`stocktake_not_in_progress` の実装漏れが追加で見つかった。`get_stocktake_items`（一覧取得）の `stocktake_not_in_progress` は invalidate 処理があったが、カウント保存と `complete_stocktake`（確定）で発生した場合は kind 判定・invalidate ともに未実装で、汎用エラー表示のまま画面が完了済み状態に固まっていた。加えて表示文言もバックエンドのエラーメッセージ文字列をそのまま出しており（たまたま UI 側の想定文言と一致していたため既存テストでは検出できなかった）、UI 固定文言としてハードコードされていなかった。3 箇所（一覧取得・カウント保存・確定）すべてで共通ヘルパー `isStocktakeNotInProgressError` による kind 判定 + UI 固定文言 + invalidate に統一した。§73.9 のエラーテーブルに詳細を追記。
-- **追記2（2026-07-08、owner 指摘起因）**: force_fill 未入力超過 `validation` エラーについて、owner から「発生条件がそこまで珍しくないのでは」という指摘を受けて再検討した。当時の商品登録画面（`ProductFormPage.tsx`）は自身の商品一覧クエリしか invalidate しておらず、確定直前に新商品登録を挟んだ場合に到達し得た。D-052-C1/C3 で商品登録・一括 import から棚卸し一覧への追随を追加した後も、別端末更新や race への防御として `handleCompleteConfirm` の validation error refresh は維持する。kind 判別不能という制約から専用再試行ボタンは作らず、次回操作を最新 `uncounted_items` に収束させる。T20 で検証する。（b1 で force_fill を外し、未計数は `completion_blocked` の理由ごとの一覧で示す。T20 は契約ごと外し、U7 が止める。）
+- **完了の `validation`**: 完了の `validation`（合計金額の範囲の外ほか）は `handleCompleteConfirm` で一覧を invalidate し、次の完了で最新の状態を使う。kind で理由を判別できない（message を解析しない。UI-10-D1）ので、専用の再試行ボタンは作らない。
 
 ### UI-10-D9: カウント中の明細自動追加は通知なしで自然反映
 
@@ -121,8 +120,6 @@
 
 ### UI-10-D10: 一覧の差異・最終カウント列 + 確定警告の視認性 + 前回比較の独立表示（実装レビュー起因の追記）
 
-以下は決定の履歴。b1 で差異は BIZ が求める差異（[35](35-biz-stocktake-service.md) の「読取り」の `difference`）に置き換え、画面は計算しない。在庫列は写し（要再確認なら範囲と「要再確認」）。警告の視認性・前回比較の独立表示は維持する。
-
 最終カウント列は、画面の小口の lane（[packet](../plans/2026-10-27-stocktake-screen-fixes.md)。b1 の L3 の owner の所感、repo 外の回答台帳 TD-433）で、保存の時刻（`counted_at`）から効く計数の業務日（`count_business_date`。「前の日の分を入れる」で選んだ日付、既定は保存した日）に置き換えた（owner の決定 2026-10-27、repo 外の回答台帳 TD-452: A〈業務日だけ〉）。
 - **Why**: b1 から計数は業務日で効き（ADR D3）、「前に保存した数」の欄（§73.5 の 3）と棚卸しの記録の詳細（[65](65-inventory-record-traceability.md)）は業務日を出す。一覧だけが保存の時刻を出すと、前の日の分を入れたのに一覧に今日と出て、入れた日付が効いたかを一覧で確かめられない。
 - **Rejected**: 保存の時刻のまま（上の迷いが残る）。業務日と保存の時刻の両方（1 つの列に日付と時刻の 2 つの種類が混ざり、どちらが効く日か読み分けが要る。保存の時刻は業務記録の側で引ける）。
@@ -130,11 +127,11 @@
 - **Revisit trigger**: 同じ業務日に何度も入れ直す使い方で、どれが最後かを一覧で見分ける要望が出たとき。
 
 - **決定**: 2026-07-08、Windows native L3 実機観察（PR #159）と実装コード確認を受けて 3 点を追加・是正する。
-  1. **一覧に「差異」「最終カウント」列を追加**する。差異は `current_stock - actual_count`（`update_count` の `current_difference` と同一計算式、35-biz §20.4「差異の動的計算」を一覧にも適用）。`actual_count` が `null`（未入力）の行は差異・最終カウントとも「—」。列表示は符号付き数値のプレーンテキストのみとし、結果画面の `adjusted_items` テーブル（既存、色分けなし）と表現を揃える（新規に色分けを導入しない）。最終カウントは既存 `formatMovementDateTime`（`src/features/stock-movements/lib/movement-formatters.ts`）と同じ `T` 区切り→スペース変換を流用する。**既存の「システム在庫」列（`stocktake_items.system_stock`、開始時点の参考値）は「現在在庫」列に改め、表示値を `current_stock` に揃える**（カウント入力欄の選択商品情報表示も同様）。差異の計算根拠と画面表示の在庫値が異なる列に見えると、棚卸し中に在庫が動いた場合（35-biz §20.4 の前提どおり CSV 取込み等で変動しうる）に「現在在庫 10 / 実際 9 / 差異 +3」のような数値的に矛盾した表示になるため、両者を同一ソースに統一する（実装レビュー P2 是正、2026-07-08）。
-  2. **確定確認ダイアログに warning Alert（`border-warning bg-warning-soft text-warning-strong` + `AlertTriangle`）を `AlertDialogContent` 内へネストし、不可逆性を視覚的に強調する**。実装（PR #159）は `AlertDialogTitle` が「未入力の商品があります」という状態説明に留まり、取り消せないことを伝えていなかった。一次是正として `RestoreConfirmDialog`（`BackupRestorePage.tsx`）のタイトル強調パターンに倣い「棚卸しを確定します（取り消せません）」に統一したが、owner が Before/After 比較 Artifact を見た上で **warning Alert ネスト版の視認性を明示的に支持**（2026-07-08）。`AlertDialogTitle` は未入力有無で状態を示す文言に戻し（未入力あり「未入力の商品があります」/ なし「棚卸しの確定」）、`AlertDialogContent` 直下に常時 warning Alert を配置して `AlertTitle`「確定すると取り消せません」+ `AlertDescription`（未入力有無で分岐）で不可逆性を伝える。
+  1. **一覧に「差異」「最終カウント」列を置く**。差異は BIZ が求める差異（[35](35-biz-stocktake-service.md) の「読取り」の `difference`: 効く計数の値 − その計数に入っている記録だけから求めた帳簿）を符号付きで出し、画面は計算しない。最終カウントは効く計数の業務日（上の段落）。`actual_count` が `null`（未入力）の行は差異・最終カウントとも「—」。在庫の列は「現在在庫」で、写し（`current_stock`。要再確認なら範囲と「要再確認」）を出す（カウント入力欄の選択商品情報表示も同様）。
+  2. **確定確認ダイアログに warning Alert（`border-warning bg-warning-soft text-warning-strong` + `AlertTriangle`）を `AlertDialogContent` 内へネストし、不可逆性を視覚的に強調する**。実装（PR #159）は `AlertDialogTitle` が「未入力の商品があります」という状態説明に留まり、取り消せないことを伝えていなかった。一次是正として `RestoreConfirmDialog`（`BackupRestorePage.tsx`）のタイトル強調パターンに倣い「棚卸しを確定します（取り消せません）」に統一したが、owner が Before/After 比較 Artifact を見た上で **warning Alert ネスト版の視認性を明示的に支持**（2026-07-08）。`AlertDialogTitle` は「棚卸しの確定」、`AlertDialogContent` 直下に常時 warning Alert を配置して `AlertTitle`「確定すると取り消せません」+ `AlertDescription` で不可逆性を伝える（UI-10-D4）。
   3. **結果画面の前回比較を、総額カードから独立したカードに分離**する。既存実装は `formatLastStocktake()` の1文をコストカード内に注記として同居させており、独立した情報として認識しにくい。
 - **Why**: L3 実機観察で「警告文言が小さく薄いグレーで正確な文言を記録できなかった」という指摘、および一覧に差異・カウント日時が出ないため実カウントとシステム在庫の乖離を目視で追えないという指摘。原因はコード確認の結果、①既存の design-system 警告パターン（`BackupRestorePage.tsx` の `RestoreConfirmDialog`）を踏襲していなかったこと、②本設計書（UI-10-D2〜D9 初版）が一覧の情報構造・確定ダイアログの文言強度をここまで具体的に指定していなかったこと、の両方に起因する。warning Alert ネストへの再変更は、タイトル強調のみの一次是正版と Artifact の warning Alert 版を owner が実際に見比べ、後者を明示的に選んだため（2026-07-08）。
-- **Rejected**: 差異列の色分け（正=success系・負=destructive系）（結果画面の `adjusted_items` テーブルが無色のプレーンテキストであり、進行中一覧だけに新しい色分け表現を導入すると同じ「差異」という概念の表現が画面間で割れる。DSR-01 の視覚言語継承を優先）。
+- **Rejected**: 差異列の色分け（正=success系・負=destructive系）（同じ「差異」という概念の表現が画面間で割れる。DSR-01 の視覚言語継承を優先）。
 - **Revisit trigger**: 結果画面の差異テーブル自体に色分けを導入する設計変更が別途入った場合、進行中一覧の差異列も合わせて見直す。`RestoreConfirmDialog`（`BackupRestorePage.tsx`）も同様に warning Alert ネスト版へ揃えるかは、他の不可逆操作ダイアログでも同じ視認性懸念が出た時に横展開を検討する（本 PR のスコープでは UI-10 のみ変更）。
 
 ### UI-10-D11: 連続 HID スキャンのためのフォーカス自動遷移（実装漏れの是正）

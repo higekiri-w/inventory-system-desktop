@@ -136,7 +136,7 @@ fn start_stocktake(
 - システム側で除外品を表現する専用フラグや状態は追加しない（owner 方針）。部門キーで商品非連動販売として扱い、現物が再流通する場合は新規商品として改めて登録する。
 
 **設計判断 — 明細一括生成のパフォーマンス**:
-- 最大4000件の INSERT を1TX内で実行する。SQLite の WAL モード + 単一接続で十分高速（数百ms以内）
+- 最大4000件の INSERT を1TX内で実行する（SQLite の WAL モード + 単一接続。かかる時間は `未実測`）
 - 一括INSERT文（VALUES多値）は SQLite の SQL長制限とデバッグ困難性のため不採用。1件ずつ insert_stocktake_item を呼ぶ方式
 
 **入力例**: なし（引数なし）
@@ -249,7 +249,7 @@ fn valuation_total_yen(lines: &[i128]) -> Result<i64, BizError>
   - 不採用: 商品ごとの基準数量の列（migration・DTO・商品フォーム・商品 CSV の追加が要り、長さ商品ごとに 100 を入れる操作を利用者に任せる。今ある単位では単位と基準数量が一対一）。原価を 1 cm あたりの小数で持つ（伝票・値札の m 単価と食い違い、原価の列に小数の型が要る）。
   - 見直す条件: 単位の拡張で、単位だけでは基準数量が決まらない商品（箱で仕入れて 1 個ずつ売る商品の原価を箱あたりで記録する等）が店の回答で確かめられたとき。
 - **SPEC-STK-VAL-D2 金額の表現**: 中間（原価〈1/100 円〉 × 数量、商、余り）・商品別の金額（1/100 円）・その合計は i128 で計算し、最後の円額だけを i64 へ検査付きで変換する。積と合計の加算は checked とする。原価が円の整数だった間（原価の lane の前）は円の原価を × 100 してから掛けた。`biz::unit_amount` の test の helper はこの形で 35 の円の golden を確かめる（共通規則 SPEC-UNIT-D6）。浮動小数（f32 / f64）を使わない。理由: 2 進の浮動小数は 0.005 の境界を正確に表せず、四捨五入を誤る（例: 1.005 は 1.00499… として保持され、小数第 2 位への四捨五入が 1.00 になる）。10 進小数の crate は追加しない（整数の分子と分母で正確に計算できる）。
-- **SPEC-STK-VAL-D3 商品別の金額**: `valuation_line_centi`（実装は `biz::unit_amount::cost_line_centi`）は `cost_price_centi × quantity ÷ basis`（原価は 1/100 円）を 1/100 円未満で四捨五入した値を返す。四捨五入は割り算の正確な値に対して行う（商 q・余り r で `2r >= basis` なら q + 1）。これは店の「商品別の金額を小数第 3 位で四捨五入して小数第 2 位まで持つ」と同じ値になる。quantity は旧本体では actual_count、新方式では `max(補正後現在庫, 0)`。原価が 1/100 円なので、長さの商品（基準数量 100）では割り切れないことがあり、この四捨五入（SPEC-UNIT-D6 の行の金額の規則と同じ）が実際に効く（例: `8333 × 130 ÷ 100 = 10832.9` → `10833`）。個数の商品（基準数量 1）は割り切れる。
+- **SPEC-STK-VAL-D3 商品別の金額**: `valuation_line_centi`（実装は `biz::unit_amount::cost_line_centi`）は `cost_price_centi × quantity ÷ basis`（原価は 1/100 円）を 1/100 円未満で四捨五入した値を返す。四捨五入は割り算の正確な値に対して行う（商 q・余り r で `2r >= basis` なら q + 1）。これは店の「商品別の金額を小数第 3 位で四捨五入して小数第 2 位まで持つ」と同じ値になる。quantity は評価数量 `max(完了の時点の写しの在庫, 0)`（`valuation_quantity`）。原価が 1/100 円なので、長さの商品（基準数量 100）では割り切れないことがあり、この四捨五入（SPEC-UNIT-D6 の行の金額の規則と同じ）が実際に効く（例: `8333 × 130 ÷ 100 = 10832.9` → `10833`）。個数の商品（基準数量 1）は割り切れる。
 - **SPEC-STK-VAL-D4 総額**: `valuation_total_yen` は商品別の金額の合計（1/100 円）を円未満で四捨五入した円の整数を返す。`stocktakes.total_cost`（INTEGER、円）・StocktakeResult.total_cost（i64）・操作ログの「仕入原価総額: ¥{total_cost}」の型と表示は変えない。
 - **SPEC-STK-VAL-D5 入力の検査**: cost_price_centi か quantity が負なら、`valuation_line_centi` が評価額を求めず `BizError::ValidationFailed("評価額を計算できません。原価か数量が負の値です（商品 {product_code}）")` を返す（検査と文言は関数の中の 1 か所。呼出し側は商品コードを渡すだけ）。中間の積か合計の加算が i128 を越える場合、または四捨五入した円額が i64 を越える場合は、既存の `BizError::ValidationFailed("仕入原価総額の計算でオーバーフローが発生しました")` を返す（i64 への変換の失敗もこの文言に固定する。既存の overflow test〈原価 `i64::MAX / 2 + 1`〈1/100 円として読む〉・数量 200〉は変換で初めて error になる）。どちらも確定の TX を ROLLBACK し、header・明細・在庫を変えない。呼出し元は `price_basis_quantity` の値（1 以上）を basis に渡す。
 - **SPEC-STK-VAL-D6 非遡及**: 確定済みの total_cost と valuation_cost_price_centi は再計算しない（[棚卸しの数の置き場と在庫の求め直しの ADR](../adr/2026-10-16-stocktake-count-placement.md) SPEC-STK-CNT-D6 と同じ）。本契約より前に確定した記録の total_cost は旧式（原価 × 数量の整数積和）のまま残る。本契約は本番開始前に入るため、本番の記録に旧式は現れない（[初導入の前提](../project-memory.md)）。
@@ -337,12 +337,12 @@ fn get_stocktake_record(
 |------------|------|-----------------|
 | 棚卸し中のCSV取込み処理 | 棚卸し中もCSV取込みは許可（SP-205-09）。取込みは計数を持つ商品を求め直す（ADR D2） | BIZ-03 |
 | 棚卸し中の新規商品登録時のstocktake_items自動追加 | 商品登録のTX内で実施済み | BIZ-01（create_product ステップ6） |
-| 整合性チェック（stock_quantity突合） | 棚卸し確定後の自動実行は第5段階で統合 | BIZ-07（PR-5で実装） |
+| 整合性チェック（写しと記録の突合） | 完了の TX の後に BIZ-07 の `run_integrity_check` を呼ぶだけ（§20.5） | BIZ-07 |
 | 棚卸し画面の表示・フィルタ・ページング | UI層の責務 | UI-10 |
 | 物理DELETE | 棚卸しの削除はサポートしない。completedのまま保持 | — |
-| 棚卸しの「中止」（途中破棄） | 初期バージョンでは不要。中断→再開で対応 | 将来拡張 |
+| 棚卸しの「中止」（途中破棄） | 持たない。中断→再開で対応（[73](73-ui-stocktake.md) UI-10-D1） | — |
 | 操作ログのカウント入力ごとの記録 | 頻度が高すぎて有用なログが埋もれる | — |
-| 棚卸し明細の一覧取得の業務ルール | 一覧取得はBIZ層の `get_stocktake_items` が `stocktake_repo::list_stocktake_items` + 進捗集計を束ねる薄いwrapperとして提供（2026-04-13 `882cec6` でCMD直ラップからBIZ経由に変更、[42-cmd-sales-stocktake.md](42-cmd-sales-stocktake.md) §22.5 参照）。フィルタ・ページングの実体はIO層 | BIZ-06 wrapper + stocktake_repo |
+| 棚卸し明細の一覧取得の業務ルール | 一覧取得はBIZ層の `get_stocktake_items` が `stocktake_repo::list_stocktake_items` + 進捗集計を束ねる薄いwrapperとして提供（[42-cmd-sales-stocktake.md](42-cmd-sales-stocktake.md) §22.5 参照）。フィルタ・ページングの実体はIO層 | BIZ-06 wrapper + stocktake_repo |
 
 ---
 
