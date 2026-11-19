@@ -95,3 +95,57 @@ fn default_members_and_default_run_d137() {
         "D-137 (2): default-run = \"inventory-system-tauri-scaffold\" が要る。外すと default-members の 2 つの package の bin が候補になり、`npm run tauri dev` が打つ `--bin` の無い `cargo run` が止まる"
     );
 }
+
+/// build script の文から行の comment（`//` から行末）を除いた文。ブロックの comment は使わない。
+fn build_script_code(relative: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} を読めない: {e}", path.display()));
+    let code: String = text
+        .lines()
+        .map(|l| l.find("//").map_or(l, |i| &l[..i]))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code.contains("/*"),
+        "D-159: {relative} にブロックの comment（/*）を書かない。この test は行の comment だけを除いて文を見る"
+    );
+    code
+}
+
+/// `"cargo::rustc-link-arg=/MANIFEST` で始まり次の `"` で終わる文字列 literal の集合。
+fn manifest_link_args(code: &str) -> std::collections::BTreeSet<&str> {
+    const PREFIX: &str = "\"cargo::rustc-link-arg=/MANIFEST";
+    code.match_indices(PREFIX)
+        .filter_map(|(i, _)| {
+            let end = code[i + 1..].find('"')?;
+            Some(&code[i..i + 1 + end + 1])
+        })
+        .collect()
+}
+
+#[test]
+fn windows_manifest_link_args_d159() {
+    let tauri = build_script_code("build.rs");
+    let dev_tools = build_script_code("dev-tools/build.rs");
+
+    assert!(
+        tauri.contains("new_without_app_manifest()") && tauri.contains("try_build"),
+        "D-159 (a): src-tauri/build.rs は Windows の MSVC で WindowsAttributes::new_without_app_manifest() を try_build に渡す。tauri の既定の manifest を残すと linker の manifest と 2 つになり、Windows の MSVC で link できない"
+    );
+
+    let tauri_args = manifest_link_args(&tauri);
+    let dev_tools_args = manifest_link_args(&dev_tools);
+    assert!(
+        tauri_args.len() == 2 && tauri_args == dev_tools_args,
+        "D-159 (b): src-tauri/build.rs と src-tauri/dev-tools/build.rs は同じ 2 つの cargo::rustc-link-arg=/MANIFEST… を出す（-bins・-tests にしない）。ずれると Windows で lib の test の実行 file に Common Controls v6 の manifest が届かず STATUS_ENTRYPOINT_NOT_FOUND で起動しない。tauri: {tauri_args:?} dev-tools: {dev_tools_args:?}"
+    );
+
+    let guard = "let windows_msvc = target_os == \"windows\" && target_env == \"msvc\";";
+    assert!(
+        tauri.lines().any(|l| l.trim() == guard)
+            && tauri.matches("\"windows\"").count() == 1
+            && tauri.matches("\"msvc\"").count() == 1,
+        "D-159 (c): src-tauri/build.rs の Windows の MSVC の判定は `{guard}` の 1 行だけにし、manifest の選択と link の引数の両方がこの名を使う。崩れると Windows の GNU・Linux の linker に /MANIFEST… が渡るか、MSVC で manifest が 2 つ・0 になる"
+    );
+}

@@ -1,9 +1,10 @@
 //! D-137 の Compatibility（Gated Amendment 1・2）: 開発用の bin を Windows の MSVC で
 //! tauri の crate の bin と同じ link の設定に揃える。他の target では何も出さない。
 //!
-//! (i) tauri の crate の bin は `src-tauri/build.rs` の `tauri_build::build()` から
-//! Common Controls v6 の依存を持つ manifest を受けるが、workspace の member の dev-tools は
-//! 受けない。manifest が無いと Windows で `generate_bindings` が
+//! (i) tauri の crate は Windows の MSVC で `src-tauri/build.rs` から下と同じ 2 行を linker に渡して
+//! Common Controls v6 の依存を持つ manifest を受ける（D-159。行の一致は
+//! `tests/bundle_identity_test.rs` の `windows_manifest_link_args_d159`）が、build script の出力は
+//! workspace の member の dev-tools に届かない。manifest が無いと Windows で `generate_bindings` が
 //! `STATUS_ENTRYPOINT_NOT_FOUND`（`TaskDialogIndirect`）で起動しない
 //! （PR #201 の L3 の 1 回目、2026-10-29）。ここでは MSVC の linker に manifest を埋めさせ、
 //! tauri-build の既定の manifest と同じ Common Controls v6 の依存を 1 つ足す。
