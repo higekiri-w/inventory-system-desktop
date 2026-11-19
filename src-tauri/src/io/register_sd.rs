@@ -688,7 +688,17 @@ mod tests {
             path.clone(),
         ] {
             let root = resolve_register_sd_root(&selected).unwrap();
-            assert_eq!(root.path, path, "{}", selected.display());
+            if cfg!(windows) {
+                // Windows の child_dir は定数の綴りを返す（同じ folder。IO-09-D1 は大文字小文字を区別しない）
+                assert_eq!(
+                    fs::canonicalize(&root.path).unwrap(),
+                    fs::canonicalize(&path).unwrap(),
+                    "{}",
+                    selected.display()
+                );
+            } else {
+                assert_eq!(root.path, path, "{}", selected.display());
+            }
         }
     }
 

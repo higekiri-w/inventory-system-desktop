@@ -1448,10 +1448,12 @@ mod tests {
              VALUES ('old-wal', '2026-07-18T00:00:01');",
         )
         .unwrap();
-        let reader = rusqlite::Connection::open(&db_path).unwrap();
-        reader
-            .execute_batch("BEGIN; SELECT COUNT(*) FROM suppliers;")
-            .unwrap();
+        // close の後も WAL を残す。別の接続を開いたままにすると、Windows では main の退避が共有違反（os error 32）で失敗し B12 に届かない
+        conn.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+            true,
+        )
+        .unwrap();
         drop(database_with_supplier(&backup_path, "new"));
         let ops = InjectedOps {
             busy_checkpoint: true,
@@ -1459,11 +1461,10 @@ mod tests {
         };
 
         let error = restore_backup_with_ops(conn, &backup_path, &db_path, &ops).unwrap_err();
-        assert!(matches!(error, RestoreError::Unrecoverable(_)));
         let paths = RestorePaths::new(&db_path);
+        assert!(matches!(error, RestoreError::Unrecoverable(_)), "{error:?}");
         assert!(paths.main.exists());
         assert!(paths.wal_backup.exists() && paths.manifest.exists());
-        drop(reader);
         assert_eq!(
             reconcile_restore(&db_path).unwrap(),
             ReconcileState::Recovered
