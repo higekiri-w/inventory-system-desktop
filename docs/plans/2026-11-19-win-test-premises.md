@@ -2,7 +2,7 @@
 
 wave に属さない単独の lane。出所は owner の決定（repo 外の回答台帳 TD-825 の A、2026-11-19。関門の作業の合間に）と [backlog](../backlog.md) の「Windows で落ちる lib の test の前提を直す lane」（群 A〜D）。事実は起点 `91fec088`（PR #287 を含む）の Windows observe の run <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44523246270>（lib の unittests 1559 passed・60 failed・4 ignored）。経緯: PR #286 の run（`44504745664`）と owner の Windows（#286 の comment `7008849050`）では 53 本。PR #286 の Final の P2（B12 の原因が確かめられていないのに分類を閉じて読める）と P3（`docs/backlog.md:55` の行）をこの lane で直す（Coordinator の裁定）。
 
-decision-log の番号は仮に D-160 と書く（`grep -on "^## D-[0-9]*" docs/decision-log.md | tail -1` → `1452:## D-159`、2026-11-19）。Coordinator が並走の lane と突き合わせて割り当てる。
+decision-log の番号は D-161（D-160 は PR #292 が使った。`git show origin/main:docs/decision-log.md | grep -o '^## D-[0-9]*' | tail -1` → `## D-160`、2026-11-20）。
 
 ## Workflow State
 
@@ -64,7 +64,7 @@ Goal Invariant:
 - S3 B12（`restore.rs:1439-1471`）: (a) まず `:1462` の assert に `"{error:?}"` を付け、その前で `Recovered` なら `reader` を閉じて既存の DB を `db::open_existing_database`（no-create）で開き、`supplier_names` と `assert_no_restore_artifacts` の結果を出して push し、log で variant・message（失敗した操作と OS の error、`:263-265`）・元の行を読む。(b) その結果で直す（下の「B12 の決め方」）。
 - S4 C: `backup.rs:2211` の `actual` の期待を、Windows では prefix が `\\?\Volume{` で、prefix の後の component が `root.join("a/c/d")` の prefix の後と等しい形にする（`:2210` は今のまま）。`:1697-1701` の注入先を `pin_to_volume(&backup_dir).unwrap().actual.join(name_at(now))` にする（Linux は今と同じ path。71 §71.10 の表の実体の path）。
 - S5 D の 2 本: `backup.rs:2380-2384` は Windows では土台を `std::fs::canonicalize(dir.path())`（実際に開く path に `?` が入る）にし、`\` を区切りとして folder `d#1`・`50% done` の下の `x.db` を作る（純関数の assert `:2392-2395` は今のまま）。`register_sd.rs:691` は Linux は今の綴りの一致のまま、Windows は `fs::canonicalize` の両辺の一致にする。
-- S6 正本: 71 `:650-651`（§71.11.2 手順 1・2）は root の選び方だけを差し替える: 手順 1 の前半を「`selected` を、見えている取外し可能な drive の root〈§71.11.3 の列〉のうち `selected` を含むものにする（component ごとに比べ、Windows は ASCII の大文字小文字を区別しない）」、手順 2 を「無ければ `OffsiteError::NotRemovable`」にする。手順 1 の後半（以後の読み書きは `pin_to_volume` で固定した実体を通す）は残す。`docs/decision-log.md` に D-160（下の Design Readiness）。
+- S6 正本: 71 `:650-651`（§71.11.2 手順 1・2）は root の選び方だけを差し替える: 手順 1 の前半を「`selected` を、見えている取外し可能な drive の root〈§71.11.3 の列〉のうち `selected` を含むものにする（component ごとに比べ、Windows は ASCII の大文字小文字を区別しない）」、手順 2 を「無ければ `OffsiteError::NotRemovable`」にする。手順 1 の後半（以後の読み書きは `pin_to_volume` で固定した実体を通す）は残す。`docs/decision-log.md` に D-161（下の Design Readiness）。
 - S7 docs: `docs/ci.md:105` の「（どれも test の前提。…）」を確かめた事実（群ごとの原因、B12 の error、直した PR）にする。`docs/backlog.md:55`（PR #188 の申し送り。D-159 と PR #286 で追える）を消し、`:56-60` の項目を外し、1 項目を足す: `test_restore_req901_b1_evacuation_failure_preserves_real_wal_snapshot` も開いた接続の下の改名に頼り、B12 の推定が当たれば Windows で空振りする。`docs/DEV_SETUP_CHECKLIST.md:274`（`tauri dev` の後の「変更あり」）の頭に、S1 の後の clone では出ず、前の clone は pull で直らないので A の 7 本を手元で流すときと同じく別の folder に新しい clone を作る（既存の clone を強制で展開しない）と書き、今の戻し方は前の clone のために残す。
 
 B12 の決め方（S3 (b)）:
@@ -88,8 +88,8 @@ Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装
 ## Design Readiness
 
 - 引用する設計正本: 71 §71.4 (2)・§71.10 の表・§71.11.2・§71.11.3・§71.12、MNT-01-D4（§71.7）・D6・D8・D9・D10、29 IO-09-D1・D3、IO-11-D3、D-157（Windows observe）、D-159、D-147。
-- 必要な設計成果物: S6 の 71 の文と D-160。DB・command・DTO・画面は変わらない。
-- D-160 の要旨（S6 で書く）: Decision: repo の text の file は新しい clone でどの OS でも LF（`* text=auto eol=lf`）、CSV は bytes のまま（`*.csv`・`*.CSV` に `-text`。29 本の CP932・CRLF の fixture）。前の clone は新しい clone で直す。Why: Windows の autocrlf で source を読む A の 7 本が落ち、`tauri dev` の後に「変更あり」が出る。Alternatives: (a) test で `\r\n` を正規化（同じ形の test が増えるたびに落ち、`tauri dev` の件が残る）; (b) `core.autocrlf=false`（人の設定に頼る）; (c) `* -text`（diff と merge が崩れる）; (d) `tests/fixtures/** -text`（前の clone の pull で 5 本が ` M`）; (e) `*.rs` と名指しの file だけを LF（書き直す file・読む source が増えるたびに名指しを足す）。Revisit: CRLF の要る file（`.bat` 等）を足すとき。
+- 必要な設計成果物: S6 の 71 の文と D-161。DB・command・DTO・画面は変わらない。
+- D-161 の要旨（S6 で書く）: Decision: repo の text の file は新しい clone でどの OS でも LF（`* text=auto eol=lf`）、CSV は bytes のまま（`*.csv`・`*.CSV` に `-text`。29 本の CP932・CRLF の fixture）。前の clone は新しい clone で直す。Why: Windows の autocrlf で source を読む A の 7 本が落ち、`tauri dev` の後に「変更あり」が出る。Alternatives: (a) test で `\r\n` を正規化（同じ形の test が増えるたびに落ち、`tauri dev` の件が残る）; (b) `core.autocrlf=false`（人の設定に頼る）; (c) `* -text`（diff と merge が崩れる）; (d) `tests/fixtures/** -text`（前の clone の pull で 5 本が ` M`）; (e) `*.rs` と名指しの file だけを LF（書き直す file・読む source が増えるたびに名指しを足す）。Revisit: CRLF の要る file（`.bat` 等）を足すとき。
 - 前提・延期した gap: `removable_drive_roots`（変えない）と本物の USB メモリの用意は自動の test の外（D-114 の L3 で確かめ済み）。Windows の mutation は流さない（S2 (b) は Windows observe の結果だけで見る）。
 - 絶対保証の例外: 主張しない。S2 は列の root の component の一致だけを見て、drive の種類は `removable_drive_roots` が持つ。
 - 判定: ready（計画の review の前）。
@@ -105,7 +105,7 @@ Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装
 | IO-09-D1（SD の root） | 29 §29.7.4 手順 3 | S5 | `test_req401_resolve_accepts_drive_casio_and_model_folder` | 返す綴りは契約の外 |
 | MNT-01-D4（B12） | 71 §71.7 手順 8e、MNT-01-D4 | S3 | B12 の test | 決め方の 3 は owner |
 | source を読む test（SPEC-SFV・D-142・IO-09-D3・IO-11-D3・MNT-01-D7） | 各正本 | S1 | A の 7 本 | test は変えない |
-| D-160（改行） | decision-log D-160（新規） | S1・S6・S7 | A の 7 本（Windows observe）、AC3 の fixture | 前の clone は新しい clone に替える（S7） |
+| D-161（改行） | decision-log D-161（新規） | S1・S6・S7 | A の 7 本（Windows observe）、AC3 の fixture | 前の clone は新しい clone に替える（S7） |
 
 ## Test Plan
 
