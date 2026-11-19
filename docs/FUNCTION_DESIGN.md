@@ -62,7 +62,7 @@
 - UI-12: 共通レイアウト（RootLayout / Sidebar / navigation 定数）+ ウィンドウタイトル動的更新機構
 - UI-00: ホーム画面（HomePage / useHomeSummary / useYesterdayDate / count-stock-status）+ TanStack Query 4 useQuery 束ね（業務ロジックあり版テンプレ初適用）
 - UI-shortcuts: ショートカット一覧ダイアログ（ShortcutsDialog / useShortcutsDialog / SHORTCUTS 定数）+ global Ctrl+/ keydown listener + IME / input 除外（業務ロジックあり版テンプレ、CMD 呼び出し 0 件 + state 駆動分岐パターン初適用）
-- UI-07: 売上データ取込み画面（SalesImportPage / DailyReportImport flow / existing Z004 CsvImport flow）— current operation は Z001/Z002/Z005 日報取込み、既存Z004商品別CSV取込みはPLU後トラックとして分離
+- UI-07: 売上データ取込み画面（CsvImportPage。日報のタブ = DailyReportImportPage、Z004 のタブ = CsvImportFlowPanel）— 日報（Z001/Z002/Z005）の取込みを主動線にし、Z004 の商品別の取込みは別のタブ
 - UI-08: PLU書出し画面（PluExportPage）— D-072 / D-117 / REQ-907 Design Phase 更新済み。毎日の SD の読取りでの Z004 占有の照合、永続 memory No.、`prepare_plu_export` / `confirm_plu_export_saved` 二段階契約、Diff / Full の CV17 投入、Windows native L3 は [function-design/67-ui-plu-export.md](function-design/67-ui-plu-export.md) を参照
 - UI-11b: バックアップ・復元画面（BackupRestorePage）— Design Phase 追加済み（実装済み）。QR-05 / REQ-901、PR #141 generated `commands.*`、復元前強制バックアップ、break-glass 例外、復元後 query cache clear、Windows native L3 は [function-design/68-ui-backup-restore.md](function-design/68-ui-backup-restore.md) を参照
 - UI-11a: 閾値設定画面（ThresholdSettingsPage、operator 名称「在庫少の基準」）— Design Phase 追加済み（実装済み）。QR系 / D-4、`/settings/thresholds` route、既存 `getSettings` / `updateSetting` 契約（新規 CMD なし）、在庫少基準 2 key 所有、整数 1〜99999 検証、部分失敗表示、Windows native L3 軽量 2 項目は [function-design/69-ui-threshold-settings.md](function-design/69-ui-threshold-settings.md) を参照
@@ -121,7 +121,7 @@ UI-06b は独立画面ではなく UI-06a への deep-link のため、専用の
 ### MNT層（保守）
 - [MNT-01: バックアップ・リストア](function-design/71-mnt-backup.md) — create_backup（VACUUM INTO）, restore_backup, check_auto_backup, list_backups, inspect_backup（D-114、実装済み）, PC の外の控え（prepare_offsite_medium / check_offsite_backup / offsite_status / reset_offsite_state / stop_offsite_backup / check_backup_dir_choice。D-114・D-130、実装済み）
 - [MNT-02: 操作ログ管理](function-design/72-mnt-log-manager.md) — cleanup_old_logs（起動時自動削除）
-- [MNT-03: スキーママイグレーション](function-design/22-mnt-migration.md) — migration v1（初期スキーマ）〜 v4（日報取込みテーブル）
+- [MNT-03: スキーママイグレーション](function-design/22-mnt-migration.md) — migration v1（初期スキーマ）〜 v13（版ごとの中身は 22 と `src-tauri/src/db/migration.rs` の一覧）
 - [MNT-04: アプリケーション診断ログ](function-design/70-mnt-diagnostic-log.md) — init_diagnostics, cleanup_old_log_files, 既存コードへのtracing埋め込み方針
 
 ### BIZ層（ビジネスロジック）
@@ -148,7 +148,7 @@ UI-06b は独立画面ではなく UI-06a への deep-link のため、専用の
 - [UI request primitives: request builder共通基盤](function-design/76-ui-request-primitives.md) — prefixed idempotency key、local calendar date、strict safe integer parserのsingle ownerと4 feature wrapper互換
 - [UI-00: ホーム画面](function-design/53-ui-home.md) — HomePage, useHomeSummary, useYesterdayDate, count-stock-status（業務ロジックあり版テンプレ初適用、4 useQuery 部分障害許容）
 - [UI-shortcuts: ショートカット一覧ダイアログ](function-design/54-ui-shortcuts.md) — ShortcutsDialog, useShortcutsDialog, SHORTCUTS 定数（業務ロジックあり版テンプレ、CMD 呼び出し 0 件 + state 駆動分岐パターン初適用）
-- [UI-07: 売上データ取込み画面](function-design/55-ui-csv-import.md) — SalesImportPage, DailyReportImport flow, existing Z004 CsvImport flow（業務ロジックあり版テンプレ、current operation 日報主動線 + PLU後商品別トラック）
+- [UI-07: 売上データ取込み画面](function-design/55-ui-csv-import.md) — CsvImportPage, DailyReportImportPage, CsvImportFlowPanel（業務ロジックあり版テンプレ、日報の主動線 + Z004 の商品別のタブ）
 - [UI-09a: 日次売上レポート画面](function-design/56-ui-daily-sales.md) — DailySalesPage, useDailySalesReport, useExportDailySalesCsv, calculate-unit-price（業務ロジックあり版テンプレ、URL state + 2 useQuery + 派生 5 純関数 + 単価派生 + 部門小計テーブル + 主動線 CTA 配線パターン初適用）
 - [UI-09b: 月次売上レポート画面](function-design/57-ui-monthly-sales.md) — MonthlySalesPage, useMonthlySalesReport, compute-summary/period-label/comparison/composition, pick-top-ranking, sort-items, format-month-label（業務ロジックあり版テンプレ、1 useQuery + prev_month_comparison 派生 + 失敗 4 状態 + TabsHeader 共通化 + Progress wrapper + 8-7 useExportFile 共通化）
 - [UI-06a: 在庫照会画面](function-design/58-ui-stock-inquiry.md) — StockInquiryPage, useStockInquiry, StockDetailContent, derive-stock-state, format-stock-display, format-last-date, filter-low-stock-list（業務ロジックあり版テンプレ、3 useQuery 部分障害許容 + StockInquiryListResult 正規化 + 色分け契約 H + 検索駆動表示契約 I（D-138 で撤去し、UI-01a と 1 つの画面「商品と在庫」にする。proposed・未実装） + 1 件自動展開 + selected 不在 clear + 選択行直下インライン展開 + フォールバックカード + toggle/toggle-group 新規 add（collapsible 未使用化）+ CSV 取込み invalidation）
