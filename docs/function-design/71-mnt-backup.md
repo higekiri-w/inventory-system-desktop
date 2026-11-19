@@ -555,11 +555,12 @@ pub fn resolve_backup_dir(conn: &DbConnection, app_data: &Path) -> Result<PathBu
 | MNT-01-D8 排他の poison | lock を持った thread を panic させた後も、確認・用意・作り直し・やめるの入口が結果を返す（test は終わりに lock の poison を外す） |
 | MNT-01-D6 metadata の既存 test の移し替え | `test_create_backup_req901_metadata_error_propagates_without_success_log`（`src-tauri/src/mnt/backup.rs`）は `fail_any_metadata()` で全部の metadata を失敗させるので、手順 4a の検査（作業名の size を読む）で先に失敗して作業名が消え、今の oracle（message の「サイズ」・dir に 1 file）が red になる。注入を作業名でない path（公開の後の正式名）だけに当てる形へ替え、oracle は変えない（弱めない）。4a の metadata の失敗は MNT-01-D7 作業名の行で見る |
 | MNT-01-D8 照合 | 読み戻しの bytes を注入で変え、作業名の file が消え、正式名の file が無く、`last_failure` が `verify_mismatch` |
-| MNT-01-D8 保持 | 正式名の写しが `OFFSITE_KEEP` を超えると古い順に消え、今写した file と作業名でない他の file（目印・名前の規約に合わない file）を消さない |
-| MNT-01-D8 状態 | 状態の file が壊れていると写さずに `StateUnreadable` を返し、状態は「控えが古い」側に倒れる（黙って `NotPrepared` にならない）。`OFFSITE_STALE_DAYS` の境界（2 日前は古くない・3 日前は古い）。`local_backup_old` は PC の中の最新の正式名が無い・3 日以上前で `true`、2 日前で `false`、一覧の失敗で `false` |
+| MNT-01-D8 保持 | 名前の日付が今日以前の正式名の写しが `OFFSITE_KEEP` を超えると古い順に消え、今写した file（今日以前の名前の新しい順で `OFFSITE_KEEP` 本目より後になる場合で確かめる）と作業名でない他の file（目印・名前の規約に合わない file）を消さない。名前の日付が今日より後の写しは MNT-01-D12 の行 |
+| MNT-01-D8 状態 | 状態の file が壊れていると写さずに `StateUnreadable` を返し、状態は「控えが古い」側に倒れる（黙って `NotPrepared` にならない）。`OFFSITE_STALE_DAYS` の境界（2 日前は古くない・3 日前は古い）。`local_backup_old` は §71.11.4 手順 2 の写す元（§71.11.5）が無い・3 日以上前で `true`、2 日前で `false`、一覧の失敗で `false` |
 | MNT-01-D8 やめる | 状態の file（読める・壊れた・`format: 2` の 3 つ）で `stop_offsite_backup` が、元の bytes を `offsite-backup.json.stopped-*` に残し、`offsite_status` が `prepared = false`・`stale = false`。媒体の `InventoryBackup` の一覧と bytes、PC の中の backup の一覧が前後で同じ。また用意すると同じ `medium_id` で写る。移せない注入で `StopFailed`、状態の file は元のまま。移した後の親 directory の sync の失敗の注入で `StopFailed`・`offsite_status` が `prepared = false` |
 | MNT-01-D8 作り直し | 壊れた状態の file と目印のある媒体で `reset_offsite_state` が、元の bytes を `offsite-backup.json.unreadable-*` に copy し、状態の file を新しい内容に置き換え、媒体を登録し直し、写す（新しい backup があれば `Copied`）。`format` が 1 でない数の状態は `StateUnsupported`、媒体が 0 本なら `NoMediumAttached` で、どちらも状態の file の bytes と app data の一覧が前後で同じ。手順 4〜6 の置き換えまでの各点の失敗の注入で `StateResetFailed`、状態の file の bytes が元のまま、`offsite_status` が `state_unreadable`、押し直しで回復する。置き換えの後の親 directory の sync の失敗の注入で `StateResetFailed`・`offsite_status` が `prepared = true`・`last_failure_kind = None`（`state_unreadable` でない）。手順 7 の写しの失敗の注入で §71.11.4 の失敗・`offsite_status` がその `last_failure_kind`。手順 7 の中の成功の記録の置き換えの後の親 directory の sync の失敗の注入で、結果が `Copied`（成功のまま、§71.11.4 のエラーの表）・`offsite_status` が `stale = false`・`last_failure_kind = None` |
 | MNT-01-D11 | `backup_dir` を媒体の `InventoryBackup` そのものにした場合と、別の一時 directory の symbolic link でそこを指した場合の両方で、用意が `BackupDirIsMediumFolder` で何も書かず（目印・状態の file ができない、媒体の一覧と bytes が前後で同じ）、用意の後に `backup_dir` をそこへ替えた確認が `BackupDirIsMediumFolder`・`last_failure.kind = backup_dir_is_medium_folder`・`last_success` と媒体の一覧と bytes が前後で同じ（判定を消すと `UpToDate`、文字列で比べると link の case が通って red）。`check_backup_dir_choice` は目印のある媒体の `InventoryBackup`（直接・link）を止め、`InventoryBackup` の中の folder・媒体の root・目印の無い媒体の `InventoryBackup` は `Ok`（判定を前方一致にすると red） |
+| MNT-01-D12 | 写す元: 今日の `23:59:59` の名前の file と明日の `00:00:00` の名前の file がある dir で、今日の file が写り、明日の file は写らない（比べる先を明日にしても、今日を外しても red）。先の日付の file だけなら `NoLocalBackup` で何も書かない。成功の記録: 時計が先のときに写した記録は、時計が直った後の `offsite_status` が無いものとして返し（成功の 3 項目が `None`・`stale = true`、媒体が見えなくても同じ）、今日の backup を写すと記録の `at` が今の時刻、`file_name` が今日の file に置き換わって `stale = false` になる。時計が戻っている間も、その日付の backup が写る。`local_backup_old` は先の日付の file を数えない。写した日と控えの日付の片方だけが先の記録は、今までどおり古い方から数える。状態の file は `offsite_status` で変わらない。媒体の掃除: 媒体に先の日付の名前の写しが 30 本、今日より前の名前の写しが 5 本あるとき、今日の file を写した後に 36 本の全部が残る（名前の全部で 30 本を数えると今日より前の 5 本が消えて red）。先の日付の名前が無い媒体では、今日以前の名前が 30 本ちょうどなら消えず、31 本なら最も古い 1 本だけが消える |
 | MNT-01-D9 | 新しすぎる版・`quick_check` の失敗・読めない file の 3 つを `inspect_backup` が区別し、どれも対象の file と folder を変えない（hash と folder の一覧が前後で同じ、journal の file を作らない）。空の file・`schema_versions` の無い DB・版 0 の DB・必須の表の無い DB は `Err`（読めない控え） |
 
 ---
@@ -620,7 +621,7 @@ enum OffsiteError {
 // （用意の失敗で何も書かないので last_failure に残さない。CMD は 43 §43.8.2 の表の固定の文に写す）
 
 const OFFSITE_DIR_NAME: &str = "InventoryBackup";
-const OFFSITE_KEEP: usize = 30;        // 媒体ごとに残す写しの数（新しい順）
+const OFFSITE_KEEP: usize = 30;        // 媒体ごとに残す写しの数（名前の日付が今日以前の写しの新しい順。§71.11.4 手順 4g）
 const OFFSITE_STALE_DAYS: i64 = 3;     // これ以上前なら「控えが古い」（店主の許容〈3 日程度前まで戻れれば OK〉、repo 外の回答台帳 L-220）
 ```
 
@@ -693,7 +694,7 @@ enum OffsiteCheckResult {
 
 **処理ステップ**:
 1. PC 側の状態を読む。file が無い・`media` が空 → `NotPrepared`。読めない → `last_failure` を書けないまま `OffsiteError::StateUnreadable`
-2. 写す元 = `list_backups(backup_dir)`（§71.6。正式名だけ）の先頭。無ければ `NoLocalBackup`。`list_backups` が `Err` なら、どの媒体にも書かず `last_failure = { at, kind: Io, medium_id: None }` を書いて `OffsiteError::Io`（`NoLocalBackup` に倒さない）
+2. 写す元 = `list_backups(backup_dir)`（§71.6。正式名だけ）のうち、名前の日付（§71.3）が今日（PC のローカル日付）以前の file の先頭（MNT-01-D12。先の日付の file は写す元にしない）。無ければ `NoLocalBackup`。`list_backups` が `Err` なら、どの媒体にも書かず `last_failure = { at, kind: Io, medium_id: None }` を書いて `OffsiteError::Io`（`NoLocalBackup` に倒さない）
 3. 用意済みの媒体を探す（§71.11.3）。0 → `MediumMissing`（状態を変えない）。見つけた媒体のどれかの `InventoryBackup` が `backup_dir` と同じ実体の folder（§71.11.3 の「PC の中の保存先と同じ folder の判定」、MNT-01-D11）なら、どの媒体にも書かず・消さず（手順 3a の検査もしない）、`last_failure = { at, kind: BackupDirIsMediumFolder, medium_id: その媒体 }` を書いて `OffsiteError::BackupDirIsMediumFolder`（`last_success` を変えない。同じ folder のままでは、写す元と写す先が同じ file で手順 4a が毎回 `UpToDate` になり、原因を名指さずに `stale` になるため）。保存先は 1 つなので同じ folder の媒体は多くて 1 本で、ほかの媒体へも写さない（原因と直し方を 1 つにする。店の PC の空きの USB の口は 1 つで、2 本を同時に差さない〈§71.11.6〉）
 3a. 見えている媒体のどれか 1 つにでも同じ名前・同じ size の正式名が無い（写す必要がある）ときだけ、写す元を共有の検査（§71.12 の「使える控え」）にかける。合格しなければ、どの媒体にも書かず、`last_failure = { at, kind: SourceUnverified, medium_id: None }` を書いて `Err`（`last_success` を変えない。壊れた・空の・このアプリのものでない正式名の file〈旧い実装の中断の残り等〉を、hash が一致するだけで「写せた」としない）
 4. 見えている媒体ごとに、その volume の識別（§71.11.3 の「媒体の固定」）の下の `InventoryBackup\` へ:
@@ -703,7 +704,7 @@ enum OffsiteCheckResult {
    d. 目印を読み直して照合し、`InventoryBackup` が reparse point でないことを確かめ（§71.11.3）、`{ファイル名}.partial` を `OpenOptions::create_new` で開いて `io::copy` → `sync_all` する（§71.11.5a 手順 5 と同じ、既存なら失敗する copy）。作業名の entry が残る・直前に現れる場合は、reparse point を含め開かず・上書きせず `Io`。手順 b が除外した link を辿る `std::fs::copy` は使わない
    e. 作業名の file を開き直して全部読み、SHA-256 を c と比べる。違えば作業名の file を消し `VerifyMismatch`
    f. 目印と reparse point を確かめ直し、正式名へ上書きしない公開（§71.4.1）をして、親 directory を sync する。同じ名前の正式名が現れていれば既存を残し、作業名を消して `Io`
-   g. 掃除: 目印と reparse point を確かめ直し、正式名の写し（reparse point の entry を除く）を新しい順に並べ、`OFFSITE_KEEP` 本目より後を消す。今写した file・作業名でない他の file（目印、名前の規約に合わない file）は消さない。消せなければ `tracing::warn!` で続ける
+   g. 掃除: 目印と reparse point を確かめ直し、正式名の写し（reparse point の entry を除く）のうち、名前の日付（§71.3）が今日（手順 2 と同じ日付）以前のものを新しい順に並べ、`OFFSITE_KEEP` 本目より後を消す。名前の日付が今日より後の写しは数えず、消さない（MNT-01-D12。日付だけで比べ、今日の日付の名前は時刻が今より後でも数える）。今写した file・作業名でない他の file（目印、名前の規約に合わない file）は消さない。消せなければ `tracing::warn!` で続ける
 5. 1 つ以上写せたら `last_success = { at: 今, file_name, medium_id: 最後に写した媒体, sha256 }`、`last_failure = None` を書き `Copied`。写すものが無ければ `UpToDate`（状態を変えない）
 6. 手順 4 のどれかが失敗したら、その媒体の残りを止め、`last_failure = { at, kind, medium_id }` を書いて `Err`（他の媒体へ写せていれば `last_success` も書く）
 
@@ -750,17 +751,17 @@ struct OffsiteBackupStatus {
     prepared: bool,                         // 用意した媒体が 1 つ以上ある
     last_success_at: Option<String>,        // YYYY-MM-DD HH:MM:SS
     last_success_label: Option<String>,     // 写した媒体の「控え N」
-    days_since_last_success: Option<i64>,   // 今日の日付 − min(最後に写した日の日付, 写した控えの日付〈last_success.file_name の §71.3 の日付〉)
+    days_since_last_success: Option<i64>,   // 下の規則の日数（写した日と写した控えの日付〈last_success.file_name の §71.3 の日付〉の古い方から今日まで。負にならない）
     stale: bool,                            // 下の規則
     attached: Vec<OffsiteMediumView>,       // 今見えている用意済みの媒体
     last_failure_kind: Option<OffsiteFailureKind>, // 最後の確認が失敗なら
-    local_backup_old: bool,                 // PC の中の最新の backup が無いか、その日付が OFFSITE_STALE_DAYS 日以上前
+    local_backup_old: bool,                 // 下の「PC の中の backup の古さ」（§71.11.4 手順 2 の写す元で決める）
 }
 ```
 
-**規則**: `stale = prepared && (last_success_at が無い || days_since_last_success >= OFFSITE_STALE_DAYS)`。日数は、写した日と写した控えの日付の古い方から数える（PC の中の backup が止まった後に古い控えを写しても、中身の古さで知らせる。例: 10 日前の控えを今日写せば 10 日。写した日だけで数えると、ホームが知らせずに 10 日前の中身のまま過ぎる）。知らせの文（UI-11b-D14、UI-00-D12）は原因で分ける: USB が抜けている・写せないときは USB の文、PC の中の backup が作られていないときは PC の中の backup の文（下の `local_backup_old`）。状態の file が読めないときは `prepared = true`、`stale = true`、`last_failure_kind = StateUnreadable` を返す（知らせる側に倒す）。状態の file が無いときは `prepared = false`、`stale = false`（用意は導入時の owner の作業で、用意の前にホームで知らせない）。
+**規則**: `stale = prepared && (last_success_at が無い || days_since_last_success >= OFFSITE_STALE_DAYS)`。日数は、写した日と写した控えの日付の古い方から数える（PC の中の backup が止まった後に古い控えを写しても、中身の古さで知らせる。例: 10 日前の控えを今日写せば 10 日。写した日だけで数えると、ホームが知らせずに 10 日前の中身のまま過ぎる）。知らせの文（UI-11b-D14、UI-00-D12）は原因で分ける: USB が抜けている・写せないときは USB の文、PC の中の backup が作られていないときは PC の中の backup の文（下の `local_backup_old`）。状態の file が読めないときは `prepared = true`、`stale = true`、`last_failure_kind = StateUnreadable` を返す（知らせる側に倒す）。状態の file が無いときは `prepared = false`、`stale = false`（用意は導入時の owner の作業で、用意の前にホームで知らせない）。先の日付の成功の記録（写した日と写した控えの日付の両方が `today` より後。どちらかが `today` 以前なら上の規則のまま古い方から数える）は無いものとして返す（`last_success_at`・`last_success_label`・`days_since_last_success` は `None`、`prepared` なら `stale = true`。MNT-01-D12）。`offsite_status` は状態の file を書き換えない。成功の記録の有効さは読取りの日（`today`）と記録の `min(写した日, 控えの日付)` を比べて決め（`today` がその日付になれば、記録が同じままでも上の規則で数える。古い中身の控えを写しただけでは知らせは消えない）、記録の更新は §71.11.4 手順 5・6 に従う。`days_since_last_success` は負にならない（両方が今日なら 0）。
 
-**PC の中の backup の古さ**（`local_backup_old`）: `list_backups(backup_dir)`（§71.6。正式名だけ）の先頭が無いか、その名前の日付（§71.3）が `today` から `OFFSITE_STALE_DAYS` 日以上前なら `true`（2 日前は `false`、3 日前は `true`）。`list_backups` が `Err` なら `false`（原因を決めつけない。PC の中の一覧の失敗は画面の一覧が出す）。`stale` の判定は変えない。`stale` のとき画面とホームが原因の文を選ぶ材料で（UI-11b-D14、UI-00-D12）、`true` なら USB を差し直しても直らない（写す元が古いので、写しても `UpToDate` のまま、または古い控えを写すだけ）ため、USB の文でなく PC の中の backup の直し方を出す。読む `backup_dir` は写す元と同じ（43 §43.8.4）。書かない
+**PC の中の backup の古さ**（`local_backup_old`）: §71.11.4 手順 2 と同じ写す元（`list_backups(backup_dir)` のうち名前の日付が `today` 以前の先頭。MNT-01-D12）が無いか、その名前の日付（§71.3）が `today` から `OFFSITE_STALE_DAYS` 日以上前なら `true`（2 日前は `false`、3 日前は `true`）。`list_backups` が `Err` なら `false`（原因を決めつけない。PC の中の一覧の失敗は画面の一覧が出す）。`stale` の判定は変えない。`stale` のとき画面とホームが原因の文を選ぶ材料で（UI-11b-D14、UI-00-D12）、`true` なら USB を差し直しても直らない（写す元が古いので、写しても `UpToDate` のまま、または古い控えを写すだけ）ため、USB の文でなく PC の中の backup の直し方を出す。読む `backup_dir` は写す元と同じ（43 §43.8.4）。書かない
 
 #### 71.11.5a reset_offsite_state（読めない記録を作り直す）
 
@@ -854,15 +855,16 @@ fn check_backup_dir_choice(selected: &Path) -> Result<(), OffsiteError>
 - 作り直しは用意済みの媒体が 1 本も見えないと止まる（`NoMediumAttached`。知らせが消える側でなく、残る側に倒した）。媒体を全部失ったとき・USB の控えを使わないときは、画面の「PC の外の控えをやめる」（§71.11.5b）で知らせを止める
 - 作り直しのときに差していない媒体は登録されないまま残り、入れ替えの後はその媒体が「用意済み」にならず USB の確認の文が出る（差してあるのに未登録の目印の媒体を名指す文は範囲の外。出所: Final Review の closure〈AI の review〉が出した改善の候補で、owner の確認の前の要件にしない）
 - 原因が PC の中の backup の古さ（自動 backup の無効・保存先への書込みの失敗の継続）のときは、USB を差し直しても直らないので、画面とホームは USB の文でなく PC の中の backup の直し方を出す（§71.11.5 の `local_backup_old`）。その文が導く「今すぐバックアップを作成」が失敗すれば、その文が原因を名指す（レジの SD の判定〈MNT-01-D10〉なら見つけた folder の path と直し方、43 §43.6）
-- 媒体の `InventoryBackup\` はアプリが持つ。中の §71.3 の規約の名前の file は、手で置いた物も写しとして数え（同じ名前・同じ size なら写さない、§71.11.4 手順 4a）、新しい 30 本を残して古いものを消す（同 手順 4g）。手で保つ控え（更新の前の backup 等）は `InventoryBackup\` の外に置く
+- 媒体の `InventoryBackup\` はアプリが持つ。中の §71.3 の規約の名前の file は、手で置いた物も写しとして数え（同じ名前・同じ size なら写さない、§71.11.4 手順 4a）、名前の日付が今日以前のものの新しい 30 本を残して古いものを消す（同 手順 4g。今日より後の名前のものは下の MNT-01-D12 の項）。手で保つ控え（更新の前の backup 等）は `InventoryBackup\` の外に置く
 - PC の中の保存先（`backup_path`）を媒体の `InventoryBackup` と同じ folder にしない（MNT-01-D11）: 保存先を選ぶとき（§71.11.5c）・用意するとき（§71.11.2 手順 3c）・確認のたび（§71.11.4 手順 3）に、固定した path で比べて止め、card とホームが「保存先を選ぶ」で選び直す直し方を名指す（43 §43.8.2〜§43.8.7 の表、68 UI-11b-D14 の (4)、53 UI-00-D12 の (4)）。例外: 保存先を選んだ時点で目印の無かった folder（手で作った `InventoryBackup` 等）が後で用意された場合と、選んだ後に drive 文字の割当てが替わって保存先の path が別の用意済みの媒体の `InventoryBackup` を指すようになった場合は、選ぶときに止まらない。前者は用意が、後者は次の確認が止めて知らせる。確認が止めている間も PC の中の保持日数の掃除（§71.5。本決定は変えない）はその folder の古い写しを日付で消すので、保存先を選び直すまで、その媒体の写しは保持日数の分に減る（data は PC の中の backup と同じ file で、失うのは媒体の上の古い世代）
 - 「PC の外の控えをやめる」（§71.11.5b）は全部の媒体の登録をまとめて外す。1 本だけを外す操作は持たない（1 本だけ外したいときは、やめてから残す媒体を用意し直す。見直し契機に置く）
+- PC の日付より先の日付の名前の backup の file（PC の時計が先へ進んでいた間に作った file、時計が戻っている間の本当の日付の file、手で置いた file）は、PC の中では写す元と backup の古さの判定に使わず、媒体の上では掃除の 30 本に数えない（MNT-01-D12、§71.11.4 手順 2・4g）。アプリはその file を PC の中でも媒体の上でも消さず・名前を変えない。PC の中では一覧（§71.6）に今のまま出て、保持日数の掃除（§71.5）は PC の日付がその日付 + 保持日数を過ぎるまで消さない。媒体の上では PC の日付がその日付になるまで 30 本の外に残るので、その間の媒体の写しは 30 本より多くなる（先の日付の名前の本数に上限は無い。空きが足りなくなれば写しが `StorageFull` で失敗して `last_failure` に残り〈§71.11.4 のエラーの表〉、`stale` の知らせは「USB メモリの空きが足りません」の文を続ける〈68 UI-11b-D14 の (4)〉）。PC の日付がその日付になった日には写す元と 30 本の数に戻り、同じ日の backup より名前の時刻が後なら、その日は古い中身のその file が最新として写る（それより名前の日時が後の backup ができた時に直る）。先の日付の成功の記録は無いものとして知らせる側に倒すので、写す元が既に媒体にあって確認が `UpToDate` でも「まだ写せていません」の知らせが出る（§71.11.4 のエラーの表の「公開の後の失敗」と同じ扱い）。成功の記録の有効さは読取りの日と記録の `min(写した日, 控えの日付)` を比べて決め（§71.11.5）、記録の更新は §71.11.4 手順 5・6 に従う
 - 新しい PC で戻した直後は、その PC の起動時の自動 backup と復元の事前バックアップ（どちらも空の DB の控え）が今日の backup と数えられ、写す元の最新になる。アプリは空の DB の控えを区別しない（店の記録の有無を判定する業務の規則を backup に持たない）ので、§71.13 の本番の復元の手順で、媒体を登録し直す前に手動の backup を作る
 - 持ち帰った媒体の古さはアプリから見えない。店の型 C では、PC と差しっぱなしの 1 本を同時に失ったとき（盗難・火事）に戻れるのは最後の入れ替えの時点までで、訪問の間隔は決まっていない（TD-199）ので失う日数に上限は無い（§71.11.6、D-114 の Guarantee range）
 
 **MNT-01-D8: PC の外の控えは、目印を置いた取外し可能な媒体へ、確かめ済みの backup を写して読み戻しで照合する（D-114）**
 
-- 決定: 上の §71.11.1〜§71.11.7。媒体は目印（`InventoryBackup\offsite-medium.json` の `medium_id`）と PC 側の状態の一覧の両方で見分け、drive 文字で覚えず、1 回の確認の中は volume の識別に書込み先を固定する。写すのは共有の検査（§71.12）に通った正式名の backup（MNT-01-D7）だけで、作業名へ写して SHA-256 で読み戻しを照合してから上書きしない公開で正式名にする。状態は DB の外（`offsite-backup.json`）に置く。媒体ごとに新しい 30 本を残す。最後に写せた日（写した控えの日付の方が古ければその日付、§71.11.5）から 3 日以上で「控えが古い」とする
+- 決定: 上の §71.11.1〜§71.11.7。媒体は目印（`InventoryBackup\offsite-medium.json` の `medium_id`）と PC 側の状態の一覧の両方で見分け、drive 文字で覚えず、1 回の確認の中は volume の識別に書込み先を固定する。写すのは共有の検査（§71.12）に通った正式名の backup（MNT-01-D7）だけで、作業名へ写して SHA-256 で読み戻しを照合してから上書きしない公開で正式名にする。状態は DB の外（`offsite-backup.json`）に置く。媒体ごとに、名前の日付が今日以前の写しの新しい 30 本を残す（今日より後の名前の写しは数えず消さない、MNT-01-D12）。最後に写せた日（写した控えの日付の方が古ければその日付、§71.11.5）から 3 日以上で「控えが古い」とする
 - Why: owner 決定（2026-10-07、repo 外の回答台帳 TD-190 の Q4）「外付けの保存先へ自動で書き、確かめて画面に出す」。店主が毎回手で backup を取れるかは分からない（TD-187）ので、差してあれば何もしなくても写る形にする。drive 文字は入れ替えで変わり、レジの SD と同じ文字になりうる（MNT-01-D10）。状態を DB に置くと復元で巻き戻り、用意した媒体を忘れて黙って写さなくなる。3 日は店主の許容（3 日程度前まで戻れれば OK、L-220）で、店の定休日（1 日）や連休の朝でも、起動時の確認ですぐ写るので知らせが出続けない
 - Rejected alternatives: `backup_path` を USB メモリにする（照合が無く、作成途中の file が正式名で残り〈D7 の前〉、drive 文字が変わると別の drive やレジの SD へ書く）／ 固定 disk・network（UNC）も保存先にする（PC の内蔵の別 partition は PC の外でない。UNC は `VACUUM INTO` が失敗する既知の問題〈`docs/backlog.md` の保留〉）／ 写した後に照合しない（「file がある」と「使える控え」を分けない）／ 読み戻しの代わりに size だけ比べる（中身の化けを見ない）／ クラウドへ置く（外部のサービスに頼らない owner の方針、本 lane の範囲外）／ 媒体の上で日付で掃除する（入れ替えで久しぶりに差した媒体の古い写しを、今日の 1 本を除き一度に消す。数で残す方が古い時点を残す）／ 写しを暗号化する（鍵を PC と別に保つ運用が要る。持ち出すときの露出は owner が受けた〈D-114 の owner の決定 1、TD-196〉）
 - Compatibility: 既存の command・DTO・`app_settings` の key・DB の schema は変えない（command と DTO を足す、43 §43.8.2〜§43.8.7）。`backup_path`（PC の中の保存先）とその一覧・掃除・復元は今のまま。DB の外に `offsite-backup.json` を足す（restore はこの file を変えない）
@@ -875,6 +877,14 @@ fn check_backup_dir_choice(selected: &Path) -> Result<(), OffsiteError>
 - Rejected alternatives: §71.11.7 に「PC の中の保存先にこの folder を選ばない」と 1 文足すだけ（起票の推奨の B。回避を文に回し、起きた画面で名指さない）／ backlog に残す（C）／ `backup_path` の文字列と drive 文字の path を比べる（junction・symbolic link・大文字・小文字の違いで見落とす）／ 用意と確認だけで止め、保存先の選択では止めない（上の Why の掃除）／ 保存先の選択だけで止める（用意の前に選んだ保存先と、drive 文字の割当ての変化を見落とす）／ 保存先に取外し可能な drive を選べなくする（既に選んだ人の設定を壊す。MNT-01-D10 の棄却案と同じ）／ 同じ folder のときは PC の中の保持日数の掃除を止める（§71.5 の契約を変え、PC の中の backup が無制限に溜まる）
 - Compatibility: 既存の `backup_path` の値は書き換えない。用意の前の店（状態の file が無い）は、保存先の選択だけが目印のある媒体の `InventoryBackup` を止め、ほかは今のまま。`OffsiteFailureKind` に 1 値、`OffsiteError` に 1 値、command を 1 つ（43 §43.8.8）足す。`CmdErrorKind` は変えない
 - 見直し契機: PC の中の保存先に USB メモリそのものを使う運用を owner が求めたとき。媒体の root や `InventoryBackup` の中の folder を保存先にした組み合わせで、互いの掃除が file を消す経路が見つかったとき
+
+**MNT-01-D12: PC の日付より先の日付の backup は写す元と古さの判定に使わず、媒体の掃除で数えず消さず、先の日付の成功の記録は無いものとして知らせる**
+
+- 決定: (1) 写す元（§71.11.4 手順 2）と `local_backup_old`（§71.11.5）は、`list_backups` のうち名前の日付（§71.3）が今日（PC のローカル日付）以前の file の先頭で決める（`mnt::offsite` の同じ 1 つの関数）。(2) `offsite_status` は、写した日と写した控えの日付の両方が今日より後の成功の記録を、無いものとして返す（§71.11.5）。(3) 先の日付の file と記録を、アプリは PC の中でも媒体の上でも消さず・名前を変えず・書き換えない。PC の中の掃除（§71.5、MNT-01-D3）、一覧（§71.6）、今日の backup の判定（§71.8）は変えない。(4) 媒体の掃除（§71.11.4 手順 4g）は、名前の日付が今日以前の写しだけを数えて新しい `OFFSITE_KEEP` 本を残し、今日より後の名前の写しは数えず消さない（日付の比べ方は (1) と同じ）。今写した file を消さない規則（MNT-01-D8）は変えない
+- Why: owner の決定（2026-11-19、repo 外の回答台帳 TD-816: PC の中の先の日付の file はそのままにし、先の日付の成功の記録は記録なしの扱いで今の「まだ写せていません」の文で知らせる。TD-820: 媒体の掃除も直し、先の日付の名前の写しは 30 本に数えず消さない）。PC の時計が先へ進んでから直ると、先の日付の名前の file が `list_backups` の先頭に残り続け、写し済みなら確認が毎回 `UpToDate` になって、PC の日付がその日付になるまで新しい backup が媒体へ写らない。日数も負になって `stale` が立たず、知らせも出ない。PC の時計が戻っている間も、本当の日付の最新が先頭に残って同じになる（起票の時に 3 つの筋を一時の test で再現した。packet の「調べ」）。PC の外の控えは黙って止まらないことが要る（MNT-01-D8 の Why）。先の日付の記録は「いつ写せたか」を言えないので、読めない記録と同じく知らせる側に倒す（§71.11.5）。(4) の理由: (1) で今日の backup が写るようになると、止まっていた手順 4g が写すたびに動く。名前の全部で 30 本を数えると、先の日付の名前の写しが本当の日付の写しを押し出す（媒体に先の日付の名前 30 本と今日より前の名前 5 本があると、今日の file が写った時に今日より前の 5 本が全部消えた。packet の「調べ」の S4 (a) の実測）。(4) の規則が残す写しは、名前の全部で数える規則が残す写しを必ず含む（先の日付の名前は全部残り、今日以前の名前の順位は先の日付の名前を除いても下がらない）
+- Rejected alternatives: 媒体の掃除は名前の全部で 30 本を数えるままにし、受けるリスクとして書く（TD-820 で採らなかった案。媒体に先の日付の名前の写しがあると、今日の backup が写るたびに本当の日付の写しが押し出されて消え、消えた写しは戻らない）／ 日数が負のときだけ `stale` にし、写す元は変えない（知らせは出るが写しは止まったままで、文は「USB メモリは差してありますが、写せません」になり直し方が外れる）／ 写す元だけ変え、先の日付の記録はそのまま使う（USB メモリが見えないままだと、PC の日付が記録の日付 + `OFFSITE_STALE_DAYS` 日になるまで知らせが出ない）／ 先の日付の file をアプリが消す・別の名前へ退避する（破壊的で、PC の中の掃除は今のままという owner の決定〈repo 外の回答台帳 TD-673〉と衝突する。時計が戻っているだけの間は、本当の日付の正しい backup を消すことになる）／ `list_backups` の中で除く（一覧と復元の画面から先の日付の file が消える）／ 名前でなく file の更新日時で新しさを決める（copy と媒体の file system で変わり、名前が日時の正本という §71.3 の規約を崩す）／ 時刻まで比べる（`offsite_status` は日付だけを受ける〈43 §43.8.4〉ので、写す元と古さの判定の規則が 2 つに割れる）／ 先の日付の記録のとき `UpToDate` で成功の記録を書き直す（写していない時刻を「写せた日時」に書く。§71.11.4 のエラーの表は、記録が古いままの `UpToDate` を次の写しまで知らせる側に置いている）／ 「PC の日付を確かめてください」の文を足す（画面の文と目視が要る。時計が今ずれているのか、前にずれていた跡なのかをアプリは見分けられない）
+- Compatibility: command・DTO の形・状態の file の形・`app_settings`・画面の文字列は変えない。`days_since_last_success` は負の値を返さなくなる（今は負を返しうるが、画面は `stale` のときしか日数を出さない）。状態の file の先の日付の記録は読めるまま残る。成功の記録の有効さは読取りの日と記録の `min(写した日, 控えの日付)` を比べて決め（§71.11.5）、記録の更新は §71.11.4 手順 5・6 に従う。媒体の上の写しは今ある file のまま始まり（この決定の前に消えた写しは戻らない）、先の日付の名前の写しがある媒体では 30 本より多く残る
+- 見直し契機: 先の日付の file（PC の中・媒体の上）があることを画面で知らせたい・アプリに片付けさせたいと owner が求めたとき。先の日付の名前の写しで媒体の空きが足りなくなったとき。PC の中の掃除の規則（MNT-01-D3）を変えるとき（同じ「先の日付の file」の扱いで決める）。同じ日の中の時刻まで比べる必要が出たとき（時計が同じ日の中で数時間先へ進んでから直ると、その日の残りの backup は写らず、翌日の backup から写る）
 
 ---
 
