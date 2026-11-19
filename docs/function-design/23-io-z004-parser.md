@@ -9,10 +9,6 @@
 - 数量・金額とも 0 の正常 JAN の行を BIZ の判定まで保持する旧 ADR（時点証拠）の要求は外した（売上と返品の相殺の判定を持たない。SPEC-STK-CNT-D11）。parser の出力の形は変えない。
 - 処理は既存のサイズ外ガード・strict decode・改行の正規化・layout / header の検出・日付 / JAN / 符号の規則を維持する。PLU の占有の読取り mode も用途を維持する（D-117）。
 
-> **2026-06-30 field-check note**: 本書は既存実装の Z004 parser contract を記録する。現場確認では、現在の店舗日報主入力は `Z001`/`Z002`/`Z005` であり、`Z004` は PLU(商品) / 商品別トラックとして再評価する対象になった。REQ-401 の current SALES import を変更する場合は、本書を拡張するのではなく SALES redesign で `Z001`/`Z002`/`Z005` parser contract を別途定義する。
->
-> **2026-08-01 evidence boundary（2026-08-17 実態同期）**: 2026-07-06 issue #135 で、Z004 が メモリNo. / コード / 名称 / 個数 / 金額 の列意味を持つCV17のPLU別売上レポートであり、代表販売1件が個数非ゼロ行へ出ることを確認済み（実ヘッダ表記は `レコード / ｽｷｬﾆﾝｸﾞｺｰﾄﾞ / キャラクター / 個数 / 金額`、第2フィールドは半角カナ。2026-08-17 実ファイル機械抽出）。IO-02 は、従来shapeに加えてCV17のSD取込み後 `EcrDatas` に残るメタ6行+headerのlayout Aを受理する。BIZ-03のsale_records作成・`pos_stock_sync`在庫増減・rollbackと `ParseResult` 契約は変更しない。店舗採取shapeでのend-to-end確認はL3境界に残る。
-
 ### 13.1 モジュール構成
 
 ```
@@ -38,6 +34,16 @@ Z004ファイルのパース成功時の結果。行単位エラーがあって�
 - parse_errors: Vec\<ParseError\>（行単位のパースエラー）
 - total_data_lines: usize（改行正規化後、検出したヘッダ行より後の非空行でフィールド分割を試みた行の総数。Ok(Some)=正常行、Ok(None)=売上の無い枠（SPEC-Z4A-D8）、Err=エラー行すべてカウント。空文字列のみの行は除外。従来shapeではヘッダが2行目なので旧定義と実質同値。SPEC-Z4A-D4）
 - file_hash: String（SHA-256、生バイト列から算出、hex小文字64文字。INV-6準拠）
+- settlement_metadata: Option\<SettlementMetadata\>（精算の識別メタ。layout A のメタ行から読む。従来shapeは None。冒頭の節）
+
+#### SettlementMetadata構造体
+
+精算の識別メタ。番号は意味を確かめるまで文字列のまま（先頭の 0 を保つ）。parser は精算の系列・同一性・時計の信用を認定しない。
+
+- machine_no: Option\<String\>
+- report_kind: Option\<String\>
+- settlement_no: Option\<String\>
+- settled_at: Option\<String\>（POS が印字した精算日時）
 
 #### ParsedRow構造体
 
@@ -79,6 +85,7 @@ enum Z004ParseError {
     DecodeFailed(String),       // CP932デコード失敗
     NoDataLines(String),        // 2行未満（ヘッダ行すらない）
     NoSettlementDate(String),   // ヘッダまたは精算日を抽出不能
+    ImportError(String),        // 全スロット占有読取り mode の構造が契約を満たさない（§13.3.1。parse_z004 は返さない）
 }
 ```
 
@@ -105,7 +112,7 @@ fn parse_z004(raw_bytes: &[u8]) -> Result<ParseResult, Z004ParseError>
 4. `\n` で行分割。空行は除去しない（行番号を保持するため）
 5. 2行未満 → Err(Z004ParseError::NoDataLines("データ行がありません。ファイル形式を確認してください"))
 6. shape判定とヘッダ位置・settlement_dateの確定（SPEC-Z4A-D1〜D3）
-   - 従来shape: 1行目に `YYYY-MM-DD` があり、かつ2行目が中間強度検査（CSV分割後が5フィールドかつ第2フィールドに「コード」または半角カナ「ｺｰﾄﾞ」を含む。第5フィールドのラベル照合はしない）を満たす場合。settlement_dateは1行目の一致を現行どおり採用する
+   - 従来shape: 1行目に `YYYY-MM-DD` があり、かつ2行目が中間強度検査（CSV分割後が5フィールドかつ第2フィールドに「コード」または半角カナ「ｺｰﾄﾞ」を含む。第5フィールドのラベル照合はしない）を満たす場合。settlement_dateは1行目の一致を現行どおり採用する。実物の Z004 は layout A で（2026-07-06 の店の採取）、従来shapeの file は精算回数・マシンNo. を持たないので BIZ-03 が取り込まない（[32](32-biz-csv-import-service.md) の新契約の表の 1）。parser のこの分岐を外すのは code の別の lane
    - layout A: 従来shapeの二重条件を満たさない場合、先頭20行以内から最初のヘッダ行を走査する。ヘッダ未検出 → Err(Z004ParseError::NoSettlementDate("ヘッダ行を検出できません。ファイル形式を確認してください"))
    - layout Aヘッダ検査: CSV分割後が5フィールドで、第2フィールドに「コード」または半角カナ「ｺｰﾄﾞ」、第5フィールドに「金額」を含むこと（実ファイルのヘッダ第2フィールドは半角カナ「ｽｷｬﾆﾝｸﾞｺｰﾄﾞ」、2026-08-17 実ファイル機械抽出）。フィールド数だけでなく位置アンカー付きラベル照合を重ね、5フィールドの非ヘッダ行を排除する
    - layout Aの精算日は、ヘッダより前のメタ行群で第1フィールドに「日付」を含む行を優先する。該当行に日付がない場合のみ、メタ行群の先頭から最初の日付パターンへfallbackする
@@ -129,7 +136,7 @@ raw_bytes: CP932エンコードされたZ004ファイル
   8行目: "レコード    ","ｽｷｬﾆﾝｸﾞｺｰﾄﾞ ","キャラクター","個数        ","金額        "
   9行目以降: 5フィールドの全スロットダンプ
 
-  従来shape:
+  従来shape（parser は読むが BIZ-03 が拒む）:
   1行目: "精算日報 2026-03-21 ..."
   2行目: "No,コード,名称,個数,金額"
   3行目: "1","4976383262108","ﾊﾏﾅｶ ｱﾐｱﾐ極太",3,1782
@@ -162,7 +169,7 @@ Ok(ParseResult {
 
 | ID | 契約 |
 |---|---|
-| SPEC-Z4A-D1 | 従来shapeとlayout Aを受理し、従来shapeは1行目日付 + 2行目中間強度検査（5フィールド + 第2フィールドに「コード」/半角「ｺｰﾄﾞ」含有、第5フィールドのラベル照合なし）の二重条件で判定する。二形状外は致命的エラーでfail-closedする |
+| SPEC-Z4A-D1 | 従来shapeとlayout Aを受理し、従来shapeは1行目日付 + 2行目中間強度検査（5フィールド + 第2フィールドに「コード」/半角「ｺｰﾄﾞ」含有、第5フィールドのラベル照合なし）の二重条件で判定する（従来shapeは BIZ-03 が拒む。§13.3 手順 6）。二形状外は致命的エラーでfail-closedする |
 | SPEC-Z4A-D2 | layout Aのヘッダは5フィールド + 第2「コード」（半角カナ「ｺｰﾄﾞ」を含む）/第5「金額」の位置アンカーで検査し、先頭20行以内だけを走査する |
 | SPEC-Z4A-D3 | layout Aの精算日は「日付」ラベル行優先 + 最初の日付パターンfallbackとし、`YYYY-MM-DD` / `YYYY-M-D` / `YYYY/M/D`（月日1〜2桁）をゼロ埋め正規化する |
 | SPEC-Z4A-D4 | `ParseResult`系の型と意味論を変えず、line_noは物理行番号、total_data_linesはヘッダ後の試行行数とする |
@@ -236,7 +243,7 @@ fn parse_data_line(line: &str, line_no: usize) -> Result<Option<ParsedRow>, Pars
 - カンマ付きの値を InvalidNumber のまま残す（従来）: 1,000 円以上の PLU の売上が在庫に反映されない
 - 小数の受理: 単位の拡張（D-113。backlog「単位の拡張の残りの申し送り」の P）で数量の型ごと決める。本書では InvalidNumber のまま
 
-単位の拡張の後（proposed・未実装、Z004・EJ の lane、D-113）: 個数（第 4 欄）は、上の 2 つの形の整数部に任意の `.` + ASCII 数字 1〜2 桁を続けた形を受け、小数 2 桁までの 100 倍の整数（`quantity_hundredths: i64`、`ParsedRow.quantity` を置き換える）にする（[共通規則](10-common-rules.md) SPEC-UNIT-D8。浮動小数を通さない）。金額（第 5 欄）は今の整数の規則のまま。IO は商品を引かず、在庫の数量への換算（個数の商品で 100 で割り切れない値は在庫に効かせない、長さの商品は 100 倍の整数がそのまま cm）は BIZ-03 が行う。型の変更は Z004 の取込みを再開する lane（CASIO 固有）が `csv_import_service` の `quantity: i32`・時点証拠の受領の型と一緒に行い、それまで上の規則が実装の正本である。
+単位の拡張の後（proposed・未実装、Z004・EJ の lane、D-113）: 個数（第 4 欄）は、上の 2 つの形の整数部に任意の `.` + ASCII 数字 1〜2 桁を続けた形を受け、小数 2 桁までの 100 倍の整数（`quantity_hundredths: i64`、`ParsedRow.quantity` を置き換える）にする（[共通規則](10-common-rules.md) SPEC-UNIT-D8。浮動小数を通さない）。金額（第 5 欄）は今の整数の規則のまま。IO は商品を引かず、在庫の数量への換算（個数の商品で 100 で割り切れない値は在庫に効かせない、長さの商品は 100 倍の整数がそのまま cm）は BIZ-03 が行う。型の変更は [backlog](../backlog.md) の「単位の拡張の残りの申し送り」の P が BIZ-03 の換算（[32](32-biz-csv-import-service.md) の「数量」）と一緒に行い、それまで上の規則が実装の正本である。
 
 #### 13.4.2 売上の有無による行の分類（SPEC-Z4A-D8、D-103）
 

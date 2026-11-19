@@ -66,9 +66,9 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 
 | コマンド名 | 入力 | 呼び出すBIZ | 出力 |
 |-----------|------|-----------|------|
-| parse_and_validate_csv | FileBytes, filename | BIZ-03 Stage1+2 | ParseValidateResult（preview_data, preview_token） |
-| commit_csv_import | CommitRequest（preview_token, additional_import_confirmed） | BIZ-03 Stage4 | ImportResult（csv_import_id, status, total_items, skipped_count） |
-| rollback_csv_import | csv_import_id | BIZ-03 ロールバック | RollbackResult（success, voided_sale_count, stock_corrections） |
+| parse_and_validate_csv | FileBytes, filename | BIZ-03 Stage1+2 | ParseAndValidateResponse（preview_data, preview_token） |
+| commit_csv_import | preview_token | BIZ-03 Stage4 | ImportResult（csv_import_id, status, total_items, total_amount, skipped_count, settlement_gaps, settlement_date_after_today, recheck_targets） |
+| rollback_csv_import | csv_import_id | BIZ-03 ロールバック | RollbackResult（success, voided_sale_count, voided_movement_count, recheck_targets） |
 | preview_rollback_csv_import | csv_import_id | BIZ-03 取消の前の読取り（取消を TX で当てて戻す。何も書かない） | RollbackPreview（csv_import_id, settlement_no, recheck_targets, affected_stocktakes） |
 | list_csv_imports | ListQuery（page, per_page） | BIZ-03経由 | PaginatedResult\<CsvImport\> |
 
@@ -80,7 +80,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | parse_and_validate_daily_report_from_sd | scan_token, candidate_key | BIZ-08 Stage1+2 | DailyReportPreviewResponse（preview_data, preview_token） |
 | parse_and_validate_daily_report | DailyReportSourceFile[]（filename, file_bytes） | BIZ-08 Stage1+2 | DailyReportPreviewResponse（preview_data, preview_token） |
 | commit_daily_report_import | CommitDailyReportRequest（preview_token, additional_import_confirmed） | BIZ-08 Stage4 | DailyReportImportResult（daily_report_import_id, status, report_date, warning_count） |
-| rollback_daily_report_import | daily_report_import_id | BIZ-08 ロールバック | DailyReportRollbackResult（success, status） |
+| rollback_daily_report_import | daily_report_import_id | BIZ-08 ロールバック | DailyReportRollbackResult（daily_report_import_id, status, rolled_back_at） |
 | list_daily_report_imports | ListQuery（page, per_page, date_from?, date_to?） | BIZ-08経由 | PaginatedResult\<DailyReportImportRow\> |
 
 **CMD-12の責務境界**:
@@ -151,3 +151,4 @@ biz/mnt からの直接 `pub use` / `pub(crate) use crate::db::*` / `crate::io::
 | 日付 | PR | 内容 |
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D3: 両取込みcommandの確認flagを `additional_import_confirmed` に統一。 |
+| 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | CMD-07 の commit の入力から `additional_import_confirmed` を外し（D-118 の b1）、ImportResult・RollbackResult・DailyReportRollbackResult の field を実装に合わせた。 |
