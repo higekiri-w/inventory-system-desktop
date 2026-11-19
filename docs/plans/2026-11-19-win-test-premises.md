@@ -48,7 +48,7 @@ Goal Invariant:
 | 属性 | (a) | (b) | (c) | (d) |
 |---|---|---|---|---|
 | なし | 0 | 29/29 | 121 `w/crlf` | ` M` 2 本（11-14 の観測と同じ） |
-| S1（退けた案 (d)・(e) の結果は D-161 の Alternatives） | 0 | 29/29 | 121 `w/lf` | 0 |
+| S1（退けた案 (d)・(e) とその理由は D-161 の Alternatives） | 0 | 29/29 | 121 `w/lf` | 0 |
 
   S1 の後: `git ls-files --eol tests/fixtures | grep -c 'i/crlf.*attr/-text'` → `29`、CSV の 2 行を消して `git add --renormalize tests/fixtures` → 29 本が変更。前の clone は pull の後も `lib.rs` が `w/crlf`、(d) で 2 本が ` M`。`tauri dev` が書き直す file は 11-14 の観測の 2 本で、他は未確認。
 - B（48 本）: `prepare_with`（`offsite.rs:344-360`）は `drive_root` の root が列に `same_root` で在るかで `NotRemovable` を決める。Windows の `drive_root`（`:983-995`）は注入の `roots` を使わず prefix と root を返すので、test が注入した `\\?\C:\…\E`（`Fx::new`、`:1368`。CMD は `settings_cmd.rs:991-995`）が `\\?\C:\` になり `NotRemovable`。Windows 以外（`:997-1005`）は注入の列のうち選んだ path を含む最も長いもの。本番の列は `removable_drive_roots()`（`register_sd.rs:158-185`、`DRIVE_REMOVABLE` の `X:\`）。71 §71.11.3 は production と test が同じ内部関数を通す。`component_eq`（`offsite.rs:960-980`、Windows は ASCII の大文字小文字を区別しない）は MNT-01-D11（`:952`）が使う。
@@ -63,7 +63,7 @@ Goal Invariant:
 - S4 C: `backup.rs:2211` の `actual` の期待を、Windows では prefix が `\\?\Volume{` で、prefix の後の component が `root.join("a/c/d")` の prefix の後と等しい形にする（`:2210` は今のまま）。`:1697-1701` の注入先を `pin_to_volume(&backup_dir).unwrap().actual.join(name_at(now))` にする（Linux は今と同じ path。71 §71.10 の表の実体の path）。
 - S5 D の 2 本: `backup.rs:2380-2384` は Windows では土台を `std::fs::canonicalize(dir.path())`（実際に開く path に `?` が入る）にし、`\` を区切りとして folder `d#1`・`50% done` の下の `x.db` を作る（純関数の assert `:2392-2395` は今のまま）。`register_sd.rs:691` は Linux は今の綴りの一致のまま、Windows は `fs::canonicalize` の両辺の一致にする。
 - S6 正本: 71 `:650-651`（§71.11.2 手順 1・2）は root の選び方だけを差し替える: 手順 1 の前半を「`selected` を、見えている取外し可能な drive の root〈§71.11.3 の列〉のうち `selected` を含むものにする（component ごとに比べ、Windows は ASCII の大文字小文字を区別しない）」、手順 2 を「無ければ `OffsiteError::NotRemovable`」にする。手順 1 の後半（以後の読み書きは `pin_to_volume` で固定した実体を通す）は残す。`docs/decision-log.md` に D-161（下の Design Readiness）。
-- S7 docs: `docs/ci.md:105` の「（どれも test の前提。…）」を確かめた事実（群ごとの原因、B12 の error、直した PR）にする。`docs/backlog.md:55`（PR #188 の申し送り。D-159 と PR #286 で追える）を消し、`:56-60` の項目を外し、1 項目を足す: `test_restore_req901_b1_evacuation_failure_preserves_real_wal_snapshot` も開いた接続の下の改名に頼り、B12 の推定が当たれば Windows で空振りする。`docs/DEV_SETUP_CHECKLIST.md:274`（`tauri dev` の後の「変更あり」）を、S1 の後の新しい clone では出ない、前の clone（pull で直らない）で出たら戻す操作をせず別の folder に新しい clone を作って使う（既存の clone を強制で展開しない。`git restore .` は `assume-unchanged` の未 commit の編集も消す）、に置き換える。`docs/msi-distribution-runbook.md:57` の改行の文もその項への参照に替える（その clone の MSI は配布しない）。
+- S7 docs: `docs/ci.md:105` の「（どれも test の前提。…）」を確かめた事実（群ごとの原因、B12 の error、直した PR）にする。`docs/backlog.md:55`（PR #188 の申し送り。D-159 と PR #286 で追える）を消し、`:56-60` の項目を外し、1 項目を足す: `test_restore_req901_b1_evacuation_failure_preserves_real_wal_snapshot` も開いた接続の下の改名に頼り、B12 の推定が当たれば Windows で空振りする。もう 1 項目を足す: owner の Windows の clone の手順の安全（`docs/DEV_SETUP_CHECKLIST.md:274` の `git restore .`、`docs/msi-distribution-runbook.md:57` の `git restore package-lock.json`、同期の手順 `docs/DEV_SETUP_CHECKLIST.md:294` の `git reset --hard` は、`assume-unchanged` の編集や意図した未 stage の編集を消しうる。S1 の後に新しい clone へ移るときの置き場と、固定の path の手順との関係も決める。出所: この lane の計画の review round 1〜3、owner の決定 TD-837）。この lane はこれらの手順書を変えない（S1 の後も前の clone では今の文が当たる）。
 
 B12 の決め方（S3 (b)）:
 
@@ -71,7 +71,7 @@ B12 の決め方（S3 (b)）:
 2. 1 に当たらない・届かない場合で、製品が MNT-01-D4 の安全側（`Recovered` で元の DB が戻る、または `Unrecoverable` で reconcile が収束する）: 根拠を PR の comment に書き、Gated Amendment で直し方を足す（期待を OS で分けない。Windows でも WAL の巻き戻しの失敗 → `Unrecoverable` → reconcile で `Recovered` の経路を今の assert で通す）。
 3. 契約と違う（`Ok`、`Recovered` なのに元の DB が開けない・行が欠ける・遺物が残る、reconcile が収束しない）: 製品の欠陥として止め、owner に諮る。この lane で直さない。
 
-Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装の順 1 の扱いを除く）、`src-tauri/src/io/register_sd.rs` の本体（`child_dir` の綴りは契約の外）、`Plans.md`。
+Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装の順 1 の扱いを除く）、`src-tauri/src/io/register_sd.rs` の本体（`child_dir` の綴りは契約の外）、`Plans.md`、clone の手順書（`docs/DEV_SETUP_CHECKLIST.md`・`docs/msi-distribution-runbook.md`。S7 の backlog の項目、TD-837）。
 
 実装の順（push は Coordinator）: 1. 計画の固定の後、S1・S2・S3 (a)・S4・S5 の commit を push し、run を読む（59 本が通り B12 の message が出る見込み）。60 本の外か新しく落ちた test（B の 2 段目の assert 等）は B12 の決め方 2・3 と同じに扱う（Gated Amendment か owner）。2. S3 (b) を push し、run で 60 本を確かめる。3. S6・S7 を push する。
 
@@ -87,7 +87,7 @@ Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装
 
 - 引用する設計正本: 71 §71.4 (2)・§71.10 の表・§71.11.2・§71.11.3・§71.12、MNT-01-D4（§71.7）・D6・D8・D9・D10、29 IO-09-D1・D3、IO-11-D3、D-157（Windows observe）、D-159、D-147。
 - 必要な設計成果物: S6 の 71 の文と D-161。DB・command・DTO・画面は変わらない。
-- D-161 の要旨（S6 で書く）: Decision: repo の text の file は新しい clone で LF を既定とする（`* text=auto eol=lf`。既存の混在改行の 4 本は正規化しない）、CSV は bytes のまま（`*.csv`・`*.CSV` に `-text`。29 本の CP932・CRLF の fixture）。前の clone は新しい clone で直す。Why: Windows の autocrlf で source を読む A の 7 本が落ち、`tauri dev` の後に「変更あり」が出る。Alternatives: (a) test で `\r\n` を正規化（同じ形の test が増えるたびに落ち、`tauri dev` の件が残る）; (b) `core.autocrlf=false`（人の設定に頼る）; (c) `* -text`（diff と merge が崩れる）; (d) `tests/fixtures/** -text`（前の clone の pull で 5 本が ` M`）; (e) `*.rs` と名指しの file だけを LF（書き直す file・読む source が増えるたびに名指しを足す）。Revisit: CRLF の要る file（`.bat` 等）を足すとき。
+- D-161 の要旨（S6 で書く）: Decision: repo の text の file は新しい clone で LF を既定とする（`* text=auto eol=lf`。既存の混在改行の 4 本は正規化しない）、CSV は bytes のまま（`*.csv`・`*.CSV` に `-text`。29 本の CP932・CRLF の fixture）。前の clone は改行が今のまま残る（手順は backlog の別の項目）。Why: Windows の autocrlf で source を読む A の 7 本が落ち、`tauri dev` の後に「変更あり」が出る。Alternatives: (a) test で `\r\n` を正規化（同じ形の test が増えるたびに落ち、`tauri dev` の件が残る）; (b) `core.autocrlf=false`（人の設定に頼る）; (c) `* -text`（diff と merge が崩れる）; (d) `tests/fixtures/** -text`（前の clone の pull で 5 本が ` M`）; (e) `*.rs` と名指しの file だけを LF（書き直す file・読む source が増えるたびに名指しを足す）。Revisit: CRLF の要る file（`.bat` 等）を足すとき。
 - 前提・延期した gap: `removable_drive_roots`（変えない）と本物の USB メモリの用意は自動の test の外（D-114 の L3 で確かめ済み）。Windows の mutation は流さない（S2 (b) は Windows observe の結果だけで見る）。
 - 絶対保証の例外: 主張しない。S2 は列の root の component の一致だけを見て、drive の種類は `removable_drive_roots` が持つ。
 - 判定: ready（計画の review の前）。
@@ -103,7 +103,7 @@ Non-scope: `src-tauri/Cargo.toml`・`Cargo.lock`、60 本の外の test（実装
 | IO-09-D1（SD の root） | 29 §29.7.4 手順 3 | S5 | `test_req401_resolve_accepts_drive_casio_and_model_folder` | 返す綴りは契約の外 |
 | MNT-01-D4（B12） | 71 §71.7 手順 8e、MNT-01-D4 | S3 | B12 の test | 決め方の 3 は owner |
 | source を読む test（SPEC-SFV・D-142・IO-09-D3・IO-11-D3・MNT-01-D7） | 各正本 | S1 | A の 7 本 | test は変えない |
-| D-161（改行） | decision-log D-161（新規） | S1・S6・S7 | A の 7 本（Windows observe）、AC3 の fixture | 前の clone は新しい clone に替える（S7） |
+| D-161（改行） | decision-log D-161（新規） | S1・S6・S7 | A の 7 本（Windows observe）、AC3 の fixture | 前の clone の手順は変えない（S7 の backlog の項目） |
 
 ## Test Plan
 
