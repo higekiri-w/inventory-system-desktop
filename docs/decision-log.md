@@ -1459,3 +1459,14 @@ Use concise ADR-style entries.
 - Guarantee range: Windows の MSVC の target。Windows の GNU は今のまま lib の test の実行 file に manifest が入らない。`target/` の cdylib の DLL にも manifest が入る（配らない）。Linux の test は文の形だけを見て、Windows の link の結果は見ない（Windows observe と L3 が持つ）。
 - Compatibility: 配る exe の manifest に linker の既定の `trustInfo`（`asInvoker`、`uiAccess='false'`）が増える（lane の L3-3 で確かめる）。icon・版の情報・`STATIC_VCRUNTIME` の扱いは tauri-build のまま変えない。D-137 の dev-tools の 2 行と同じ。
 - Revisit: tauri-build を上げるとき（既定の manifest の中身と `new_without_app_manifest` を見比べる）。配る exe の manifest に DPI の要素を足すとき（そのとき manifest の file を持つ形を比べる）。
+
+## D-161: repo の text の file は新しい clone で LF を既定とし、CSV は bytes のまま持つ（2026-11-20）
+
+- Status: accepted（lane「Windows で落ちる lib の test 60 本の前提を直す」〈Plan Packet `docs/plans/2026-11-19-win-test-premises.md`、PR #291〉で起票した。lane は owner の決定、repo 外の回答台帳 TD-825 の A〈2026-11-19〉）
+- Context: repo に `.gitattributes` が無く、Windows の `core.autocrlf` の checkout では text が CRLF になる。自分の source を `\n` を含む文字列で探す lib の test 7 本が Windows observe で落ち（[ci.md](ci.md) の Windows Observe）、`tauri dev` が LF で書き直した `src-tauri/Cargo.toml`・`src/lib/bindings.ts` が「変更あり」になる。tracked の CSV 29 本は `tests/fixtures/` の合成の fixture で、CP932・CRLF が契約（各 README）。
+- Decision: `.gitattributes` を足す: `* text=auto eol=lf`、`*.csv -text`、`*.CSV -text`。repo の text の file は新しい clone で LF を既定とし、CSV は bytes のまま持つ。既存の混在改行の 4 本（`i/mixed`）は正規化しない（`--renormalize` を流さない）。前の clone は改行が今のまま残る（clone の手順は [backlog](backlog.md) の「owner の Windows の clone の手順の安全」）。
+- Why: Windows の autocrlf で source を読む test 7 本が落ち、`tauri dev` の後に「変更あり」が出る。属性 1 つで新しい clone が Linux と同じ改行になり、人の git の設定に頼らない。
+- Alternatives: (a) test で `\r\n` を正規化する（同じ形の test が増えるたびに落ち、`tauri dev` の件が残る）; (b) `core.autocrlf=false`（人の設定に頼る）; (c) `* -text`（diff と merge が崩れる）; (d) `tests/fixtures/** -text`（前の clone の pull で fixture の README 4 本と `z004/setup-products.sql` の 5 本が ` M`）; (e) `*.rs` と名指しの file だけを LF（書き直す file・読む source が増えるたびに名指しを足す）。
+- Guarantee range: Linux の `core.autocrlf=true` で Windows を代用した probe（packet の「確かめた事実」）と Windows observe の run で確かめた。実の Windows の owner の clone は未実測。`tauri dev` が書き直す file は 2 本の観測だけで、他は未確認。
+- Compatibility: tracked の bytes は変えない（fixture の 29 本は `-text` で bytes のまま。index の改行は今のまま）。前の clone は pull の後も作業 tree の改行が今のまま残る。
+- Revisit: CRLF の要る file（`.bat` 等）を足すとき。

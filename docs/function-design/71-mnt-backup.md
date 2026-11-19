@@ -647,8 +647,8 @@ struct OffsiteMediumView { label: String, drive_root: String, newest_copy: Optio
 ```
 
 **処理ステップ**:
-1. `selected` をその drive の root（`E:\` 等）にする（root の下の folder を選んでも root を使う）。以後の手順の読み書きは、その root を `pin_to_volume`（§71.4 の「書く先の固定」）で固定した実体の path（§71.11.3 の「媒体の固定」）を通して行う
-2. root の drive が取外し可能（Windows の `GetDriveTypeW` = `DRIVE_REMOVABLE`）でなければ `OffsiteError::NotRemovable`（固定 disk・network・PC の内蔵の drive は PC の外と言えない）
+1. `selected` を、見えている取外し可能な drive の root（§71.11.3 の列）のうち `selected` を含むものにする（component ごとに比べ、Windows は ASCII の大文字小文字を区別しない）。以後の手順の読み書きは、その root を `pin_to_volume`（§71.4 の「書く先の固定」）で固定した実体の path（§71.11.3 の「媒体の固定」）を通して行う
+2. 無ければ `OffsiteError::NotRemovable`（固定 disk・network・PC の内蔵の drive は PC の外と言えない）
 3. root に `CASIO\SR500_550_4000` があれば `OffsiteError::RegisterSd`（MNT-01-D10 の判定。書く先 `{root}\InventoryBackup` の祖先は root だけ）。判定は手順 1 の固定の後に、drive 文字の root と固定した実体の root の両方で行う（判定と固定の間に drive 文字の割当てが替わっても、書く先の volume の側で SD を見る。PC の中の保存先の `pin_backup_dir` が正規化した path と実体の path の両方で見るのと同じ）。返す `sd_folder` は drive 文字の形
 3a. PC 側の状態を読む。file が無ければ空の状態として続ける。読めなければ、媒体に何も書かずに `OffsiteError::StateUnreadable`（手順 4 の目印を書く前に止める。上書きで媒体の一覧を失わない）
 3b. `{root}\InventoryBackup`・目印の file・目印の作業名（`offsite-medium.json.tmp`、§71.11.1 の公開の順で手順 4 が書く名前）のどれかが reparse point（junction・symbolic link・mounted folder）なら、追わずに何も書かず `OffsiteError::Redirected`（§71.11.3 の「reparse point を追わない」。作業名への書込みは既存の entry を辿って開くので、link を残したまま書くと転送先〈媒体の外の file〉を目印の JSON で書き換える。dangling link なら転送先を作る。読める目印があって作業名を書かない場合も同じに止める）
