@@ -476,6 +476,18 @@ mod sd_bulk {
             .collect()
     }
 
+    /// 候補の中身の日付（並べ替え済み。日付の置換を確かめる）
+    fn report_dates(result: &DailyReportSdScanResult) -> Vec<String> {
+        let mut dates: Vec<String> = result
+            .scan
+            .candidates
+            .iter()
+            .map(|candidate| candidate.report_date.clone().unwrap_or_default())
+            .collect();
+        dates.sort();
+        dates
+    }
+
     fn summary(
         new_count: i64,
         held_count: i64,
@@ -498,6 +510,8 @@ mod sd_bulk {
         // L3-1
         let a = scan(&conn, out, "sd-a", today);
         assert_eq!(statuses(&a), [NotImported; 3]);
+        let text = |offset| day_at(day, offset).format("%Y-%m-%d").to_string();
+        assert_eq!(report_dates(&a), [text(-1), text(0), text(0)]);
         assert_eq!(a.scan.ej, summary(5, 1, 1));
         let bulk = commit_register_sd_bulk_import(&mut conn, &a.snapshot, &app).unwrap();
         assert_eq!(bulk.items.len(), 4);
@@ -530,6 +544,7 @@ mod sd_bulk {
         // L3-2 の 1 回目: T の最後が入り、保留は T+1 の最後の 1 件
         let c = scan(&conn, out, "sd-c", today);
         assert_eq!(statuses(&c), [NotImported]);
+        assert_eq!(report_dates(&c), [text(1)]);
         assert_eq!(c.scan.ej, summary(2, 1, 0));
         let bulk = commit_register_sd_bulk_import(&mut conn, &c.snapshot, &app).unwrap();
         assert!(matches!(
