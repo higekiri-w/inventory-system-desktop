@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { commands, type DailyReportRollbackResult } from "@/lib/bindings";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { unwrapResult } from "@/lib/invoke";
+import { useWindowCloseGuard } from "@/lib/window-close-guard";
 
 export function useRollbackDailyReportImport({
   onSuccess,
@@ -36,11 +37,12 @@ export function useRollbackDailyReportImport({
       toast.error("取り消しに失敗しました。もう一度お試しください");
     },
   });
-  // §55.7: 取消の応答を待つ間は route の移動とリロード等の page の離脱を止める（2 つの入口に共通。native の window の close は保証しない）。
+  // §55.7: 取消の応答を待つ間は route の移動・リロード等の page の離脱・native の window の close（UI-USW-D5）を止める（2 つの入口に共通）。
   // pending は onSuccess / onError の後に外れるので、Toast と再取得の後に解ける
   useBlocker({
     shouldBlockFn: () => mutation.isPending,
     enableBeforeUnload: () => mutation.isPending,
   });
+  useWindowCloseGuard("daily-report-rollback", mutation.isPending);
   return mutation;
 }

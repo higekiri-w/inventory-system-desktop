@@ -81,7 +81,7 @@ struct DailyReportPreviewResponse {
 **シグネチャ**:
 
 ```rust
-#[tauri::command]
+#[tauri::command(async)] // 下の「実行の thread」
 fn commit_daily_report_import(
     state: State<AppState>,
     app: tauri::AppHandle, // D-111 で足す。Tauri が注入し、wire（bindings の引数）は変わらない
@@ -91,6 +91,8 @@ fn commit_daily_report_import(
 ```
 
 `app` は Tauri が注入する。手順 3a の `app_data_dir` は command が test 用の `commit_daily_report_import_with_state`（`src-tauri/src/cmd/daily_report_import_cmd.rs`）を呼ぶ前に取り、解決済みの `app_data_dir: &Path` を引数で渡す（取れなければ cache に触れずに `internal`。test は一時 directory を渡す）。このため手順 3a は番号に反して手順 1 より前に行い、観測できる差は token が不正（手順 1〜3 の失敗）かつ `app_data_dir` を取れないときに、手順 1〜3 の error でなく手順 3a の `internal` が返る（期限切れの token も cache から消えない）ことだけである（`src-tauri/src/cmd/daily_report_import_cmd.rs` の `commit_daily_report_import`）。
+
+**実行の thread**: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。CMD-12 のほかの command の実行の thread は変えない。
 
 **処理ステップ**:
 1. preview_tokenのUUID形式を検証する。
@@ -105,7 +107,7 @@ fn commit_daily_report_import(
 ### 45.5 rollback_daily_report_import
 
 ```rust
-#[tauri::command]
+#[tauri::command(async)] // §45.4 の「実行の thread」
 fn rollback_daily_report_import(
     state: State<AppState>,
     daily_report_import_id: i64,
@@ -144,6 +146,7 @@ status filter は第1スライスでは公開しない。BIZ-08のquery型には
 #[tauri::command]
 fn scan_register_sd(
     state: State<AppState>,
+    app: tauri::AppHandle,         // 写しの置き場所（app_data_dir）を得る（D-149、BIZ-08-D11 の片付け）
     selected_path: Option<String>, // None = 自動で探す。Some = 利用者が folder の選択で選んだ path
 ) -> Result<RegisterSdScanResponse, CmdError>
 
@@ -157,7 +160,8 @@ struct RegisterSdScanResponse {
 
 **処理ステップ**:
 1. `selected_path` を BIZ-08 の `DailyReportSdSelection`（37 §37.9。`None` → `Auto`、`Some` → `Selected(PathBuf)`）にする。CMD は IO-09 の型を使わない（`src-tauri/tests/architecture_test.rs` の LAYER_RULES で cmd → io は禁止）。空文字は `CmdError.kind="validation"`。
-2. DB接続を取得し、BIZ-08 `scan_register_sd_daily_reports(conn, selection, PC の今日の日付)` を呼ぶ。SD を読む間（窓の範囲の小さな file と照合。利用者は 1 人）は DB の Mutex を持ったままでよい。
+1a. §45.4 手順 3a と同じ取り方で `app_data_dir` を得る（D-149、BIZ-08-D11）。得られなければ error にせず `None` にする（診断 WARN）。BIZ が片付けを飛ばして `tidy_failure = Some(Other)` にし、読取りは続く（§45.4 の commit と違い、scan は写しを書かなくても読める）。`selected_path` が `Some` でも渡し、使うかは BIZ が決める（37 §37.9 手順 2a）。
+2. DB接続を取得し、BIZ-08 `scan_register_sd_daily_reports(conn, selection, PC の今日の日付, app_data_dir)` を呼ぶ。SD を読む間（窓の範囲の小さな file と照合。利用者は 1 人）は DB の Mutex を持ったままでよい。BIZ の片付け（37 §37.12）もこの中で行う（SD の書込みは数本の改名）。CMD は SD の書込みの規則を持たず（CMD-12-D1）、`DailyReportSdScan.tidy_failure`（`Option<RegisterSdTidyFailure>`、specta の enum で `"SdWrite" | "PcCopy" | "Other"`）を変えずに返す。
 2a. 成功時、同じ DB 接続を持ったまま BIZ-04 `refresh_plu_register_snapshot_from_sd(conn, &snapshot.plu_register_z004s)` を呼ぶ（PLU の占有の照合、[33 §16.3](33-biz-plu-export-service.md)、D-117 (3)）。`Err` は scan の失敗にせず、`tracing::warn!` で記録して手順 3 へ進む（response は変えない）。照合の後、`plu_register_z004s` を空にしてから手順 3 で snapshot を cache に入れる（Z004 の bytes を cache に残さない）。本手順は PLU の書出しの見直しの runtime の lane が実装する（37 §37.9 手順 10 と同じ lane）。SD 直読みの runtime の lane（D-111）は手順 1・2・3・4 を実装し、手順 2 の後に手順 3 へ進む。
 3. 成功時、UUID の scan_token を作り、`register_sd_scan_cache` を空にしてから snapshot を入れる（同時に持つ scan は最新の 1 つだけ）。
 4. response を返す。
@@ -268,6 +272,11 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-10-07 | sd-direct-read（Plan Review round 1 の是正） | §45.4 の commit に `app: tauri::AppHandle` と `app_data_dir` の取り方（手順 3a）を足した（BIZ-08-D5 の写しの置き場所）。 |
 | 2026-10-17 | sd-bulk-import-design（design、D-121） | §45.6c（CMD-12-D2）: 一括取込みと EJ の控えの command と、scan に後から足す EJ の数え・Z004 の bytes を proposed で足した。§45.6a・§45.6b は変えていない。Plan Review round 2 の是正で、`Failed` の kind と EJ の kind・mode を生成 enum にし、scan の `ej_unreadable_files` と手で選んだ EJ の保留の判定の置き場を書いた。Plan Review round 3 の是正で、一括取込みと手で選ぶ EJ の取込みの後に無効にする控えの query の key を書いた。Final Review の是正で、(B) の scan が返す `z004_unreadable_files` を書いた。あわせて `z004_unreadable_count` を書いた。 |
 | 2026-10-24 | sd-direct-read-runtime（実装、PR #172） | §45.3・§45.4・§45.8 の「今の実装」の注記と lane の注記を実装の記述に直した。§45.4 手順 3a の `app_data_dir` は command が `commit_daily_report_import_with_state` を呼ぶ前に取る。 |
+| 2026-11-02 | xz-bkup-move（起票、D-149） | §45.6a に (b) の lane で足すもの（`app` と `app_data_dir` を BIZ-08 の scan へ渡す、`DailyReportSdScan.tidy_failure`）を proposed で足した。 |
+| 2026-11-02 | xz-bkup-move（Plan Review round 1 の是正、D-149） | §45.6a の (b) の lane で足すものの `app_data_dir` を得られないときを、`internal` で scan を止める形から、`None` を渡して BIZ が片付けを飛ばす形に直した（BIZ-08-D11）。 |
+| 2026-11-02 | xz-bkup-move（実装、D-149） | §45.6a の (b) の lane で足すものを、シグネチャの `app` と手順 1a・2 の本文に置き換えた（proposed の注記を外した）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（起票、55 UI-07-D19） | §45.3 の DTO の所有、§45.6 の出力の型（`DailyReportImportRow`。精算回数を含む、TD-590）と呼ぶ画面、§45.8 の再生成の対象を proposed・未実装で足した（[Plan Packet](../plans/2026-11-03-daily-report-import-rollback-entry.md)）。 |
 | 2026-11-03 | daily-report-import-rollback-entry（計画の review の closure round 2 の是正、55 UI-07-D19） | §45.6a に候補の `settlement_no`（TD-592）、§45.8 にその再生成を proposed・未実装で足した。出所は closure 775 の P3（AI の review）と owner の決定 TD-592。 |
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235） | §45.3・§45.6・§45.6a・§45.8 の proposed・未実装の注記を外し、実装の記述にした（bindings は再生成）。§45.8 の wire に出さない精算回数を preview の cache の値と書き分けた。 |
+| 2026-11-14 | window-close-guard（計画の review round 1 の是正、PR #250） | §45.4 に「実行の thread」を足した（`commit_daily_report_import`・`rollback_daily_report_import` を `#[tauri::command(async)]` にする。UI_TECH_STACK UI-USW-D5 の 8、D-153）。未実装の注は実装の PR で外し、§45.4・§45.5 のシグネチャの属性も同じ PR で直す（[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-15 | window-close-guard（実装、PR #250） | §45.4 の「実行の thread」の「未実装」の注を外し、§45.4・§45.5 の `commit_daily_report_import`・`rollback_daily_report_import` のシグネチャの属性を `#[tauri::command(async)]` に直した（wire と生成 bindings は変わらない。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |

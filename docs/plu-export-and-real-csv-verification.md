@@ -140,7 +140,7 @@ issue #135 で採取した実 Z001/Z002/Z004/Z005 の匿名化解析結果（詳
 ### SDカード / PCツール保存領域
 
 - SD 通常領域 `...\XZ\{年}\{月}` は CV17「SDカードからデータを取込む」実行後に空になり、`...\XZ_BKUP\` と PC 側 `EcrDatas` に同内容が保持されるように見える（目視同一確認済み。2026-10-06 に `XZ_BKUP` と `EcrDatas` の全件で size・SHA-256 の一致を確認、[29 §29.7.2](function-design/29-io-daily-report-parser.md) SD-22）
-- （2026-10-06 に置き換え）2026-08-01 owner判断の「SDからCV17へ取り込んだ後、PC側 `EcrDatas` の日報ファイル群をアプリで選ぶ」標準手順は、owner判断2026-10-06 で「アプリがレジの SD を直接読む。CV17 は PLU の書込みだけ」に変わった（取込み済みを `XZ_BKUP` へ移すアプリの操作ができるまでは、店は CV17 の取込みも今の運用のまま続ける。owner判断2026-10-07、D-111 の運用の制約。[D-111](decision-log.md)、[55](function-design/55-ui-csv-import.md) UI-07-D12・D15・D16、[29 §29.7](function-design/29-io-daily-report-parser.md)）。SDをレジから PC へ移す作業自体はアプリ導入後も要る
+- （2026-10-06 に置き換え）2026-08-01 owner判断の「SDからCV17へ取り込んだ後、PC側 `EcrDatas` の日報ファイル群をアプリで選ぶ」標準手順は、owner判断2026-10-06 で「アプリがレジの SD を直接読む。CV17 は PLU の書込みだけ」に変わった（取り込んだ精算の Z はアプリが SD の中で `XZ_BKUP` へ移す。店は最初の数日の精算を確かめた後に CV17 の Z の取込みをやめ、EJ は EJ の取込み〈D-121 の (A)〉まで月末に CV17 で取り込む。owner判断2026-11-02、D-149 (7)。[D-111・D-149](decision-log.md)、[55](function-design/55-ui-csv-import.md) UI-07-D12・D15・D16、[29 §29.7](function-design/29-io-daily-report-parser.md)）。SDをレジから PC へ移す作業自体はアプリ導入後も要る
 - CV17の明示書出し（layout B）は通常の経路に現れない。layout A/Bの双方をparserが受理することはadapter互換性であり、operatorに採取方法やlayoutを選ばせる意味ではない
 - SD の命名・同日複数精算・取込み済みの見分け・読取り途中の失敗は D-111 の設計（BIZ-08-D3・D4・D6、IO-09）で扱う
 - EJ（電子ジャーナル）は日報とは別の CV17「電子ジャーナルを閲覧する」操作で取り込み、取り込むと SD 上では `XZ_BKUP` へ移り、PC 側 `EcrDatas` にも残る。SD 上に 2022-07 以降の約 4 年分がある（2026-08-15 訪店の実機確認）。店で EJ を PC へ取り込むのは月 1 回程度で、日次ではない（owner回答2026-09-23。店主本人の話と EJ ファイルの日付で確認）

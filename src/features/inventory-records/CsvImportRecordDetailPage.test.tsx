@@ -1,12 +1,13 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { commands } from "@/lib/bindings";
+import { createAppQueryClient } from "@/lib/query-client";
 import type {
   CmdError,
   CountRecoveryTarget,
@@ -590,5 +591,50 @@ describe("CsvImportRecordDetailPage の取消（65 §65.5a TRACE-D13）", () => 
     });
     expect(mockRollback).toHaveBeenNthCalledWith(1, 41);
     expect(mockRollback).toHaveBeenNthCalledWith(2, 41);
+  });
+});
+
+describe("CsvImportRecordDetailPage の取消と回線の状態（UI-USW-D5 の 8、app と同じ既定の QueryClient）", () => {
+  // onlineManager は module の singleton。unmount の後の window の online の event は listener が外れていて
+  // 効かないので、直接戻す（戻さないと、同じ file の後の test が回線の切れた状態で走る）
+  afterEach(() => {
+    onlineManager.setOnline(true);
+  });
+
+  it("T21 (a)(b) REQ-401: 回線が切れた後に押した取消はすぐ送られ、取消の途中に回線が戻っても詳細を取り直さない", async () => {
+    const user = userEvent.setup();
+    mockGetCsvImportRecord.mockResolvedValue({ status: "ok", data: makeDetail() });
+    // 取消は応答を待つ間のまま（解決しない）
+    mockRollback.mockReturnValue(new Promise(() => undefined));
+    renderWithRouter(
+      <QueryClientProvider client={createAppQueryClient()}>
+        <CsvImportRecordDetailPage importId={41} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: "CSV取込み #41" })).toBeInTheDocument();
+    expect(mockGetCsvImportRecord).toHaveBeenCalledTimes(1);
+
+    // (a) 回線が切れた後でも、確認の読取り（query）と取消（mutation）は online を待たずに送られる
+    act(() => {
+      window.dispatchEvent(new Event("offline"));
+    });
+    expect(onlineManager.isOnline()).toBe(false);
+    await confirmRollback(user);
+    await waitFor(() => {
+      expect(mockRollback).toHaveBeenCalledTimes(1);
+    });
+    expect(mockPreviewRollback).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("button", { name: /取り消し中…/ })).toBeDisabled();
+
+    // (b) 詳細の query を stale にしてから（staleTime は 30 秒）回線を戻す。取り直すと、その command が
+    // DB の Mutex を待って main thread を塞ぐ。online の後の処理は await を挟むので、流してから数える
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now + 31_000);
+    await act(async () => {
+      window.dispatchEvent(new Event("online"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(onlineManager.isOnline()).toBe(true);
+    expect(mockGetCsvImportRecord).toHaveBeenCalledTimes(1);
   });
 });
