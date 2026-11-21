@@ -11,6 +11,7 @@ import {
   type DailyReportImportResult,
   type DailyReportPreviewData,
   type DailyReportRollbackResult,
+  type EjImportResult,
 } from "@/lib/bindings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -41,12 +42,15 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
       parseAndValidateDailyReport: vi.fn(),
       commitDailyReportImport: vi.fn(),
       rollbackDailyReportImport: vi.fn(),
+      commitRegisterSdBulkImport: vi.fn(),
+      importEjFiles: vi.fn(),
     },
   };
 });
 
 type CommitResponse = Awaited<ReturnType<typeof commands.commitDailyReportImport>>;
 type RollbackResponse = Awaited<ReturnType<typeof commands.rollbackDailyReportImport>>;
+type EjResponse = Awaited<ReturnType<typeof commands.importEjFiles>>;
 
 const mockCommit = vi.mocked(commands.commitDailyReportImport);
 const mockRollback = vi.mocked(commands.rollbackDailyReportImport);
@@ -277,5 +281,93 @@ describe("CsvImportPage daily report tabs_req401", () => {
     });
     expect(mockRollback).toHaveBeenNthCalledWith(1, IMPORT_ID);
     expect(mockRollback).toHaveBeenNthCalledWith(2, IMPORT_ID);
+  });
+
+  it("U2 REQ-401 / UI-07-D17 / UI-USW-D5（closure round 2 #3）: 手で選ぶ EJ の読込みと応答を待つ間は EJ のボタンと両方のタブが止まり、成功の後と失敗の後に解ける", async () => {
+    const EJ_RESULT: EjImportResult = {
+      inserted_count: 0,
+      already_count: 0,
+      conflict_count: 0,
+      conflicts: [],
+      held_count: 0,
+      unreadable_files: ["EJ260321.TXT"],
+      gaps: [],
+    };
+    vi.mocked(commands.scanRegisterSd).mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        scan: {
+          volume_label: "E:",
+          scanned_from: "2026-02-20",
+          candidates: [],
+          skipped_unknown_count: 0,
+          tidy_failure: null,
+          ej: { new_count: 0, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
+        },
+        scan_token: "scan-token",
+      },
+    });
+    vi.mocked(commands.commitRegisterSdBulkImport).mockResolvedValueOnce({
+      status: "ok",
+      data: { items: [{ source: { type: "Ej" }, outcome: { type: "ImportedEj", ...EJ_RESULT } }] },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "SD から読む" }));
+    await user.click(await screen.findByRole("button", { name: "まとめて取り込む" }));
+    const ejButton = () => screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" });
+    await screen.findByRole("list", { name: "まとめて取り込んだ結果" });
+    expect(ejButton()).toBeEnabled();
+    expect(dailyTab()).toBeEnabled();
+    expect(z004Tab()).toBeEnabled();
+    const expectLocked = async () => {
+      await waitFor(() => {
+        expect(ejButton()).toBeDisabled();
+      });
+      expect(dailyTab()).toBeDisabled();
+      expect(z004Tab()).toBeDisabled();
+    };
+    const expectReleased = async () => {
+      await waitFor(() => {
+        expect(ejButton()).toBeEnabled();
+      });
+      expect(dailyTab()).toBeEnabled();
+      expect(z004Tab()).toBeEnabled();
+    };
+
+    // 成功: 選択の確定（読込みの待ち）から応答まで止まる
+    const reading = deferred<Uint8Array>();
+    const importing = deferred<EjResponse>();
+    vi.mocked(open).mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    vi.mocked(readFile).mockReturnValueOnce(reading.promise);
+    vi.mocked(commands.importEjFiles).mockReturnValueOnce(importing.promise);
+    await user.click(ejButton());
+    await expectLocked();
+    expect(commands.importEjFiles).not.toHaveBeenCalled();
+    await user.click(z004Tab());
+    expect(dailyTab()).toHaveAttribute("aria-selected", "true");
+
+    reading.resolve(new Uint8Array([1]));
+    await waitFor(() => {
+      expect(commands.importEjFiles).toHaveBeenCalledTimes(1);
+    });
+    await expectLocked();
+
+    importing.resolve({ status: "ok", data: EJ_RESULT });
+    await expectReleased();
+
+    // 失敗: 応答の失敗の後も解け、同じ画面で選び直せる
+    const failing = deferred<EjResponse>();
+    vi.mocked(open).mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    vi.mocked(commands.importEjFiles).mockReturnValueOnce(failing.promise);
+    await user.click(ejButton());
+    await expectLocked();
+    failing.resolve({
+      status: "error",
+      error: { ...ROLLBACK_ERROR, message: "合成の EJ の取込みの失敗" },
+    });
+    expect(await screen.findByText(/合成の EJ の取込みの失敗/)).toBeInTheDocument();
+    await expectReleased();
+    expect(dailyTab()).toHaveAttribute("aria-selected", "true");
   });
 });

@@ -882,12 +882,14 @@ describe("useDailyReportImportFlow_req401", () => {
     expect(result.current.isBlocking).toBe(false);
 
     mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
-    await act(async () => {
-      await result.current.chooseEjFiles();
+    // chooseEjFiles は command の終わりまで待つので、待つ間を見るここでは await しない
+    act(() => {
+      void result.current.chooseEjFiles();
     });
     await waitFor(() => {
-      expect(result.current.ejImport.pending).toBe(true);
+      expect(vi.mocked(commands.importEjFiles)).toHaveBeenCalled();
     });
+    expect(result.current.ejImport.pending).toBe(true);
     expect(vi.mocked(commands.importEjFiles)).toHaveBeenCalledWith([
       { filename: "EJ260321_0001.TXT", file_bytes: [1, 2, 3] },
     ]);
@@ -933,6 +935,27 @@ describe("useDailyReportImportFlow_req401", () => {
     const { result } = renderHook(() => useDailyReportImportFlow(), {
       wrapper: makeWrapper(queryClient),
     });
+    // 末尾の一括のやり直しのために先に読む（読取りは手で選んだ結果を消すので、EJ の前に済ませる）
+    vi.mocked(commands.scanRegisterSd).mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        scan: {
+          volume_label: "E:",
+          scanned_from: "2026-02-20",
+          candidates: [],
+          skipped_unknown_count: 0,
+          tidy_failure: null,
+          ej: { new_count: 0, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
+        },
+        scan_token: "scan-token",
+      },
+    });
+    act(() => {
+      result.current.scanSd();
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("sd_list");
+    });
     mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
     await act(async () => {
       await result.current.chooseEjFiles();
@@ -949,6 +972,39 @@ describe("useDailyReportImportFlow_req401", () => {
     });
     expect(result.current.ejImport.pending).toBe(false);
     expect(result.current.ejImport.result).toEqual(first);
+
+    // closure round 2 #6: 一括のやり直しは、手で選んだ結果と error を消す（前の一括の結果に付いた値を次の結果に出さない）
+    vi.mocked(commands.commitRegisterSdBulkImport).mockResolvedValueOnce({
+      status: "ok",
+      data: { items: [] },
+    });
+    act(() => {
+      result.current.bulkImport();
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("bulk_result");
+    });
+    expect(result.current.ejImport.result).toBeNull();
+    expect(result.current.ejImport.error).toBeNull();
+  });
+
+  it("U2 REQ-401 / UI-07-D17 / UI-USW-D5（closure round 2 #6）: 手で選んだ EJ の読込みが失敗したら、待ちと close の止めを解き、取り込まない", async () => {
+    mockReadFile.mockRejectedValueOnce(new Error("合成の読込みの失敗"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    await act(async () => {
+      await result.current.chooseEjFiles();
+    });
+    expect(result.current.ejImport.error).toBe("EJ のファイルの選択または読み取りに失敗しました");
+    expect(result.current.ejImport.pending).toBe(false);
+    expect(result.current.isBlocking).toBe(false);
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+    expect(vi.mocked(commands.importEjFiles)).not.toHaveBeenCalled();
   });
 
   it("U2 REQ-401 / UI-07-D17 / UI-USW-D5（Final round 1 #5）: 手で選んだ EJ の読込みの待ちから止め、unmount の後は importEjFiles を呼ばない", async () => {

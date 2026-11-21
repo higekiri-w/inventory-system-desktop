@@ -223,7 +223,7 @@ export function useDailyReportImportFlow() {
     onSuccess: setEjResult,
   });
   const [ejSelectionError, setEjSelectionError] = useState<string | null>(null);
-  // 選択の確定（readFile の待ち）から command の終わりまでを 1 つの待ちにする（UI-USW-D5 の止め）
+  // 選択の確定（readFile の待ち）から command の終わりまでの 1 つの待ち（UI-USW-D5 の止め。解くのは chooseEjFiles の finally だけ）
   const [ejPending, setEjPending] = useState(false);
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -244,15 +244,14 @@ export function useDailyReportImportFlow() {
   // （UI-USW-D5、55 UI-07-D17。取消の応答を待つ間の止めは useRollbackDailyReportImport）
   const importing = state.status === "importing";
   const bulkImporting = state.status === "bulk_importing";
-  const ejImporting = ejPending || ejImportMutation.isPending;
-  const busy = importing || bulkImporting || ejImporting;
+  const busy = importing || bulkImporting || ejPending;
   useBlocker({
     shouldBlockFn: () => busy,
     enableBeforeUnload: () => busy,
   });
   useWindowCloseGuard("daily-report-import", importing);
   useWindowCloseGuard("sd-bulk-import", bulkImporting);
-  useWindowCloseGuard("ej-import", ejImporting);
+  useWindowCloseGuard("ej-import", ejPending);
 
   const scanSd = useCallback(
     (selectedPath: string | null = null) => {
@@ -304,21 +303,18 @@ export function useDailyReportImportFlow() {
         if (bytes.byteLength > CSV_IMPORT_FILE_SIZE_LIMIT) {
           setEjSelectionError(TOO_LARGE_MESSAGE);
           toast.error(TOO_LARGE_MESSAGE);
-          setEjPending(false);
           return;
         }
         files.push({ filename: extractFilename(path), file_bytes: Array.from(bytes) });
       }
       // 読む間に画面を離れていたら取り込まない（結果を見る画面が無い）
       if (!mountedRef.current) return;
-      ejImportMutation.mutate(files, {
-        onSettled: () => {
-          setEjPending(false);
-        },
-      });
+      // command の失敗は mutation の error が持つ（読込みの失敗の文にしない）
+      await ejImportMutation.mutateAsync(files).catch(() => undefined);
     } catch {
       setEjSelectionError(EJ_READ_FAILED_MESSAGE);
       toast.error(EJ_READ_FAILED_MESSAGE);
+    } finally {
       setEjPending(false);
     }
   }, [ejImportMutation]);
@@ -502,7 +498,7 @@ export function useDailyReportImportFlow() {
         (ejImportMutation.error
           ? describeError(ensureInvokeError(ejImportMutation.error, "import_ej_files"))
           : null),
-      pending: ejImporting,
+      pending: ejPending,
     },
     chooseFiles,
     removeManualFile,

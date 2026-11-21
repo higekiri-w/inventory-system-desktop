@@ -1,3 +1,4 @@
+import type { DailyReportSdScan, RegisterSdBulkResponse } from "@/lib/bindings";
 import type { DailyReportImportAction, DailyReportImportState, DailyReportSdOrigin } from "./types";
 
 /** SD の一覧の状態（UI-07-D15 (4)・(5)） */
@@ -6,36 +7,37 @@ function sdList(origin: DailyReportSdOrigin): DailyReportImportState {
 }
 
 /**
- * 一覧の行の「確認する」（UI-07-D15）と、一括の結果の「1 件ずつ確かめてください」の行の「確認する」（55 UI-07-D17）。
- * 同じ scan で個別の preview へ進み、一括の結果から来たときは戻る一覧で一括で入った束を取込み済みにする
- * （読み直さない。UI-07-D15 (6) と同じ）
+ * 一括の応答を同じ scan の表示に畳む（55 UI-07-D17。読み直さない。UI-07-D15 (6) と同じく CMD の snapshot は替えない）:
+ * 入った日報の束を取込み済みに、EJ が入れば EJ の数を結果の数に（新しい控えは 0）。
+ * 次の一括は畳んだ scan を引き継ぐので、印は累積する
  */
-function selectSdCandidate(
-  state: Extract<DailyReportImportState, { status: "sd_list" | "bulk_result" }>,
-  action: Extract<DailyReportImportAction, { type: "sd_candidate_selected" }>,
-): DailyReportImportState {
+function foldBulkResponse(
+  scan: DailyReportSdScan,
+  response: RegisterSdBulkResponse,
+): DailyReportSdScan {
   const imported = new Set(
-    state.status === "bulk_result"
-      ? state.response.items.flatMap((item) =>
-          item.source.type === "DailyReport" && item.outcome.type === "ImportedDailyReport"
-            ? [item.source.candidate_key]
-            : [],
-        )
-      : [],
+    response.items.flatMap((item) =>
+      item.source.type === "DailyReport" && item.outcome.type === "ImportedDailyReport"
+        ? [item.source.candidate_key]
+        : [],
+    ),
   );
+  const ej = response.items
+    .map((item) => item.outcome)
+    .find((outcome) => outcome.type === "ImportedEj");
   return {
-    status: "parsing",
-    filenames: action.filenames,
-    sdOrigin: {
-      scan: {
-        ...state.scan,
-        candidates: state.scan.candidates.map((candidate) =>
-          imported.has(candidate.candidate_key) ? { ...candidate, status: "Imported" } : candidate,
-        ),
-      },
-      scanToken: state.scanToken,
-      candidateKey: action.candidateKey,
-    },
+    ...scan,
+    candidates: scan.candidates.map((candidate) =>
+      imported.has(candidate.candidate_key) ? { ...candidate, status: "Imported" } : candidate,
+    ),
+    ej: ej
+      ? {
+          new_count: 0,
+          held_count: ej.held_count,
+          conflict_count: ej.conflict_count,
+          unreadable_file_count: ej.unreadable_files.length,
+        }
+      : scan.ej,
   };
 }
 
@@ -64,13 +66,23 @@ export function dailyReportImportReducer(
       if (action.type === "bulk_started") {
         return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
       }
-      if (action.type === "sd_candidate_selected") return selectSdCandidate(state, action);
+      if (action.type === "sd_candidate_selected") {
+        return {
+          status: "parsing",
+          filenames: action.filenames,
+          sdOrigin: {
+            scan: state.scan,
+            scanToken: state.scanToken,
+            candidateKey: action.candidateKey,
+          },
+        };
+      }
       return state;
     case "bulk_importing":
       if (action.type === "bulk_succeeded") {
         return {
           status: "bulk_result",
-          scan: state.scan,
+          scan: foldBulkResponse(state.scan, action.response),
           scanToken: state.scanToken,
           response: action.response,
         };

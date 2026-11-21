@@ -31,7 +31,7 @@ export type DailyReportImportState =
   | { status: "sd_list"; scan: DailyReportSdScan; scanToken: string }
   /** 55 UI-07-D17: 「まとめて取り込む」の応答を待つ間 */
   | { status: "bulk_importing"; scan: DailyReportSdScan; scanToken: string }
-  /** 55 UI-07-D17: 一括の結果（同じ scan_token でもう一度押せる。BIZ-08-D7 のやり直し） */
+  /** 55 UI-07-D17: 一括の結果。scan は応答を畳んだ表示で、残りがあれば同じ scan_token でもう一度押せる（BIZ-08-D7 のやり直し） */
   | {
       status: "bulk_result";
       scan: DailyReportSdScan;

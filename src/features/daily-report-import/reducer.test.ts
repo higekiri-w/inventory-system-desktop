@@ -3,6 +3,7 @@ import type {
   DailyReportImportResult,
   DailyReportPreviewData,
   DailyReportSdScan,
+  RegisterSdBulkResponse,
 } from "@/lib/bindings";
 import type { InvokeError } from "@/lib/invoke";
 import { dailyReportImportReducer } from "./reducer";
@@ -229,5 +230,76 @@ describe("dailyReportImportReducer UI-07-D15 REQ-401", () => {
       filenames: [],
     };
     expect(dailyReportImportReducer(manualResult, { type: "back_to_sd_list" })).toBe(manualResult);
+  });
+
+  it("REQ-401 / UI-07-D17（closure round 2 #1）: bulk_succeeded folds the response into the same scan, and the next bulk accumulates", () => {
+    const withEj: DailyReportSdScan = {
+      ...scan,
+      ej: { new_count: 4, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
+    };
+    const bulk = (from: DailyReportImportState, items: RegisterSdBulkResponse["items"]) =>
+      dailyReportImportReducer(dailyReportImportReducer(from, { type: "bulk_started" }), {
+        type: "bulk_succeeded",
+        response: { items },
+      });
+    const daily = (key: string): RegisterSdBulkResponse["items"][number]["source"] => ({
+      type: "DailyReport",
+      candidate_key: key,
+      report_date: "2026-03-21",
+    });
+    const imported = { ...result, type: "ImportedDailyReport" as const };
+    const failed = { type: "Failed" as const, kind: "internal" as const, message: "合成の失敗" };
+
+    // 1 回目: key-a だけが入り、EJ は止まった → EJ の数は scan の時のまま（何も入っていない）
+    const first = bulk({ status: "sd_list", scan: withEj, scanToken: "scan-token" }, [
+      { source: daily("key-a"), outcome: imported },
+      { source: daily("key-b"), outcome: failed },
+      { source: { type: "Ej" }, outcome: { type: "NotAttempted" } },
+    ]);
+    if (first.status !== "bulk_result") throw new Error("not bulk_result");
+    expect(first.scanToken).toBe("scan-token");
+    expect(first.scan.candidates.map((candidate) => candidate.status)).toEqual([
+      "Imported",
+      "NotImported",
+    ]);
+    expect(first.scan.ej).toEqual(withEj.ej);
+
+    // 2 回目: key-a は「取込み済み」で飛ばされ、key-b と EJ が入る → key-a の印は残り、EJ は結果の数（新しい控えは 0）
+    const second = bulk(first, [
+      { source: daily("key-a"), outcome: { type: "Skipped", message: "取込み済みです" } },
+      { source: daily("key-b"), outcome: imported },
+      {
+        source: { type: "Ej" },
+        outcome: {
+          type: "ImportedEj",
+          inserted_count: 4,
+          already_count: 0,
+          conflict_count: 2,
+          conflicts: [],
+          held_count: 1,
+          unreadable_files: ["EJ260320.TXT", "EJ260321.TXT"],
+          gaps: [],
+        },
+      },
+    ]);
+    if (second.status !== "bulk_result") throw new Error("not bulk_result");
+    expect(second.scan.candidates.map((candidate) => candidate.status)).toEqual([
+      "Imported",
+      "Imported",
+    ]);
+    expect(second.scan.ej).toEqual({
+      new_count: 0,
+      held_count: 1,
+      conflict_count: 2,
+      unreadable_file_count: 2,
+    });
+    // 個別の preview へは畳んだ scan のまま進む
+    expect(
+      dailyReportImportReducer(second, {
+        type: "sd_candidate_selected",
+        candidateKey: "key-b",
+        filenames: [],
+      }),
+    ).toMatchObject({ status: "parsing", sdOrigin: { scan: second.scan } });
   });
 });

@@ -107,6 +107,25 @@ describe("SdBulkImport (UI-07-D17)", () => {
     },
   );
 
+  it("U1 REQ-401（closure round 2 #1）: 止まった結果の後は、畳んだ scan に残りが無くても「まとめて取り込む」を押し直せる", () => {
+    // 日報は全部入り、EJ だけが止まった（scan の EJ の数は 0 のまま）
+    const failedEj: RegisterSdBulkResponse = {
+      items: [
+        {
+          source: { type: "Ej" },
+          outcome: { type: "Failed", kind: "internal", message: "保存できませんでした" },
+        },
+      ],
+    };
+    const view = renderBulk(makeScan(["Imported"], ZERO), failedEj);
+    expect(screen.getByText(/途中で止まりました。/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "まとめて取り込む" })).toBeEnabled();
+    view.unmount();
+    // 止まっていなければ、残りの無い scan は押せない
+    renderBulk(makeScan(["Imported"], ZERO), ejResponse(makeEj()));
+    expect(screen.getByRole("button", { name: "まとめて取り込む" })).toBeDisabled();
+  });
+
   it("U3 REQ-401: 5 種の outcome を label と icon で出し、止まったときは上に文を出す", () => {
     const daily = (key: string) => ({
       type: "DailyReport" as const,

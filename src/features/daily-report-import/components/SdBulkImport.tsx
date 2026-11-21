@@ -238,7 +238,8 @@ export function SdBulkImport({
   const lastImportedDate = importedDates[importedDates.length - 1];
   return (
     <div className="space-y-3" aria-label="まとめて取り込む">
-      <Button onClick={onBulkImport} disabled={busy || !canBulkImport(scan)}>
+      {/* 止まったときは上の文が押し直しを指すので、畳んだ scan に残りが見えなくても押せる（EJ だけの失敗等） */}
+      <Button onClick={onBulkImport} disabled={busy || !(stopped || canBulkImport(scan))}>
         {importing && <Loader2 className="animate-spin text-ongoing" aria-hidden="true" />}
         {importing ? "取り込んでいます…" : "まとめて取り込む"}
       </Button>

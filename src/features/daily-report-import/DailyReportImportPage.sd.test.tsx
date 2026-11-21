@@ -10,6 +10,7 @@ import {
   type DailyReportPreviewData,
   type DailyReportSdCandidate,
   type DailyReportSdScan,
+  type RegisterSdBulkItemDto,
 } from "@/lib/bindings";
 import { open } from "@tauri-apps/plugin-dialog";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
@@ -569,33 +570,48 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
     expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.dailyReportImport());
   });
 
+  const IMPORTED_A: RegisterSdBulkItemDto = {
+    source: { type: "DailyReport", candidate_key: "A", report_date: "2026-03-21" },
+    outcome: {
+      type: "ImportedDailyReport",
+      daily_report_import_id: 9,
+      status: "completed",
+      report_date: "2026-03-21",
+      gross_amount: 12000,
+      net_amount: 11000,
+      warning_count: 0,
+    },
+  };
+  const NEEDS_B: RegisterSdBulkItemDto = {
+    source: { type: "DailyReport", candidate_key: "B", report_date: "2026-03-21" },
+    outcome: { type: "NeedsIndividualConfirmation" },
+  };
+  const ejItem = (insertedCount: number): RegisterSdBulkItemDto => ({
+    source: { type: "Ej" },
+    outcome: {
+      type: "ImportedEj",
+      inserted_count: insertedCount,
+      already_count: 0,
+      conflict_count: 0,
+      conflicts: [],
+      held_count: 0,
+      unreadable_files: [],
+      gaps: [],
+    },
+  });
+  const EJ_NEW_3 = { new_count: 3, held_count: 0, conflict_count: 0, unreadable_file_count: 0 };
+  const ejLine = () => screen.getByLabelText("レシートの控え（EJ）");
+
   it("REQ-401 / UI-07-D17（Final round 1 #2）: 「1 件ずつ確かめてください」の「確認する」は、SD を読み直さずに保持中の scan_token とその行の candidate_key で個別の preview へ進む", async () => {
     mockBulk.mockResolvedValueOnce({
       status: "ok",
-      data: {
-        items: [
-          {
-            source: { type: "DailyReport", candidate_key: "A", report_date: "2026-03-21" },
-            outcome: {
-              type: "ImportedDailyReport",
-              daily_report_import_id: 9,
-              status: "completed",
-              report_date: "2026-03-21",
-              gross_amount: 12000,
-              net_amount: 11000,
-              warning_count: 0,
-            },
-          },
-          {
-            source: { type: "DailyReport", candidate_key: "B", report_date: "2026-03-21" },
-            outcome: { type: "NeedsIndividualConfirmation" },
-          },
-        ],
-      },
+      data: { items: [IMPORTED_A, NEEDS_B, ejItem(3)] },
     });
-    const user = await scanWith(
-      makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "21", null)]),
-    );
+    const user = await scanWith({
+      ...makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "21", null)]),
+      ej: EJ_NEW_3,
+    });
+    expect(ejLine()).toHaveTextContent("新しい控え 3 件");
     await user.click(screen.getByRole("button", { name: "まとめて取り込む" }));
     const results = await screen.findByRole("list", { name: "まとめて取り込んだ結果" });
     await user.click(within(results).getByRole("button", { name: "確認する" }));
@@ -608,5 +624,55 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
     await user.click(screen.getByRole("button", { name: "ファイルを選び直す" }));
     expect(within(row("Z001_A.CSV")).getByText("取込み済み")).toBeInTheDocument();
     expect(within(row("Z001_B.CSV")).getByText("取り込めます")).toBeInTheDocument();
+    // closure round 2 #1 (a): 一括で入った控えを、戻った一覧が scan の時の「新しい控え 3 件」のまま出さない
+    expect(ejLine()).toHaveTextContent("新しい控えはありません");
+    expect(ejLine()).not.toHaveTextContent(/新しい控え \d/);
+  });
+
+  it("REQ-401 / UI-07-D17（Final round 1 #2、closure round 2 #1 (b)）: 同じ scan で一括を 2 回押した後に戻った一覧でも、1 回目に入った束は取込み済み", async () => {
+    mockBulk
+      .mockResolvedValueOnce({ status: "ok", data: { items: [IMPORTED_A, NEEDS_B, ejItem(3)] } })
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          items: [
+            { source: IMPORTED_A.source, outcome: { type: "Skipped", message: "取込み済みです" } },
+            NEEDS_B,
+            ejItem(0),
+          ],
+        },
+      });
+    const user = await scanWith({
+      ...makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "21", null)]),
+      ej: EJ_NEW_3,
+    });
+    await user.click(screen.getByRole("button", { name: "まとめて取り込む" }));
+    await screen.findByText("控え 3 件を取り込みました");
+    // 残り（B）があるので、同じ scan でもう一度押せる
+    await user.click(screen.getByRole("button", { name: "まとめて取り込む" }));
+    const results = await screen.findByRole("list", { name: "まとめて取り込んだ結果" });
+    await within(results).findByText("取込み済みです");
+    expect(mockBulk).toHaveBeenCalledTimes(2);
+    expect(mockBulk).toHaveBeenLastCalledWith("scan-token");
+
+    await user.click(within(results).getByRole("button", { name: "確認する" }));
+    await screen.findByText("取込み内容");
+    await user.click(screen.getByRole("button", { name: "ファイルを選び直す" }));
+    const a = row("Z001_A.CSV");
+    expect(within(a).getByText("取込み済み")).toBeInTheDocument();
+    expect(within(a).queryByRole("button", { name: "確認する" })).not.toBeInTheDocument();
+    expect(within(row("Z001_B.CSV")).getByText("取り込めます")).toBeInTheDocument();
+    expect(ejLine()).toHaveTextContent("新しい控えはありません");
+    expect(mockScan).toHaveBeenCalledTimes(1);
+  });
+
+  it("U1 REQ-401 / UI-07-D17（closure round 2 #1）: 日報も控えも全部入った後は、同じ scan の「まとめて取り込む」を押せない", async () => {
+    mockBulk.mockResolvedValueOnce({ status: "ok", data: { items: [IMPORTED_A, ejItem(3)] } });
+    const user = await scanWith({ ...makeScan([candidate("A", "NotImported")]), ej: EJ_NEW_3 });
+    const bulk = screen.getByRole("button", { name: "まとめて取り込む" });
+    expect(bulk).toBeEnabled();
+    await user.click(bulk);
+    await screen.findByText("控え 3 件を取り込みました");
+    expect(screen.getByRole("button", { name: "まとめて取り込む" })).toBeDisabled();
   });
 });

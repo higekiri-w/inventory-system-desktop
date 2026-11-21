@@ -76,7 +76,7 @@ export function DailyReportImportPage({
             scanning={state.status === "scanning"}
             scan={listed ? state.scan : null}
             busy={isBlocking}
-            // 一括の結果を出した後の一覧の状態は古いので、一覧の行は出さない（読み直すと今の状態で出る）
+            // 一括の結果を出している間は一覧の行を出さない（項目ごとの結果は結果の行が持つ。55 UI-07-D17）
             showCandidates={state.status !== "bulk_result"}
             bulk={
               listed ? (
