@@ -394,13 +394,6 @@ idle state では特に loading 表示なし。`FileDropzone` が常時 mount �
 
 TanStack Router の `useBlocker` を `useCsvImportFlow`（Z004 タブ）と `useDailyReportImportFlow`（日報取込みタブ。`src/features/daily-report-import/hooks/useDailyReportImportFlow.ts`）の中で同じ形で登録し、それぞれの `state.status === "importing"` 期間中の navigation を block する。日報取込みタブは一括の応答を待つ間（`bulk_importing`）と、手で選ぶ EJ の選択の確定（file の読込み）から応答までを待つ間も同じ hook の同じ条件に含める（UI-07-D17）。本節が持つ進行中の処理のガードの hook（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D1 の `useBlocker` の直接使用の例外）は、この 2 つと、取消の応答を待つ間の `useRollbackCsvImport`（下の UI-07-D18）と `useRollbackDailyReportImport`（§55.12 UI-07-D19。日報の取消の止めは結果の画面と「日報の取込みの記録」に共通）。
 
-```ts
-useBlocker({
-  shouldBlockFn: () => state.status === "importing",
-  enableBeforeUnload: () => state.status === "importing",
-});
-```
-
 **設計判断 — 確認ダイアログ無しの常時 block**:
 
 - importing 中に確認ダイアログを出すと、利用者が「はい」を押した場合に commit IPC が完了する前に画面が unmount され、`commitMutation.onSuccess` の invalidation / settlementDate state 反映 / Sonner success トーストが page unmount 後に走る → state が宙に浮く
