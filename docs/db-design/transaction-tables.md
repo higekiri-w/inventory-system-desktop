@@ -50,15 +50,20 @@
 - **cost_price_centiを明細に持つ理由**: 入庫時点の原価を記録。商品マスタの原価は後から変わる可能性があるが、入庫時にいくらで仕入れたかは変わらない事実
 - `receiving_records.supplier_id` は取引先統合（SPEC-SUP-D4）で残す側の取引先へ付け替わり得る。統合は同一実体の重複解消であり、入庫日・明細・原価の事実は変更しない
 
-### 入出庫記録追跡の完成形（2026-06-27 追加）
+### 入出庫記録追跡と取消の列（2026-06-27 追加、2026-11-20 に D-163 で取消の形を置き換えた）
 
-現行の冪等性列は入庫・返品交換・手動販売・廃棄破損の各ヘッダに実装済み。追加DDL・既存行のbackfillは [migration v2](../function-design/22-mnt-migration.md#9-mnt-03-追加-migration-v2冪等性カラム)、同一キーの再送と内容不一致の判定は [入出庫BIZ](../function-design/31-biz-inventory-service.md) を参照する。以下の取消・訂正用フィールドは将来設計であり、現行ERには含めない。
+現行の冪等性列は入庫・返品交換・手動販売・廃棄破損の各ヘッダに実装済み。追加DDL・既存行のbackfillは [migration v2](../function-design/22-mnt-migration.md#9-mnt-03-追加-migration-v2冪等性カラム)、同一キーの再送と内容不一致の判定は [入出庫BIZ](../function-design/31-biz-inventory-service.md) を参照する。入庫、返品・交換、手動販売、廃棄・破損の各ヘッダは、後から一覧・詳細で追える業務記録として扱う（[65-inventory-record-traceability.md](../function-design/65-inventory-record-traceability.md) §65.6）。
 
-入庫、返品・交換、手動販売、廃棄・破損の各ヘッダは、完成形では後から一覧・詳細で追える業務記録として扱う。詳細は [65-inventory-record-traceability.md](../function-design/65-inventory-record-traceability.md) §65.6 を正とする。
+**取消の列**（proposed・未実装。入出庫の記録の取消の lane の migration〈見込みの版は v15、[22](../function-design/22-mnt-migration.md) §23〉が足す。D-163）: `receiving_records`・`return_records`・`manual_sales`・`disposal_records`・`transfer_records`（振替、§11a-11b）の 5 つのヘッダに次の 2 列を足す。既存の行は両方 NULL（有効）。
 
-- 各ヘッダは `status`（active / canceled / corrected）、取消日時、取消理由、訂正元/訂正先を持つ方向で migration を設計する。
-- 取消・訂正は物理削除ではなく、ヘッダ状態変更 + 逆方向 `inventory_movements` 追加で表現する。
-- 各業務記録詳細は関連 `inventory_movements` を表示し、商品別在庫変動履歴からも元記録へ戻れるようにする。
+| カラム名 | 型 | 制約 | 説明 |
+|---------|---|----|------|
+| canceled_at | TEXT | NULLABLE | 取消の日時（`YYYY-MM-DDTHH:MM:SS`、ローカル時刻。`created_at` と同じ形）。NULL なら有効 |
+| cancel_reason | TEXT | NULLABLE、CHECK: `(canceled_at IS NULL) = (cancel_reason IS NULL)` かつ `cancel_reason IS NULL OR length(trim(cancel_reason)) > 0` | 取消の理由（必須。BIZ が前後の空白を除いて書く。CHECK の `trim` は半角空白だけを除き、全角空白・tab だけの理由は BIZ が拒む〈31 §12.6c〉） |
+
+- 取消は物理削除しない。ヘッダに 2 列を書き、その記録の `inventory_movements` を `is_voided=1` にして、その商品を同じ TX で求め直す（逆向きの movement は作らない）。手動販売は加えて `sale_records.manual_sale_id` で結んだ売上の行を `is_voided=1` にする（[POS](pos-tables.md) §13）。明細の行は変えない。
+- 状態の列・訂正の列は持たない（状態は `canceled_at` の有無。訂正は取り消してから入れ直す。65 TRACE-D5）。
+- 各業務記録詳細は関連 `inventory_movements`（無効にしたものを除く）を表示し、商品別在庫変動履歴からも元記録へ戻れるようにする。
 
 ### 業務シナリオ例
 ```
@@ -230,6 +235,8 @@ D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。�
 | idempotency_key | TEXT | NOT NULL, 非空CHECK, UNIQUE INDEX | 再送を識別するキー |
 | request_fingerprint | TEXT | NOT NULL, 非空CHECK | 同じキーでの内容不一致を検出 |
 | created_at | TEXT | NOT NULL | 作成日時（YYYY-MM-DDTHH:MM:SS） |
+| canceled_at | TEXT | NULLABLE | 取消の日時（proposed・未実装。§4-5 の「取消の列」と同じ列と CHECK。D-163） |
+| cancel_reason | TEXT | NULLABLE、CHECK は §4-5 の「取消の列」と同じ | 取消の理由（proposed・未実装。D-163） |
 
 ### transfer_items カラム定義
 
@@ -246,7 +253,7 @@ D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。�
 ### 設計意図
 - **ヘッダと明細に分けた理由**: 1 本の反物を 2 種の端切れに分ける・複数の商品を 1 つにまとめる記録を 1 回の操作で残す。入出庫履歴の一覧（[65](../function-design/65-inventory-record-traceability.md) の `list_inventory_records`）がヘッダと明細の表の組で記録を数え・探すので、ほかの業務記録と同じ形に揃える。
 - **換算の比・原価を持たない理由**: 元と先の数の対応は回ごとに違いうるので、両方を利用者が入れた値のまま持つ。振替は商品の原価を変えず、ロス原価や仕入れの金額を求めないので、明細に原価を持たない（D-143 (3)(4)）。
-- **取消の列を持たない理由**: ほかの入出庫の業務記録と同じく、取消・訂正（[65](../function-design/65-inventory-record-traceability.md) §65.6.1）は全ての記録で後の設計。誤った振替は、元の記録と同じ日付・同じ数量で向きを入れ替えた振替で戻す（[79](../function-design/79-ui-stock-transfer.md) §79.6）。
+- **取消**: ほかの入出庫の記録と同じ取消の列（§4-5、D-163）で取り消す。取消はその記録の全部の明細の movement（減らす商品と増やす商品の両方）を無効にし、その全部の商品を求め直す。誤った振替を向きを入れ替えた振替で戻す案内（D-143 (5)）は取消に置き換えた（[79](../function-design/79-ui-stock-transfer.md) §79.6）。
 
 ### 業務シナリオ例
 

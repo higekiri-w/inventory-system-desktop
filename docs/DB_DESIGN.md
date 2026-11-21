@@ -98,10 +98,7 @@ EJ の記録の文を持つ表（`ej_records`、D-121、migration v14）: [POS](
 
 商業用の在庫管理として、入庫・返品交換・手動販売出庫・廃棄破損・CSV取込み・棚卸し補正は、作成後に一覧・詳細・在庫変動履歴から追跡できる必要がある。完成形の DB 方針は [function-design/65-inventory-record-traceability.md](function-design/65-inventory-record-traceability.md) §65.6 を正とする。
 
-- 業務記録ヘッダは `active` / `canceled` / `corrected` の状態を持つ方向で設計する。
-- 取消は物理削除せず、取消理由と取消日時を残す。
-- 訂正は元記録を取消/訂正済みにし、新しい記録を作る。
-- 在庫戻しは既存 movement を消さず、逆方向 movement を追加する。
+- 取消は物理削除せず、ヘッダに取消の日時と理由を書き、その記録の movement を `is_voided=1` にして求め直す（逆向きの movement・状態の列・訂正の列は持たない。訂正は取り消してから入れ直す。[D-163](decision-log.md)、65 §65.6）。
 - `operation_logs` は監査・保守ログであり、業務記録や在庫変動履歴の正本にはしない。
 
 ### CHECK制約方針（指摘#17対応）
@@ -130,6 +127,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - sale_records(sale_date) — 日次売上一覧の検索用
 - sale_records(product_code, sale_date) — 商品別売上集計用
 - sale_records(csv_import_id) — ロールバック時の関連レコード特定用
+- sale_records(manual_sale_id) — `idx_sale_records_manual_sale_id`。手動販売の記録の取消で売上の行を特定する（proposed・未実装、D-163。[22](function-design/22-mnt-migration.md) §23）
 - daily_report_imports(report_date) — 日報取込みの対象日検索用
 - daily_report_imports(bundle_hash) — 同一Z001/Z002/Z005束の重複検知用
 - daily_report_summary_lines(daily_report_import_id) — 日報表示用

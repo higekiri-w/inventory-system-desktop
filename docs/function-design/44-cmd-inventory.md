@@ -729,6 +729,40 @@ fn get_transfer_record(
 
 ---
 
+### 23.7b 入出庫の記録の取消コマンド（D-163、proposed・未実装）
+
+BIZ は [31](31-biz-inventory-service.md) §12.6c、画面は [65](65-inventory-record-traceability.md) §65.5b。
+
+#### cancel_inventory_record
+
+**関数要求**: 入庫・返品交換・手動販売・廃棄・振替の記録を、理由を付けて取り消す
+
+**シグネチャ（Tauriコマンド）**:
+```
+#[tauri::command(async)] // 下の「実行の thread」
+#[specta::specta]
+fn cancel_inventory_record(
+    state: State<AppState>,
+    record_type: ReferenceType,     // "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "transfer_record"（"csv_import"・"stocktake" は validation。下の「受け方」）
+    record_id: i64,
+    reason: String,
+) -> Result<RecordCancelResult, CmdError>
+```
+
+**出力型**: BIZ層の `RecordCancelResult { stock_warnings: Vec<String> }`
+
+**実行の thread**: `#[tauri::command(async)]` で定義し、取消の transaction（DB の Mutex の待ちと、複数の商品の求め直し）を main thread で動かさない。画面は応答を待つ間 `inventory-record-cancel` の close の止めを持ち、main thread で動く間は native の window の close に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [41](41-cmd-pos.md) §17.2 の `rollback_csv_import` と同じで、関数は sync のまま `(async)` を付ける。test は `crate::cmd::assert_commands_run_off_main_thread` で固定する。
+
+**処理ステップ**: create_disposal と同パターン（`state.db.lock()` → `biz::inventory_service::cancel_inventory_record(&mut conn, record_type, record_id, &reason)`。`ValidationFailed` → `validation`、`NotFound` → `not_found`。§23.3）
+
+**`record_type` の受け方**: `ReferenceType`（`src-tauri/src/db/inventory_repo.rs`）は今 `Serialize` と `specta::Type` だけで、command の入力にできない。同じ enum に `serde::Deserialize`（`rename_all = "snake_case"` のまま）を足す。error の境: 定義のある 7 つの値のうち取り消せない `csv_import`・`stocktake` は BIZ に届いて `validation`（31 §12.6c の手順 1）。定義に無い文字列は Tauri の引数の変換で拒まれて BIZ に届かず、`CmdError` の kind を持たない invoke の error になる（生成した TS の型は 7 つの値の union なので、画面からは送らない）。
+
+**詳細の DTO**: `get_receiving_record`・`get_return_record`・`get_manual_sale_record`・`get_disposal_record`・`get_transfer_record` の結果に `canceled_at: Option<String>`・`cancel_reason: Option<String>` を足し、`status` は `canceled_at` の有無で `"active"`・`"canceled"`。作成の画面の直近の一覧の `list_receivings`・`list_returns`・`list_disposals` の行に `canceled_at: Option<String>` を足す（65 §65.5b の recent list の「取消済み」。手動販売と振替の画面の直近の一覧は `list_inventory_records` の `status` を読む）。`list_inventory_records` の 5 つの種類の `status` は `canceled_at` から決める（65 §65.4.1）。
+
+**登録（§23.13）**: `lib.rs` の `collect_commands!` と `generate_handler!` に足し、`cargo run --bin generate_bindings` で `src/lib/bindings.ts` を作り直す（`cancelInventoryRecord`・`RecordCancelResult` と上の DTO の field が出る）。
+
+---
+
 ### 23.8 CMD-06: 在庫照会コマンド群
 
 #### get_stock_detail

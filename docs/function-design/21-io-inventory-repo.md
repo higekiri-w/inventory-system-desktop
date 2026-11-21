@@ -347,7 +347,7 @@ fn list_inventory_records(
    - 廃棄・破損: `disposal_records` + `disposal_items`
    - CSV取込み: `csv_imports` + `sale_records`。TRACE-D6 の履歴保持方針により `sale_records.is_voided=1` も `item_count` / `representative_item` に含める
    - 棚卸し: `stocktakes` + 差異 `inventory_movements`。差異母集団は `reference_type='stocktake' AND is_voided=0` に必ず絞る
-   - `status_expr`: CSV取込みは `CASE status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END`、棚卸しは `CASE status WHEN 'completed' THEN 'active' ELSE 'in_progress' END`、既存 4 種は `'active'` 固定を継続する
+   - `status_expr`: CSV取込みは `CASE status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END`、棚卸しは `CASE status WHEN 'completed' THEN 'active' ELSE 'in_progress' END`、既存 4 種と振替は `'active'` 固定を継続する（取消〈D-163。proposed・未実装〉の後は header の `canceled_at` の有無で `'active'`・`'canceled'`。[65](65-inventory-record-traceability.md) §65.4.1）
    - `date_expr`: CSV取込みは `settlement_date`、棚卸しは `DATE(COALESCE(completed_at, started_at))`。棚卸しの `DATE()` ラップは SELECT と日付範囲 WHERE の 2 箇所へ同じ式で入れ、外側 ORDER BY は `business_date` alias を継承するため変更しない
    - `created_at_col`: CSV取込みは `imported_at`、棚卸しは `started_at`。`csv_imports` / `stocktakes` のいずれにも `created_at` 列は存在しない
 3. WHERE句構築: 業務日付、record_id、department_id、product_keyword を条件化する。日付条件は `date_expr` を式として直接 WHERE に使い、`header_alias.` を機械的に前置しない
@@ -452,7 +452,7 @@ fn get_transfer_record_detail(
 **TransferRecordDetail構造体**:
 - id: i64
 - transfer_date: String
-- status: String（今は常に `"active"`。取消は持たない）
+- status: String（今は常に `"active"`。取消〈[31](31-biz-inventory-service.md) §12.6c、D-163。proposed・未実装〉の後は `canceled_at` の有無で `"active"`・`"canceled"`）
 - created_at: String
 - items: Vec<TransferRecordDetailItem>（減らす明細を先、同じ向きの中は明細の id の順）
 - movements: Vec<MovementRecord>
