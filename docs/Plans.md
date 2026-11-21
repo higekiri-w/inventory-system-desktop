@@ -18,7 +18,7 @@
   - 関門 15: SD から Z004 を取り込む（backlog の「Z004 を SD の一括取込みに入れる runtime（B）」、D-121）（owner の決定 2026-11-19、repo 外の回答台帳 TD-813 の (a)）。関門 14 で PLU を書いてから導入するので初日から Z004 に売上が載り、D-070 は初日から自動在庫連動とする。(B) が無いと店の人が毎日 Z004 の file を手で探して選ぶことになり（D-149 の片付けは取り込んでいない Z004 も `XZ_BKUP` へ移す）、その手順はどの正本にも無い（出所: 仕様の見直しの POS の取込みの群の AI の調べ、2026-11-19）。前提の lane は backlog の「SD の一括取込みと EJ の控えの runtime（A）」。(B) は Z004 を scan で読む手順（[37](function-design/37-biz-daily-report-import-service.md) §37.9 の手順 10。PLU の書出しの見直しの runtime が入れる）にも依る見込み（AI の調べ、起票で確かめる）。
   - 関門 16: 入庫・返品に届いた日を持たせる（owner の決定 2026-11-17、repo 外の回答台帳 TD-763。店主の答え TD-762）。backlog の「入庫・返品の届いた日の runtime」。
   - 関門 17: 棚卸しに基準日を持たせ、基準日の後の入出庫を年末の評価額から外す（owner の決定 2026-11-19、repo 外の回答台帳 TD-832）。backlog の「棚卸しの基準日の runtime」。
-  - 関門 18: 打ち間違えた入庫・返品・手動販売・廃棄の記録の取消（REQ-208、[65](function-design/65-inventory-record-traceability.md) の slice 5）（owner の決定 2026-11-19、repo 外の回答台帳 TD-833）。backlog の「入出庫の記録の取消の runtime」。
+  - 関門 18: 打ち間違えた入庫・返品・手動販売・廃棄・詰め替え（振替）の記録の取消（REQ-208、[65](function-design/65-inventory-record-traceability.md) の slice 5）（owner の決定 2026-11-19・2026-11-20、repo 外の回答台帳 TD-833・TD-848）。backlog の「入出庫の記録の取消の runtime」。
 - 関門（candidate、owner が選んで足す）:
   - 初期投入の手順（backlog の「初期投入の手順」）: 手順書は [initial-load-runbook.md](initial-load-runbook.md)（[PR #196](https://github.com/higekiri-w/inventory-system-desktop/pull/196)、[packet](archive/plans/2026-10-23-initial-load-procedure.md)）。残りは初回の導入の版の後の予行演習と店の PC での投入（手順書の流れ 2・流れ 3）で、CSV 作りと照合に Excel のある Windows と店の値札が要る（手順書の流れ 1、流れ 2 の手順 6。TD-437）。
   - デザインの刷新。owner は v1.0 の前に入れると決めた（TD-296）が、関門を決めた TD-345 より前の答えで、関門に足すかは owner が選ぶ。設計の lane は機能の関門が済んでから始める（owner の決定 2026-11-02、TD-569）。backlog の「デザインの刷新（v1.0 の前）」。

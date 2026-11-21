@@ -387,13 +387,13 @@ fn get_transfer_record(conn: &DbConnection, record_id: i64) -> Result<TransferRe
 4. detail.movements の各行に対して `reference_type/reference_id` から `MovementSourceLink` を補完する
 
 **設計判断 — read-only の責務分離**:
-詳細取得は過去記録の確認用途であり、取消/訂正、CSV出力、印刷、画像 asset 表示は別 slice に分ける。CMD 層は read command を thin wrapper とし、表示用集計（原価合計、販売金額合計）は IO/BIZ の DTO に入れて UI で再計算しない。取消（§12.6c）の後の詳細は、`status` を `canceled_at` の有無で `active`・`canceled` にし、取消の日時と理由（`canceled_at`・`cancel_reason`）を返す（入庫・返品交換・手動販売・廃棄の 4 つ。D-163。proposed・未実装）。
+詳細取得は過去記録の確認用途であり、取消/訂正、CSV出力、印刷、画像 asset 表示は別 slice に分ける。CMD 層は read command を thin wrapper とし、表示用集計（原価合計、販売金額合計）は IO/BIZ の DTO に入れて UI で再計算しない。取消（§12.6c）の後の詳細は、`status` を `canceled_at` の有無で `active`・`canceled` にし、取消の日時と理由（`canceled_at`・`cancel_reason`）を返す（入庫・返品交換・手動販売・廃棄・振替の 5 つ。D-163。proposed・未実装）。
 
 ---
 
 ### 12.6c cancel_inventory_record（入出庫の記録の取消。D-163、proposed・未実装）
 
-**関数要求**: 打ち間違えて保存した入庫・返品交換・手動販売・廃棄の記録を取り消す。記録を消さず、header に取消の日時と理由を書き、その記録の movement（と手動販売の売上の行）を無効にし、触れた商品を求め直す（ADR SPEC-STK-CNT-D7 の Z004 の取消と同じ形。逆向きの movement は作らない。[65](65-inventory-record-traceability.md) §65.7.2・TRACE-D4・D6）。
+**関数要求**: 打ち間違えて保存した入庫・返品交換・手動販売・廃棄・振替の記録を取り消す。記録を消さず、header に取消の日時と理由を書き、その記録の movement（と手動販売の売上の行）を無効にし、触れた商品を求め直す（ADR SPEC-STK-CNT-D7 の Z004 の取消と同じ形。逆向きの movement は作らない。[65](65-inventory-record-traceability.md) §65.7.2・TRACE-D4・D6）。
 
 **シグネチャ**:
 ```
@@ -402,11 +402,11 @@ fn cancel_inventory_record(conn: &mut DbConnection, record_type: ReferenceType, 
 ```
 
 **処理ステップ**（全て 1 つの TX）:
-1. `record_type` が `ReceivingRecord`・`ReturnRecord`・`ManualSale`・`DisposalRecord` 以外なら `ValidationFailed`（「この種類の記録は取り消せません」。CSV取込みの取消は BIZ-03 の `rollback_csv_import`）。`reason` の前後の空白を除いて空なら `ValidationFailed`（「取り消す理由を入れてください」）。TX を開く前に検査する
+1. `record_type` が `ReceivingRecord`・`ReturnRecord`・`ManualSale`・`DisposalRecord`・`TransferRecord` 以外なら `ValidationFailed`（「この種類の記録は取り消せません」。CSV取込みの取消は BIZ-03 の `rollback_csv_import`）。`reason` の前後の空白を除いて空なら `ValidationFailed`（「取り消す理由を入れてください」）。TX を開く前に検査する
 2. TX 開始。header を読み、無ければ `NotFound`。`canceled_at` があれば `ValidationFailed`（「この記録は {canceled_at} に取り消し済みです」）
 3. 手動販売だけ: `manual_sale_id` で結んだ `is_voided=0` の売上の行の数が明細の数と違えば `ValidationFailed`（「この手動販売は売上の記録と結ばれていないため取り消せません（アプリの更新の前に保存した記録です）」。vC〈[22](22-mnt-migration.md) §23〉の前の記録。本番の DB は無い）。同じなら、その行を `is_voided=1` にする
 4. header に `canceled_at`（今の日時、`created_at` と同じ形）と `cancel_reason`（前後の空白を除いた値）を `UPDATE … WHERE id = ? AND canceled_at IS NULL` で書き、変わった行が 1 でなければ `ValidationFailed`（手順 2 と同じ文。同じ TX の中なので通常は届かない）
-5. `sales_repo::void_movements_by_reference(tx, record_type, record_id)`（Z004 の取消と同じ関数）で無効にし、返った商品コードを重複なく商品コードの順に `recompute_stock` で求め直す（精算の一覧は変わらないので、計数を持つ他の商品は求め直さない。ADR の横断の表）。返品・交換で movement の無い記録（D-148）は求め直しが 0 件
+5. `sales_repo::void_movements_by_reference(tx, record_type, record_id)`（Z004 の取消と同じ関数）で無効にし、返った商品コードを重複なく商品コードの順に `recompute_stock` で求め直す（精算の一覧は変わらないので、計数を持つ他の商品は求め直さない。ADR の横断の表）。返品・交換で movement の無い記録（D-148）は求め直しが 0 件。振替は明細ごとの movement（§12.6b の手順 8。減らす商品と増やす商品の全部）が返り、その全部の商品を求め直す
 6. 求め直した在庫が負の商品を `negative_stock_warning_message` で `stock_warnings` に入れる
 7. 操作ログ `inventory_record_cancel`（detail: `record_type`・`record_id`・無効にした movement の数・無効にした売上の行の数。理由は header が持つので写さない）を同じ TX で書く（74 の関連記録の link は `record_type`・`record_id` で当たる）
 8. COMMIT

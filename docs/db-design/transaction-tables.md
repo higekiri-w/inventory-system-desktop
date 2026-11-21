@@ -54,7 +54,7 @@
 
 現行の冪等性列は入庫・返品交換・手動販売・廃棄破損の各ヘッダに実装済み。追加DDL・既存行のbackfillは [migration v2](../function-design/22-mnt-migration.md#9-mnt-03-追加-migration-v2冪等性カラム)、同一キーの再送と内容不一致の判定は [入出庫BIZ](../function-design/31-biz-inventory-service.md) を参照する。入庫、返品・交換、手動販売、廃棄・破損の各ヘッダは、後から一覧・詳細で追える業務記録として扱う（[65-inventory-record-traceability.md](../function-design/65-inventory-record-traceability.md) §65.6）。
 
-**取消の列**（proposed・未実装。入出庫の記録の取消の lane の migration〈見込みの版は v15、[22](../function-design/22-mnt-migration.md) §23〉が足す。D-163）: `receiving_records`・`return_records`・`manual_sales`・`disposal_records` の 4 つのヘッダに次の 2 列を足す。既存の行は両方 NULL（有効）。
+**取消の列**（proposed・未実装。入出庫の記録の取消の lane の migration〈見込みの版は v15、[22](../function-design/22-mnt-migration.md) §23〉が足す。D-163）: `receiving_records`・`return_records`・`manual_sales`・`disposal_records`・`transfer_records`（振替、§11a-11b）の 5 つのヘッダに次の 2 列を足す。既存の行は両方 NULL（有効）。
 
 | カラム名 | 型 | 制約 | 説明 |
 |---------|---|----|------|
@@ -235,6 +235,8 @@ D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。�
 | idempotency_key | TEXT | NOT NULL, 非空CHECK, UNIQUE INDEX | 再送を識別するキー |
 | request_fingerprint | TEXT | NOT NULL, 非空CHECK | 同じキーでの内容不一致を検出 |
 | created_at | TEXT | NOT NULL | 作成日時（YYYY-MM-DDTHH:MM:SS） |
+| canceled_at | TEXT | NULLABLE | 取消の日時（proposed・未実装。§4-5 の「取消の列」と同じ列と CHECK。D-163） |
+| cancel_reason | TEXT | NULLABLE、CHECK は §4-5 の「取消の列」と同じ | 取消の理由（proposed・未実装。D-163） |
 
 ### transfer_items カラム定義
 
@@ -251,7 +253,7 @@ D-143（migration v13、[22 §21](../function-design/22-mnt-migration.md)）。�
 ### 設計意図
 - **ヘッダと明細に分けた理由**: 1 本の反物を 2 種の端切れに分ける・複数の商品を 1 つにまとめる記録を 1 回の操作で残す。入出庫履歴の一覧（[65](../function-design/65-inventory-record-traceability.md) の `list_inventory_records`）がヘッダと明細の表の組で記録を数え・探すので、ほかの業務記録と同じ形に揃える。
 - **換算の比・原価を持たない理由**: 元と先の数の対応は回ごとに違いうるので、両方を利用者が入れた値のまま持つ。振替は商品の原価を変えず、ロス原価や仕入れの金額を求めないので、明細に原価を持たない（D-143 (3)(4)）。
-- **取消の列を持たない理由**: 取消の列（上の §4-5 の「取消の列」、D-163）は入庫・返品交換・手動販売・廃棄の 4 つだけで、振替を同じ規則に入れるかは owner の未決（D-163 の Revisit）。誤った振替は、元の記録と同じ日付・同じ数量で向きを入れ替えた振替で戻す（[79](../function-design/79-ui-stock-transfer.md) §79.6）。
+- **取消**: ほかの入出庫の記録と同じ取消の列（§4-5、D-163）で取り消す。取消はその記録の全部の明細の movement（減らす商品と増やす商品の両方）を無効にし、その全部の商品を求め直す。誤った振替を向きを入れ替えた振替で戻す案内（D-143 (5)）は取消に置き換えた（[79](../function-design/79-ui-stock-transfer.md) §79.6）。
 
 ### 業務シナリオ例
 
