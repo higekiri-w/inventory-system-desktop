@@ -192,7 +192,6 @@ invalid 遷移（例: `idle` で `parse_succeeded`）は reducer 内で現 state
 |---|---|---|
 | `currentStep` | `state.status === "idle" \|\| "parsing"` → 1、`"preview"` → 2、`"importing" \|\| "result"` → 3 | `CsvImportPage.tsx` render 時直接、`useMemo` 不要 |
 | `errorRowsCount` | `state.status === "preview" ? state.preview.error_summary.count : 0` | 同上 |
-| `showLeaveBlocker` | `state.status === "importing"` | `useCsvImportFlow` から戻り値で露出、`useBlocker` の判定式 |
 
 #### 日報取込みタブの同日追加確認契約（UI-07-D13）
 
