@@ -12,6 +12,7 @@ import {
   type DailyReportSdScan,
 } from "@/lib/bindings";
 import { open } from "@tauri-apps/plugin-dialog";
+import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { DailyReportImportPage } from "./DailyReportImportPage";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -36,6 +37,8 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
       parseAndValidateDailyReport: vi.fn(),
       commitDailyReportImport: vi.fn(),
       rollbackDailyReportImport: vi.fn(),
+      commitRegisterSdBulkImport: vi.fn(),
+      importEjFiles: vi.fn(),
     },
   };
 });
@@ -44,6 +47,7 @@ const mockOpen = vi.mocked(open);
 const mockScan = vi.mocked(commands.scanRegisterSd);
 const mockFromSd = vi.mocked(commands.parseAndValidateDailyReportFromSd);
 const mockCommit = vi.mocked(commands.commitDailyReportImport);
+const mockBulk = vi.mocked(commands.commitRegisterSdBulkImport);
 
 // UI-07-D15 (2)（D-149 の (b) の版）
 const READ_DONE = "読み終わりました。SD はレジに戻してください（次の精算に要ります）。";
@@ -491,5 +495,118 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       expect(mockFromSd).toHaveBeenLastCalledWith("scan-token", "B");
     });
     expect(mockScan).toHaveBeenCalledTimes(1);
+  });
+  it("U2・U3 REQ-401 / UI-07-D17（Final round 1 #8）: 「まとめて取り込む」の配線（待ちの間のボタンと親タブ、結果の後は一覧なし、応答の後の invalidate）", async () => {
+    let resolveBulk!: (
+      value: Awaited<ReturnType<typeof commands.commitRegisterSdBulkImport>>,
+    ) => void;
+    mockBulk.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveBulk = resolve;
+      }),
+    );
+    mockScan.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        scan: makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "22")]),
+        scan_token: "scan-token",
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const onBlockingChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DailyReportImportPage onBlockingChange={onBlockingChange} />
+      </QueryClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "SD から読む" }));
+    await screen.findByText(READ_DONE);
+    expect(screen.getByRole("list", { name: "SD の精算の一覧" })).toBeInTheDocument();
+    const bulk = screen.getByRole("button", { name: "まとめて取り込む" });
+    expect(bulk).toBeEnabled();
+    expect(onBlockingChange).toHaveBeenLastCalledWith(false);
+
+    await user.click(bulk);
+    expect(mockBulk).toHaveBeenCalledWith("scan-token");
+    expect(await screen.findByRole("button", { name: "取り込んでいます…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "SD から読む" })).toBeDisabled();
+    expect(onBlockingChange).toHaveBeenLastCalledWith(true);
+    expect(invalidateSpy).not.toHaveBeenCalled();
+
+    resolveBulk({
+      status: "ok",
+      data: {
+        items: [
+          {
+            source: { type: "DailyReport", candidate_key: "A", report_date: "2026-03-21" },
+            outcome: {
+              type: "ImportedDailyReport",
+              daily_report_import_id: 9,
+              status: "completed",
+              report_date: "2026-03-21",
+              gross_amount: 12000,
+              net_amount: 11000,
+              warning_count: 0,
+            },
+          },
+          {
+            source: { type: "DailyReport", candidate_key: "B", report_date: "2026-03-22" },
+            outcome: { type: "Failed", kind: "internal", message: "写しを保存できませんでした" },
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("list", { name: "まとめて取り込んだ結果" })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "SD の精算の一覧" })).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(onBlockingChange).toHaveBeenLastCalledWith(false);
+    });
+    expect(screen.getByRole("button", { name: "まとめて取り込む" })).toBeEnabled();
+    expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.dailyReportImport());
+  });
+
+  it("REQ-401 / UI-07-D17（Final round 1 #2）: 「1 件ずつ確かめてください」の「確認する」は、SD を読み直さずに保持中の scan_token とその行の candidate_key で個別の preview へ進む", async () => {
+    mockBulk.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        items: [
+          {
+            source: { type: "DailyReport", candidate_key: "A", report_date: "2026-03-21" },
+            outcome: {
+              type: "ImportedDailyReport",
+              daily_report_import_id: 9,
+              status: "completed",
+              report_date: "2026-03-21",
+              gross_amount: 12000,
+              net_amount: 11000,
+              warning_count: 0,
+            },
+          },
+          {
+            source: { type: "DailyReport", candidate_key: "B", report_date: "2026-03-21" },
+            outcome: { type: "NeedsIndividualConfirmation" },
+          },
+        ],
+      },
+    });
+    const user = await scanWith(
+      makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "21", null)]),
+    );
+    await user.click(screen.getByRole("button", { name: "まとめて取り込む" }));
+    const results = await screen.findByRole("list", { name: "まとめて取り込んだ結果" });
+    await user.click(within(results).getByRole("button", { name: "確認する" }));
+    await waitFor(() => {
+      expect(mockFromSd).toHaveBeenCalledWith("scan-token", "B");
+    });
+    expect(mockScan).toHaveBeenCalledTimes(1);
+    await screen.findByText("取込み内容");
+    // preview から一覧へ戻ると、一括で入った A は取込み済み（読み直さない）
+    await user.click(screen.getByRole("button", { name: "ファイルを選び直す" }));
+    expect(within(row("Z001_A.CSV")).getByText("取込み済み")).toBeInTheDocument();
+    expect(within(row("Z001_B.CSV")).getByText("取り込めます")).toBeInTheDocument();
   });
 });

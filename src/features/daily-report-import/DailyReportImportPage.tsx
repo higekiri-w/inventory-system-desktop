@@ -88,6 +88,7 @@ export function DailyReportImportPage({
                   ejManual={flow.ejImport}
                   onBulkImport={flow.bulkImport}
                   onChooseEjFiles={() => void flow.chooseEjFiles()}
+                  onConfirmCandidate={flow.confirmSdCandidate}
                 />
               ) : null
             }

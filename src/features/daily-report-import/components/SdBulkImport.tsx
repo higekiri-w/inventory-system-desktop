@@ -121,7 +121,11 @@ function EjRow({
 }) {
   // 欠けは保存の後の全期間の値なので、手で選んだ後はその結果の欠けが今の欠け
   const gaps = (manual.result ?? result).gaps;
-  const showChoose = gaps.length > 0 || result.unreadable_files.length > 0;
+  // 読めない file は一括の結果と手で選んだ結果のどちらにあっても、選び直す操作がここにしか無い
+  const showChoose =
+    gaps.length > 0 ||
+    result.unreadable_files.length > 0 ||
+    (manual.result?.unreadable_files.length ?? 0) > 0;
   return (
     <li className="space-y-1 p-3 text-sm">
       <p className="font-medium">レシートの控え（EJ）</p>
@@ -159,7 +163,15 @@ function EjRow({
   );
 }
 
-function ItemRow({ item }: { item: RegisterSdBulkItemDto }) {
+function ItemRow({
+  item,
+  busy,
+  onConfirmCandidate,
+}: {
+  item: RegisterSdBulkItemDto;
+  busy: boolean;
+  onConfirmCandidate: (candidateKey: string) => void;
+}) {
   const { outcome, source } = item;
   if (outcome.type === "ImportedEj") return null;
   const status = OUTCOME_LABEL[outcome.type];
@@ -174,11 +186,23 @@ function ItemRow({ item }: { item: RegisterSdBulkItemDto }) {
         <p>{`総売上 ${formatMoney(outcome.gross_amount)} / 純売上 ${formatMoney(outcome.net_amount)}`}</p>
       )}
       {(outcome.type === "Skipped" || outcome.type === "Failed") && <p>{outcome.message}</p>}
-      {outcome.type === "NeedsIndividualConfirmation" && (
-        <p>
-          同じ日に精算回数の分からない取込みがあるため、まとめては取り込みませんでした。「SD
-          から読む」で読み直し、この日の行の「確認する」から取り込んでください。
-        </p>
+      {outcome.type === "NeedsIndividualConfirmation" && source.type === "DailyReport" && (
+        <>
+          <p>
+            同じ日に精算回数の分からない取込みがあるため、まとめては取り込みませんでした。「確認する」から
+            1 件ずつ取り込んでください。
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              onConfirmCandidate(source.candidate_key);
+            }}
+          >
+            確認する
+          </Button>
+        </>
       )}
     </li>
   );
@@ -192,6 +216,7 @@ export function SdBulkImport({
   ejManual,
   onBulkImport,
   onChooseEjFiles,
+  onConfirmCandidate,
 }: {
   scan: DailyReportSdScan;
   /** 応答を待つ間（ボタンを押せない） */
@@ -202,6 +227,8 @@ export function SdBulkImport({
   ejManual: { result: EjImportResult | null; error: string | null; pending: boolean };
   onBulkImport: () => void;
   onChooseEjFiles: () => void;
+  /** 「1 件ずつ確かめてください」の行の「確認する」（保持中の scan_token で個別の preview へ） */
+  onConfirmCandidate: (candidateKey: string) => void;
 }) {
   const stopped = response?.items.some((item) => item.outcome.type === "Failed") ?? false;
   const importedDates =
@@ -246,7 +273,12 @@ export function SdBulkImport({
                   {item.outcome.type === "Failed" && <p>{item.outcome.message}</p>}
                 </li>
               ) : (
-                <ItemRow key={item.source.candidate_key} item={item} />
+                <ItemRow
+                  key={item.source.candidate_key}
+                  item={item}
+                  busy={busy}
+                  onConfirmCandidate={onConfirmCandidate}
+                />
               ),
             )}
           </ul>

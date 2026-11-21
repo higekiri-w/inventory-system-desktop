@@ -264,7 +264,7 @@ fn test_daily_report_req401_duplicate_already_imported() {
 }
 
 #[test]
-fn test_daily_report_req401_additional_confirmation_for_same_date_different_bundle() {
+fn test_daily_report_req401_same_date_different_bundle_without_confirmation() {
     // REQ-401 / I-W3 / SPEC-SDI-D3 / BIZ-08-D8: 同日別bundleは全件・全files/totalsのordered snapshotを持ち、
     // 精算回数のそろう束どうしは追加確認なし（NoDuplicate）。
     let (_dir, mut conn) = setup_test_db();
@@ -1856,7 +1856,7 @@ fn test_req401_same_settlement_different_bytes_is_rejected() {
 }
 
 #[test]
-fn test_req401_same_date_other_settlement_still_confirms() {
+fn test_req401_same_date_other_settlement_without_confirmation() {
     // REQ-401 / BIZ-08-D4・D8: 同じ日の別の精算（精算回数 6）は、同じ日の取込みが全部精算回数を持つので追加確認なし
     let (dir, mut conn) = setup_test_db();
     import(
@@ -3765,7 +3765,8 @@ fn test_req401_scan_number_error_unreadable_names_column() {
 // -----------------------------------------------------------------------
 
 use crate::io::ej_parser::synthetic::{
-    file as ej_bytes, header as ej_header, item as ej_item, totals as ej_totals, NAME_A, NAME_B,
+    file as ej_bytes, header as ej_header, item as ej_item, qty as ej_qty, totals as ej_totals,
+    NAME_A, NAME_B,
 };
 
 use crate::db::ej_repo::EjNumberGap;
@@ -4041,6 +4042,31 @@ fn test_req401_ej_copy_failure_inserts_nothing() {
     );
 }
 
+#[test]
+fn test_req401_ej_second_insert_failure_keeps_nothing() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 4（Final round 1 #7）: 2 件目の INSERT だけが失敗しても 1 件目も残らない（1 つの TX）
+    let (dir, mut conn) = setup_test_db();
+    conn.execute_batch(
+        "CREATE TRIGGER reject_second BEFORE INSERT ON ej_records WHEN NEW.record_no = '000102'
+         BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+    )
+    .unwrap();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            None,
+            ej_bytes(&ej_lines(&["000101", "000102"])),
+        )],
+        dir.path(),
+    );
+    assert!(
+        matches!(result, Err(BizError::DatabaseError(_))),
+        "{result:?}"
+    );
+    assert!(ej_saved(&conn).is_empty());
+}
+
 fn e8_file() -> EjSourceFile {
     ej_file("EJ300102_0001.TXT", None, ej_bytes(&ej_lines(&["000101"])))
 }
@@ -4102,16 +4128,28 @@ fn test_req401_ej_gaps_and_log_without_numbers() {
 #[test]
 fn test_req401_ej_saved_body_text_matches_expected_exactly() {
     // REQ-401 / BIZ-08-D9 §37.11 手順 2（Test Plan E10）: 見出し 2 行・行末の空白・"\n" のつなぎを保った文と、
-    // 同じ行の mode・kind・total_amount
+    // 同じ行の mode・kind・total_amount。数量の行は 24 バイトまで右が空白なので、本文の行の行末の空白も見る
     let (dir, mut conn) = setup_test_db();
-    import_ej_records(&mut conn, vec![e8_file()], dir.path()).unwrap();
+    let lines = [
+        ej_header("", EJ_AT, "000101"),
+        vec![ej_qty(2, "60"), ej_item(NAME_A, 120), ej_item(NAME_B, 380)],
+        ej_totals(3, 500),
+    ]
+    .concat();
+    import_ej_records(
+        &mut conn,
+        vec![ej_file("EJ300102_0001.TXT", None, ej_bytes(&lines))],
+        dir.path(),
+    )
+    .unwrap();
     let expected = [
         "     2030-01-02 10:15   ".to_string(),
         format!("{}0001-000101", " ".repeat(13)),
+        format!("  2 点   @60{}", " ".repeat(12)),
         format!("ｺﾞｳｾｲｱﾒ{}\\120", " ".repeat(13)),
         format!("ｶｸｳｸｯｷｰ{}\\380", " ".repeat(13)),
         "-".repeat(24),
-        format!("{}2 点", " ".repeat(20)),
+        format!("{}3 点", " ".repeat(20)),
         format!("対象計{}\\500", " ".repeat(14)),
         format!("内税{}\\45", " ".repeat(17)),
         format!("合  計{}￥５００", " ".repeat(10)),
@@ -4294,6 +4332,47 @@ fn test_req401_bulk_same_settlement_prefers_xz_every_time() {
 }
 
 #[test]
+fn test_req401_bulk_lowercase_xz_is_the_sales_folder() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 1 の「同じ鍵の順」（Final round 1 #1）: IO-09 は小文字の `xz` も売上の folder と
+    // して受けるので、`xz` と `XZ_BKUP` の同じ精算の別 bytes は `xz` の側が入る
+    let (dir, mut conn) = setup_test_db();
+    let snapshot = snapshot_of(
+        vec![
+            (
+                "a-backup",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12001"),
+                    "XZ_BKUP\\2026\\03",
+                    "21 _0001.CSV",
+                ),
+            ),
+            (
+                "z-sales",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12000"),
+                    "xz\\2026\\03",
+                    "21 .CSV",
+                ),
+            ),
+        ],
+        Vec::new(),
+    );
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, dir.path()).unwrap();
+    let RegisterSdBulkSource::DailyReport { candidate_key, .. } = &result.items[0].source else {
+        panic!("{:?}", result.items[0].source);
+    };
+    assert_eq!(candidate_key, "z-sales");
+    assert!(matches!(
+        &result.items[0].outcome,
+        RegisterSdBulkOutcome::ImportedDailyReport(imported) if imported.gross_amount == Some(12000)
+    ));
+    assert!(matches!(
+        &result.items[1].outcome,
+        RegisterSdBulkOutcome::Skipped { message } if message == D4_TEXT
+    ));
+}
+
+#[test]
 fn test_req401_bulk_business_rejection_continues() {
     // REQ-401 / BIZ-08-D7（Test Plan B3）: D4 で拒まれた束の後の束と EJ も入る
     let (dir, mut conn) = setup_test_db();
@@ -4421,6 +4500,32 @@ fn test_req401_bulk_needs_individual_confirmation_for_null_settlement_day() {
         [("2026-03-21".to_string(), "confirm")]
     );
     assert_eq!(count_rows(&conn, "daily_report_imports"), 1);
+}
+
+#[test]
+fn test_req401_bulk_ej_log_counts_scan_unreadable_files() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 4・BIZ-08-D9 §37.11 手順 5（Final round 1 #6）: scan で読めなかった EJ も、
+    // 結果と同じ数で `ej_import` の操作ログの unreadable_file_count に入る
+    let (dir, mut conn) = setup_test_db();
+    let mut snapshot = snapshot_of(
+        Vec::new(),
+        vec![sd_ej("XZ_BKUP\\EJ260322_0001.TXT", &["000101"])],
+    );
+    snapshot.ej_unreadable_files = vec!["EJ260320_0001.TXT".to_string()];
+    let result =
+        commit_register_sd_bulk_import(&mut conn, &snapshot, &dir.path().join("app")).unwrap();
+    let RegisterSdBulkOutcome::ImportedEj(ej) = &result.items[0].outcome else {
+        panic!("{:?}", result.items[0].outcome);
+    };
+    assert_eq!(ej.unreadable_files, ["EJ260320_0001.TXT"]);
+    let detail: String = conn
+        .query_row(
+            "SELECT detail_json FROM operation_logs WHERE operation_type = 'ej_import'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(detail.contains("\"unreadable_file_count\":1"), "{detail}");
 }
 
 #[test]

@@ -5,6 +5,40 @@ function sdList(origin: DailyReportSdOrigin): DailyReportImportState {
   return { status: "sd_list", scan: origin.scan, scanToken: origin.scanToken };
 }
 
+/**
+ * 一覧の行の「確認する」（UI-07-D15）と、一括の結果の「1 件ずつ確かめてください」の行の「確認する」（55 UI-07-D17）。
+ * 同じ scan で個別の preview へ進み、一括の結果から来たときは戻る一覧で一括で入った束を取込み済みにする
+ * （読み直さない。UI-07-D15 (6) と同じ）
+ */
+function selectSdCandidate(
+  state: Extract<DailyReportImportState, { status: "sd_list" | "bulk_result" }>,
+  action: Extract<DailyReportImportAction, { type: "sd_candidate_selected" }>,
+): DailyReportImportState {
+  const imported = new Set(
+    state.status === "bulk_result"
+      ? state.response.items.flatMap((item) =>
+          item.source.type === "DailyReport" && item.outcome.type === "ImportedDailyReport"
+            ? [item.source.candidate_key]
+            : [],
+        )
+      : [],
+  );
+  return {
+    status: "parsing",
+    filenames: action.filenames,
+    sdOrigin: {
+      scan: {
+        ...state.scan,
+        candidates: state.scan.candidates.map((candidate) =>
+          imported.has(candidate.candidate_key) ? { ...candidate, status: "Imported" } : candidate,
+        ),
+      },
+      scanToken: state.scanToken,
+      candidateKey: action.candidateKey,
+    },
+  };
+}
+
 export function dailyReportImportReducer(
   state: DailyReportImportState,
   action: DailyReportImportAction,
@@ -25,21 +59,12 @@ export function dailyReportImportReducer(
       if (action.type === "scan_failed") return { status: "idle" };
       return state;
     case "sd_list":
+    case "bulk_result":
       if (action.type === "scan_started") return { status: "scanning" };
       if (action.type === "bulk_started") {
         return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
       }
-      if (action.type === "sd_candidate_selected") {
-        return {
-          status: "parsing",
-          filenames: action.filenames,
-          sdOrigin: {
-            scan: state.scan,
-            scanToken: state.scanToken,
-            candidateKey: action.candidateKey,
-          },
-        };
-      }
+      if (action.type === "sd_candidate_selected") return selectSdCandidate(state, action);
       return state;
     case "bulk_importing":
       if (action.type === "bulk_succeeded") {
@@ -58,12 +83,6 @@ export function dailyReportImportReducer(
           recoverTo: "sd_list",
           previousState: { status: "sd_list", scan: state.scan, scanToken: state.scanToken },
         };
-      }
-      return state;
-    case "bulk_result":
-      if (action.type === "scan_started") return { status: "scanning" };
-      if (action.type === "bulk_started") {
-        return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
       }
       return state;
     case "parsing":

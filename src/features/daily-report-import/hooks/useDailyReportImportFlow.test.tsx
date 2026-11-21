@@ -905,4 +905,89 @@ describe("useDailyReportImportFlow_req401", () => {
     expect(getWindowCloseGuardKinds()).toEqual([]);
     expect(result.current.isBlocking).toBe(false);
   });
+  it("U6 REQ-401 / UI-07-D17（Final round 1 #4）: 手で選ぶ EJ の再試行が失敗しても、前に成功した結果を保ち、error を別に出す", async () => {
+    const first = {
+      inserted_count: 2,
+      already_count: 0,
+      conflict_count: 0,
+      conflicts: [],
+      held_count: 0,
+      unreadable_files: [],
+      gaps: [{ machine_prefix: "0001", from_no: "000106", to_no: "000106" }],
+    };
+    vi.mocked(commands.importEjFiles)
+      .mockResolvedValueOnce({ status: "ok", data: first })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: {
+          kind: "internal",
+          message: "保存できませんでした",
+          field: null,
+          error_id: null,
+          stocktake_recovery: null,
+        },
+      });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    await act(async () => {
+      await result.current.chooseEjFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.ejImport.result).toEqual(first);
+    });
+    mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0002.TXT"]);
+    await act(async () => {
+      await result.current.chooseEjFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.ejImport.error).not.toBeNull();
+    });
+    expect(result.current.ejImport.pending).toBe(false);
+    expect(result.current.ejImport.result).toEqual(first);
+  });
+
+  it("U2 REQ-401 / UI-07-D17 / UI-USW-D5（Final round 1 #5）: 手で選んだ EJ の読込みの待ちから止め、unmount の後は importEjFiles を呼ばない", async () => {
+    let resolveRead!: (value: Uint8Array) => void;
+    mockReadFile.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRead = resolve;
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { result, unmount } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    let choosing!: Promise<void>;
+    act(() => {
+      choosing = result.current.chooseEjFiles();
+    });
+    await waitFor(() => {
+      expect(result.current.ejImport.pending).toBe(true);
+    });
+    expect(result.current.isBlocking).toBe(true);
+    expect(getWindowCloseGuardKinds()).toEqual(["ej-import"]);
+    const blocker = mockUseBlocker.mock.calls[
+      mockUseBlocker.mock.calls.length - 1
+    ][0] as unknown as {
+      shouldBlockFn: () => boolean;
+      enableBeforeUnload: () => boolean;
+    };
+    expect(blocker.shouldBlockFn()).toBe(true);
+    expect(blocker.enableBeforeUnload()).toBe(true);
+    unmount();
+    expect(getWindowCloseGuardKinds()).toEqual([]);
+    resolveRead(new Uint8Array([1, 2, 3]));
+    await act(async () => {
+      await choosing;
+    });
+    expect(vi.mocked(commands.importEjFiles)).not.toHaveBeenCalled();
+  });
 });

@@ -91,7 +91,19 @@ pub fn import_ej_records(
     files: Vec<EjSourceFile>,
     app_data_dir: &Path,
 ) -> Result<EjImportResult, BizError> {
-    let (read, unreadable_files) = read_files(&files);
+    import_ej_records_after_scan(conn, files, Vec::new(), app_data_dir)
+}
+
+/// 一括取込み（§37.10 手順 4）: scan で bytes を得られなかった file の名前を手順 1 の名前の前に足して、
+/// 結果と操作ログの `unreadable_files` を同じにする
+pub(super) fn import_ej_records_after_scan(
+    conn: &mut DbConnection,
+    files: Vec<EjSourceFile>,
+    scan_unreadable_files: Vec<String>,
+    app_data_dir: &Path,
+) -> Result<EjImportResult, BizError> {
+    let (read, read_unreadable) = read_files(&files);
+    let unreadable_files = [scan_unreadable_files, read_unreadable].concat();
     let plan = plan_from(conn, &read, unreadable_files.clone())?;
 
     // 手順 4: 新しい記録を持つ SD の file を TX の前に写す（BIZ-08-D5。手で選んだ file は写さない）
@@ -214,7 +226,8 @@ fn read_file(file: &EjSourceFile) -> Option<ReadFile> {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == EjDiagnosticCode::MissingFinalNewline);
-    let lines: Vec<&[u8]> = split_crlf(&file.bytes);
+    // IO-08-D2 と同じ分け方（最後の CRLF の後の空の要素は見出しの行にならないので残してよい）
+    let lines: Vec<&[u8]> = ej_parser::split_crlf(&file.bytes);
     let last = parsed.records.len().saturating_sub(1);
     let records = parsed
         .records
@@ -236,26 +249,6 @@ fn fixed_name_rule() -> &'static Regex {
 
 fn last_name(filename: &str) -> &str {
     filename.rsplit(['\\', '/']).next().unwrap_or(filename)
-}
-
-/// CRLF で分けた行（IO-08-D2 と同じ分け方。最後の CRLF の後の空の要素は行にしない）
-fn split_crlf(bytes: &[u8]) -> Vec<&[u8]> {
-    let mut lines = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    while index + 1 < bytes.len() {
-        if bytes[index] == b'\r' && bytes[index + 1] == b'\n' {
-            lines.push(&bytes[start..index]);
-            index += 2;
-            start = index;
-        } else {
-            index += 1;
-        }
-    }
-    if start < bytes.len() {
-        lines.push(&bytes[start..]);
-    }
-    lines
 }
 
 fn decode_line(bytes: &[u8]) -> String {

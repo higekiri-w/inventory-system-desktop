@@ -58,11 +58,12 @@ function renderBulk(
   scan: DailyReportSdScan,
   response: RegisterSdBulkResponse | null = null,
   options: {
-    manual?: typeof NO_MANUAL | { result: EjImportResult; error: null; pending: false };
+    manual?: { result: EjImportResult | null; error: string | null; pending: boolean };
   } = {},
 ) {
   const onBulkImport = vi.fn();
   const onChooseEjFiles = vi.fn();
+  const onConfirmCandidate = vi.fn();
   const view = render(
     <SdBulkImport
       scan={scan}
@@ -72,9 +73,10 @@ function renderBulk(
       ejManual={options.manual ?? NO_MANUAL}
       onBulkImport={onBulkImport}
       onChooseEjFiles={onChooseEjFiles}
+      onConfirmCandidate={onConfirmCandidate}
     />,
   );
-  return { ...view, onBulkImport, onChooseEjFiles };
+  return { ...view, onBulkImport, onChooseEjFiles, onConfirmCandidate };
 }
 
 function ejResponse(result: EjImportResult): RegisterSdBulkResponse {
@@ -223,6 +225,72 @@ describe("SdBulkImport (UI-07-D17)", () => {
       }
     },
   );
+
+  it("U6 REQ-401（Final round 1 #3）: 手で選んだ結果に読めない file があれば、欠けが 0 でも選び直すボタンを残す", () => {
+    renderBulk(
+      makeScan(["Imported"], ZERO),
+      ejResponse(
+        makeEj({ gaps: [{ machine_prefix: "0001", from_no: "000104", to_no: "000105" }] }),
+      ),
+      {
+        manual: {
+          result: makeEj({ inserted_count: 2, unreadable_files: ["EJ260320_0003.TXT"] }),
+          error: null,
+          pending: false,
+        },
+      },
+    );
+    expect(screen.queryByText(/控えがありません/)).not.toBeInTheDocument();
+    expect(screen.getByText(/読めないファイル EJ260320_0003\.TXT/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" })).toBeEnabled();
+  });
+
+  it("U6 REQ-401（Final round 1 #4）: 再試行の error は、前に成功した結果と別に出す", () => {
+    renderBulk(
+      makeScan(["Imported"], ZERO),
+      ejResponse(
+        makeEj({ gaps: [{ machine_prefix: "0001", from_no: "000104", to_no: "000106" }] }),
+      ),
+      {
+        manual: {
+          result: makeEj({
+            inserted_count: 2,
+            gaps: [{ machine_prefix: "0001", from_no: "000106", to_no: "000106" }],
+          }),
+          error: "EJ のファイルの選択または読み取りに失敗しました",
+          pending: false,
+        },
+      },
+    );
+    expect(screen.getByText("選んだファイルから控え 2 件を取り込みました")).toBeInTheDocument();
+    expect(screen.getByText("記録 000106 の控えがありません")).toBeInTheDocument();
+    expect(screen.queryByText("記録 000104〜000106 の控えがありません")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "EJ のファイルの選択または読み取りに失敗しました",
+    );
+  });
+
+  it("REQ-401 / UI-07-D17（Final round 1 #2）: 「1 件ずつ確かめてください」の行の「確認する」で、その束の個別の確認へ進む", async () => {
+    const { onConfirmCandidate } = renderBulk(makeScan(["NotImported"], null), {
+      items: [
+        {
+          source: { type: "DailyReport", candidate_key: "k-confirm", report_date: "2026-03-21" },
+          outcome: { type: "NeedsIndividualConfirmation" },
+        },
+        {
+          source: { type: "DailyReport", candidate_key: "k-skip", report_date: "2026-03-22" },
+          outcome: { type: "Skipped", message: "取込み済みです" },
+        },
+      ],
+    });
+    const rows = within(screen.getByRole("list", { name: "まとめて取り込んだ結果" })).getAllByRole(
+      "listitem",
+    );
+    expect(within(rows[1]).queryByRole("button", { name: "確認する" })).toBeNull();
+    expect(within(rows[0]).queryByText(/読み直し/)).toBeNull();
+    await userEvent.click(within(rows[0]).getByRole("button", { name: "確認する" }));
+    expect(onConfirmCandidate).toHaveBeenCalledWith("k-confirm");
+  });
 
   it("U6 REQ-401: 手で選んだ EJ の結果をその場に出し、欠けはその結果の値にする", () => {
     renderBulk(

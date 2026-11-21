@@ -1,11 +1,12 @@
 //! BIZ-08-D7: SD の締めの一括取込み（37 §37.10 手順 1 の (a)・(c)、手順 2・4・5・6）。
 //! Z004（手順 1 (b)・手順 3）は runtime (B) が足す
 
+use crate::biz::daily_report_import_service::ej::import_ej_records_after_scan;
 use crate::biz::daily_report_import_service::scan::last_element;
 use crate::biz::daily_report_import_service::{
-    commit_daily_report_import, import_ej_records, parse_and_validate_daily_report,
-    DailyReportDuplicateStatus, DailyReportInputFile, DailyReportSdScanSnapshot, EjSourceFile,
-    RegisterSdBulkItem, RegisterSdBulkOutcome, RegisterSdBulkResult, RegisterSdBulkSource,
+    commit_daily_report_import, parse_and_validate_daily_report, DailyReportDuplicateStatus,
+    DailyReportInputFile, DailyReportSdScanSnapshot, EjSourceFile, RegisterSdBulkItem,
+    RegisterSdBulkOutcome, RegisterSdBulkResult, RegisterSdBulkSource,
 };
 use crate::biz::BizError;
 use crate::db::DbConnection;
@@ -52,13 +53,14 @@ pub fn commit_register_sd_bulk_import(
                     bytes: file.bytes.clone(),
                 })
                 .collect();
-            match import_ej_records(conn, files, app_data_dir) {
-                Ok(mut result) => {
-                    let mut unreadable = snapshot.ej_unreadable_files.clone();
-                    unreadable.append(&mut result.unreadable_files);
-                    result.unreadable_files = unreadable;
-                    RegisterSdBulkOutcome::ImportedEj(result)
-                }
+            // scan で読めなかった file を前に足す（結果と操作ログの数を同じにする）
+            match import_ej_records_after_scan(
+                conn,
+                files,
+                snapshot.ej_unreadable_files.clone(),
+                app_data_dir,
+            ) {
+                Ok(result) => RegisterSdBulkOutcome::ImportedEj(result),
                 Err(error) => RegisterSdBulkOutcome::Failed(error),
             }
         };
@@ -100,7 +102,12 @@ fn ordered_bundles(
             let in_sales = files
                 .first()
                 .and_then(|file| file.sd_relative_path.as_deref())
-                .is_some_and(|path| path.split('\\').next() == Some("XZ"));
+                .is_some_and(|path| {
+                    // IO-09 は大文字小文字を区別せずに売上の folder を受ける（小文字の `xz` も XZ）
+                    path.split('\\')
+                        .next()
+                        .is_some_and(|first| first.eq_ignore_ascii_case("XZ"))
+                });
             (
                 (content_key, !in_sales, key.clone()),
                 (key, files, report_date),

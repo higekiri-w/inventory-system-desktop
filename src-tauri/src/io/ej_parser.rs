@@ -423,7 +423,7 @@ struct Header {
 }
 
 /// CRLF で分割する。最後の要素は最後の CRLF の後（空なら改行で終わっている）
-fn split_crlf(raw: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn split_crlf(raw: &[u8]) -> Vec<&[u8]> {
     let mut segments = Vec::new();
     let mut start = 0;
     let mut i = 0;

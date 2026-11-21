@@ -1,12 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { commands, CSV_IMPORT_FILE_SIZE_LIMIT } from "@/lib/bindings";
 import type {
   DailyReportPreviewResponse,
   DailyReportSourceFileRequest,
   EjFileRequest,
+  EjImportResult,
 } from "@/lib/bindings";
 import { describeError } from "@/lib/describe-error";
 import { extractFilename } from "@/lib/extractFilename";
@@ -209,7 +210,9 @@ export function useDailyReportImportFlow() {
     },
   });
 
-  // 55 UI-07-D17: 結果の「EJ のファイルを選んで取り込む」（CMD-12 importEjFiles）。結果はその場に出す（mutation の data）
+  // 55 UI-07-D17: 結果の「EJ のファイルを選んで取り込む」（CMD-12 importEjFiles）。結果はその場に出し、
+  // 最後に成功した結果は再試行が失敗しても次の成功・新しい scan・一括のやり直しまで保つ（error は別に出す）
+  const [ejResult, setEjResult] = useState<EjImportResult | null>(null);
   const ejImportMutation = useMutation({
     mutationFn: (files: EjFileRequest[]) =>
       unwrapResult(commands.importEjFiles(files), {
@@ -217,8 +220,18 @@ export function useDailyReportImportFlow() {
         cmd: "import_ej_files",
       }),
     retry: 0,
+    onSuccess: setEjResult,
   });
   const [ejSelectionError, setEjSelectionError] = useState<string | null>(null);
+  // 選択の確定（readFile の待ち）から command の終わりまでを 1 つの待ちにする（UI-USW-D5 の止め）
+  const [ejPending, setEjPending] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 取消の mutation・Toast・C10 の再取得・取消の応答を待つ間の止めは共有の hook（55 §55.12 UI-07-D19）
   const rollbackMutation = useRollbackDailyReportImport({
@@ -231,7 +244,7 @@ export function useDailyReportImportFlow() {
   // （UI-USW-D5、55 UI-07-D17。取消の応答を待つ間の止めは useRollbackDailyReportImport）
   const importing = state.status === "importing";
   const bulkImporting = state.status === "bulk_importing";
-  const ejImporting = ejImportMutation.isPending;
+  const ejImporting = ejPending || ejImportMutation.isPending;
   const busy = importing || bulkImporting || ejImporting;
   useBlocker({
     shouldBlockFn: () => busy,
@@ -245,6 +258,7 @@ export function useDailyReportImportFlow() {
     (selectedPath: string | null = null) => {
       setScanError(null);
       setEjSelectionError(null);
+      setEjResult(null);
       ejImportMutation.reset();
       // UI-07-D16 (a): 選択の一覧は idle の間だけ持つ
       setManualFiles([]);
@@ -259,6 +273,7 @@ export function useDailyReportImportFlow() {
   const bulkImport = useCallback(() => {
     if (state.status !== "sd_list" && state.status !== "bulk_result") return;
     setEjSelectionError(null);
+    setEjResult(null);
     ejImportMutation.reset();
     dispatch({ type: "bulk_started" });
     bulkMutation.mutate(state.scanToken);
@@ -267,28 +282,44 @@ export function useDailyReportImportFlow() {
   /** 55 UI-07-D17: 欠け・読めない file を埋める EJ を native の file dialog で選ぶ（手で選んだ file は写さない） */
   const chooseEjFiles = useCallback(async () => {
     setEjSelectionError(null);
+    let paths: string[];
     try {
       const selected = await open({
         multiple: true,
         filters: [{ name: "EJ", extensions: ["txt", "TXT"] }],
       });
       if (selected === null) return;
-      const paths = Array.isArray(selected) ? selected : [selected];
-      if (paths.length === 0) return;
+      paths = Array.isArray(selected) ? selected : [selected];
+    } catch {
+      setEjSelectionError(EJ_READ_FAILED_MESSAGE);
+      toast.error(EJ_READ_FAILED_MESSAGE);
+      return;
+    }
+    if (paths.length === 0) return;
+    setEjPending(true);
+    try {
       const files: EjFileRequest[] = [];
       for (const path of paths) {
         const bytes = await readFile(path);
         if (bytes.byteLength > CSV_IMPORT_FILE_SIZE_LIMIT) {
           setEjSelectionError(TOO_LARGE_MESSAGE);
           toast.error(TOO_LARGE_MESSAGE);
+          setEjPending(false);
           return;
         }
         files.push({ filename: extractFilename(path), file_bytes: Array.from(bytes) });
       }
-      ejImportMutation.mutate(files);
+      // 読む間に画面を離れていたら取り込まない（結果を見る画面が無い）
+      if (!mountedRef.current) return;
+      ejImportMutation.mutate(files, {
+        onSettled: () => {
+          setEjPending(false);
+        },
+      });
     } catch {
       setEjSelectionError(EJ_READ_FAILED_MESSAGE);
       toast.error(EJ_READ_FAILED_MESSAGE);
+      setEjPending(false);
     }
   }, [ejImportMutation]);
 
@@ -301,7 +332,8 @@ export function useDailyReportImportFlow() {
 
   const confirmSdCandidate = useCallback(
     (candidateKey: string) => {
-      if (state.status !== "sd_list") return;
+      // 一括の結果の「1 件ずつ確かめてください」の行からも、保持中の scan で進む（55 UI-07-D17）
+      if (state.status !== "sd_list" && state.status !== "bulk_result") return;
       const candidate = state.scan.candidates.find((item) => item.candidate_key === candidateKey);
       // 手で選んだときの文を SD から来た preview に持ち越さない
       setLastSelectionError(null);
@@ -464,7 +496,7 @@ export function useDailyReportImportFlow() {
     bulkImport,
     chooseEjFiles,
     ejImport: {
-      result: ejImportMutation.data ?? null,
+      result: ejResult,
       error:
         ejSelectionError ??
         (ejImportMutation.error

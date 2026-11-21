@@ -394,8 +394,22 @@ mod sd_bulk {
             .fold(base.to_path_buf(), |path, part| path.join(part))
     }
 
-    /// `out` の下に sd-a・sd-b・sd-c と ej-manual を書き、手で選ぶ EJ の path を返す
+    /// 書く 4 つの出力先（`out` の下）
+    const OUTPUTS: [&str; 4] = ["sd-a", "sd-b", "sd-c", "ej-manual"];
+
+    /// `out` の下に sd-a・sd-b・sd-c と ej-manual を書き、手で選ぶ EJ の path を返す。
+    /// 出力先が 1 つでも既にあれば何も書かずに止める（違う T の古い file が残り、L3 の数が変わるため）
     fn write_sd_bulk_files(out: &Path, day: NaiveDate) -> PathBuf {
+        let existing: Vec<&str> = OUTPUTS
+            .into_iter()
+            .filter(|name| out.join(name).exists())
+            .collect();
+        assert!(
+            existing.is_empty(),
+            "{} に前の入力物 {} があるので作りませんでした。空の folder を INVENTORY_L3_OUT に指定してください",
+            out.display(),
+            existing.join("・")
+        );
         let before = day_at(day, -1);
         let next = day_at(day, 1);
         // sd-a: T−1 と T（精算 2 回）の束、`XZ` の伸びる EJ（最後が保留）、`XZ_BKUP` の EJ（000104〜000105 が欠け）、LF の読めない EJ
@@ -564,6 +578,25 @@ mod sd_bulk {
         let dir = tempfile::tempdir().unwrap();
         let manual = write_sd_bulk_files(dir.path(), day);
         assert_l3_flow(dir.path(), &manual, day);
+    }
+
+    #[test]
+    fn test_l3_fixtures_req401_sd_bulk_refuses_existing_outputs() {
+        // REQ-401 / packet S9（Final round 1 #9）: 同じ出力先に作り直すと古い T の file が残るので、書く前に止めて理由を出す
+        let dir = tempfile::tempdir().unwrap();
+        let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        write_sd_bulk_files(dir.path(), day);
+        let next = day + Days::new(1);
+        let error = std::panic::catch_unwind(|| write_sd_bulk_files(dir.path(), next)).unwrap_err();
+        let message = error.downcast_ref::<String>().unwrap();
+        assert!(
+            message.contains("前の入力物 sd-a・sd-b・sd-c・ej-manual があるので作りませんでした"),
+            "{message}"
+        );
+        // 何も書いていない（次の T の `XZ` の EJ が無い）
+        let sd_a = sd_root(&dir.path().join("sd-a"));
+        assert!(!sd_a.join("XZ").join(ej_name(next, None)).exists());
+        assert!(sd_a.join("XZ").join(ej_name(day, None)).exists());
     }
 
     #[test]
