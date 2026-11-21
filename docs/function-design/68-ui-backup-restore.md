@@ -36,7 +36,6 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 |---|---|---|
 | `commands.getSettings()` | backup 系設定の初期表示。 | `AppSetting[]` |
 | `commands.updateSetting(request)` | backup 系設定の保存。 | `UpdateSettingRequest { key, value }` |
-| `commands.listLogs(query)` | 直近の backup 操作ログを補助表示する場合だけ使う。全操作ログ UI は UI-11c が所有する。 | `LogQuery` -> `PaginatedResult<OperationLog>` |
 | `commands.createBackup()` | 手動バックアップ、復元前の強制事前バックアップ。 | `BackupResult { file_path, file_name, size_bytes }` |
 | `commands.checkAutoBackup()` | 共通レイアウトが mount する `useAutoBackupCheck` の 60 秒 interval（画面に依らない）の自動バックアップ確認（UI-11b-D13）。 | `boolean` |
 | `commands.listBackups()` | バックアップ一覧。 | `BackupInfo[]` |
@@ -65,6 +64,11 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 2. 成功時は作成ファイル名とサイズを success Alert で表示する。
 3. 失敗時は入力・設定 state を保持し、保存先の確認と再試行を促す。
 4. 成功・失敗とも `listBackups` を再取得する（公開の後の失敗では確かめ済みの正式名が残りうる、71 §71.4 のエラーハンドリング。一覧は失敗の種類から推し量らない）。
+
+### 保存日数（`backup_retention_days`、D-162 の (3)）
+
+1. 画面の見出しは `保存日数`（71 の「保持日数」と同じ値）。
+2. 1 以上の整数（ASCII の数字だけ、i32 の範囲）だけ保存する。空・数字でない・0 以下・小数・前後の空白は BIZ が `ValidationFailed`（「保存日数は 1 以上の整数で入れてください」、38 §38.3）で拒み、保存済みの値は変えない。画面はその理由を今の error の表示（Alert と toast）で出し、欄に入れた値は戻さない（隣の時刻の欄と同じ非制御の input）。
 
 ### backup_path 変更
 
@@ -99,7 +103,7 @@ UI は PR #141 で生成済みの `commands.*` だけを使う。
 5. 最終確認 AlertDialog で「元に戻せません」と対象日時を再掲し、実行ボタンのラベルに対象日時を含める。
 6. `restoreBackup({ backup_path })` を呼ぶ。
 7. 成功時は React Query cache を `invalidate` ではなく全消去し、ホームへ遷移して success Alert を出す。プロセス再起動は求めない。
-8. 失敗時は `CmdError.message` と double failure 判定に従って、recoverable failure または restart-required failure を表示する。
+8. 失敗時は `CmdError.kind`（§68.7）に従って、recoverable failure または restart-required failure を表示する。
 
 ## 68.5 Design Decisions
 
@@ -168,11 +172,10 @@ restore_* 3 kind の表示（recoverable の定型 message、fatal Alert）に�
 |---|---|---|
 | 初期設定読込 | `commands.getSettings()` | `AppSetting[]` から backup 系 4 key を抽出する。不明 key は無視。 |
 | 設定保存 | `commands.updateSetting({ key, value })` | UI-11b は backup 系 key だけを保存する。`backup_path` は native picker 由来のみで、保存の前に `commands.checkBackupDirChoice({ selected_path })` が `Ok` を返した値だけ（43 §43.8.8）。 |
-| 操作ログ補助表示 | `commands.listLogs(query)` | full 操作ログ画面は UI-11c。UI-11b では backup 操作の直近表示に限定する。 |
 | 手動 / 事前バックアップ | `commands.createBackup()` | `BackupResult` の `file_name` と `size_bytes` を表示。`file_path` は詳細/補助表示のみ。 |
 | 自動バックアップ確認 | `commands.checkAutoBackup()` | 共通レイアウトが mount する `useAutoBackupCheck` の 60 秒 interval（画面に依らない）で呼び、`true` の時は一覧を再取得する（UI-11b-D13）。 |
 | 一覧読込 | `commands.listBackups()` | `created_at` は `YYYY-MM-DD HH:MM:SS` 文字列。UI で和式日時へ整形する。 |
-| 復元 | `commands.restoreBackup({ backup_path })` | 成功時は new DB connection が Mutex に入る。失敗時も CMD が再接続を試み、二重失敗では再起動文言を含む Err を返す。 |
+| 復元 | `commands.restoreBackup({ backup_path })` | 成功時は new DB connection が Mutex に入る。失敗は `CmdError.kind` の 3 値で分かれる（§68.7）。 |
 
 ## 68.9 UI / Wording
 

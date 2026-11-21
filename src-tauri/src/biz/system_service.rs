@@ -9,14 +9,24 @@ use crate::db::{DbConnection, PaginatedResult};
 const INVALID_DATE_MESSAGE: &str = "開始日・終了日はYYYY-MM-DD形式で入力してください";
 const REVERSED_DATE_RANGE_MESSAGE: &str =
     "開始日は終了日と同じ日か、それより前の日付にしてください";
+const INVALID_BACKUP_RETENTION_DAYS_MESSAGE: &str = "保存日数は 1 以上の整数で入れてください";
 
 /// 全設定を取得する。
 pub fn get_all_settings(conn: &DbConnection) -> Result<Vec<AppSetting>, BizError> {
     system_repo::get_all_settings(conn).map_err(BizError::from)
 }
 
-/// 設定値を挿入または更新する。
+/// 設定値を挿入または更新する。`backup_retention_days` だけ値を検査する（§38.3）。
 pub fn upsert_setting(conn: &DbConnection, key: &str, value: &str) -> Result<(), BizError> {
+    // 掃除（mnt::backup::run_cleanup）は u32 で読み、0 なら今日より前を全部消し、数字でなければ黙って止まる
+    if key == "backup_retention_days"
+        && !(value.bytes().all(|byte| byte.is_ascii_digit())
+            && matches!(value.parse::<i32>(), Ok(days) if days >= 1))
+    {
+        return Err(BizError::ValidationFailed(
+            INVALID_BACKUP_RETENTION_DAYS_MESSAGE.to_string(),
+        ));
+    }
     system_repo::upsert_setting(conn, key, value).map_err(BizError::from)
 }
 
@@ -102,6 +112,65 @@ mod tests {
         assert_eq!(
             system_repo::get_setting(&conn, "stock_low_threshold").unwrap(),
             Some("5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_upsert_setting_req901_backup_retention_days_accepts_only_positive_integers() {
+        // REQ-901 / BIZ-09 / MNT-01-D3: 保存日数は 1 以上の整数だけ保存し、それ以外は理由を返して保存しない
+        let (_dir, conn) = db::test_support::setup_test_db();
+        for invalid in [
+            "0",
+            "-1",
+            "",
+            "abc",
+            "1.5",
+            " 3",
+            "3 ",
+            "+3",
+            "1e2",
+            "３",
+            "2147483648",
+        ] {
+            let result = upsert_setting(&conn, "backup_retention_days", invalid);
+            assert!(
+                matches!(
+                    result,
+                    Err(BizError::ValidationFailed(ref message))
+                        if message == "保存日数は 1 以上の整数で入れてください"
+                ),
+                "{invalid:?} must be rejected"
+            );
+            assert_eq!(
+                system_repo::get_setting(&conn, "backup_retention_days").unwrap(),
+                Some("3".to_string()),
+                "{invalid:?} must not be saved"
+            );
+        }
+        for valid in ["1", "3", "30", "2147483647"] {
+            upsert_setting(&conn, "backup_retention_days", valid).unwrap();
+            assert_eq!(
+                system_repo::get_setting(&conn, "backup_retention_days").unwrap(),
+                Some(valid.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn test_upsert_setting_req905_other_keys_are_not_validated() {
+        // REQ-905 / BIZ-09: 保存日数の検査はほかの key に掛けない
+        let (_dir, conn) = db::test_support::setup_test_db();
+
+        upsert_setting(&conn, "stock_low_threshold", "0").unwrap();
+        upsert_setting(&conn, "backup_time", "").unwrap();
+
+        assert_eq!(
+            system_repo::get_setting(&conn, "stock_low_threshold").unwrap(),
+            Some("0".to_string())
+        );
+        assert_eq!(
+            system_repo::get_setting(&conn, "backup_time").unwrap(),
+            Some(String::new())
         );
     }
 
