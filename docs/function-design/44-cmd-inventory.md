@@ -739,7 +739,7 @@ BIZ は [31](31-biz-inventory-service.md) §12.6c、画面は [65](65-inventory-
 
 **シグネチャ（Tauriコマンド）**:
 ```
-#[tauri::command]
+#[tauri::command(async)] // 下の「実行の thread」
 #[specta::specta]
 fn cancel_inventory_record(
     state: State<AppState>,
@@ -750,6 +750,8 @@ fn cancel_inventory_record(
 ```
 
 **出力型**: BIZ層の `RecordCancelResult { stock_warnings: Vec<String> }`
+
+**実行の thread**: `#[tauri::command(async)]` で定義し、取消の transaction（DB の Mutex の待ちと、複数の商品の求め直し）を main thread で動かさない。画面は応答を待つ間 `inventory-record-cancel` の close の止めを持ち、main thread で動く間は native の window の close に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [41](41-cmd-pos.md) §17.2 の `rollback_csv_import` と同じで、関数は sync のまま `(async)` を付ける。test は `crate::cmd::assert_commands_run_off_main_thread` で固定する。
 
 **処理ステップ**: create_disposal と同パターン（`state.db.lock()` → `biz::inventory_service::cancel_inventory_record(&mut conn, record_type, record_id, &reason)`。`ValidationFailed` → `validation`、`NotFound` → `not_found`。§23.3）
 
