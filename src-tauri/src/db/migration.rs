@@ -14,6 +14,7 @@ use super::schema_v10;
 use super::schema_v11;
 use super::schema_v12;
 use super::schema_v13;
+use super::schema_v14;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -107,6 +108,11 @@ fn migrations() -> Vec<Migration> {
             version: 13,
             description: "振替の種類と振替の記録の表（D-143）",
             kind: MigrationKind::Custom(schema_v13::apply_stock_transfer),
+        },
+        Migration {
+            version: 14,
+            description: "EJ の記録の文の表（ej_records、D-121）",
+            kind: MigrationKind::Sql(schema_v14::get_v14_ej_records_schema()),
         },
     ]
 }
@@ -763,6 +769,7 @@ mod tests {
             "app_settings",
             "plu_slots",
             "stock_counts",
+            "ej_records",
         ];
 
         for table_name in &expected_tables {

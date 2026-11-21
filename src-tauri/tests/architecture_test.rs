@@ -295,6 +295,26 @@ const DB_IO_REEXPORT_ALLOWLIST: &[(&str, &str, &str)] = &[
     ), // :23
     (
         "biz/mod.rs",
+        "EjNumberGap",
+        "crate::db::ej_repo::EjNumberGap",
+    ), // EJ の記録の repo の型（24 §14.25、D-121）
+    (
+        "biz/mod.rs",
+        "EjRecordKindCode",
+        "crate::db::ej_repo::EjRecordKindCode",
+    ), // EJ の記録の repo の型（24 §14.25、D-121）
+    (
+        "biz/mod.rs",
+        "EjRecordModeCode",
+        "crate::db::ej_repo::EjRecordModeCode",
+    ), // EJ の記録の repo の型（24 §14.25、D-121）
+    (
+        "biz/mod.rs",
+        "NewEjRecord",
+        "crate::db::ej_repo::NewEjRecord",
+    ), // EJ の記録の repo の型（24 §14.25、D-121）
+    (
+        "biz/mod.rs",
         "LastStocktakeSummary",
         "crate::db::stocktake_repo::LastStocktakeSummary",
     ), // :25

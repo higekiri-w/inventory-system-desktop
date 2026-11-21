@@ -25,6 +25,9 @@ pub use crate::db::product_repo::{
 };
 #[allow(unused_imports)]
 pub use crate::db::sales_repo::CsvImport;
+// EJ の記録の repo の型（24 §14.25。BIZ-08 §37.11 が使う）
+#[allow(unused_imports)]
+pub use crate::db::ej_repo::{EjNumberGap, EjRecordKindCode, EjRecordModeCode, NewEjRecord};
 #[allow(unused_imports)]
 pub use crate::db::stocktake_repo::{LastStocktakeSummary, Stocktake, StocktakeProgress};
 #[allow(unused_imports)]

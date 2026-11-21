@@ -557,23 +557,6 @@ fn find_same_settlement_daily_report_import(
 
 ---
 
-### 14.18b exists_same_date_daily_report_import_without_settlement_no（D-121、BIZ-08-D8、proposed・未実装）
-
-**関数要求**: 同じ対象日の completed の日報取込みに、精算回数の無い（`settlement_no IS NULL`）ものがあるかを返す。BIZ-08-D8（37 §37.10）が同日追加の確認を残すかを決める専用。wire に出さない。後続の runtime（A）が足す。
-
-**シグネチャ**:
-```
-fn exists_same_date_daily_report_import_without_settlement_no(
-    conn: &DbConnection,
-    report_date: &str,
-) -> Result<bool, DbError>
-```
-
-**SQL方針**:
-`SELECT EXISTS (SELECT 1 FROM daily_report_imports WHERE report_date = ? AND status = 'completed' AND settlement_no IS NULL)`。`status` の条件は §14.18 の同日の一覧（`src-tauri/src/db/sales_repo.rs` の `find_daily_report_imports_by_report_date` の `status = 'completed'`）と同じで、取り消した（`rolled_back`）取込みは数えない。
-
----
-
 ### 14.18c latest_completed_daily_report_date（D-111、BIZ-08-D3）
 
 **関数要求**: completed の日報取込みの対象日（`report_date`）の最大を返す。SD の scan の窓の始まり（[37](37-biz-daily-report-import-service.md) §37.9 手順 2）の専用で、呼び手は `biz::daily_report_import_service` の scan（`src-tauri/src/biz/daily_report_import_service/scan.rs`）だけ。wire に出さない。BIZ からだけ呼ぶので `pub(crate)`（`src-tauri/tests/design_compliance_test.rs` の照合は `pub` だけを見るので allowlist には足さない）。
@@ -768,9 +751,9 @@ fn get_monthly_official_report_dates(
 - **D-025**: 日報取込みは sale_records / inventory_movements へ擬似展開しない — daily_report_imports のrollbackは親status更新のみで完結する
 - **D-071 / SPEC-SDI-D1〜D8**: business date は group key であり uniqueness key ではない。active content hash 単位の identity、指定 ID 単位の rollback、同日の全 active imports の additive read を維持する（Z001 の行は全 active import を読むが加算せず取込みごとに返す、D-096）
 
-### 14.25 EJ の記録の保存と照会（D-121、BIZ-08-D9、proposed・未実装）
+### 14.25 EJ の記録の保存と照会（D-121、BIZ-08-D9。保存は実装済み、照会の一部は未実装）
 
-`ej_records`（[pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」）を読み書きする。呼ぶのは BIZ-08 §37.11 だけ。TX は BIZ-08 が持つ。runtime（後続の lane A）は置き場の module を決め、`design_compliance_test.rs` の本書の行に足す。
+`ej_records`（[pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」）を読み書きする。呼ぶのは BIZ-08 §37.11 だけ。TX は BIZ-08 が持つ。置き場は `src-tauri/src/db/ej_repo.rs`（`design_compliance_test.rs` の本書の行に `db::ej_repo`）。(A-1) の runtime が `NewEjRecord`・`EjNumberGap`・`EjRecordModeCode`・`EjRecordKindCode` と `find_ej_record_texts`・`insert_ej_record`・`list_ej_number_gaps` を実装した。閲覧の型（`EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`）と関数（`list_ej_records_on_date`・`find_ej_adjacent_dates`・`find_latest_ej_date`・`find_ej_records_by_no`・`get_ej_record_detail`）と、DB の TEXT から mode・kind を読む match は (A-2) が足す（未実装）。
 
 型の所有: repo が受け返しする型（下の `NewEjRecord` と、37 §37.11 に形を書いた `EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`・`EjNumberGap`・`EjRecordModeCode`・`EjRecordKindCode`）は db の module に定義し、`src-tauri/src/biz/mod.rs` で re-export する（既存の形: `CsvImport`〈`src-tauri/src/biz/mod.rs`〉、`Stocktake` ほか〈同 `stocktake_repo` の re-export〉）。CMD は BIZ の re-export を使い db を直接参照しない。BIZ だけが組み立てる型（`EjImportPlan`・`EjImportResult`・`EjConflict`・`EjRecordDay`・`EjSourceFile`）は BIZ-08 に置く。mode・kind は db の列では TEXT + CHECK のまま、型では enum で持ち、書くときは enum の文字列、読むときは明示の match で変える（外れた値は `DbError`。D-061 (c)、先例 `CsvImportStatus`〈`src-tauri/src/db/sales_repo.rs` の `CsvImportStatus` と `row_to_csv_import` の `match`〉）。
 
@@ -796,7 +779,7 @@ fn find_ej_record_texts(
 
 fn insert_ej_record(conn: &DbConnection, record: &NewEjRecord, imported_at: &str) -> Result<i64, DbError>
 
-fn list_ej_records_on_date(conn: &DbConnection, date: &str) -> Result<Vec<EjRecordSummary>, DbError> // 最大 1001 件（BIZ が 1000 件を超えたかを知るため）
+fn list_ej_records_on_date(conn: &DbConnection, date: &str) -> Result<Vec<EjRecordSummary>, DbError> // 最大 1001 件（BIZ が 1000 件を超えたかを知るため）。ここから get_ej_record_detail までの 5 つは (A-2)、未実装
 
 fn find_ej_adjacent_dates(conn: &DbConnection, date: &str) -> Result<(Option<String>, Option<String>), DbError>
 
@@ -810,7 +793,7 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 ```
 
 **SQL方針**:
-- `find_ej_record_texts`: `SELECT machine_prefix, record_no, body_text FROM ej_records WHERE (machine_prefix, record_no) IN (...)`（UNIQUE の index を使う。key の数が多いときは BIZ が分けて呼ぶ）。
+- `find_ej_record_texts`: `SELECT machine_prefix, record_no, body_text FROM ej_records WHERE (machine_prefix, record_no) IN (VALUES ...)`（UNIQUE の index を使う。key の数が多いときは BIZ が分けて呼ぶ。BIZ-08 は 400 key ずつ）。
 - `insert_ej_record`: `INSERT INTO ej_records (...) VALUES (...)`。UNIQUE に当たったら `DbError` を返す（BIZ は TX の中で先に比べるので通常は当たらない）。
 - `list_ej_records_on_date`: `WHERE printed_at >= ?1 || ' 00:00' AND printed_at < ?2 || ' 00:00'`（?2 は翌日）、`ORDER BY machine_prefix, record_no LIMIT 1001`。
 - `find_ej_adjacent_dates`: 前は `SELECT substr(printed_at, 1, 10) FROM ej_records WHERE printed_at < ?1 || ' 00:00' ORDER BY printed_at DESC LIMIT 1`、次は翌日 00:00 以上で `ORDER BY printed_at ASC LIMIT 1`。`find_latest_ej_date` は `ORDER BY printed_at DESC LIMIT 1`。
@@ -837,3 +820,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-11-04 | daily-report-import-rollback-entry（実装、PR #235、55 UI-07-D19） | §14.2 の `DailyReportImport` に `settlement_no` を足し（owner の決定 TD-590。D-111 の時の「足さない」を置き換えた）、§14.16・§14.17・§14.18・§14.20 の 4 つの SELECT の末尾に列を足した。この型を wire に出さないことにした（一覧の wire は BIZ-08 の `DailyReportImportRow`）。 |
 | 2026-11-14 | z001-row-guard（実装） | §14.21 手順 6 に、行を親 id で分け並びの一致に依らないこと、親に無い id の行を読まないことを書いた（[Plan Packet](../plans/2026-11-13-z001-row-guard.md)）。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §14.7 の関数要求を、呼ぶのが test だけの今の形に直し、同日追加の確認の文を外した。 |
+| 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | §14.25 の保存の分（`NewEjRecord`・`EjNumberGap`・mode・kind の enum、`find_ej_record_texts`・`insert_ej_record`・`list_ej_number_gaps`。`src-tauri/src/db/ej_repo.rs`）を実装し、閲覧の分に (A-2) の未実装の印を残した。§14.18b を消した（BIZ-08-D8 は取得済みの同じ日の一覧の行で決める。37 §37.10）。 |

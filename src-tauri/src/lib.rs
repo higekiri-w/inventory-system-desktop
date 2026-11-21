@@ -330,6 +330,8 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::daily_report_import_cmd::list_daily_report_imports,
         cmd::daily_report_import_cmd::scan_register_sd,
         cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
+        cmd::daily_report_import_cmd::commit_register_sd_bulk_import,
+        cmd::daily_report_import_cmd::import_ej_files,
         // CMD-08: PLU書出し
         cmd::plu_export_cmd::prepare_plu_export,
         cmd::plu_export_cmd::confirm_plu_export_saved,
@@ -1571,6 +1573,8 @@ pub fn run() {
             cmd::daily_report_import_cmd::list_daily_report_imports,
             cmd::daily_report_import_cmd::scan_register_sd,
             cmd::daily_report_import_cmd::parse_and_validate_daily_report_from_sd,
+            cmd::daily_report_import_cmd::commit_register_sd_bulk_import,
+            cmd::daily_report_import_cmd::import_ej_files,
             // CMD-08: PLU書出し
             cmd::plu_export_cmd::prepare_plu_export,
             cmd::plu_export_cmd::confirm_plu_export_saved,

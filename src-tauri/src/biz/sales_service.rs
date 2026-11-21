@@ -1847,7 +1847,7 @@ mod tests {
         for (suffix, additional) in [
             ("260323_0001", false),
             ("260324_0001", false),
-            ("260324_0002", true),
+            ("260324_0002", false),
         ] {
             let files = ["Z001", "Z002", "Z005"]
                 .into_iter()

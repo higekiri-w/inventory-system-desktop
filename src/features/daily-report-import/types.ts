@@ -2,6 +2,7 @@ import type {
   DailyReportImportResult,
   DailyReportPreviewData,
   DailyReportSdScan,
+  RegisterSdBulkResponse,
 } from "@/lib/bindings";
 import { z } from "zod";
 import type { InvokeError } from "@/lib/invoke";
@@ -28,6 +29,15 @@ export type DailyReportImportState =
   | { status: "idle" }
   | { status: "scanning" }
   | { status: "sd_list"; scan: DailyReportSdScan; scanToken: string }
+  /** 55 UI-07-D17: 「まとめて取り込む」の応答を待つ間 */
+  | { status: "bulk_importing"; scan: DailyReportSdScan; scanToken: string }
+  /** 55 UI-07-D17: 一括の結果。scan は応答を畳んだ表示で、残りがあれば同じ scan_token でもう一度押せる（BIZ-08-D7 のやり直し） */
+  | {
+      status: "bulk_result";
+      scan: DailyReportSdScan;
+      scanToken: string;
+      response: RegisterSdBulkResponse;
+    }
   | { status: "parsing"; filenames: string[]; sdOrigin?: DailyReportSdOrigin }
   | {
       status: "preview";
@@ -63,6 +73,9 @@ export type DailyReportImportAction =
   | { type: "scan_succeeded"; scan: DailyReportSdScan; scanToken: string }
   | { type: "scan_failed" }
   | { type: "sd_candidate_selected"; candidateKey: string; filenames: string[] }
+  | { type: "bulk_started" }
+  | { type: "bulk_succeeded"; response: RegisterSdBulkResponse }
+  | { type: "bulk_failed"; error: InvokeError }
   | { type: "back_to_sd_list" }
   | { type: "select_files"; filenames: string[] }
   | { type: "parse_succeeded"; preview: DailyReportPreviewData; previewToken: string }

@@ -200,6 +200,8 @@ export const commands = {
 	scanRegisterSd: (selectedPath: string | null) => typedError<RegisterSdScanResponse, CmdError>(__TAURI_INVOKE("scan_register_sd", { selectedPath })),
 	// §45.6b（CMD-12-D1）: scan の snapshot の 1 候補から preview を作る。snapshot は消さない
 	parseAndValidateDailyReportFromSd: (scanToken: string, candidateKey: string) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report_from_sd", { scanToken, candidateKey })),
+	commitRegisterSdBulkImport: (scanToken: string) => typedError<RegisterSdBulkResponse, CmdError>(__TAURI_INVOKE("commit_register_sd_bulk_import", { scanToken })),
+	importEjFiles: (files: EjFileRequest[]) => typedError<EjImportResult, CmdError>(__TAURI_INVOKE("import_ej_files", { files })),
 	/**
 	 *  PLUファイルを生成して返す。DB状態は更新しない。
 	 *
@@ -714,6 +716,8 @@ export type DailyReportSdScan = {
 	skipped_unknown_count: number,
 	// 取り込んだ精算の Z を `XZ_BKUP` へ移せなかった理由（37 §37.12、BIZ-08-D11）。None = 移す物が無い・全部移せた・片付けない
 	tidy_failure: RegisterSdTidyFailure | null,
+	// EJ の数（37 §37.10 の「§37.9 に足すもの」(A)）。snapshot の ej_files と ej_unreadable_files がどちらも空なら None
+	ej: RegisterSdEjSummary | null,
 };
 
 // 日報の紙の内容（34 §19.3a、SALES-SHEET-D1〜D6）
@@ -886,6 +890,42 @@ export type DisposalRecordSummary = {
 };
 
 export type DisposalType = "disposal" | "damage" | "other";
+
+export type EjConflict = {
+	machine_prefix: string,
+	record_no: string,
+	// その鍵の記録が保存済みか。false は同じ呼出しの中の食い違いで、どの文も保存していない
+	saved: boolean,
+};
+
+// §45.6c: 手で選んだ EJ（1 file 20MB まで）
+export type EjFileRequest = {
+	filename: string,
+	file_bytes: number[],
+};
+
+// 手順 5 の出力
+export type EjImportResult = {
+	inserted_count: number,
+	already_count: number,
+	conflict_count: number,
+	// 4 桁の欄・番号の昇順、先頭 100 件
+	conflicts: EjConflict[],
+	held_count: number,
+	unreadable_files: string[],
+	// 保存の後の欠け
+	gaps: EjNumberGap[],
+};
+
+// 番号の欠けの区間（37 §37.11）
+export type EjNumberGap = {
+	// 4 桁の欄
+	machine_prefix: string,
+	// 6 桁（先頭 0 を保つ）
+	from_no: string,
+	// 6 桁。from_no と同じなら 1 つの番号
+	to_no: string,
+};
 
 // エラー行（フロント送信 + キャッシュ兼用）
 export type ErrorRow = {
@@ -1654,6 +1694,35 @@ export type RecountReason = "undetermined_settlement" | "same_date_movement" | "
 
 // 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
 export type ReferenceType = "csv_import" | "manual_sale" | "receiving_record" | "return_record" | "disposal_record" | "stocktake" | "transfer_record";
+
+export type RegisterSdBulkItemDto = {
+	source: RegisterSdBulkSource,
+	outcome: RegisterSdBulkOutcomeDto,
+};
+
+export type RegisterSdBulkOutcomeDto = { type: "ImportedDailyReport" } & (DailyReportImportResult) | { type: "ImportedEj" } & (EjImportResult) | { type: "Skipped"; message: string } | { type: "NeedsIndividualConfirmation" } |
+// BizError に §45.7 の変換を当てた CmdError の kind と message
+{ type: "Failed"; kind: CmdErrorKind; message: string } | { type: "NotAttempted" };
+
+// §45.6c の応答（37 §37.10 の内部の型から CMD が変える）
+export type RegisterSdBulkResponse = {
+	items: RegisterSdBulkItemDto[],
+};
+
+// 項目の出所（45 §45.6c は wire にそのまま出す）
+export type RegisterSdBulkSource = { type: "DailyReport"; candidate_key: string; report_date: string | null } |
+// EJ の file 全部で 1 項目
+{ type: "Ej" };
+
+// scan の EJ の数（37 §37.10）。55 UI-07-D17 のボタンの条件と一覧の文
+export type RegisterSdEjSummary = {
+	// plan_ej_records の new_records の数（保留した記録を含まない）
+	new_count: number,
+	held_count: number,
+	conflict_count: number,
+	// ej_unreadable_files の数 + plan_ej_records の unreadable_files の数
+	unreadable_file_count: number,
+};
 
 // §45.6a の応答
 export type RegisterSdScanResponse = {

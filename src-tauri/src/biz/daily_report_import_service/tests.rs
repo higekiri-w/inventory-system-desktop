@@ -264,8 +264,9 @@ fn test_daily_report_req401_duplicate_already_imported() {
 }
 
 #[test]
-fn test_daily_report_req401_additional_confirmation_for_same_date_different_bundle() {
-    // REQ-401 / I-W3 / SPEC-SDI-D3: 同日別bundleは全件・全files/totalsのordered snapshot付き追加確認。
+fn test_daily_report_req401_same_date_different_bundle_without_confirmation() {
+    // REQ-401 / I-W3 / SPEC-SDI-D3 / BIZ-08-D8: 同日別bundleは全件・全files/totalsのordered snapshotを持ち、
+    // 精算回数のそろう束どうしは追加確認なし（NoDuplicate）。
     let (_dir, mut conn) = setup_test_db();
     let first = parse_and_validate_daily_report(&conn, valid_files()).unwrap();
     let first =
@@ -284,7 +285,7 @@ fn test_daily_report_req401_additional_confirmation_for_same_date_different_bund
     );
     let second = parse_and_validate_daily_report(&conn, second_files).unwrap();
     let second =
-        commit_daily_report_import(&mut conn, second.cached_preview, true, _dir.path()).unwrap();
+        commit_daily_report_import(&mut conn, second.cached_preview, false, _dir.path()).unwrap();
     let third = parse_and_validate_daily_report(
         &conn,
         with_settlements(
@@ -305,7 +306,7 @@ fn test_daily_report_req401_additional_confirmation_for_same_date_different_bund
     .unwrap();
     assert_eq!(
         third.preview_data.duplicate_check.status,
-        DailyReportDuplicateStatus::AdditionalImportConfirmationRequired
+        DailyReportDuplicateStatus::NoDuplicate
     );
     let summaries = &third.preview_data.duplicate_check.same_date_imports;
     assert_eq!(summaries.len(), 2);
@@ -435,7 +436,7 @@ fn test_daily_report_req401_commit_same_date_is_insert_only() {
     );
     let second = parse_and_validate_daily_report(&conn, second_files).unwrap();
     let second_result =
-        commit_daily_report_import(&mut conn, second.cached_preview, true, _dir.path()).unwrap();
+        commit_daily_report_import(&mut conn, second.cached_preview, false, _dir.path()).unwrap();
 
     assert_ne!(
         first_result.daily_report_import_id,
@@ -502,10 +503,14 @@ fn test_daily_report_req401_commit_does_not_write_sale_records_or_stock() {
 
 #[test]
 fn test_daily_report_req401_commit_additional_unconfirmed_validation_failed() {
-    // REQ-401 / I-B5 / SPEC-SDI-D3: 追加確認required + false はValidationFailed。
+    // REQ-401 / I-B5 / SPEC-SDI-D3 / BIZ-08-D8: 精算回数の無い取込みのある日は追加確認が残り、required + false はValidationFailed。
     let (_dir, mut conn) = setup_test_db();
-    let first = parse_and_validate_daily_report(&conn, valid_files()).unwrap();
-    commit_daily_report_import(&mut conn, first.cached_preview, false, _dir.path()).unwrap();
+    import(
+        &mut conn,
+        _dir.path(),
+        bundle_without_settlement("2026-03-21"),
+        false,
+    );
 
     let second_files = with_settlements(
         vec![
@@ -560,10 +565,15 @@ fn test_daily_report_req401_commit_expired_preview_import_error() {
 
 #[test]
 fn test_daily_report_req401_stale_additional_preview_same_bundle_conflicts() {
-    // REQ-401 / I-B2 / SPEC-SDI-D4: hash-first recheckでstale previewの同一bundle二重取込みを防ぐ。
+    // REQ-401 / I-B2 / SPEC-SDI-D4 / BIZ-08-D8: hash-first recheckでstale previewの同一bundle二重取込みを防ぐ。
+    // 前の取込みは精算回数の無い束（追加確認の経路を保つ）
     let (_dir, mut conn) = setup_test_db();
-    let first = parse_and_validate_daily_report(&conn, valid_files()).unwrap();
-    commit_daily_report_import(&mut conn, first.cached_preview, false, _dir.path()).unwrap();
+    import(
+        &mut conn,
+        _dir.path(),
+        bundle_without_settlement("2026-03-21"),
+        false,
+    );
 
     let second_files = with_settlements(
         vec![
@@ -612,7 +622,7 @@ fn test_daily_report_req401_stale_additional_preview_same_bundle_conflicts() {
 
 #[test]
 fn test_daily_report_req401_snapshot_change_requires_repreview_without_side_effects() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: active ID snapshot差分は副作用なしで拒否する。
+    // REQ-401 / I-W5 / SPEC-SDI-D4 / BIZ-08-D8: 確認なし（NoDuplicate）の preview でも、active ID snapshot差分は副作用なしで拒否する。
     let (_dir, mut conn) = setup_test_db();
     let first = parse_and_validate_daily_report(&conn, valid_files()).unwrap();
     commit_daily_report_import(&mut conn, first.cached_preview, false, _dir.path()).unwrap();
@@ -632,6 +642,10 @@ fn test_daily_report_req401_snapshot_change_requires_repreview_without_side_effe
         ),
     )
     .unwrap();
+    assert_eq!(
+        stale.preview_data.duplicate_check.status,
+        DailyReportDuplicateStatus::NoDuplicate
+    );
     let concurrent = parse_and_validate_daily_report(
         &conn,
         with_settlements(
@@ -650,7 +664,7 @@ fn test_daily_report_req401_snapshot_change_requires_repreview_without_side_effe
         ),
     )
     .unwrap();
-    commit_daily_report_import(&mut conn, concurrent.cached_preview, true, _dir.path()).unwrap();
+    commit_daily_report_import(&mut conn, concurrent.cached_preview, false, _dir.path()).unwrap();
     let before: i64 = conn
         .query_row("SELECT COUNT(*) FROM daily_report_imports", [], |row| {
             row.get(0)
@@ -658,8 +672,8 @@ fn test_daily_report_req401_snapshot_change_requires_repreview_without_side_effe
         .unwrap();
     let before_surface = write_surface(&conn);
 
-    let error =
-        commit_daily_report_import(&mut conn, stale.cached_preview, true, _dir.path()).unwrap_err();
+    let error = commit_daily_report_import(&mut conn, stale.cached_preview, false, _dir.path())
+        .unwrap_err();
     assert!(
         matches!(error, BizError::ImportError(ref message) if message == "同日の取込み状況が変わりました。再度プレビューしてください")
     );
@@ -674,7 +688,7 @@ fn test_daily_report_req401_snapshot_change_requires_repreview_without_side_effe
 
 #[test]
 fn test_daily_report_req401_snapshot_replace_requires_repreview_without_side_effects() {
-    // REQ-401 / I-W5 / SPEC-SDI-D4: 同件数のactive parent ID置換もexact snapshotで検出する。
+    // REQ-401 / I-W5 / SPEC-SDI-D4 / BIZ-08-D8: 確認なし（NoDuplicate）の preview でも、同件数のactive parent ID置換をexact snapshotで検出する。
     let (_dir, mut conn) = setup_test_db();
     let first = parse_and_validate_daily_report(&conn, valid_files()).unwrap();
     let first =
@@ -694,6 +708,10 @@ fn test_daily_report_req401_snapshot_replace_requires_repreview_without_side_eff
         ),
     )
     .unwrap();
+    assert_eq!(
+        stale.preview_data.duplicate_check.status,
+        DailyReportDuplicateStatus::NoDuplicate
+    );
     rollback_daily_report_import(&mut conn, first.daily_report_import_id).unwrap();
     let replacement = parse_and_validate_daily_report(
         &conn,
@@ -716,8 +734,8 @@ fn test_daily_report_req401_snapshot_replace_requires_repreview_without_side_eff
     commit_daily_report_import(&mut conn, replacement.cached_preview, false, _dir.path()).unwrap();
     let before = write_surface(&conn);
 
-    let error =
-        commit_daily_report_import(&mut conn, stale.cached_preview, true, _dir.path()).unwrap_err();
+    let error = commit_daily_report_import(&mut conn, stale.cached_preview, false, _dir.path())
+        .unwrap_err();
 
     assert!(
         matches!(error, BizError::ImportError(ref message) if message == "同日の取込み状況が変わりました。再度プレビューしてください")
@@ -790,7 +808,7 @@ fn test_daily_report_req401_rollback_keeps_same_date_sibling() {
     );
     let second = parse_and_validate_daily_report(&conn, second_files).unwrap();
     let second =
-        commit_daily_report_import(&mut conn, second.cached_preview, true, _dir.path()).unwrap();
+        commit_daily_report_import(&mut conn, second.cached_preview, false, _dir.path()).unwrap();
 
     rollback_daily_report_import(&mut conn, first.daily_report_import_id).unwrap();
 
@@ -838,7 +856,7 @@ fn test_daily_report_rollback_req401_logs_exact_selected_id_and_survives_log_fai
     )
     .unwrap();
     let second =
-        commit_daily_report_import(&mut conn, second.cached_preview, true, _dir.path()).unwrap();
+        commit_daily_report_import(&mut conn, second.cached_preview, false, _dir.path()).unwrap();
 
     conn.execute_batch(
         "CREATE TRIGGER fail_daily_rollback_log
@@ -1838,8 +1856,8 @@ fn test_req401_same_settlement_different_bytes_is_rejected() {
 }
 
 #[test]
-fn test_req401_same_date_other_settlement_still_confirms() {
-    // REQ-401 / BIZ-08-D4: 同じ日の別の精算（精算回数 6）は今どおり追加確認
+fn test_req401_same_date_other_settlement_without_confirmation() {
+    // REQ-401 / BIZ-08-D4・D8: 同じ日の別の精算（精算回数 6）は、同じ日の取込みが全部精算回数を持つので追加確認なし
     let (dir, mut conn) = setup_test_db();
     import(
         &mut conn,
@@ -1851,7 +1869,33 @@ fn test_req401_same_date_other_settlement_still_confirms() {
         parse_and_validate_daily_report(&conn, bundle("2026-03-21", "0006", "13000")).unwrap();
     assert_eq!(
         preview.preview_data.duplicate_check.status,
-        DailyReportDuplicateStatus::AdditionalImportConfirmationRequired
+        DailyReportDuplicateStatus::NoDuplicate
+    );
+}
+
+#[test]
+fn test_req401_rolled_back_null_settlement_import_does_not_confirm() {
+    // REQ-401 / BIZ-08-D8（Test Plan D5）: 精算回数の無い取込みを取り消した日は、残った精算回数のある
+    // completed だけで決まり確認なし。取り消した行は同じ日の一覧（completed だけ）に入らない
+    let (dir, mut conn) = setup_test_db();
+    import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0005", "12000"),
+        false,
+    );
+    let null_import = import(
+        &mut conn,
+        dir.path(),
+        bundle_without_settlement("2026-03-21"),
+        true,
+    );
+    rollback_daily_report_import(&mut conn, null_import).unwrap();
+    let preview =
+        parse_and_validate_daily_report(&conn, bundle("2026-03-21", "0006", "13000")).unwrap();
+    assert_eq!(
+        preview.preview_data.duplicate_check.status,
+        DailyReportDuplicateStatus::NoDuplicate
     );
 }
 
@@ -2203,7 +2247,7 @@ fn test_req401_source_filenames_accepts_missing_copy_fields() {
         "XZ\\2026\\03",
         "21A.CSV",
     );
-    import(&mut conn, &dir.path().join("app"), files, true);
+    import(&mut conn, &dir.path().join("app"), files, false);
     let preview =
         parse_and_validate_daily_report(&conn, bundle("2026-03-21", "0007", "14000")).unwrap();
     let summaries = &preview.preview_data.duplicate_check.same_date_imports;
@@ -2246,7 +2290,7 @@ fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
         &mut conn,
         dir.path(),
         bundle("2026-03-21", "0006", "13000"),
-        true,
+        false,
     );
     let other_day = import(
         &mut conn,
@@ -2258,7 +2302,7 @@ fn test_daily_report_req401_list_rows_carry_source_filenames_and_status() {
         &mut conn,
         dir.path(),
         bundle("2026-03-21", "0008", "15000"),
-        true,
+        false,
     );
     rollback_daily_report_import(&mut conn, sd).unwrap();
     // 同じ対象日の行に ID の順と逆の取込み日時を置き、取込み日時の段を ID の段と見分ける。
@@ -2351,7 +2395,7 @@ fn test_daily_report_req401_list_rows_carry_settlement_no() {
         &mut conn,
         dir.path(),
         bundle("2026-03-21", "0102", "13000"),
-        true,
+        false,
     );
     let without = sales_repo::insert_daily_report_import(
         &conn,
@@ -3714,4 +3758,833 @@ fn test_req401_scan_number_error_unreadable_names_column() {
         assert!(!reason.contains(leaked), "{leaked} in {reason}");
     }
     assert!(result.snapshot.files_by_candidate.is_empty());
+}
+
+// -----------------------------------------------------------------------
+// BIZ-08-D9: EJ の記録の取込み（37 §37.11、Test Plan E1〜E10）。EJ は合成だけ（TD-296）
+// -----------------------------------------------------------------------
+
+use crate::io::ej_parser::synthetic::{
+    file as ej_bytes, header as ej_header, item as ej_item, qty as ej_qty, totals as ej_totals,
+    NAME_A, NAME_B,
+};
+
+use crate::db::ej_repo::EjNumberGap;
+
+const EJ_AT: &str = "2030-01-02 10:15";
+
+/// 合成の取引の記録（明細 2 行、合計 500 円。first で 1 行目の金額を変えると文が変わる）
+fn ej_sale_with(at: &str, number: &str, first: i64) -> Vec<String> {
+    [
+        ej_header("", at, number),
+        vec![ej_item(NAME_A, first), ej_item(NAME_B, 500 - first)],
+        ej_totals(2, 500),
+    ]
+    .concat()
+}
+
+fn ej_sale(number: &str) -> Vec<String> {
+    ej_sale_with(EJ_AT, number, 120)
+}
+
+fn ej_lines(numbers: &[&str]) -> Vec<String> {
+    numbers.iter().flat_map(|number| ej_sale(number)).collect()
+}
+
+fn ej_file(filename: &str, sd_relative_path: Option<&str>, bytes: Vec<u8>) -> EjSourceFile {
+    EjSourceFile {
+        filename: filename.to_string(),
+        sd_relative_path: sd_relative_path.map(str::to_string),
+        bytes,
+    }
+}
+
+fn ej_saved(conn: &crate::db::DbConnection) -> Vec<(String, String)> {
+    conn.prepare("SELECT record_no, body_text FROM ej_records ORDER BY record_no")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn ej_numbers(conn: &crate::db::DbConnection) -> Vec<String> {
+    ej_saved(conn).into_iter().map(|(no, _)| no).collect()
+}
+
+#[test]
+fn test_req401_ej_shape_and_date_outliers_are_unreadable() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 1（Test Plan E1）: LF・BOM・暦に無い日時の file は名前だけ返し、1 件も入れない
+    let (dir, mut conn) = setup_test_db();
+    let good = ej_bytes(&ej_lines(&["000101", "000102"]));
+    // CR を全部外して LF だけにする（CP932 の 2 byte 目に CR は無い）
+    let lf: Vec<u8> = good.iter().copied().filter(|byte| *byte != b'\r').collect();
+    let bom = [b"\xEF\xBB\xBF".as_slice(), &good].concat();
+    let bad_date = ej_bytes(
+        &[
+            ej_sale("000103"),
+            ej_sale_with("2026-02-30 12:00", "000104", 120),
+        ]
+        .concat(),
+    );
+    let files = vec![
+        ej_file("EJ300102_0001.TXT", None, lf),
+        ej_file("EJ300102_0002.TXT", None, bom),
+        ej_file("EJ300102_0003.TXT", None, bad_date),
+    ];
+    let plan = plan_ej_records(&conn, &files).unwrap();
+    assert_eq!(
+        plan.unreadable_files,
+        [
+            "EJ300102_0001.TXT",
+            "EJ300102_0002.TXT",
+            "EJ300102_0003.TXT"
+        ]
+    );
+    assert!(plan.new_records.is_empty());
+    let result = import_ej_records(&mut conn, files, dir.path()).unwrap();
+    assert_eq!(result.inserted_count, 0);
+    assert_eq!(result.unreadable_files.len(), 3);
+    assert!(ej_saved(&conn).is_empty());
+}
+
+#[test]
+fn test_req401_ej_last_record_held_by_name_rule() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 2（Test Plan E2・E3）: 連番の無い名前は出所に依らず最後を保留、
+    // 連番つきは最後まで入り、最終改行の無い file の最後は保留
+    let lines = ej_lines(&["000101", "000102"]);
+    for file in [
+        ej_file("EJ300102.TXT", Some("XZ\\EJ300102.TXT"), ej_bytes(&lines)),
+        ej_file("EJ300102.TXT", None, ej_bytes(&lines)),
+        ej_file("ej300102.txt", None, ej_bytes(&lines)),
+    ] {
+        let (dir, mut conn) = setup_test_db();
+        let result = import_ej_records(&mut conn, vec![file], dir.path()).unwrap();
+        assert_eq!((result.inserted_count, result.held_count), (1, 1));
+        assert_eq!(ej_numbers(&conn), ["000101"]);
+    }
+    let (dir, mut conn) = setup_test_db();
+    let fixed = ej_file("EJ300102_0001.TXT", None, ej_bytes(&lines));
+    let result = import_ej_records(&mut conn, vec![fixed], dir.path()).unwrap();
+    assert_eq!((result.inserted_count, result.held_count), (2, 0));
+
+    let (dir, mut conn) = setup_test_db();
+    let mut cut = ej_bytes(&lines);
+    cut.truncate(cut.len() - 2);
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file("EJ300102_0002.TXT", None, cut)],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!((result.inserted_count, result.held_count), (1, 1));
+    assert!(result.unreadable_files.is_empty());
+}
+
+#[test]
+fn test_req401_ej_conflicts_keep_saved_and_store_nothing() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 3 (a)・(d)（Test Plan E4・E5）
+    // 2 file の同じ鍵の別の文 → saved false、どちらも入らない
+    let (dir, mut conn) = setup_test_db();
+    let result = import_ej_records(
+        &mut conn,
+        vec![
+            ej_file("EJ300102_0001.TXT", None, ej_bytes(&ej_sale("000101"))),
+            ej_file(
+                "EJ300103_0001.TXT",
+                None,
+                ej_bytes(&ej_sale_with(EJ_AT, "000101", 220)),
+            ),
+        ],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(result.conflict_count, 1);
+    assert_eq!(
+        result.conflicts,
+        vec![EjConflict {
+            machine_prefix: "0001".to_string(),
+            record_no: "000101".to_string(),
+            saved: false
+        }]
+    );
+    assert!(ej_saved(&conn).is_empty());
+
+    // 保存済みと別の文 → saved true、保存済みを上書きしない
+    let (dir, mut conn) = setup_test_db();
+    let first = ej_file("EJ300102_0001.TXT", None, ej_bytes(&ej_sale("000101")));
+    import_ej_records(&mut conn, vec![first], dir.path()).unwrap();
+    let before = ej_saved(&conn);
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0002.TXT",
+            None,
+            ej_bytes(&ej_sale_with(EJ_AT, "000101", 220)),
+        )],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!((result.conflict_count, result.inserted_count), (1, 0));
+    assert!(result.conflicts[0].saved);
+    assert_eq!(ej_saved(&conn), before);
+
+    // 1 file に同じ鍵 2 回（文が同じでも）→ conflict、入らない
+    let (dir, mut conn) = setup_test_db();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            None,
+            ej_bytes(&ej_lines(&["000101", "000101"])),
+        )],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!((result.conflict_count, result.inserted_count), (1, 0));
+
+    // 保留だけで保存済みと違う → (d)。conflict にしない
+    let (dir, mut conn) = setup_test_db();
+    import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            None,
+            ej_bytes(&ej_lines(&["000101", "000102"])),
+        )],
+        dir.path(),
+    )
+    .unwrap();
+    let growing = [ej_sale("000101"), ej_sale_with(EJ_AT, "000102", 220)].concat();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file("EJ300102.TXT", None, ej_bytes(&growing))],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            result.conflict_count,
+            result.held_count,
+            result.already_count
+        ),
+        (0, 1, 1)
+    );
+}
+
+#[test]
+fn test_req401_ej_held_record_enters_when_file_grows() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 3 (b)〜(d)（Test Plan E6）: 1 回目は保留、伸びた 2 回目に (c)、3 回目は (b)
+    let (dir, mut conn) = setup_test_db();
+    let read = |conn: &mut crate::db::DbConnection, numbers: &[&str]| {
+        import_ej_records(
+            conn,
+            vec![ej_file(
+                "EJ300102.TXT",
+                Some("XZ\\EJ300102.TXT"),
+                ej_bytes(&ej_lines(numbers)),
+            )],
+            &dir.path().join("app"),
+        )
+        .unwrap()
+    };
+    let first = read(&mut conn, &["000101", "000102"]);
+    assert_eq!((first.inserted_count, first.held_count), (1, 1));
+    let second = read(&mut conn, &["000101", "000102", "000103"]);
+    assert_eq!(
+        (
+            second.inserted_count,
+            second.already_count,
+            second.held_count
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(ej_numbers(&conn), ["000101", "000102"]);
+    let third = read(&mut conn, &["000101", "000102", "000103"]);
+    assert_eq!(
+        (third.inserted_count, third.already_count, third.held_count),
+        (0, 2, 1)
+    );
+}
+
+#[test]
+fn test_req401_ej_copy_failure_inserts_nothing() {
+    // REQ-401 / BIZ-08-D5・D9 §37.11 手順 4（Test Plan E7）: 写しを書けなければ DB を変えない
+    let (dir, mut conn) = setup_test_db();
+    let app = dir.path().join("app-as-file");
+    std::fs::write(&app, b"x").unwrap();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            Some("XZ_BKUP\\EJ300102_0001.TXT"),
+            ej_bytes(&ej_lines(&["000101"])),
+        )],
+        &app,
+    );
+    assert!(matches!(result, Err(BizError::SourceCopyFailed(_))));
+    assert!(ej_saved(&conn).is_empty());
+    // 写しが書ければ同じ file が入り、写しは SD の相対 path の下
+    let app = dir.path().join("app");
+    import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            Some("XZ_BKUP\\EJ300102_0001.TXT"),
+            ej_bytes(&ej_lines(&["000101"])),
+        )],
+        &app,
+    )
+    .unwrap();
+    assert_eq!(
+        copies_under(&app),
+        ["pos-sources/casio-sr-s4000/sd/XZ_BKUP/EJ300102_0001.TXT"]
+    );
+}
+
+#[test]
+fn test_req401_ej_second_insert_failure_keeps_nothing() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 4（Final round 1 #7）: 2 件目の INSERT だけが失敗しても 1 件目も残らない（1 つの TX）
+    let (dir, mut conn) = setup_test_db();
+    conn.execute_batch(
+        "CREATE TRIGGER reject_second BEFORE INSERT ON ej_records WHEN NEW.record_no = '000102'
+         BEGIN SELECT RAISE(ABORT, 'synthetic'); END;",
+    )
+    .unwrap();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            None,
+            ej_bytes(&ej_lines(&["000101", "000102"])),
+        )],
+        dir.path(),
+    );
+    assert!(
+        matches!(result, Err(BizError::DatabaseError(_))),
+        "{result:?}"
+    );
+    assert!(ej_saved(&conn).is_empty());
+}
+
+fn e8_file() -> EjSourceFile {
+    ej_file("EJ300102_0001.TXT", None, ej_bytes(&ej_lines(&["000101"])))
+}
+
+/// E8 の差込み: plan の後・TX の中の照合の前に同じ記録を入れる
+fn e8_insert_same_record(conn: &crate::db::DbConnection) {
+    let plan = plan_ej_records(conn, &[e8_file()]).unwrap();
+    crate::db::ej_repo::insert_ej_record(conn, &plan.new_records[0], "2030-01-02T10:20:00")
+        .unwrap();
+}
+
+#[test]
+fn test_req401_ej_rechecks_saved_texts_in_tx() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 4（Test Plan E8）: plan の後に入った同じ記録は TX の中で (b) になる
+    let (dir, mut conn) = setup_test_db();
+    let _hook = ej::hook::arm(e8_insert_same_record);
+    let result = import_ej_records(&mut conn, vec![e8_file()], dir.path()).unwrap();
+    assert_eq!((result.inserted_count, result.already_count), (0, 1));
+    assert_eq!(ej_numbers(&conn), ["000101"]);
+}
+
+#[test]
+fn test_req401_ej_gaps_and_log_without_numbers() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 5（Test Plan E9）: 欠けは区間、ej_import のログは件数だけ
+    let (dir, mut conn) = setup_test_db();
+    let result = import_ej_records(
+        &mut conn,
+        vec![ej_file(
+            "EJ300102_0001.TXT",
+            None,
+            ej_bytes(&ej_lines(&["000101", "000102", "000105"])),
+        )],
+        dir.path(),
+    )
+    .unwrap();
+    assert_eq!(
+        result.gaps,
+        vec![EjNumberGap {
+            machine_prefix: "0001".to_string(),
+            from_no: "000103".to_string(),
+            to_no: "000104".to_string(),
+        }]
+    );
+    let (summary, detail): (String, String) = conn
+        .query_row(
+            "SELECT summary, detail_json FROM operation_logs WHERE operation_type = 'ej_import'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert!(detail.contains("\"inserted_count\":3"), "{detail}");
+    for text in [&summary, &detail] {
+        for forbidden in ["000101", "000105", NAME_A, "EJ300102"] {
+            assert!(!text.contains(forbidden), "{text}");
+        }
+    }
+}
+
+#[test]
+fn test_req401_ej_saved_body_text_matches_expected_exactly() {
+    // REQ-401 / BIZ-08-D9 §37.11 手順 2（Test Plan E10）: 見出し 2 行・行末の空白・"\n" のつなぎを保った文と、
+    // 同じ行の mode・kind・total_amount。数量の行は 24 バイトまで右が空白なので、本文の行の行末の空白も見る
+    let (dir, mut conn) = setup_test_db();
+    let lines = [
+        ej_header("", EJ_AT, "000101"),
+        vec![ej_qty(2, "60"), ej_item(NAME_A, 120), ej_item(NAME_B, 380)],
+        ej_totals(3, 500),
+    ]
+    .concat();
+    import_ej_records(
+        &mut conn,
+        vec![ej_file("EJ300102_0001.TXT", None, ej_bytes(&lines))],
+        dir.path(),
+    )
+    .unwrap();
+    let expected = [
+        "     2030-01-02 10:15   ".to_string(),
+        format!("{}0001-000101", " ".repeat(13)),
+        format!("  2 点   @60{}", " ".repeat(12)),
+        format!("ｺﾞｳｾｲｱﾒ{}\\120", " ".repeat(13)),
+        format!("ｶｸｳｸｯｷｰ{}\\380", " ".repeat(13)),
+        "-".repeat(24),
+        format!("{}3 点", " ".repeat(20)),
+        format!("対象計{}\\500", " ".repeat(14)),
+        format!("内税{}\\45", " ".repeat(17)),
+        format!("合  計{}￥５００", " ".repeat(10)),
+        format!("お預り{}￥１，０００", " ".repeat(6)),
+        format!("お  釣{}￥５００", " ".repeat(10)),
+    ]
+    .join("\n");
+    let row: (String, String, String, Option<i64>) = conn
+        .query_row(
+            "SELECT body_text, mode, kind, total_amount FROM ej_records",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(row.0, expected);
+    assert_eq!(
+        (row.1.as_str(), row.2.as_str(), row.3),
+        ("normal", "sale", Some(500))
+    );
+}
+
+// -----------------------------------------------------------------------
+// BIZ-08-D7: SD の締めの一括取込みと scan の EJ（37 §37.10、Test Plan B1〜B5・C1〜C3）
+// -----------------------------------------------------------------------
+
+fn snapshot_of(
+    bundles: Vec<(&str, Vec<DailyReportInputFile>)>,
+    ej_files: Vec<SdSourceFile>,
+) -> DailyReportSdScanSnapshot {
+    DailyReportSdScanSnapshot {
+        created_at: Instant::now(),
+        files_by_candidate: bundles
+            .into_iter()
+            .map(|(key, files)| (key.to_string(), files))
+            .collect(),
+        ej_files,
+        ej_unreadable_files: Vec::new(),
+    }
+}
+
+/// 項目ごとの (日報の対象日〈EJ は "EJ"〉, outcome の種類)
+fn bulk_outline(result: &RegisterSdBulkResult) -> Vec<(String, &'static str)> {
+    result
+        .items
+        .iter()
+        .map(|item| {
+            let source = match &item.source {
+                RegisterSdBulkSource::DailyReport { report_date, .. } => {
+                    report_date.clone().unwrap_or_else(|| "?".to_string())
+                }
+                RegisterSdBulkSource::Ej => "EJ".to_string(),
+            };
+            let outcome = match &item.outcome {
+                RegisterSdBulkOutcome::ImportedDailyReport(_) => "imported",
+                RegisterSdBulkOutcome::ImportedEj(_) => "imported_ej",
+                RegisterSdBulkOutcome::Skipped { .. } => "skipped",
+                RegisterSdBulkOutcome::NeedsIndividualConfirmation => "confirm",
+                RegisterSdBulkOutcome::Failed(_) => "failed",
+                RegisterSdBulkOutcome::NotAttempted => "not_attempted",
+            };
+            (source, outcome)
+        })
+        .collect()
+}
+
+fn sd_ej(relative: &str, numbers: &[&str]) -> SdSourceFile {
+    SdSourceFile {
+        sd_relative_path: relative.to_string(),
+        bytes: ej_bytes(&ej_lines(numbers)),
+    }
+}
+
+#[test]
+fn test_req401_bulk_imports_bundles_oldest_settlement_first() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 1 (a)（Test Plan B1）: 前の日・精算 5・精算 6 の順。parse の失敗は先頭で Skipped
+    let (dir, mut conn) = setup_test_db();
+    let snapshot = snapshot_of(
+        vec![
+            (
+                "six",
+                as_sd_files(
+                    bundle("2026-03-21", "0006", "13000"),
+                    "XZ\\2026\\03",
+                    "21B.CSV",
+                ),
+            ),
+            (
+                "five",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12000"),
+                    "XZ\\2026\\03",
+                    "21A.CSV",
+                ),
+            ),
+            (
+                "prev",
+                as_sd_files(
+                    bundle("2026-03-20", "0004", "11000"),
+                    "XZ\\2026\\03",
+                    "20 .CSV",
+                ),
+            ),
+            (
+                "bad",
+                as_sd_files(
+                    vec![
+                        z001_with_three_column_row("2026-03-21"),
+                        z002("2026-03-21"),
+                        z005("2026-03-21"),
+                    ],
+                    "XZ\\2026\\03",
+                    "21C.CSV",
+                ),
+            ),
+        ],
+        Vec::new(),
+    );
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, dir.path()).unwrap();
+    assert_eq!(
+        bulk_outline(&result),
+        [
+            ("2026-03-21".to_string(), "skipped"),
+            ("2026-03-20".to_string(), "imported"),
+            ("2026-03-21".to_string(), "imported"),
+            ("2026-03-21".to_string(), "imported"),
+        ]
+    );
+    let settlements: Vec<Option<i64>> = conn
+        .prepare("SELECT settlement_no FROM daily_report_imports ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(settlements, [Some(4), Some(5), Some(6)]);
+}
+
+#[test]
+fn test_req401_bulk_same_settlement_prefers_xz_every_time() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 1 の「同じ鍵の順」（Test Plan B2）: XZ と XZ_BKUP の同じ精算の別 bytes は
+    // 実行ごとに変わらず XZ が入り、XZ_BKUP は D4 で Skipped
+    for _ in 0..100 {
+        let (dir, mut conn) = setup_test_db();
+        let snapshot = snapshot_of(
+            vec![
+                (
+                    "a-backup",
+                    as_sd_files(
+                        bundle("2026-03-21", "0005", "12001"),
+                        "XZ_BKUP\\2026\\03",
+                        "21 _0001.CSV",
+                    ),
+                ),
+                (
+                    "z-sales",
+                    as_sd_files(
+                        bundle("2026-03-21", "0005", "12000"),
+                        "XZ\\2026\\03",
+                        "21 .CSV",
+                    ),
+                ),
+            ],
+            Vec::new(),
+        );
+        let result = commit_register_sd_bulk_import(&mut conn, &snapshot, dir.path()).unwrap();
+        let keys: Vec<&str> = result
+            .items
+            .iter()
+            .map(|item| match &item.source {
+                RegisterSdBulkSource::DailyReport { candidate_key, .. } => candidate_key.as_str(),
+                RegisterSdBulkSource::Ej => "EJ",
+            })
+            .collect();
+        assert_eq!(keys, ["z-sales", "a-backup"]);
+        assert!(matches!(
+            &result.items[1].outcome,
+            RegisterSdBulkOutcome::Skipped { message } if message == D4_TEXT
+        ));
+    }
+}
+
+#[test]
+fn test_req401_bulk_lowercase_xz_is_the_sales_folder() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 1 の「同じ鍵の順」（Final round 1 #1）: IO-09 は小文字の `xz` も売上の folder と
+    // して受けるので、`xz` と `XZ_BKUP` の同じ精算の別 bytes は `xz` の側が入る
+    let (dir, mut conn) = setup_test_db();
+    let snapshot = snapshot_of(
+        vec![
+            (
+                "a-backup",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12001"),
+                    "XZ_BKUP\\2026\\03",
+                    "21 _0001.CSV",
+                ),
+            ),
+            (
+                "z-sales",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12000"),
+                    "xz\\2026\\03",
+                    "21 .CSV",
+                ),
+            ),
+        ],
+        Vec::new(),
+    );
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, dir.path()).unwrap();
+    let RegisterSdBulkSource::DailyReport { candidate_key, .. } = &result.items[0].source else {
+        panic!("{:?}", result.items[0].source);
+    };
+    assert_eq!(candidate_key, "z-sales");
+    assert!(matches!(
+        &result.items[0].outcome,
+        RegisterSdBulkOutcome::ImportedDailyReport(imported) if imported.gross_amount == Some(12000)
+    ));
+    assert!(matches!(
+        &result.items[1].outcome,
+        RegisterSdBulkOutcome::Skipped { message } if message == D4_TEXT
+    ));
+}
+
+#[test]
+fn test_req401_bulk_business_rejection_continues() {
+    // REQ-401 / BIZ-08-D7（Test Plan B3）: D4 で拒まれた束の後の束と EJ も入る
+    let (dir, mut conn) = setup_test_db();
+    import(
+        &mut conn,
+        dir.path(),
+        bundle("2026-03-21", "0005", "12000"),
+        false,
+    );
+    let snapshot = snapshot_of(
+        vec![
+            (
+                "d4",
+                as_sd_files(
+                    bundle("2026-03-21", "0005", "12001"),
+                    "XZ\\2026\\03",
+                    "21 .CSV",
+                ),
+            ),
+            (
+                "next",
+                as_sd_files(
+                    bundle("2026-03-22", "0006", "13000"),
+                    "XZ\\2026\\03",
+                    "22 .CSV",
+                ),
+            ),
+        ],
+        vec![sd_ej("XZ_BKUP\\EJ260322_0001.TXT", &["000101"])],
+    );
+    let app = dir.path().join("app");
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, &app).unwrap();
+    assert_eq!(
+        bulk_outline(&result),
+        [
+            ("2026-03-21".to_string(), "skipped"),
+            ("2026-03-22".to_string(), "imported"),
+            ("EJ".to_string(), "imported_ej"),
+        ]
+    );
+    assert_eq!(ej_numbers(&conn), ["000101"]);
+}
+
+#[test]
+fn test_req401_bulk_stops_at_commit_stage_failure() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 2・5（Test Plan B4）: 2 つ目の束の写しの失敗で止まり、後と EJ は NotAttempted、
+    // 1 つ目は残る
+    let (dir, mut conn) = setup_test_db();
+    let app = dir.path().join("app");
+    // 2 つ目の束の写しの folder の位置に file を置いて、写しを失敗させる
+    let blocked = app.join("pos-sources/casio-sr-s4000/sd/XZ/2026/04");
+    std::fs::create_dir_all(blocked.parent().unwrap()).unwrap();
+    std::fs::write(&blocked, b"x").unwrap();
+    let snapshot = snapshot_of(
+        vec![
+            (
+                "first",
+                as_sd_files(
+                    bundle("2026-03-31", "0005", "12000"),
+                    "XZ\\2026\\03",
+                    "31 .CSV",
+                ),
+            ),
+            (
+                "second",
+                as_sd_files(
+                    bundle("2026-04-01", "0006", "13000"),
+                    "XZ\\2026\\04",
+                    "01 .CSV",
+                ),
+            ),
+            (
+                "third",
+                as_sd_files(
+                    bundle("2026-04-02", "0007", "14000"),
+                    "XZ\\2026\\03",
+                    "02 .CSV",
+                ),
+            ),
+        ],
+        vec![sd_ej("XZ_BKUP\\EJ260402_0001.TXT", &["000101"])],
+    );
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, &app).unwrap();
+    assert_eq!(
+        bulk_outline(&result),
+        [
+            ("2026-03-31".to_string(), "imported"),
+            ("2026-04-01".to_string(), "failed"),
+            ("2026-04-02".to_string(), "not_attempted"),
+            ("EJ".to_string(), "not_attempted"),
+        ]
+    );
+    assert!(matches!(
+        result.items[1].outcome,
+        RegisterSdBulkOutcome::Failed(BizError::SourceCopyFailed(_))
+    ));
+    assert_eq!(count_rows(&conn, "daily_report_imports"), 1);
+    assert!(ej_saved(&conn).is_empty());
+}
+
+#[test]
+fn test_req401_bulk_needs_individual_confirmation_for_null_settlement_day() {
+    // REQ-401 / BIZ-08-D8（Test Plan B5）: 精算回数の無い取込みのある日の束は入れず、1 件ずつの確認へ
+    let (dir, mut conn) = setup_test_db();
+    import(
+        &mut conn,
+        dir.path(),
+        bundle_without_settlement("2026-03-21"),
+        false,
+    );
+    let snapshot = snapshot_of(
+        vec![(
+            "k",
+            as_sd_files(
+                bundle("2026-03-21", "0006", "13000"),
+                "XZ\\2026\\03",
+                "21 .CSV",
+            ),
+        )],
+        Vec::new(),
+    );
+    let result = commit_register_sd_bulk_import(&mut conn, &snapshot, dir.path()).unwrap();
+    assert_eq!(
+        bulk_outline(&result),
+        [("2026-03-21".to_string(), "confirm")]
+    );
+    assert_eq!(count_rows(&conn, "daily_report_imports"), 1);
+}
+
+#[test]
+fn test_req401_bulk_ej_log_counts_scan_unreadable_files() {
+    // REQ-401 / BIZ-08-D7 §37.10 手順 4・BIZ-08-D9 §37.11 手順 5（Final round 1 #6）: scan で読めなかった EJ も、
+    // 結果と同じ数で `ej_import` の操作ログの unreadable_file_count に入る
+    let (dir, mut conn) = setup_test_db();
+    let mut snapshot = snapshot_of(
+        Vec::new(),
+        vec![sd_ej("XZ_BKUP\\EJ260322_0001.TXT", &["000101"])],
+    );
+    snapshot.ej_unreadable_files = vec!["EJ260320_0001.TXT".to_string()];
+    let result =
+        commit_register_sd_bulk_import(&mut conn, &snapshot, &dir.path().join("app")).unwrap();
+    let RegisterSdBulkOutcome::ImportedEj(ej) = &result.items[0].outcome else {
+        panic!("{:?}", result.items[0].outcome);
+    };
+    assert_eq!(ej.unreadable_files, ["EJ260320_0001.TXT"]);
+    let detail: String = conn
+        .query_row(
+            "SELECT detail_json FROM operation_logs WHERE operation_type = 'ej_import'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(detail.contains("\"unreadable_file_count\":1"), "{detail}");
+}
+
+#[test]
+fn test_req401_scan_reads_ej_and_names_unreadable_files() {
+    // REQ-401 / 37 §37.10 の「§37.9 に足すもの」(A)（Test Plan C1・C3）: TooLarge の EJ は名前と数 1、
+    // 数は plan_ej_records と同じ（新しい控えに保留を足さない）
+    let (dir, conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    put_sd(
+        &root,
+        "XZ\\EJ260321.TXT",
+        &ej_bytes(&ej_lines(&["000101", "000102", "000103"])),
+    );
+    put_sd(
+        &root,
+        "XZ_BKUP\\EJ260320_0001.TXT",
+        &vec![b' '; constants::CSV_IMPORT_FILE_SIZE_LIMIT + 1],
+    );
+    let result = scan_selected(&conn, &root, day("2026-03-25")).unwrap();
+    assert_eq!(result.snapshot.ej_unreadable_files, ["EJ260320_0001.TXT"]);
+    assert_eq!(result.snapshot.ej_files.len(), 1);
+    let plan = plan_ej_records(
+        &conn,
+        &[ej_file(
+            "EJ260321.TXT",
+            Some("XZ\\EJ260321.TXT"),
+            result.snapshot.ej_files[0].bytes.clone(),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        result.scan.ej,
+        Some(RegisterSdEjSummary {
+            new_count: plan.new_records.len() as i64,
+            held_count: plan.held_count,
+            conflict_count: 0,
+            unreadable_file_count: 1,
+        })
+    );
+    assert_eq!((plan.new_records.len(), plan.held_count), (2, 1));
+}
+
+#[test]
+fn test_req401_scan_without_ej_has_no_ej_item() {
+    // REQ-401 / 37 §37.10 手順 1 (c)（Test Plan C2）: EJ の無い SD は ej が None で、一括の結果に EJ の項目が無い
+    let (dir, mut conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    put_bundle(
+        &root,
+        "XZ\\2026\\03",
+        "21 .CSV",
+        &bundle("2026-03-21", "0005", "12000"),
+    );
+    let result = scan_selected(&conn, &root, day("2026-03-25")).unwrap();
+    assert_eq!(result.scan.ej, None);
+    let bulk = commit_register_sd_bulk_import(&mut conn, &result.snapshot, &dir.path().join("app"))
+        .unwrap();
+    assert_eq!(
+        bulk_outline(&bulk),
+        [("2026-03-21".to_string(), "imported")]
+    );
 }

@@ -306,7 +306,7 @@ pub fn read_register_sd_file(
     let real = inside_root(&root_real, &joined, relative_path)?;
     let file = File::open(&real).map_err(|error| io_error(relative_path, &error))?;
     let bytes = read_limited(file, max_bytes, relative_path)?;
-    let shape = measure_shape(&bytes);
+    let shape = measure_register_sd_shape(&bytes);
     Ok(RegisterSdFile {
         relative_path: relative_path.to_string(),
         bytes,
@@ -351,8 +351,8 @@ fn read_limited(
     Ok(bytes)
 }
 
-/// 29 §29.7.6 手順 3（IO-09-D4）: 測るだけで、直さない
-fn measure_shape(bytes: &[u8]) -> RegisterSdShape {
+/// 29 §29.7.6 手順 3（IO-09-D4）: 測るだけで、直さない。BIZ-08 §37.11 手順 1 の EJ の形の検査も共用する
+pub fn measure_register_sd_shape(bytes: &[u8]) -> RegisterSdShape {
     let decoded = encoding_rs::SHIFT_JIS.decode_without_bom_handling_and_without_replacement(bytes);
     let mut crlf_only = decoded
         .as_ref()

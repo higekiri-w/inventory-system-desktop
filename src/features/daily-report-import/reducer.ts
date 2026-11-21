@@ -1,8 +1,44 @@
+import type { DailyReportSdScan, RegisterSdBulkResponse } from "@/lib/bindings";
 import type { DailyReportImportAction, DailyReportImportState, DailyReportSdOrigin } from "./types";
 
 /** SD の一覧の状態（UI-07-D15 (4)・(5)） */
 function sdList(origin: DailyReportSdOrigin): DailyReportImportState {
   return { status: "sd_list", scan: origin.scan, scanToken: origin.scanToken };
+}
+
+/**
+ * 一括の応答を同じ scan の表示に畳む（55 UI-07-D17。読み直さない。UI-07-D15 (6) と同じく CMD の snapshot は替えない）:
+ * 入った日報の束を取込み済みに、EJ が入れば EJ の数を結果の数に（新しい控えは 0）。
+ * 次の一括は畳んだ scan を引き継ぐので、印は累積する
+ */
+function foldBulkResponse(
+  scan: DailyReportSdScan,
+  response: RegisterSdBulkResponse,
+): DailyReportSdScan {
+  const imported = new Set(
+    response.items.flatMap((item) =>
+      item.source.type === "DailyReport" && item.outcome.type === "ImportedDailyReport"
+        ? [item.source.candidate_key]
+        : [],
+    ),
+  );
+  const ej = response.items
+    .map((item) => item.outcome)
+    .find((outcome) => outcome.type === "ImportedEj");
+  return {
+    ...scan,
+    candidates: scan.candidates.map((candidate) =>
+      imported.has(candidate.candidate_key) ? { ...candidate, status: "Imported" } : candidate,
+    ),
+    ej: ej
+      ? {
+          new_count: 0,
+          held_count: ej.held_count,
+          conflict_count: ej.conflict_count,
+          unreadable_file_count: ej.unreadable_files.length,
+        }
+      : scan.ej,
+  };
 }
 
 export function dailyReportImportReducer(
@@ -25,7 +61,11 @@ export function dailyReportImportReducer(
       if (action.type === "scan_failed") return { status: "idle" };
       return state;
     case "sd_list":
+    case "bulk_result":
       if (action.type === "scan_started") return { status: "scanning" };
+      if (action.type === "bulk_started") {
+        return { status: "bulk_importing", scan: state.scan, scanToken: state.scanToken };
+      }
       if (action.type === "sd_candidate_selected") {
         return {
           status: "parsing",
@@ -35,6 +75,25 @@ export function dailyReportImportReducer(
             scanToken: state.scanToken,
             candidateKey: action.candidateKey,
           },
+        };
+      }
+      return state;
+    case "bulk_importing":
+      if (action.type === "bulk_succeeded") {
+        return {
+          status: "bulk_result",
+          scan: foldBulkResponse(state.scan, action.response),
+          scanToken: state.scanToken,
+          response: action.response,
+        };
+      }
+      // command の失敗（scan の期限切れ等）は一覧へ戻す（項目の失敗は応答の中）
+      if (action.type === "bulk_failed") {
+        return {
+          status: "error",
+          error: action.error,
+          recoverTo: "sd_list",
+          previousState: { status: "sd_list", scan: state.scan, scanToken: state.scanToken },
         };
       }
       return state;

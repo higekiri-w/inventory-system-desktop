@@ -242,10 +242,10 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - Z004商品別CSV完了取消し（取込みの結果の画面の「取り消す」と CSV取込みの詳細の「この取込みを取り消す」の 2 つの入口）→ 共通の確認が CMD-07 preview_rollback_csv_import で取り消した後のようすを読み、確定で CMD-07 rollback_csv_import（55 UI-07-D18）
 
 **【利用者操作フロー】**
-1. 既定タブ「日報取込み」で「SD から読む」を押し（CMD-12 scan_register_sd）、読み終えたら SD をレジへ戻す案内と精算の一覧を見て、「取り込めます」の精算を選ぶ（CMD-12 parse_and_validate_daily_report_from_sd、D-111、UI-07-D15）。SD が読めない・過去の分は予備の「ファイルを選んで取り込む」で Z001/Z002/Z005 を 1 つずつ選ぶ（UI-07-D16。dialog の path を `source_path` で送り、SD の上の file なら BIZ-08 が SD の入力として扱う）
+1. 既定タブ「日報取込み」で「SD から読む」を押し（CMD-12 scan_register_sd）、読み終えたら SD をレジへ戻す案内と精算の一覧を見る（D-111、UI-07-D15）。日々の主操作と、行の「確認する」（CMD-12 parse_and_validate_daily_report_from_sd）の使いどころは 55 UI-07-D17 に従う。SD が読めない・過去の分は予備の「ファイルを選んで取り込む」で Z001/Z002/Z005 を 1 つずつ選ぶ（UI-07-D16。dialog の path を `source_path` で送り、SD の上の file なら BIZ-08 が SD の入力として扱う）
 2. プレビュー表示（対象日、読み込む3ファイル、総売上/純売上、支払集計、部門別集計、警告）
 3. 部門未対応warningは取り込めるが、商品別・在庫引落しには使われないことを表示する
-4. 重複チェック結果（同一bundle取込み済み→ブロック、同じ精算を別のファイルから取込み済み→ブロック〈BIZ-08-D4〉、同日別bundle→既存全件summaryを示す追加確認）
+4. 重複チェック結果（同一bundle取込み済み→ブロック、同じ精算を別のファイルから取込み済み→ブロック〈BIZ-08-D4〉、同日別bundle→追加確認が要るかは BIZ-08-D8〈37 §37.10〉に従い、要るときは既存全件summaryを示す）
 5. 「取り込む」で確定 → 実行中はボタンdisabled → 結果サマリ
 6. PLU登録後の商品別売上・`pos_stock_sync`在庫増減は「商品別CSV取込み（Z004）」トラックを使う（IO-02 は店舗採取layout Aを受理する）
 

@@ -8,7 +8,7 @@
 - Z004 の取込みの machine_no・settlement_no: [POS](db-design/pos-tables.md)。
 - 並びの鍵（`business_date`・`phase`・`settlement_no`）・計数の表（`stock_counts`）・求め直し・棚卸し・移行: [tracking](db-design/tracking-system-tables.md)。
 
-EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）: [POS](db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」。
+EJ の記録の文を持つ表（`ej_records`、D-121、migration v14）: [POS](db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」。
 
 `products.stock_quantity` は記録から求め直した写しで、書くのは BIZ の求め直しの関数だけ（D-051 の原則、D-118）。migration は棚卸しか Z004 の取込みを持つ DB では止まり（開発・試験 DB はリリースの前まで作り直してよい。D-123）、持たない DB では列と表を足して既存の movement の鍵を埋め、写しを求め直す（(a) の migration v9 で実装済み。SQL・CHECK / FK / index・故障注入の試験は 22 §19 のテスト）。
 
@@ -62,7 +62,7 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 | マスタ | [db-design/master-tables.md](db-design/master-tables.md) | products, product_jan_aliases（proposed、D-122）, departments, suppliers |
 | PLU slot | [db-design/plu-tables.md](db-design/plu-tables.md) | plu_slots、PLU snapshot 用 app_settings key |
 | トランザクション | [db-design/transaction-tables.md](db-design/transaction-tables.md) | receiving_records/items, return_records/items, manual_sales/items, disposal_records/items, transfer_records/items |
-| POS連携 | [db-design/pos-tables.md](db-design/pos-tables.md) | csv_imports, csv_import_errors, daily_report_imports, daily_report_summary_lines, daily_report_payment_lines, daily_report_department_lines, B-1/B-2パース仕様, sale_records |
+| POS連携 | [db-design/pos-tables.md](db-design/pos-tables.md) | csv_imports, csv_import_errors, daily_report_imports, daily_report_summary_lines, daily_report_payment_lines, daily_report_department_lines, B-1/B-2パース仕様, sale_records, ej_records |
 | 在庫追跡・棚卸し・システム | [db-design/tracking-system-tables.md](db-design/tracking-system-tables.md) | inventory_movements, price_history, stocktakes/items, stock_counts, operation_logs, app_settings |
 
 ---
