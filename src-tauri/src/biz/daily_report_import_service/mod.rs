@@ -1,6 +1,8 @@
 //! BIZ-08: 日報取込みパイプライン
 
+mod bulk;
 mod commit;
+mod ej;
 mod list;
 mod parse;
 mod rollback;
@@ -11,7 +13,13 @@ mod tidy;
 mod tests;
 
 #[allow(unused_imports)]
+pub use bulk::commit_register_sd_bulk_import;
+#[allow(unused_imports)]
 pub use commit::commit_daily_report_import;
+#[allow(unused_imports)]
+pub use ej::{
+    import_ej_records, plan_ej_records, EjConflict, EjImportPlan, EjImportResult, EjSourceFile,
+};
 #[allow(unused_imports)]
 pub use list::list_daily_report_imports;
 #[allow(unused_imports)]
@@ -181,6 +189,69 @@ pub struct DailyReportSdScan {
     pub skipped_unknown_count: i64,
     /// 取り込んだ精算の Z を `XZ_BKUP` へ移せなかった理由（37 §37.12、BIZ-08-D11）。None = 移す物が無い・全部移せた・片付けない
     pub tidy_failure: Option<RegisterSdTidyFailure>,
+    /// EJ の数（37 §37.10 の「§37.9 に足すもの」(A)）。snapshot の ej_files と ej_unreadable_files がどちらも空なら None
+    pub ej: Option<RegisterSdEjSummary>,
+}
+
+/// scan の EJ の数（37 §37.10）。55 UI-07-D17 のボタンの条件と一覧の文
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
+pub struct RegisterSdEjSummary {
+    /// plan_ej_records の new_records の数（保留した記録を含まない）
+    pub new_count: i64,
+    pub held_count: i64,
+    pub conflict_count: i64,
+    /// ej_unreadable_files の数 + plan_ej_records の unreadable_files の数
+    pub unreadable_file_count: i64,
+}
+
+/// SD から読んだ 1 file（37 §37.10）
+#[derive(Debug, Clone)]
+pub struct SdSourceFile {
+    /// IO-09 の RegisterSdEntry.relative_path
+    pub sd_relative_path: String,
+    pub bytes: Vec<u8>,
+}
+
+/// 37 §37.10 一括取込みの結果（BIZ の内部の型。wire は CMD-12 の RegisterSdBulkResponse）
+#[derive(Debug)]
+pub struct RegisterSdBulkResult {
+    /// 処理の順（日報 → EJ）。止まったかは Failed の item の有無で決まる
+    pub items: Vec<RegisterSdBulkItem>,
+}
+
+#[derive(Debug)]
+pub struct RegisterSdBulkItem {
+    pub source: RegisterSdBulkSource,
+    pub outcome: RegisterSdBulkOutcome,
+}
+
+/// 項目の出所（45 §45.6c は wire にそのまま出す）
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
+#[serde(tag = "type")]
+pub enum RegisterSdBulkSource {
+    DailyReport {
+        candidate_key: String,
+        report_date: Option<String>,
+    },
+    /// EJ の file 全部で 1 項目
+    Ej,
+}
+
+#[derive(Debug)]
+pub enum RegisterSdBulkOutcome {
+    ImportedDailyReport(DailyReportImportResult),
+    /// 新しい記録が 0 件でも ImportedEj（件数で示す）
+    ImportedEj(EjImportResult),
+    /// 業務の検査で取り込まない。message は BIZ の固定の文のまま
+    Skipped {
+        message: String,
+    },
+    /// 日報の同日追加の確認が要る（BIZ-08-D8 の外）
+    NeedsIndividualConfirmation,
+    /// 確定の段の失敗。ここで止まる。CMD が 45 §45.7 の変換を当てる
+    Failed(BizError),
+    /// 止まった後の項目
+    NotAttempted,
 }
 
 /// 37 §37.12: 片付けの失敗の種類。画面の固定の文を選ぶだけ（55 UI-07-D15 (7)）。数と path は診断ログ
@@ -223,6 +294,10 @@ pub struct DailyReportSdScanSnapshot {
     pub created_at: Instant,
     /// NotImported の束だけ
     pub files_by_candidate: HashMap<String, Vec<DailyReportInputFile>>,
+    /// 読めた EJ（形の検査の前。37 §37.10 の「§37.9 に足すもの」(A)）
+    pub ej_files: Vec<SdSourceFile>,
+    /// bytes を得られなかった EJ の file 名（相対 path の最後の要素）
+    pub ej_unreadable_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

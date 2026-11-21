@@ -1,14 +1,15 @@
 //! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜9。手順 10 は PLU の runtime の lane）。
-//! 手順 2a で、自動で見つけた SD の取り込んだ精算の Z を `XZ_BKUP` へ移す（BIZ-08-D11、§37.12）
+//! 手順 2a で、自動で見つけた SD の取り込んだ精算の Z を `XZ_BKUP` へ移す（BIZ-08-D11、§37.12）。
+//! 手順 9 の後に EJ を読んで数える（37 §37.10 の「§37.9 に足すもの」(A)。手順 10 が未実装なので 9 の後）
 
 use crate::biz::daily_report_import_service::parse::{
     build_bundle_hash, log_parse_diagnostics, number_column_message,
 };
 use crate::biz::daily_report_import_service::tidy::tidy_register_sd_imported;
 use crate::biz::daily_report_import_service::{
-    DailyReportInputFile, DailyReportSdCandidate, DailyReportSdCandidateStatus, DailyReportSdScan,
-    DailyReportSdScanResult, DailyReportSdScanSnapshot, DailyReportSdSelection,
-    RegisterSdTidyFailure,
+    plan_ej_records, DailyReportInputFile, DailyReportSdCandidate, DailyReportSdCandidateStatus,
+    DailyReportSdScan, DailyReportSdScanResult, DailyReportSdScanSnapshot, DailyReportSdSelection,
+    EjSourceFile, RegisterSdEjSummary, RegisterSdTidyFailure, SdSourceFile,
 };
 use crate::biz::BizError;
 use crate::constants;
@@ -133,6 +134,14 @@ pub(super) fn scan_with_roots(
         );
     }
 
+    // EJ は組にせず、手順 9 の後に読む（`XZ` 直下は窓に依らず、`XZ_BKUP` は窓の中。IO-09 の列挙のまま）
+    let ej_paths: Vec<String> = listing
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, RegisterSdEntryKind::Ej { .. }))
+        .map(|entry| entry.relative_path.clone())
+        .collect();
+
     // 手順 4: (area、folder、日、接尾字、連番) が同じ Z001 / Z002 / Z005 を組にする
     let mut groups: BTreeMap<(String, u8, char, Option<u16>), Group> = BTreeMap::new();
     for entry in listing.entries {
@@ -205,6 +214,47 @@ pub(super) fn scan_with_roots(
         }
         wire.push(candidate.wire);
     }
+
+    // (A): EJ を手順 5 と同じ上限で読む。bytes を得られなかった file は名前だけ。形の検査は §37.11 手順 1 だけで行う
+    let mut ej_files = Vec::new();
+    let mut ej_unreadable_files = Vec::new();
+    for relative_path in ej_paths {
+        match register_sd::read_register_sd_file(
+            &root,
+            &relative_path,
+            constants::CSV_IMPORT_FILE_SIZE_LIMIT as u64,
+        ) {
+            Ok(read) => ej_files.push(SdSourceFile {
+                sd_relative_path: relative_path,
+                bytes: read.bytes,
+            }),
+            Err(RegisterSdError::TooLarge { .. } | RegisterSdError::Io { .. }) => {
+                tracing::warn!(relative_path, "EJ のファイルを SD から読めませんでした");
+                ej_unreadable_files.push(last_element(&relative_path).to_string());
+            }
+            Err(error) => return Err(sd_error(error)),
+        }
+    }
+    let ej = if ej_files.is_empty() && ej_unreadable_files.is_empty() {
+        None
+    } else {
+        let sources: Vec<EjSourceFile> = ej_files
+            .iter()
+            .map(|file| EjSourceFile {
+                filename: last_element(&file.sd_relative_path).to_string(),
+                sd_relative_path: Some(file.sd_relative_path.clone()),
+                bytes: file.bytes.clone(),
+            })
+            .collect();
+        let plan = plan_ej_records(conn, &sources)?;
+        Some(RegisterSdEjSummary {
+            new_count: plan.new_records.len() as i64,
+            held_count: plan.held_count,
+            conflict_count: plan.conflict_count,
+            unreadable_file_count: (ej_unreadable_files.len() + plan.unreadable_files.len()) as i64,
+        })
+    };
+
     Ok(DailyReportSdScanResult {
         scan: DailyReportSdScan {
             volume_label: root.volume_label,
@@ -212,10 +262,13 @@ pub(super) fn scan_with_roots(
             candidates: wire,
             skipped_unknown_count,
             tidy_failure,
+            ej,
         },
         snapshot: DailyReportSdScanSnapshot {
             created_at: Instant::now(),
             files_by_candidate,
+            ej_files,
+            ej_unreadable_files,
         },
     })
 }
@@ -353,12 +406,12 @@ fn read_group(
 }
 
 fn file_name(entry: &RegisterSdEntry) -> String {
-    entry
-        .relative_path
-        .rsplit('\\')
-        .next()
-        .unwrap_or(&entry.relative_path)
-        .to_string()
+    last_element(&entry.relative_path).to_string()
+}
+
+/// 相対 path（区切りは `\`）の最後の要素
+pub(super) fn last_element(relative_path: &str) -> &str {
+    relative_path.rsplit('\\').next().unwrap_or(relative_path)
 }
 
 /// 37 §37.9 手順 1・3: IO-09 の失敗を固定の文にする（raw の path を文に入れない）

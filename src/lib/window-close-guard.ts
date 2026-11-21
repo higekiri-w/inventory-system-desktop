@@ -8,12 +8,14 @@
 
 import { useEffect } from "react";
 
-/** 進行中（取込み・取消の応答を待つ間）の 4 つと、未保存の入力の `dirty` */
+/** 進行中（取込み・取消の応答を待つ間）の 6 つと、未保存の入力の `dirty` */
 export type WindowCloseGuardKind =
   | "z004-import"
   | "z004-rollback"
   | "daily-report-import"
   | "daily-report-rollback"
+  | "sd-bulk-import"
+  | "ej-import"
   | "dirty";
 
 // ponytail: 窓は 1 つ（tauri.conf.json の windows が 1 件）なので、module の 1 つの store で持つ。

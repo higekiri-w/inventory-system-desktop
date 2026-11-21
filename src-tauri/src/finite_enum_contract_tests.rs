@@ -2,6 +2,7 @@ use crate::biz::csv_import_service::CsvImportErrorType;
 use crate::biz::plu_export_service::ExportMode;
 use crate::biz::sales_service::{DailySaleSource, SalesMode};
 use crate::db::disposal_repo::DisposalType;
+use crate::db::ej_repo::{EjRecordKindCode, EjRecordModeCode};
 use crate::db::inventory_repo::{MovementType, ReferenceType};
 use crate::db::manual_sale_repo::ManualSaleReason;
 use crate::db::product_repo::{ProductStockUnit, ProductTaxRate};
@@ -385,6 +386,37 @@ fn next_reference_type(value: ReferenceType) -> Option<ReferenceType> {
     }
 }
 
+fn next_ej_mode(value: EjRecordModeCode) -> Option<EjRecordModeCode> {
+    use EjRecordModeCode as T;
+    match value {
+        T::Normal => Some(T::Return),
+        T::Return => Some(T::Training),
+        T::Training => Some(T::Settlement),
+        T::Settlement => Some(T::Inspection),
+        T::Inspection => Some(T::Program),
+        T::Program => Some(T::Program1),
+        T::Program1 => Some(T::Program3),
+        T::Program3 => Some(T::Off),
+        T::Off => Some(T::Unrecognized),
+        T::Unrecognized => None,
+    }
+}
+
+fn next_ej_kind(value: EjRecordKindCode) -> Option<EjRecordKindCode> {
+    use EjRecordKindCode as T;
+    match value {
+        T::Sale => Some(T::Cancelled),
+        T::Cancelled => Some(T::CashMovement),
+        T::CashMovement => Some(T::Receipt),
+        T::Receipt => Some(T::Settlement),
+        T::Settlement => Some(T::Inspection),
+        T::Inspection => Some(T::Settings),
+        T::Settings => Some(T::Training),
+        T::Training => Some(T::Unclassified),
+        T::Unclassified => None,
+    }
+}
+
 fn next_transfer_direction(value: TransferDirection) -> Option<TransferDirection> {
     use TransferDirection as T;
     match value {
@@ -439,4 +471,33 @@ fn test_db_check_matches_enum_values_d143_e1() {
             TransferDirection::as_str
         )
     );
+    // REQ-401 / D-121（Test Plan M3）: ej_records の mode・kind と EJ の 2 つの enum（wire と DB の値は同じ snake_case）
+    assert_eq!(
+        sorted(check_values(&conn, "ej_records", "mode")),
+        all_wire(
+            EjRecordModeCode::Normal,
+            next_ej_mode,
+            EjRecordModeCode::as_str
+        )
+    );
+    assert_eq!(
+        sorted(check_values(&conn, "ej_records", "kind")),
+        all_wire(
+            EjRecordKindCode::Sale,
+            next_ej_kind,
+            EjRecordKindCode::as_str
+        )
+    );
+    for value in std::iter::successors(Some(EjRecordModeCode::Normal), |v| next_ej_mode(*v)) {
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            format!("\"{}\"", value.as_str())
+        );
+    }
+    for value in std::iter::successors(Some(EjRecordKindCode::Sale), |v| next_ej_kind(*v)) {
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            format!("\"{}\"", value.as_str())
+        );
+    }
 }

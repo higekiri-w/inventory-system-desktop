@@ -307,7 +307,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **Stage 3: Preview**
 1. 対象日、3ファイル、総売上/純売上、支払集計、部門別集計、部門未対応warningを返す
 2. 同一bundleのcompleted取込みはブロックする
-3. 同一report_dateの別bundleがある場合は、active import全件summaryを示して追加確認を要求する
+3. 同一report_dateの別bundleがある場合は、追加確認が要るかを BIZ-08-D8（37 §37.10）で決め、要るときは active import全件summaryを示して追加確認を要求する
 4. preview_token を返し、CMD層cacheに30分保持する
 
 **Stage 4: Commit**

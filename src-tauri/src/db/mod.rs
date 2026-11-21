@@ -5,6 +5,7 @@
 
 // モジュール宣言（アルファベット順）
 pub mod disposal_repo;
+pub mod ej_repo;
 pub mod inventory_common;
 pub mod inventory_repo;
 pub mod manual_sale_repo;
@@ -30,6 +31,7 @@ pub(crate) use schema_v10::insert_pre_vb_product;
 mod schema_v11;
 mod schema_v12;
 mod schema_v13;
+mod schema_v14;
 mod schema_v2;
 mod schema_v3;
 mod schema_v4;

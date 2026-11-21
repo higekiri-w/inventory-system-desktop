@@ -151,7 +151,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
 
     map.insert(
         "24-io-csv-import-repo.md",
-        vec!["db::csv_import_repo", "db::sales_repo"],
+        vec!["db::csv_import_repo", "db::sales_repo", "db::ej_repo"],
     );
 
     // SALES 日報パーサー: 実装済み
@@ -213,6 +213,8 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "biz::daily_report_import_service::rollback",
             "biz::daily_report_import_service::list",
             "biz::daily_report_import_service::scan",
+            "biz::daily_report_import_service::ej",
+            "biz::daily_report_import_service::bulk",
         ],
     );
 
