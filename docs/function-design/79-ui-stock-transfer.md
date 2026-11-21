@@ -108,7 +108,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 - 日付不正、どちらかの表が 0 行、数量 0 以下・形の誤り・上限越え: command の前に日本語の field error。ページ先頭へはスクロールしない。
 - BIZ validation error（[31](31-biz-inventory-service.md) §12.6b の手順 0・1・2・5 の文。画面の検証を通らずに届くのは同じ商品の重複と、画面の後に変わった商品の不在）: form state を保持する。入力を直して再送するときは新しい `idempotencyKey`。
 - internal error: 入力と `idempotencyKey` を保持し、同内容のまま再試行できる。
-- 誤った振替を保存した後: 記録の詳細（§79.8）で取り消してから、この画面で入れ直す（[65](65-inventory-record-traceability.md) §65.5b・§65.7.2、D-163。proposed・未実装）。取消は減らす商品と増やす商品の全部の movement を無効にして求め直すので、どちらの在庫も「その振替が無かった」値に戻り、要再確認を新しく作らない。2026-11-20 に、向きを入れ替えた振替で戻す案内（D-143 (5)。戻す記録は同じ日付の別の記録で、同じ日の fresh な計数があると要再確認になった）を置き換えた（owner の決定 TD-848）。
+- 誤った振替を保存した後: 記録の詳細（§79.8）で取り消してから、この画面で入れ直す。日付の打ち間違いでなければ、日付は元の記録の日付を選ぶ（日付の既定は今日なので、そのままだと、元の日と今日の間に計数のある商品は在庫が合わなくなる。取消の dialog が元の日付を名指す）（[65](65-inventory-record-traceability.md) §65.5b・§65.7.2、D-163。proposed・未実装）。取消は減らす商品と増やす商品の全部の movement を無効にして求め直すので、どちらの在庫も「その振替が無かった」値に戻り、要再確認を新しく作らない。2026-11-20 に、向きを入れ替えた振替で戻す案内（D-143 (5)。戻す記録は同じ日付の別の記録で、同じ日の fresh な計数があると要再確認になった）を置き換えた（owner の決定 TD-848）。
 
 ## 79.7 Cache / Navigation
 
@@ -120,7 +120,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 
 - route `/inventory/transfer/records/$recordId`、本体 `src/features/inventory-records/TransferRecordDetailPage.tsx`（ほかの記録の詳細と同じ置き場と形。[65](65-inventory-record-traceability.md) TRACE-D14）。
 - 見出しは「詰め替え・切り分け #{id}」、記録ID・日付・作成日時・状態。「減らした商品」と「増やした商品」の 2 つの表（商品コード・商品名・部門・数量と単位）と、関連する在庫変動（既存の `MovementTable`）。
-- 取消は他の入出庫の記録の詳細と同じ（[65](65-inventory-record-traceability.md) §65.5b の CTA・dialog・取消済みの表示・成功と失敗。D-163。proposed・未実装）。dialog の「この記録で動いた在庫を元に戻します」は、減らした商品と増やした商品の両方を戻す。今の「向きを入れ替えて、もう一度記録してください」の案内（`TRANSFER_CORRECTION_GUIDE`）は取消に置き換えて外す（§79.6）。訂正の CTA は出さない（TRACE-D5）。
+- 取消は他の入出庫の記録の詳細と同じ（[65](65-inventory-record-traceability.md) §65.5b の CTA・dialog・取消済みの表示・成功と失敗。D-163。proposed・未実装）。dialog の「この記録で動いた在庫を元に戻します」は、減らした商品と増やした商品の両方を戻す。入れ直しの文は振替の日付を名指す（§79.6、65 §65.5b）。今の「向きを入れ替えて、もう一度記録してください」の案内（`TRANSFER_CORRECTION_GUIDE`）は取消に置き換えて外す（§79.6）。訂正の CTA は出さない（TRACE-D5）。
 - 「前の画面へ戻る」は `returnTo`（DSR-18）、欠落・不正は `/inventory/records`。
 - 記録が無い（NotFound）ときは他の記録の詳細と同じ not found の表示。
 

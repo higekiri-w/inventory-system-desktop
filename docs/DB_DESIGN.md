@@ -98,10 +98,7 @@ EJ の記録の文を持つ表（`ej_records`、proposed・未実装、D-121）:
 
 商業用の在庫管理として、入庫・返品交換・手動販売出庫・廃棄破損・CSV取込み・棚卸し補正は、作成後に一覧・詳細・在庫変動履歴から追跡できる必要がある。完成形の DB 方針は [function-design/65-inventory-record-traceability.md](function-design/65-inventory-record-traceability.md) §65.6 を正とする。
 
-- 業務記録ヘッダは `active` / `canceled` / `corrected` の状態を持つ方向で設計する。
-- 取消は物理削除せず、取消理由と取消日時を残す。
-- 訂正は元記録を取消/訂正済みにし、新しい記録を作る。
-- 在庫戻しは既存 movement を消さず、逆方向 movement を追加する。
+- 取消は物理削除せず、ヘッダに取消の日時と理由を書き、その記録の movement を `is_voided=1` にして求め直す（逆向きの movement・状態の列・訂正の列は持たない。訂正は取り消してから入れ直す。[D-163](decision-log.md)、65 §65.6）。
 - `operation_logs` は監査・保守ログであり、業務記録や在庫変動履歴の正本にはしない。
 
 ### CHECK制約方針（指摘#17対応）

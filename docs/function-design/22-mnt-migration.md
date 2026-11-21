@@ -534,4 +534,4 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **回復**: §16 の「回復」と同じ（vC が COMMIT した DB は vC を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vC の後に入れた記録と取消は戻らない）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
 
-**テスト**（取消の lane の完了条件。名前と期待は packet の Test Plan）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・空白だけの理由・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。
+**テスト**（取消の lane の完了条件。名前と期待は packet の Test Plan）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・半角空白だけの理由（SQLite の `trim` は半角空白だけを除くので、全角空白・tab だけの理由は DB を通り、BIZ が拒む。31 §12.6c の手順 1）・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。

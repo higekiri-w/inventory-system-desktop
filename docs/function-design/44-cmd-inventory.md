@@ -743,7 +743,7 @@ BIZ は [31](31-biz-inventory-service.md) §12.6c、画面は [65](65-inventory-
 #[specta::specta]
 fn cancel_inventory_record(
     state: State<AppState>,
-    record_type: ReferenceType,     // "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "transfer_record"（ほかは validation）
+    record_type: ReferenceType,     // "receiving_record" | "return_record" | "manual_sale" | "disposal_record" | "transfer_record"（"csv_import"・"stocktake" は validation。下の「受け方」）
     record_id: i64,
     reason: String,
 ) -> Result<RecordCancelResult, CmdError>
@@ -752,6 +752,8 @@ fn cancel_inventory_record(
 **出力型**: BIZ層の `RecordCancelResult { stock_warnings: Vec<String> }`
 
 **処理ステップ**: create_disposal と同パターン（`state.db.lock()` → `biz::inventory_service::cancel_inventory_record(&mut conn, record_type, record_id, &reason)`。`ValidationFailed` → `validation`、`NotFound` → `not_found`。§23.3）
+
+**`record_type` の受け方**: `ReferenceType`（`src-tauri/src/db/inventory_repo.rs`）は今 `Serialize` と `specta::Type` だけで、command の入力にできない。同じ enum に `serde::Deserialize`（`rename_all = "snake_case"` のまま）を足す。error の境: 定義のある 7 つの値のうち取り消せない `csv_import`・`stocktake` は BIZ に届いて `validation`（31 §12.6c の手順 1）。定義に無い文字列は Tauri の引数の変換で拒まれて BIZ に届かず、`CmdError` の kind を持たない invoke の error になる（生成した TS の型は 7 つの値の union なので、画面からは送らない）。
 
 **詳細の DTO**: `get_receiving_record`・`get_return_record`・`get_manual_sale_record`・`get_disposal_record`・`get_transfer_record` の結果に `canceled_at: Option<String>`・`cancel_reason: Option<String>` を足し、`status` は `canceled_at` の有無で `"active"`・`"canceled"`。作成の画面の直近の一覧の `list_receivings`・`list_returns`・`list_disposals` の行に `canceled_at: Option<String>` を足す（65 §65.5b の recent list の「取消済み」。手動販売と振替の画面の直近の一覧は `list_inventory_records` の `status` を読む）。`list_inventory_records` の 5 つの種類の `status` は `canceled_at` から決める（65 §65.4.1）。
 

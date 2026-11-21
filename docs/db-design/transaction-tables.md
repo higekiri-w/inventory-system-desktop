@@ -59,7 +59,7 @@
 | カラム名 | 型 | 制約 | 説明 |
 |---------|---|----|------|
 | canceled_at | TEXT | NULLABLE | 取消の日時（`YYYY-MM-DDTHH:MM:SS`、ローカル時刻。`created_at` と同じ形）。NULL なら有効 |
-| cancel_reason | TEXT | NULLABLE、CHECK: `(canceled_at IS NULL) = (cancel_reason IS NULL)` かつ `cancel_reason IS NULL OR length(trim(cancel_reason)) > 0` | 取消の理由（必須。BIZ が前後の空白を除いて書く） |
+| cancel_reason | TEXT | NULLABLE、CHECK: `(canceled_at IS NULL) = (cancel_reason IS NULL)` かつ `cancel_reason IS NULL OR length(trim(cancel_reason)) > 0` | 取消の理由（必須。BIZ が前後の空白を除いて書く。CHECK の `trim` は半角空白だけを除き、全角空白・tab だけの理由は BIZ が拒む〈31 §12.6c〉） |
 
 - 取消は物理削除しない。ヘッダに 2 列を書き、その記録の `inventory_movements` を `is_voided=1` にして、その商品を同じ TX で求め直す（逆向きの movement は作らない）。手動販売は加えて `sale_records.manual_sale_id` で結んだ売上の行を `is_voided=1` にする（[POS](pos-tables.md) §13）。明細の行は変えない。
 - 状態の列・訂正の列は持たない（状態は `canceled_at` の有無。訂正は取り消してから入れ直す。65 TRACE-D5）。
