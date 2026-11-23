@@ -23,16 +23,10 @@ let exited;
 let driverExit;
 let stage = "setup";
 
-function closePipes() {
-  child?.stdout?.destroy();
-  child?.stderr?.destroy();
-}
-
 // A grandchild that holds a pipe or a hung cleanup must not keep the step running.
 setTimeout(() => {
   console.error(`L3 smoke: FAIL: overall ${TOTAL_MS / 1000} s deadline passed (stage: ${stage})`);
   child?.kill();
-  closePipes();
   process.exit(1);
 }, TOTAL_MS);
 
@@ -146,6 +140,5 @@ try {
     if (!driverExit)
       console.error(`L3 smoke: tauri-driver did not exit within ${EXIT_WAIT_MS / 1000} s`);
   }
-  closePipes();
 }
 process.exit(code);
