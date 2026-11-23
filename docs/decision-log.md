@@ -1495,3 +1495,14 @@ Use concise ADR-style entries.
 - Guarantee range: (3) の実装までは、画面は検査せずに保存する（0 で今日より前の backup が消える）。(5) の演習は開発用の Windows で行い、店の PC の上での復元は本番の復元（71 §71.13）まで確かめない。
 - Compatibility: docs だけ。(3) の code は backlog の項目の lane が入れる。D-114 の本文は変えない（(7) の Superseded in part の行を D-114 に足した）。D-114 の Revisit の「更新・migration の前の保全を設計するとき」は (4) の R4 の lane で当たる。
 - Revisit: 自動更新を設計するとき（(4)）。店がアプリを閉じる時刻が変わったとき（(6)）。
+
+## D-164: hosted の Windows で release の build を起動してホームの見出しを確かめる L3 smoke を、smoke 自身を変える PR でだけ走らせる（2026-11-23）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-805 の A〈2026-11-19〉と TD-863〜TD-865〈2026-11-23〉。lane「L3 の自動化の E-1」〈Plan Packet `docs/plans/2026-11-23-l3-smoke-e1.md`〉で起票した）
+- Context: L3 は人が Windows でアプリを開いて確かめる。機械が同じ確かめをどこまで通せるかを、最小の形（起動してホームが出る）で手間と効果を測ってから、E-2（lane の `## L3` の項目を機械で通す）・E-3（D-015 と [DEV_WORKFLOW](DEV_WORKFLOW.md#l3) の L3 の文の改訂）に進むかを決める。
+- Decision: (1) 走らせる場所は hosted の `windows-latest` だけ（TD-863）。owner の Windows・店の PC では走らせない（app data の場所が `identifier` で決まり、その PC の DB で起動して migration と自動バックアップが走る）。(2) 起動の道: `cargo install tauri-driver --locked --version 2.1.0`、`msedgedriver` は毎回 WebView2 の Runtime の registry の `pv` に合わせて Microsoft の配布元から落とし、署名が `Valid` で署名者証明書の簡易表示名が `Microsoft Corporation` のときだけ使う。build は release（`--no-bundle`）で、配る exe と同じ構成を確かめる。(3) client は依存なし（Node 24 の `fetch` と `child_process` で WebDriver の 5 request、TD-864）。合格はホームの `<h1>` の Get Element Text（表示された文）が `ホーム` であること。script は全体で 300 秒の期限を 1 つ持ち、後始末もその内に置く。(4) trigger は smoke 自身の 2 file の `paths` の `pull_request` だけ（TD-865）。`workflow_dispatch`・`continue-on-error`・retry を付けない。差分の判定の時間切れで起動した run は、job の最初の差分の step が対象 2 file の差分なしを確かめて build と smoke を省き success で終える。
+- Why: E-1 の目的（機械で確かめられるか）は hosted だけで足り、店のデータに触れない。5 request のために npm の依存を足さない（D-030、D-147）。`paths` を smoke 自身に限ると、赤で helper の `merge` が止まるのは smoke を変える PR だけで、D-015 は E-3 まで変わらない。
+- Alternatives: owner の Windows で手で 1 command（PC の data で起動する、毎回の手間）; `selenium-webdriver`（依存 4 つ）; `webdriverio`・`@wdio/tauri-service`（直接の依存 23、E-2 で画面を操作するなら比べ直す）; Tauri の文書の `cargo install --git https://github.com/chippers/msedgedriver-tool`（version も commit も pin しない）; image に入っている `EDGEWEBDRIVER`（Edge の版で、WebView2 の Runtime の版に合う保証が無い）; debug の build（vite の dev server が要り、配る exe と構成が違う）; `workflow_dispatch` を付ける（default branch に無いと lane の PR で使えず、別の head に赤が載りうる）。
+- Guarantee range: runner の image と店の PC は同じでなく、L3 を置き換えない。見るのは見出し 1 つだけ（画面の中身と操作は E-2）。product の PR では走らないので、image や WebView2 の更新で壊れても次に smoke を変えるまで気づかない。差分の判定の時間切れで起動した run で checkout か差分の step が失敗すると、product の PR でも赤になり helper の `merge` が止まりうる（戻し方は job の再実行、[ci.md](ci.md) の L3 Smoke）。
+- Compatibility: `Merge gate`・ci.yml・`windows-observe.yml`・`scripts/pr-gate.py`・`scripts/ci/check-required-jobs.sh`・`classify-changes.sh`・`package.json`・`package-lock.json`・D-015 は変えない。
+- Revisit: E-2 を起票するとき、`tauri-driver` の major を上げるとき、WebView2 の Runtime と `msedgedriver` の不一致を観測したとき。

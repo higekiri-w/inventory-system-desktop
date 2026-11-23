@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
 NPM_SECURITY_WORKFLOW="$REPO_ROOT/.github/workflows/npm-security-monitor.yml"
 WINDOWS_OBSERVE_WORKFLOW="$REPO_ROOT/.github/workflows/windows-observe.yml"
+L3_SMOKE_WORKFLOW="$REPO_ROOT/.github/workflows/l3-smoke.yml"
 NODE_VERSION_FILE="$REPO_ROOT/.node-version"
 PACKAGE_JSON="$REPO_ROOT/package.json"
 PR_TEMPLATE="$REPO_ROOT/.github/pull_request_template.md"
@@ -134,8 +135,9 @@ validate_node_contract() {
     local package_json="${2:-$PACKAGE_JSON}"
     local ci_workflow="${3:-$WORKFLOW}"
     local npm_security_workflow="${4:-$NPM_SECURITY_WORKFLOW}"
+    local l3_smoke_workflow="${5:-$L3_SMOKE_WORKFLOW}"
 
-    ruby - "$node_version_file" "$package_json" "$ci_workflow" "$npm_security_workflow" <<'RUBY'
+    ruby - "$node_version_file" "$package_json" "$ci_workflow" "$npm_security_workflow" "$l3_smoke_workflow" <<'RUBY'
 require "json"
 require "yaml"
 
@@ -293,6 +295,62 @@ end
 RUBY
 }
 
+# D-164: the L3 smoke runs only for PRs that change it, never fails a product PR, and keeps its red.
+validate_l3_smoke() {
+    ruby - "$1" <<'RUBY'
+require "yaml"
+text = File.read(ARGV.fetch(0))
+workflow = YAML.safe_load(text, aliases: true)
+abort "smoke must not use secrets" if text.include?("secrets.") || text.include?("GITHUB_TOKEN")
+abort "smoke must not hide its red" if text.match?(/continue-on-error|retry/i)
+abort "smoke must not install from git" if text.include?("--git")
+abort "smoke workflow name drifted" unless workflow["name"] == "L3 smoke"
+triggers = workflow["on"] || workflow[true]
+# D-015: no push or workflow_dispatch, so only the paths below start it.
+abort "smoke triggers drifted" unless triggers.is_a?(Hash) && triggers.keys.map(&:to_s) == %w[pull_request]
+pr = triggers.fetch("pull_request")
+abort "smoke pull_request drifted" unless pr["branches"] == ["main"] && Array(pr["types"]).sort == %w[opened reopened synchronize]
+smoke_paths = [".github/workflows/l3-smoke.yml", "scripts/ci/l3-smoke-home.mjs"]
+abort "smoke paths drifted: #{pr["paths"].inspect}" unless pr["paths"] == smoke_paths && !pr.key?("paths-ignore")
+abort "smoke token must be read-only" unless workflow["permissions"] == {"contents" => "read"}
+abort "smoke cancellation drifted" unless workflow.dig("concurrency", "cancel-in-progress") == true
+abort "smoke concurrency group drifted" unless workflow.dig("concurrency", "group").to_s.start_with?("l3-smoke-")
+jobs = workflow.fetch("jobs")
+abort "smoke must have exactly one job" unless jobs.length == 1
+job = jobs.values.first
+# The ruleset requires the context "Merge gate"; the smoke must never publish it.
+abort "smoke job name drifted: #{job["name"].inspect}" unless job["name"] == "L3 smoke"
+abort "smoke must run on windows-latest" unless job["runs-on"] == "windows-latest"
+job_timeout = job["timeout-minutes"]
+abort "smoke job timeout must be an integer" unless job_timeout.is_a?(Integer) && job_timeout.positive?
+steps = job.fetch("steps")
+uses = steps.map { |step| step["uses"] }.compact
+abort "smoke actions drifted: #{uses.inspect}" unless uses == %w[actions/checkout@v6 actions/setup-node@v6 dtolnay/rust-toolchain@stable actions/cache@v5]
+abort "smoke checkout needs the merge base" unless steps.first["uses"] == "actions/checkout@v6" && steps.first.dig("with", "fetch-depth") == 0
+diff_index = steps.index { |step| step["id"] == "diff" }
+abort "smoke diff step is missing" unless diff_index == 1
+diff = steps[diff_index]
+abort "smoke diff base/head drifted" unless diff["env"] == {
+  "BASE_SHA" => "${{ github.event.pull_request.base.sha }}",
+  "HEAD_SHA" => "${{ github.event.pull_request.head.sha }}",
+}
+abort "smoke diff must read the same files as paths" unless diff["run"].to_s.include?(%(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- #{smoke_paths.join(" ")}))
+later = steps[(diff_index + 1)..]
+abort "smoke step runs without the diff guard" unless later.all? { |step| step["if"] == "steps.diff.outputs.changed == 'true'" }
+cache = steps.find { |step| step["uses"] == "actions/cache@v5" }
+cache_paths = cache.dig("with", "path").to_s.lines.map(&:strip).reject(&:empty?)
+abort "smoke cache paths drifted: #{cache_paths.inspect}" unless cache_paths == %w[~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/]
+runs = steps.map { |step| step["run"].to_s.strip }
+["npm ci --ignore-scripts", "cargo install tauri-driver --locked --version 2.1.0", "npm run tauri -- build --no-bundle"].each do |command|
+  abort "smoke command drifted: #{command}" unless runs.include?(command)
+end
+smoke = steps.find { |step| step["run"].to_s.strip == "node scripts/ci/l3-smoke-home.mjs" }
+abort "smoke step is missing" unless smoke
+step_timeout = smoke["timeout-minutes"]
+abort "smoke step timeout must be an integer below the job timeout" unless step_timeout.is_a?(Integer) && step_timeout.positive? && step_timeout < job_timeout
+RUBY
+}
+
 # MG-D4: real PR PK5 and every former local workflow check remain wired on both routes.
 validate_parity() {
     ruby - "$1" "$2" "$3" <<'RUBY'
@@ -332,6 +390,7 @@ validate_workflow_contract "$WORKFLOW"
 validate_node_contract
 validate_monitor_schedule "$NPM_SECURITY_WORKFLOW"
 validate_windows_observe "$WINDOWS_OBSERVE_WORKFLOW"
+validate_l3_smoke "$L3_SMOKE_WORKFLOW"
 # D-059 / SPEC-HOOK-01 / CH8: hosted workflow owns the inventory audit step.
 validate_claude_hook_audit ||
     fail "CH8 hosted Claude hook audit step is missing"
@@ -623,11 +682,43 @@ reject_observe_mutant windows-observe-shared-group "$(observe_mutant shared-grou
 reject_observe_mutant windows-observe-unknown-outcome-expr "$(observe_mutant unknown-outcome-expr "s/TEST_OUTCOME: \${{ steps.test.outcome }}/TEST_OUTCOME: \${{ steps.test.outcome || 'skipped' }}/")"
 reject_observe_mutant windows-observe-no-outcome-warning "$(observe_mutant no-outcome-warning 's/echo "::warning title=Windows observe::cargo test failed"/:/')"
 
+# D-164: every smoke guarantee in the Test Plan rejects its mutant.
+reject_smoke_mutant() {
+    assert_mutated "$L3_SMOKE_WORKFLOW" "$2" "$1"
+    if validate_l3_smoke "$2" >/dev/null 2>&1; then
+        fail "L3 smoke validator accepted $1"
+    fi
+}
+smoke_mutant() {
+    local out="$mutation_dir/$1.yml"
+    shift
+    sed "$@" "$L3_SMOKE_WORKFLOW" > "$out"
+    printf '%s' "$out"
+}
+reject_smoke_mutant l3-smoke-product-path "$(smoke_mutant product-path '/- "scripts\/ci\/l3-smoke-home.mjs"/a\      - "src-tauri/**"')"
+reject_smoke_mutant l3-smoke-extra-trigger "$(smoke_mutant extra-trigger '/^on:$/a\  workflow_dispatch:')"
+reject_smoke_mutant l3-smoke-no-diff-guard "$(smoke_mutant no-diff-guard '/name: Build the release app/{n;d}')"
+reject_smoke_mutant l3-smoke-diff-paths "$(smoke_mutant diff-paths '/git diff --name-only/s|scripts/ci/l3-smoke-home.mjs|scripts/ci/other.mjs|')"
+reject_smoke_mutant l3-smoke-continue "$(smoke_mutant continue '/timeout-minutes: 10/a\        continue-on-error: true')"
+reject_smoke_mutant l3-smoke-no-step-timeout "$(smoke_mutant no-step-timeout '/timeout-minutes: 10/d')"
+reject_smoke_mutant l3-smoke-merge-gate-name "$(smoke_mutant merge-gate-name 's/^    name: L3 smoke$/    name: Merge gate/')"
+reject_smoke_mutant l3-smoke-write-permission "$(smoke_mutant write-permission 's/contents: read/contents: write/')"
+reject_smoke_mutant l3-smoke-secret "$(smoke_mutant secret '/RUST_BACKTRACE: 1/a\  TOKEN: ${{ secrets.SMOKE_TOKEN }}')"
+reject_smoke_mutant l3-smoke-unpinned-driver "$(smoke_mutant unpinned-driver 's/ --version 2.1.0//')"
+reject_smoke_mutant l3-smoke-git-driver "$(smoke_mutant git-driver '/cargo install tauri-driver/a\          cargo install --git https://github.com/chippers/msedgedriver-tool')"
+reject_smoke_mutant l3-smoke-npm-scripts "$(smoke_mutant npm-scripts 's/npm ci --ignore-scripts/npm ci/')"
+reject_smoke_mutant l3-smoke-target-cache "$(smoke_mutant target-cache '\|~/.cargo/git/db/|a\            src-tauri/target/')"
+smoke_node_mutation="$(smoke_mutant node24 's/node-version-file: .node-version/node-version: 24/')"
+assert_mutated "$L3_SMOKE_WORKFLOW" "$smoke_node_mutation" l3-smoke-node24
+if validate_node_contract "$NODE_VERSION_FILE" "$PACKAGE_JSON" "$WORKFLOW" "$NPM_SECURITY_WORKFLOW" "$smoke_node_mutation" >/dev/null 2>&1; then
+    fail "Node contract validator accepted literal Node 24 in l3-smoke.yml"
+fi
+
 reject_fixed "  push:"
 reject_fixed '      - "**/*.md"'
 require_fixed "  workflow_dispatch:"
 reject_fixed "paths-ignore:"
-# D-157: Windows runs only in windows-observe.yml, outside Merge gate.
+# Windows runs outside ci.yml (windows-observe.yml for D-157, l3-smoke.yml for D-164), so outside Merge gate.
 reject_fixed "windows-latest"
 
 # D-145 (9) (rewritten from requiring the Draft name guard): no Draft-specific aggregate name remains.

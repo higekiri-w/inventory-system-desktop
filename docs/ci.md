@@ -105,6 +105,18 @@ D-157。ci.yml の job は全部 `ubuntu-latest` で、`cfg(windows)` の code �
 - 初回の結果と時間: 初回（2026-11-17、PR #273 の run <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44076654226>）は `cargo test`（lib の unittests の実行 file が Windows で起動しない）と `cargo clippy --release`（Windows でだけ出る 3 件）がどちらも failure で、job の実行時間は 439 秒（cold build）。clippy の 3 件は PR #281、lib の test の起動は D-159 で直した。D-159 の lane の run（2026-11-19、PR #286 の <https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44504745664>）では、`cargo test` は lib の unittests が起動して 53 本が落ちた。PR #287 の後の run（<https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44523246270>）では 60 本で、どれも test の前提だった: A 7 本は source を `\n` で探すのに Windows の checkout が CRLF（`.gitattributes` が無い）、B 48 本は Windows の媒体の root の選び方が test の注入した root の列を使わず `NotRemovable`、C 2 本は `pin_to_volume` が返す Volume GUID の形を test が drive 文字の形で期待・注入、D 3 本は file 名の `\`・SD の folder の綴り・B12。B12 は `Recovered("main の退避に失敗: … (os error 32)")` で、test が開いたままにした別の接続の下で main の改名が共有違反で失敗した（元の DB の 2 行が戻り、遺物なし。MNT-01-D4 の安全側。<https://github.com/higekiri-w/inventory-system-desktop/actions/runs/44562295748>）。PR #291 で直した（A は D-161、B は §71.11.2 の root の選び方を両 OS で共通にした）。job は observe で success。
 - 昇格（enforce）の条件: Ready の承認を求める返答の記録で、`src-tauri/**` に触れる PR が続けて 10 本（owner の決定、2026-11-17、repo 外の回答台帳 TD-783）、誤検知（Windows の挙動でも test の前提の誤りでもない失敗、flaky の疑い）なしで通り、見つかった Windows の失敗が直っていること。昇格は別の R3 で、`Merge gate` と `check-required-jobs.sh` の変え方を計画する。
 
+## L3 Smoke
+
+D-164（L3 の自動化の E-1）。`.github/workflows/l3-smoke.yml` の job `L3 smoke` は、`windows-latest` の上で release の build（`npm run tauri -- build --no-bundle`）のアプリを `tauri-driver` と `msedgedriver` で起動し、`scripts/ci/l3-smoke-home.mjs` がホーム画面の `<h1>` の表示された文（WebDriver の Get Element Text）が `ホーム` かを確かめる。合えば緑、起動の失敗・時間切れ・文の不一致で赤。見るのは見出し 1 つだけで、L3 を置き換えない（runner の image と店の PC は同じでない）。
+
+- 走る PR（D-015 を変えない）: `pull_request`（main、opened・reopened・synchronize）で、`paths` はこの workflow と `scripts/ci/l3-smoke-home.mjs` の 2 file だけ。`workflow_dispatch` は付けない。product の PR（`src/**`・`src-tauri/**` だけに触れる PR）では通常は起動しない。`continue-on-error` も retry も付けない（赤が目的）ので、赤で helper の `merge`（`mergeable_state == 'clean'`）が止まるのは smoke 自身を変える PR だけ。`Merge gate` の外の別の workflow で、ci.yml・`check-required-jobs.sh`・helper の CI 根拠は変わらない。
+- 例外の起動: GitHub は `paths` の差分の判定が時間切れになると workflow を起動する。job の最初の step が同じ three-dot の差分（PR の base と head、2 file）を git で取り、差分が無ければ build と smoke を省いて、summary と `::notice` に「実施保留（対象 2 file に差分なし）」を出して success で終える。この差分の確かめ（checkout か差分の step）に失敗すると、product の PR でも赤になり helper の `merge` が止まりうる。戻し方は job の再実行（smoke の失敗ではないので test の retry ではない）。
+- driver の版: `tauri-driver` は `cargo install tauri-driver --locked --version 2.1.0` で pin する。`msedgedriver` は WebView2 の Runtime の版に合わせる必要があるので pin せず、毎回 registry の `pv` を読んで `https://msedgedriver.microsoft.com/<pv>/edgedriver_win64.zip` を落とし、署名が `Valid` で署名者証明書の簡易表示名が `Microsoft Corporation`（大文字・小文字も完全一致）のときだけ使う。`pv` が無い・download の失敗・署名の不一致は赤。log に `pv`・`msedgedriver --version`・署名者の名を出す。
+- 期限: script は全体で 300 秒の期限を 1 つ持つ（本処理 270 秒、`DELETE /session` 15 秒、`tauri-driver` の終了待ち 10 秒、残り 5 秒）。期限が切れたら `tauri-driver` を止め、pipe を閉じて exit 1 で終わる。`msedgedriver` とアプリは `tauri-driver` が自分を入れる Job Object で一緒に終わる。step の `timeout-minutes: 10` と job の `timeout-minutes: 60` は後ろの止めで、job の時間切れは `cancelled` で `failure` でない。
+- 初回の時間: 未実測（lane の PR の初回の run で書く）。
+- 走る機会: merge の後に走るのは smoke 自身を変える PR だけで、product の PR では走らない。image や WebView2 の更新で壊れても、次に smoke を変えるまで気づかない。
+- 次の段: 画面の操作まで機械で通す E-2 に進むかは、lane の PR の記録（時間・壊れやすさ・保守の手間）を見て owner が決める。
+
 ## Related Records
 
 [DEV_WORKFLOW](DEV_WORKFLOW.md)、[merge evidence設計とrollout](agent-guidance/merge-evidence.md)、[D-033/D-063と後継判断](decision-log.md)。初回Actions Enableと旧CIの実績はarchive/過去PRの記録を参照する。
