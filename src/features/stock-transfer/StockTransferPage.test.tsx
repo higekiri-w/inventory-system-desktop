@@ -742,6 +742,46 @@ describe("StockTransferPage（REQ-210 / UI-16）", () => {
     );
   });
 
+  it("REQ-208 / 79 §79.5（T12）: 最近の記録は一覧の status が canceled の行だけに「取消済み」を文字で出す", async () => {
+    mockListInventoryRecords.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            record_type: "transfer_record",
+            record_id: 13,
+            business_date: "2026-11-18",
+            representative_item: "合成の商品",
+            item_count: 1,
+            status: "canceled",
+            created_at: "2026-11-18T10:00:00",
+            detail_route: "/inventory/transfer/records/13",
+          },
+          {
+            record_type: "transfer_record",
+            record_id: 12,
+            business_date: "2026-11-17",
+            representative_item: "合成の商品",
+            item_count: 1,
+            status: "active",
+            created_at: "2026-11-17T10:00:00",
+            detail_route: "/inventory/transfer/records/12",
+          },
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
+    renderWithClient(<StockTransferPage />);
+
+    const canceled = (await screen.findByText("2026-11-18")).closest("tr");
+    const active = screen.getByText("2026-11-17").closest("tr");
+    if (canceled === null || active === null) throw new Error("expected table rows");
+    expect(within(canceled).getByText("取消済み")).toBeInTheDocument();
+    expect(within(active).queryByText("取消済み")).not.toBeInTheDocument();
+  });
+
   it("U9: 最近の記録の空と失敗", async () => {
     const { unmount } = renderWithClient(<StockTransferPage />);
     expect(await screen.findByText("最近の詰め替え・切り分けはありません")).toBeInTheDocument();

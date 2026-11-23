@@ -156,6 +156,7 @@ UI-11c は JST 暦日の inclusive/exclusive 境界と逆転範囲エラーを�
 | 入出庫 | `manual_sale_create` | 手動販売出庫記録 |
 | 入出庫 | `disposal_create` | 廃棄・破損記録 |
 | 入出庫 | `transfer_create` | 詰め替え・切り分け記録（D-143） |
+| 入出庫 | `inventory_record_cancel` | 入出庫記録の取消（D-163。関連記録の link は取り消した記録の `record_type`・`record_id`） |
 | 売上データ取込み | `csv_import` | 売上データ取込み |
 | 売上データ取込み | `csv_import_failed` | 売上データ取込み失敗 |
 | 売上データ取込み | `csv_import_parse_failed` | 売上データ解析失敗 |
@@ -627,3 +628,4 @@ Test Design Matrix 作成時に、以下が「モックの偶然一致」でグ�
 | 2026-08-03 | ui-polish-batch-b（本 PR） | §74.11 の「empty・filter 適用中」に filter-empty reset action（catalog ⑥、SPEC-UIBB-1/2）を追加し、既定 filter 一致側とは非表示のまま区別することを明記。既存の範囲外 page 回復 action（UI-11c-D8）との共存を明記。§74.17 Adjacent Pattern Audit の filter reset ボタン行を実装後の状態へ更新 |
 | 2026-08-28 | docs-hygiene-sync（本 PR） | stocktake 除外理由 3 箇所（UI-11c-D7 表 row / §74.9 相当 bullet / §末尾表）の理由を、詳細 route の不在を根拠とする旧表現から「stocktake 系 `record_type` を書き込む producer が0件」〈65 §65.8.3 と同型〉へ差替え。結論〈許可リストからの除外維持〉は不変 |
 | 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | registry に `ej_import`（レシートの控え（EJ）の取込み）を足した。 |
+| 2026-11-23 | record-cancel（実装、PR #297） | registry に `inventory_record_cancel`（入出庫記録の取消）を足した。 |

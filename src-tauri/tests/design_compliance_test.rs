@@ -183,6 +183,7 @@ fn build_doc_to_modules_map() -> HashMap<&'static str, Vec<&'static str>> {
             "biz::inventory_service::manual_sale",
             "biz::inventory_service::disposal",
             "biz::inventory_service::transfer",
+            "biz::inventory_service::cancel",
             "biz::stock_ledger",
         ],
     );

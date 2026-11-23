@@ -32,6 +32,7 @@ mod schema_v11;
 mod schema_v12;
 mod schema_v13;
 mod schema_v14;
+mod schema_v15;
 mod schema_v2;
 mod schema_v3;
 mod schema_v4;

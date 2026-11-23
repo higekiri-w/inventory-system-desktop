@@ -1056,7 +1056,14 @@ export function ReturnExchangePage() {
             <TableBody>
               {recentQuery.data.items.map((record) => (
                 <TableRow key={record.id}>
-                  <TableCell className="font-medium">{record.return_date}</TableCell>
+                  <TableCell className="font-medium">
+                    {record.return_date}
+                    {record.canceled_at !== null ? (
+                      <Badge variant="outline" className="ml-2">
+                        取消済み
+                      </Badge>
+                    ) : null}
+                  </TableCell>
                   <TableCell>{formatReturnType(record.return_type)}</TableCell>
                   <TableCell>{formatRegisterProcessed(record.register_processed)}</TableCell>
                   <TableCell className="max-w-[24rem] min-w-[14rem] whitespace-normal">

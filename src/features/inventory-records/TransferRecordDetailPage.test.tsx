@@ -31,6 +31,8 @@ function makeDetail(): TransferRecordDetail {
     id: 7,
     transfer_date: "2026-10-27",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-10-27T10:30:00",
     items: [
       {
@@ -86,7 +88,7 @@ beforeEach(() => {
 });
 
 describe("TransferRecordDetailPage（REQ-210 / UI-16b / U12）", () => {
-  it("U12: 減らした商品と増やした商品の 2 つの表（単位つき）、関連在庫変動、取消の代わりの案内を出す", async () => {
+  it("U12: 減らした商品と増やした商品の 2 つの表（単位つき）、関連在庫変動、取消の操作を出す", async () => {
     mockGetTransferRecord.mockResolvedValue({ status: "ok", data: makeDetail() });
 
     renderWithClient(<TransferRecordDetailPage recordId={7} />);
@@ -115,12 +117,11 @@ describe("TransferRecordDetailPage（REQ-210 / UI-16b / U12）", () => {
     expect(screen.getByText("-1.5 m")).toBeInTheDocument();
     expect(screen.getByText("+3")).toBeInTheDocument();
 
-    expect(
-      screen.getByText(
-        "間違えたときは、この記録と同じ日付・同じ数量で、減らす商品と増やす商品を入れ替えて、もう一度詰め替え・切り分けを記録してください",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /取消|訂正/ })).not.toBeInTheDocument();
+    // 79 §79.8（D-163）: 向きを入れ替える案内は取消に置き換えた。訂正の操作は持たない（TRACE-D5）
+    expect(screen.queryByText(/入れ替えて、もう一度/)).not.toBeInTheDocument();
+    expect(screen.queryByText("取消はできません")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /訂正/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "この記録を取り消す" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "前の画面へ戻る" })).toHaveAttribute(
       "href",
       "/inventory/records",

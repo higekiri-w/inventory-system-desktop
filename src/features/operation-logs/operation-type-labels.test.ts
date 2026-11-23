@@ -26,6 +26,15 @@ describe("operation type labels（UI-11c）", () => {
     expect(order.indexOf("transfer_create")).toBe(order.indexOf("disposal_create") + 1);
   });
 
+  it("REQ-208 / 74 registry（T12）: inventory_record_cancel は入出庫の「入出庫記録の取消」で、詰め替え・切り分け記録の次に並ぶ", () => {
+    expect(OPERATION_TYPE_LABELS.inventory_record_cancel).toEqual({
+      category: "入出庫",
+      label: "入出庫記録の取消",
+    });
+    const order = Object.keys(OPERATION_TYPE_LABELS);
+    expect(order.indexOf("inventory_record_cancel")).toBe(order.indexOf("transfer_create") + 1);
+  });
+
   it("REQ-401 / 74 registry: ej_import は売上データ取込みの「レシートの控え（EJ）の取込み」で、日報取込み取消の次に並ぶ", () => {
     expect(OPERATION_TYPE_LABELS.ej_import).toEqual({
       category: "売上データ取込み",

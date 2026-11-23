@@ -5,7 +5,7 @@ import { queryKeys } from "@/lib/query-keys";
 export type InvalidationKey = readonly unknown[];
 
 /**
- * D-052-C1〜C22、C23（D-141）、C24（D-143）を test 側へ独立転記した oracle。
+ * D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）を test 側へ独立転記した oracle。
  * production の invalidation-contract.ts を参照してはならない。
  */
 export const d052InvalidationOracle = {
@@ -226,6 +226,23 @@ export const d052InvalidationOracle = {
     ["product-form"],
     ["stocktake", "items"],
     ["stocktake", "recheck-list"],
+  ],
+  // C25: 65 §65.5b の成功の項の列から写す（入出庫履歴・記録の詳細・棚卸しの記録の詳細は inventory-records の下、
+  // 在庫・在庫変動の履歴・商品・日次と月次の売上、作業画面の直近の一覧の 3 つの root）
+  inventoryRecordCancel: () => [
+    ["inventory-records"],
+    ["stock-inquiry"],
+    ["products", "low-stock", { includeDiscontinued: false }],
+    ["stock-movements"],
+    ["product-list"],
+    ["product-form"],
+    ["daily-sales"],
+    ["monthly-sales"],
+    ["stocktake", "items"],
+    ["stocktake", "recheck-list"],
+    ["receivings"],
+    ["returns"],
+    ["disposals"],
   ],
 } satisfies Record<string, (...args: never[]) => InvalidationKey[]>;
 

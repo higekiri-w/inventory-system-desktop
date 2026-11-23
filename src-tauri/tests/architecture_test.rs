@@ -416,6 +416,11 @@ const DB_IO_REEXPORT_ALLOWLIST: &[(&str, &str, &str)] = &[
         "crate::db::transfer_repo::TransferRecordDetail",
     ), // 振替の記録の詳細（D-143、44 §23.7a の出力型は IO の型）
     (
+        "biz/inventory_service/mod.rs",
+        "ReferenceType",
+        "crate::db::inventory_repo::ReferenceType",
+    ), // 記録の取消の入力の種類（D-163、44 §23.7b の入力型は IO の enum）
+    (
         "biz/product_service.rs",
         "PriceHistoryEntry",
         "crate::db::product_repo::PriceHistoryEntry",

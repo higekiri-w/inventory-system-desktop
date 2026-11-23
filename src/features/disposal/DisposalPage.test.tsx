@@ -518,11 +518,51 @@ describe("DisposalPage (UI-05 / REQ-204)", () => {
     expect(screen.getByLabelText("DP-002 の数量")).toBeInTheDocument();
   });
 
+  it("REQ-208 / 65 §65.5b（T12）: 直近の一覧は取り消した行だけに「取消済み」を文字で出す", async () => {
+    mockListDisposals.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            id: 13,
+            disposal_date: "2026-11-18",
+            created_at: "2026-11-18T10:00:00",
+            canceled_at: "2026-11-21T10:00:00",
+          },
+          {
+            id: 12,
+            disposal_date: "2026-11-17",
+            created_at: "2026-11-17T10:00:00",
+            canceled_at: null,
+          },
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
+
+    renderWithClient(<DisposalPage />);
+
+    const canceled = (await screen.findByText("2026-11-18")).closest("tr");
+    const active = screen.getByText("2026-11-17").closest("tr");
+    if (canceled === null || active === null) throw new Error("expected table rows");
+    expect(within(canceled).getByText("取消済み")).toBeInTheDocument();
+    expect(within(active).queryByText("取消済み")).not.toBeInTheDocument();
+  });
+
   it("REQ-204 displays recent disposal records", async () => {
     mockListDisposals.mockResolvedValue({
       status: "ok",
       data: {
-        items: [{ id: 12, disposal_date: "2026-06-27", created_at: "2026-06-27T10:30:00" }],
+        items: [
+          {
+            id: 12,
+            disposal_date: "2026-06-27",
+            created_at: "2026-06-27T10:30:00",
+            canceled_at: null,
+          },
+        ],
         total_count: 1,
         page: 1,
         per_page: 10,

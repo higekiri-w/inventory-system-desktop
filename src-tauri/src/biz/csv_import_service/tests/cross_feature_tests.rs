@@ -736,7 +736,8 @@ fn test_cross_feature_req904_req203_model_detects_consistent_corruption() {
     world
         .conn()
         .execute(
-            "UPDATE sale_records SET source='auto' WHERE source='manual'",
+            // 手動販売との結びを持つ行は source='manual' だけ（v15 の CHECK）なので、結びも外して書き換える
+            "UPDATE sale_records SET source='auto', manual_sale_id=NULL WHERE source='manual'",
             [],
         )
         .unwrap();

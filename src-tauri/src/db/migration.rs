@@ -15,6 +15,7 @@ use super::schema_v11;
 use super::schema_v12;
 use super::schema_v13;
 use super::schema_v14;
+use super::schema_v15;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -113,6 +114,11 @@ fn migrations() -> Vec<Migration> {
             version: 14,
             description: "EJ の記録の文の表（ej_records、D-121）",
             kind: MigrationKind::Sql(schema_v14::get_v14_ej_records_schema()),
+        },
+        Migration {
+            version: 15,
+            description: "入出庫の記録の取消の列と手動販売の売上の結び（D-163）",
+            kind: MigrationKind::Sql(schema_v15::get_v15_record_cancel_schema()),
         },
     ]
 }

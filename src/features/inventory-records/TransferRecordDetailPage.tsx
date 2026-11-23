@@ -7,8 +7,6 @@ import { ArrowLeft, PackageSearch } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -26,11 +24,17 @@ import { formatStockDisplay } from "@/features/stock-inquiry/lib/format-stock-di
 import { MovementTable, stockUnitMap } from "@/features/stock-movements/components/MovementTable";
 import { commands, type TransferDirection, type TransferRecordDetailItem } from "@/lib/bindings";
 import { formatDateTime } from "@/lib/date-time";
-import { describeError } from "@/lib/describe-error";
 import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { returnToLinkProps } from "@/lib/return-to";
-import { formatRecordStatus } from "./types";
+import {
+  CANCELED_MOVEMENTS_EMPTY_DESCRIPTION,
+  RecordCancelButton,
+  RecordCanceledAlert,
+  RecordDetailError,
+  RecordStatusBadge,
+} from "./RecordCancel";
+import { useRecordCancel } from "./useRecordCancel";
 
 export interface TransferRecordDetailPageProps {
   recordId: number;
@@ -41,10 +45,6 @@ const SIDE_HEADINGS: Record<TransferDirection, string> = {
   out: "減らした商品",
   in: "増やした商品",
 };
-
-/** §79.8: 取消・訂正の代わりの案内（D-143 (5)） */
-export const TRANSFER_CORRECTION_GUIDE =
-  "間違えたときは、この記録と同じ日付・同じ数量で、減らす商品と増やす商品を入れ替えて、もう一度詰め替え・切り分けを記録してください";
 
 function SideTable({
   direction,
@@ -82,19 +82,28 @@ function SideTable({
   );
 }
 
-export function TransferRecordDetailPage({ recordId, returnTo }: TransferRecordDetailPageProps) {
+export function TransferRecordDetailPage(props: TransferRecordDetailPageProps) {
+  // 取消の途中の状態（dialog・理由・在庫の知らせ）は表示している記録のものだけ（65 §65.5b）。同じ route の param が
+  // 変わっても component は再 mount されないので、記録ID で作り直す
+  return <TransferRecordDetailBody key={props.recordId} {...props} />;
+}
+
+function TransferRecordDetailBody({ recordId, returnTo }: TransferRecordDetailPageProps) {
   const backLinkProps = returnToLinkProps(returnTo) ?? { to: "/inventory/records", search: {} };
+  const queryKey = queryKeys.inventoryRecords.transferDetail(recordId);
+  const readDetail = () =>
+    unwrapResult(commands.getTransferRecord(recordId), {
+      source: "commands",
+      cmd: "get_transfer_record",
+    });
   const detailQuery = useQuery({
-    queryKey: queryKeys.inventoryRecords.transferDetail(recordId),
-    queryFn: () =>
-      unwrapResult(commands.getTransferRecord(recordId), {
-        source: "commands",
-        cmd: "get_transfer_record",
-      }),
+    queryKey,
+    queryFn: readDetail,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: 0,
   });
+  const cancel = useRecordCancel({ recordType: "transfer_record", recordId, queryKey, readDetail });
 
   if (detailQuery.isLoading) {
     return (
@@ -109,19 +118,12 @@ export function TransferRecordDetailPage({ recordId, returnTo }: TransferRecordD
   if (detailQuery.isError) {
     return (
       <PageShell>
-        <PageHeader title="詰め替え・切り分け詳細" />
-        <Alert variant="destructive">
-          <AlertTitle>{describeError(detailQuery.error)}</AlertTitle>
-          <AlertDescription>
-            記録IDを確認するか、入出庫履歴から開き直してください。
-          </AlertDescription>
-        </Alert>
-        <Button asChild variant="outline">
-          <Link {...backLinkProps}>
-            <ArrowLeft aria-hidden="true" />
-            前の画面へ戻る
-          </Link>
-        </Button>
+        <RecordDetailError
+          title="詰め替え・切り分け詳細"
+          cancel={cancel}
+          query={detailQuery}
+          backLinkProps={backLinkProps}
+        />
       </PageShell>
     );
   }
@@ -134,14 +136,22 @@ export function TransferRecordDetailPage({ recordId, returnTo }: TransferRecordD
       <PageHeader
         title={`詰め替え・切り分け #${String(detail.id)}`}
         actions={
-          <Button asChild variant="outline">
-            <Link {...backLinkProps}>
-              <ArrowLeft aria-hidden="true" />
-              前の画面へ戻る
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link {...backLinkProps}>
+                <ArrowLeft aria-hidden="true" />
+                前の画面へ戻る
+              </Link>
+            </Button>
+            <RecordCancelButton
+              cancel={cancel}
+              status={detail.status}
+              businessDate={detail.transfer_date}
+            />
+          </>
         }
       />
+      <RecordCanceledAlert cancel={cancel} detail={detail} />
 
       <section className="rounded-md border p-4">
         <div className="grid gap-3 text-sm sm:grid-cols-4">
@@ -162,16 +172,11 @@ export function TransferRecordDetailPage({ recordId, returnTo }: TransferRecordD
           <div>
             <span className="text-muted-foreground">状態</span>
             <div>
-              <Badge variant="outline">{formatRecordStatus(detail.status)}</Badge>
+              <RecordStatusBadge cancel={cancel} status={detail.status} />
             </div>
           </div>
         </div>
       </section>
-
-      <Alert>
-        <AlertTitle>取消はできません</AlertTitle>
-        <AlertDescription>{TRANSFER_CORRECTION_GUIDE}</AlertDescription>
-      </Alert>
 
       {(["out", "in"] as const).map((direction) => (
         <SideTable
@@ -187,7 +192,11 @@ export function TransferRecordDetailPage({ recordId, returnTo }: TransferRecordD
           <EmptyState
             icon={PackageSearch}
             title="関連する在庫変動がありません"
-            description="この記録に紐づく在庫変動は見つかりません"
+            description={
+              detail.status === "canceled"
+                ? CANCELED_MOVEMENTS_EMPTY_DESCRIPTION
+                : "この記録に紐づく在庫変動は見つかりません"
+            }
           />
         ) : (
           <MovementTable

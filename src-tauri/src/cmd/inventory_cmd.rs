@@ -1,6 +1,6 @@
-//! CMD-06: 在庫照会コマンド群
+//! CMD-06: 在庫照会コマンド群と、入出庫の記録の取消
 //!
-//! 44-cmd-inventory.md §23.8 に基づく実装。
+//! 44-cmd-inventory.md §23.8 と §23.7b（D-163）に基づく実装。
 
 use crate::biz::{
     inventory_service, product_service, MovementQuery, PaginatedResult, ProductWithRelations,
@@ -57,8 +57,30 @@ pub fn list_movements(
     inventory_service::list_movements(&conn, &query).map_err(CmdError::from)
 }
 
+/// 入庫・返品交換・手動販売・廃棄・振替の記録を、理由を付けて取り消す
+///
+/// 44-cmd-inventory.md §23.7b cancel_inventory_record
+// transaction の間に window の close を受けられるよう main thread の外で動かす（44 §23.7b の「実行の thread」）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
+#[specta::specta]
+pub fn cancel_inventory_record(
+    state: State<AppState>,
+    record_type: inventory_service::ReferenceType,
+    record_id: i64,
+    reason: String,
+) -> Result<inventory_service::RecordCancelResult, CmdError> {
+    let mut conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    inventory_service::cancel_inventory_record(&mut conn, record_type, record_id, &reason)
+        .map_err(CmdError::from)
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::biz::inventory_service::{self, ReferenceType};
     use crate::biz::BizError;
     use crate::cmd::{CmdError, CmdErrorKind};
     use crate::db;
@@ -410,5 +432,48 @@ mod tests {
         let count = result.items[0].count.as_ref().expect("count row");
         assert_eq!(count.count_value, 7);
         assert_eq!(result.items[0].business_date, "2026-04-02");
+    }
+
+    #[test]
+    fn cancel_inventory_record_cmd_maps_errors() {
+        // REQ-208 / 44 §23.7b・§23.3（Test Plan T11）: error の写像、種類の受け方、実行の thread
+        let mut conn = setup_db();
+        for record_type in [ReferenceType::CsvImport, ReferenceType::Stocktake] {
+            let error =
+                inventory_service::cancel_inventory_record(&mut conn, record_type, 1, "理由")
+                    .unwrap_err();
+            assert_eq!(CmdError::from(error).kind, CmdErrorKind::Validation);
+        }
+        let not_found = inventory_service::cancel_inventory_record(
+            &mut conn,
+            ReferenceType::ReceivingRecord,
+            404,
+            "理由",
+        )
+        .unwrap_err();
+        assert_eq!(CmdError::from(not_found).kind, CmdErrorKind::NotFound);
+
+        // snake_case の 7 つの値は変換でき、定義に無い文字列は拒まれる（BIZ に届かない）
+        let values = [
+            ("csv_import", ReferenceType::CsvImport),
+            ("manual_sale", ReferenceType::ManualSale),
+            ("receiving_record", ReferenceType::ReceivingRecord),
+            ("return_record", ReferenceType::ReturnRecord),
+            ("disposal_record", ReferenceType::DisposalRecord),
+            ("stocktake", ReferenceType::Stocktake),
+            ("transfer_record", ReferenceType::TransferRecord),
+        ];
+        for (wire, expected) in values {
+            let parsed: ReferenceType = serde_json::from_value(serde_json::json!(wire)).unwrap();
+            assert_eq!(parsed, expected);
+            assert_eq!(expected.as_str(), wire);
+        }
+        assert!(serde_json::from_value::<ReferenceType>(serde_json::json!("receiving")).is_err());
+
+        // 取消の応答を待つ間の close の止め（UI-USW-D5 の 8）のため、main thread で動かさない
+        crate::cmd::assert_commands_run_off_main_thread(
+            include_str!("inventory_cmd.rs"),
+            &["cancel_inventory_record"],
+        );
     }
 }

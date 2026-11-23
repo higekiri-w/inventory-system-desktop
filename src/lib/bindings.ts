@@ -157,6 +157,12 @@ export const commands = {
 	 */
 	listMovements: (query: MovementQuery) => typedError<PaginatedResult<StockHistoryItem>, CmdError>(__TAURI_INVOKE("list_movements", { query })),
 	/**
+	 *  入庫・返品交換・手動販売・廃棄・振替の記録を、理由を付けて取り消す
+	 *
+	 *  44-cmd-inventory.md §23.7b cancel_inventory_record
+	 */
+	cancelInventoryRecord: (recordType: ReferenceType, recordId: number, reason: string) => typedError<RecordCancelResult, CmdError>(__TAURI_INVOKE("cancel_inventory_record", { recordType, recordId, reason })),
+	/**
 	 *  Z004ファイルを受け取り、プレビューデータを返す
 	 *
 	 *  docs/function-design/41-cmd-pos.md §17.5 parse_and_validate_csv
@@ -860,6 +866,10 @@ export type DisposalRecordDetail = {
 	id: number,
 	disposal_date: string,
 	status: string,
+	// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+	canceled_at: string | null,
+	// 取消の理由。有効なら None
+	cancel_reason: string | null,
 	created_at: string,
 	items: DisposalRecordDetailItem[],
 	// ロス原価合計（円。行のロス原価の和を円未満で四捨五入した値。SPEC-UNIT-D6）
@@ -887,6 +897,8 @@ export type DisposalRecordSummary = {
 	id: number,
 	disposal_date: string,
 	created_at: string,
+	// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+	canceled_at: string | null,
 };
 
 export type DisposalType = "disposal" | "damage" | "other";
@@ -1152,6 +1164,10 @@ export type ManualSaleRecordDetail = {
 	reason: ManualSaleReason,
 	note: string | null,
 	status: string,
+	// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+	canceled_at: string | null,
+	// 取消の理由。有効なら None
+	cancel_reason: string | null,
 	created_at: string,
 	items: ManualSaleRecordDetailItem[],
 	total_amount: number,
@@ -1659,6 +1675,10 @@ export type ReceivingRecordDetail = {
 	supplier_name: string | null,
 	note: string | null,
 	status: string,
+	// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+	canceled_at: string | null,
+	// 取消の理由。有効なら None
+	cancel_reason: string | null,
 	created_at: string,
 	items: ReceivingRecordDetailItem[],
 	// 原価合計（円。行の金額の和を円未満で四捨五入した値。SPEC-UNIT-D6）
@@ -1687,6 +1707,14 @@ export type ReceivingRecordWithSupplier = {
 	receiving_date: string,
 	note: string | null,
 	created_at: string,
+	// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+	canceled_at: string | null,
+};
+
+// 記録の取消の結果（31 §12.6c）
+export type RecordCancelResult = {
+	// 取消で在庫が負になった商品の文（作成と同じ文。商品コードの順・重複なし）
+	stock_warnings: string[],
 };
 
 // 要再確認の理由（40。ADR D3 の理由 1〜3、この順）
@@ -1783,6 +1811,10 @@ export type ReturnRecordDetail = {
 	receipt_image_path: string | null,
 	note: string | null,
 	status: string,
+	// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+	canceled_at: string | null,
+	// 取消の理由。有効なら None
+	cancel_reason: string | null,
 	created_at: string,
 	items: ReturnRecordDetailItem[],
 	movements: MovementRecord[],
@@ -1807,6 +1839,8 @@ export type ReturnRecordSummary = {
 	register_processed: boolean,
 	note: string | null,
 	created_at: string,
+	// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+	canceled_at: string | null,
 };
 
 // preview_rollback_csv_import の結果（取消の前の読取り。何も書かない。32 §15.6b）
@@ -2167,8 +2201,12 @@ export type TransferItemInput = {
 export type TransferRecordDetail = {
 	id: number,
 	transfer_date: string,
-	// 今は常に `"active"`（取消は持たない）
+	// 取り消していなければ `"active"`、取り消した記録は `"canceled"`（`canceled_at` の有無。D-163）
 	status: string,
+	// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None
+	canceled_at: string | null,
+	// 取消の理由。有効なら None
+	cancel_reason: string | null,
 	created_at: string,
 	// 減らす明細を先、同じ向きの中は明細の id の順
 	items: TransferRecordDetailItem[],
