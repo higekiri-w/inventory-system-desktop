@@ -2,7 +2,7 @@
 //!
 //! 21-io-inventory-repo.md §10.2 に基づく実装。
 
-use super::inventory_common::{validate_and_offset, ListQuery};
+use super::inventory_common::{get_record_cancel, record_status, validate_and_offset, ListQuery};
 use super::inventory_repo::MovementRecord;
 use super::product_repo::{parse_stock_unit, ProductStockUnit};
 use super::{DbConnection, DbError, PaginatedResult};
@@ -41,6 +41,8 @@ pub struct ReceivingRecordWithSupplier {
     pub receiving_date: String,
     pub note: Option<String>,
     pub created_at: String,
+    /// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+    pub canceled_at: Option<String>,
 }
 
 /// 入庫記録詳細の明細行
@@ -67,6 +69,10 @@ pub struct ReceivingRecordDetail {
     pub supplier_name: Option<String>,
     pub note: Option<String>,
     pub status: String,
+    /// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+    pub canceled_at: Option<String>,
+    /// 取消の理由。有効なら None
+    pub cancel_reason: Option<String>,
     pub created_at: String,
     pub items: Vec<ReceivingRecordDetailItem>,
     /// 原価合計（円。行の金額の和を円未満で四捨五入した値。SPEC-UNIT-D6）
@@ -154,7 +160,7 @@ pub fn list_receiving_records(
 
     // data
     let data_sql = format!(
-        "SELECT rr.id, rr.supplier_id, s.name, rr.receiving_date, rr.note, rr.created_at \
+        "SELECT rr.id, rr.supplier_id, s.name, rr.receiving_date, rr.note, rr.created_at, rr.canceled_at \
          FROM receiving_records rr \
          LEFT JOIN suppliers s ON rr.supplier_id = s.id \
          {} \
@@ -179,6 +185,7 @@ pub fn list_receiving_records(
                     receiving_date: row.get(3)?,
                     note: row.get(4)?,
                     created_at: row.get(5)?,
+                    canceled_at: row.get(6)?,
                 })
             },
         )?
@@ -221,6 +228,8 @@ pub fn get_receiving_record_detail(
         Err(rusqlite::Error::QueryReturnedNoRows) => return Err(DbError::NotFound),
         Err(e) => return Err(DbError::from(e)),
     };
+
+    let (canceled_at, cancel_reason) = get_record_cancel(conn, "receiving_records", record_id)?;
 
     let mut item_stmt = conn.prepare(
         "SELECT
@@ -284,7 +293,9 @@ pub fn get_receiving_record_detail(
         supplier_id,
         supplier_name,
         note,
-        status: "active".to_string(),
+        status: record_status(canceled_at.as_deref()),
+        canceled_at,
+        cancel_reason,
         created_at,
         items,
         total_cost: 0,

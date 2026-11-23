@@ -3,6 +3,7 @@
 //! 21-io-inventory-repo.md §10.5a に基づく実装（D-143）。
 //! 在庫の変動は BIZ の `apply_stock_change` が書き、この module は書かない。
 
+use super::inventory_common::{get_record_cancel, record_status};
 use super::inventory_repo::{parse_movement_type, parse_reference_type, MovementRecord};
 use super::product_repo::{parse_stock_unit, ProductStockUnit};
 use super::{DbConnection, DbError};
@@ -77,8 +78,12 @@ pub struct TransferRecordDetailItem {
 pub struct TransferRecordDetail {
     pub id: i64,
     pub transfer_date: String,
-    /// 今は常に `"active"`（取消は持たない）
+    /// 取り消していなければ `"active"`、取り消した記録は `"canceled"`（`canceled_at` の有無。D-163）
     pub status: String,
+    /// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None
+    pub canceled_at: Option<String>,
+    /// 取消の理由。有効なら None
+    pub cancel_reason: Option<String>,
     pub created_at: String,
     /// 減らす明細を先、同じ向きの中は明細の id の順
     pub items: Vec<TransferRecordDetailItem>,
@@ -170,6 +175,8 @@ pub fn get_transfer_record_detail(
         Err(e) => return Err(DbError::from(e)),
     };
 
+    let (canceled_at, cancel_reason) = get_record_cancel(conn, "transfer_records", record_id)?;
+
     let mut item_stmt = conn.prepare(
         "SELECT ti.id, ti.product_code, p.name, d.name, p.stock_unit, ti.direction, ti.quantity
          FROM transfer_items ti
@@ -221,7 +228,9 @@ pub fn get_transfer_record_detail(
     Ok(TransferRecordDetail {
         id,
         transfer_date,
-        status: "active".to_string(),
+        status: record_status(canceled_at.as_deref()),
+        canceled_at,
+        cancel_reason,
         created_at,
         items,
         movements,

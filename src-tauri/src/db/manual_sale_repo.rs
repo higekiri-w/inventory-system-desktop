@@ -2,6 +2,7 @@
 //!
 //! 21-io-inventory-repo.md §10.4 に基づく実装。
 
+use super::inventory_common::{get_record_cancel, record_status};
 use super::inventory_repo::MovementRecord;
 use super::product_repo::{parse_stock_unit, ProductStockUnit};
 use super::{DbConnection, DbError};
@@ -79,6 +80,10 @@ pub struct ManualSaleRecordDetail {
     pub reason: ManualSaleReason,
     pub note: Option<String>,
     pub status: String,
+    /// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+    pub canceled_at: Option<String>,
+    /// 取消の理由。有効なら None
+    pub cancel_reason: Option<String>,
     pub created_at: String,
     pub items: Vec<ManualSaleRecordDetailItem>,
     pub total_amount: i64,
@@ -127,6 +132,18 @@ pub fn insert_manual_sale_item(
     Ok(())
 }
 
+/// 手動販売の明細の数を返す（記録の取消で、結んだ売上の行の数と比べる）
+///
+/// 21-io-inventory-repo.md §10.5b
+pub fn count_manual_sale_items(conn: &DbConnection, manual_sale_id: i64) -> Result<u64, DbError> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM manual_sale_items WHERE manual_sale_id = ?1",
+        rusqlite::params![manual_sale_id],
+        |row| row.get(0),
+    )?;
+    Ok(count as u64)
+}
+
 /// 手動販売記録の詳細を取得する。
 ///
 /// 65-inventory-record-traceability.md §65.5
@@ -155,6 +172,8 @@ pub fn get_manual_sale_record_detail(
         Err(e) => return Err(DbError::from(e)),
     };
     let reason = parse_manual_sale_reason(reason).map_err(DbError::from)?;
+
+    let (canceled_at, cancel_reason) = get_record_cancel(conn, "manual_sales", record_id)?;
 
     let mut item_stmt = conn.prepare(
         "SELECT
@@ -217,7 +236,9 @@ pub fn get_manual_sale_record_detail(
         sale_date,
         reason,
         note,
-        status: "active".to_string(),
+        status: record_status(canceled_at.as_deref()),
+        canceled_at,
+        cancel_reason,
         created_at,
         items,
         total_amount,

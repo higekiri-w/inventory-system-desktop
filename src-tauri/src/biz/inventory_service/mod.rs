@@ -1,10 +1,11 @@
 //! BIZ-02: 在庫変動ロジック
 //!
 //! ARCHITECTURE.md タスク仕様 BIZ-02 + 31-biz-inventory-service.md §12 に基づく実装。
-//! apply_stock_change（共通在庫変動）+ 5業務関数（入庫/返品/手動販売/廃棄/振替）。
+//! apply_stock_change（共通在庫変動）+ 5業務関数（入庫/返品/手動販売/廃棄/振替）+ 記録の取消。
 
 //! CMD-02〜05 が全シンボルを使用。
 
+mod cancel;
 mod common;
 mod disposal;
 mod list;
@@ -48,6 +49,10 @@ pub use transfer::{
 };
 // 詳細の型は IO の型（21 §10.5a）。CMD が db を直に参照しないよう BIZ から出す
 pub use crate::db::transfer_repo::TransferRecordDetail;
+
+// 記録の取消（D-163、31 §12.6c）。種類は IO の enum（44 §23.7b の入力型）で、CMD が db を直に参照しないよう BIZ から出す
+pub use crate::db::inventory_repo::ReferenceType;
+pub use cancel::{cancel_inventory_record, RecordCancelResult};
 
 // 一覧取得
 #[allow(unused_imports)]

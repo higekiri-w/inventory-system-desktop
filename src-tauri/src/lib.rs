@@ -251,7 +251,7 @@ fn show_pre_window_fatal(message: &str) {
 /// - CMD-05: create_disposal / list_disposals
 /// - CMD-05b: list_inventory_records / get_disposal_record
 /// - CMD-13: create_transfer / get_transfer_record
-/// - CMD-06: get_stock_detail / list_low_stock / list_movements
+/// - CMD-06: get_stock_detail / list_low_stock / list_movements / cancel_inventory_record
 /// - CMD-07: parse_and_validate_csv / commit_csv_import / rollback_csv_import / list_csv_imports
 /// - CMD-12: parse_and_validate_daily_report / commit_daily_report_import / rollback_daily_report_import / list_daily_report_imports
 /// - CMD-08: prepare_plu_export / confirm_plu_export_saved / list_plu_dirty
@@ -316,6 +316,7 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::inventory_cmd::get_stock_detail,
         cmd::inventory_cmd::list_low_stock,
         cmd::inventory_cmd::list_movements,
+        cmd::inventory_cmd::cancel_inventory_record,
         // CMD-07: CSV取込み
         cmd::csv_import_cmd::parse_and_validate_csv,
         cmd::csv_import_cmd::commit_csv_import,
@@ -1559,6 +1560,7 @@ pub fn run() {
             cmd::inventory_cmd::get_stock_detail,
             cmd::inventory_cmd::list_low_stock,
             cmd::inventory_cmd::list_movements,
+            cmd::inventory_cmd::cancel_inventory_record,
             // CMD-07: CSV取込み
             cmd::csv_import_cmd::parse_and_validate_csv,
             cmd::csv_import_cmd::commit_csv_import,

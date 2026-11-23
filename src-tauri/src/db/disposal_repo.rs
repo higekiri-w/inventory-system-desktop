@@ -2,7 +2,7 @@
 //!
 //! 21-io-inventory-repo.md §10.5 に基づく実装。
 
-use super::inventory_common::{validate_and_offset, ListQuery};
+use super::inventory_common::{get_record_cancel, record_status, validate_and_offset, ListQuery};
 use super::inventory_repo::MovementRecord;
 use super::product_repo::{parse_stock_unit, ProductStockUnit};
 use super::{DbConnection, DbError, PaginatedResult};
@@ -69,6 +69,8 @@ pub struct DisposalRecordSummary {
     pub id: i64,
     pub disposal_date: String,
     pub created_at: String,
+    /// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+    pub canceled_at: Option<String>,
 }
 
 /// 入出庫履歴ハブの検索条件
@@ -125,6 +127,10 @@ pub struct DisposalRecordDetail {
     pub id: i64,
     pub disposal_date: String,
     pub status: String,
+    /// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+    pub canceled_at: Option<String>,
+    /// 取消の理由。有効なら None
+    pub cancel_reason: Option<String>,
     pub created_at: String,
     pub items: Vec<DisposalRecordDetailItem>,
     /// ロス原価合計（円。行のロス原価の和を円未満で四捨五入した値。SPEC-UNIT-D6）
@@ -208,7 +214,7 @@ pub fn list_disposal_records(
     )?;
 
     let data_sql = format!(
-        "SELECT id, disposal_date, created_at \
+        "SELECT id, disposal_date, created_at, canceled_at \
          FROM disposal_records {} \
          ORDER BY disposal_date DESC, id DESC \
          LIMIT ?{} OFFSET ?{}",
@@ -228,6 +234,7 @@ pub fn list_disposal_records(
                     id: row.get(0)?,
                     disposal_date: row.get(1)?,
                     created_at: row.get(2)?,
+                    canceled_at: row.get(3)?,
                 })
             },
         )?
@@ -240,6 +247,10 @@ pub fn list_disposal_records(
         per_page: query.per_page,
     })
 }
+
+/// 取消の列を持つ 5 つの記録の状態（65 §65.4.1、D-163）
+const CANCELABLE_STATUS_EXPR: &str =
+    "CASE WHEN {header_alias}.canceled_at IS NULL THEN 'active' ELSE 'canceled' END";
 
 /// 入出庫履歴ハブ用に業務記録をヘッダ単位で取得する。
 ///
@@ -278,7 +289,7 @@ pub fn list_inventory_records(
         item_fk_col: &'static str,
         date_col: &'static str,
         route_prefix: &'static str,
-        status_expr: Option<&'static str>,
+        status_expr: &'static str,
         date_expr: Option<&'static str>,
         created_at_col: Option<&'static str>,
     }
@@ -293,7 +304,7 @@ pub fn list_inventory_records(
             item_fk_col: "receiving_record_id",
             date_col: "receiving_date",
             route_prefix: "/inventory/receiving/records",
-            status_expr: None,
+            status_expr: CANCELABLE_STATUS_EXPR,
             date_expr: None,
             created_at_col: None,
         },
@@ -306,7 +317,7 @@ pub fn list_inventory_records(
             item_fk_col: "return_record_id",
             date_col: "return_date",
             route_prefix: "/inventory/return/records",
-            status_expr: None,
+            status_expr: CANCELABLE_STATUS_EXPR,
             date_expr: None,
             created_at_col: None,
         },
@@ -319,7 +330,7 @@ pub fn list_inventory_records(
             item_fk_col: "manual_sale_id",
             date_col: "sale_date",
             route_prefix: "/inventory/manual-sale/records",
-            status_expr: None,
+            status_expr: CANCELABLE_STATUS_EXPR,
             date_expr: None,
             created_at_col: None,
         },
@@ -332,7 +343,7 @@ pub fn list_inventory_records(
             item_fk_col: "disposal_record_id",
             date_col: "disposal_date",
             route_prefix: "/inventory/disposal/records",
-            status_expr: None,
+            status_expr: CANCELABLE_STATUS_EXPR,
             date_expr: None,
             created_at_col: None,
         },
@@ -345,9 +356,8 @@ pub fn list_inventory_records(
             item_fk_col: "csv_import_id",
             date_col: "settlement_date",
             route_prefix: "/csv-import/records",
-            status_expr: Some(
+            status_expr:
                 "CASE {header_alias}.status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END",
-            ),
             date_expr: Some("{header_alias}.settlement_date"),
             created_at_col: Some("imported_at"),
         },
@@ -361,9 +371,8 @@ pub fn list_inventory_records(
             item_fk_col: "stocktake_id",
             date_col: "completed_at",
             route_prefix: "/stocktake/records",
-            status_expr: Some(
+            status_expr:
                 "CASE {header_alias}.status WHEN 'completed' THEN 'active' ELSE 'in_progress' END",
-            ),
             date_expr: Some(
                 "DATE(COALESCE({header_alias}.completed_at, {header_alias}.started_at))",
             ),
@@ -379,7 +388,7 @@ pub fn list_inventory_records(
             item_fk_col: "transfer_record_id",
             date_col: "transfer_date",
             route_prefix: "/inventory/transfer/records",
-            status_expr: None,
+            status_expr: CANCELABLE_STATUS_EXPR,
             date_expr: None,
             created_at_col: None,
         },
@@ -413,8 +422,7 @@ pub fn list_inventory_records(
             .unwrap_or_else(|| format!("{}.{}", spec.header_alias, spec.date_col));
         let status_expr = spec
             .status_expr
-            .map(|expr| expr.replace("{header_alias}", spec.header_alias))
-            .unwrap_or_else(|| "'active'".to_string());
+            .replace("{header_alias}", spec.header_alias);
         let created_at_col = spec.created_at_col.unwrap_or("created_at");
 
         if let Some(ref from) = query.date_from {
@@ -610,6 +618,8 @@ pub fn get_disposal_record_detail(
         Err(e) => return Err(DbError::from(e)),
     };
 
+    let (canceled_at, cancel_reason) = get_record_cancel(conn, "disposal_records", record_id)?;
+
     let mut item_stmt = conn.prepare(
         "SELECT
             di.id,
@@ -673,7 +683,9 @@ pub fn get_disposal_record_detail(
     Ok(DisposalRecordDetail {
         id,
         disposal_date,
-        status: "active".to_string(),
+        status: record_status(canceled_at.as_deref()),
+        canceled_at,
+        cancel_reason,
         created_at,
         items,
         total_loss_cost: 0,

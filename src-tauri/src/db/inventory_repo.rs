@@ -55,7 +55,8 @@ pub(super) fn parse_movement_type(value: String) -> rusqlite::Result<MovementTyp
 }
 
 /// 参照先種別（db-design/tracking-system-tables.md: inventory_movements.reference_type CHECK制約に対応）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, specta::Type)]
+// Deserialize は記録の取消の command の入力（44 §23.7b）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceType {
     CsvImport,

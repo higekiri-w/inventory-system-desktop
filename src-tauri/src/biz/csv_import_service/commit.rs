@@ -136,6 +136,7 @@ fn execute_commit(conn: &mut DbConnection, req: &CommitRequest) -> Result<Import
                 reason: None,
                 note: None,
                 stock_linked: *linked,
+                manual_sale_id: None,
             },
         )?;
         // 数量 0 で金額が 0 でない行は売上だけ

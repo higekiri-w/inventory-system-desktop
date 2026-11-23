@@ -112,7 +112,7 @@ fn list_receiving_records(conn: &DbConnection, query: &ListQuery) -> Result<Pagi
 ```
 
 **ReceivingRecordWithSupplier構造体**:
-- id: i64, supplier_id: Option<i64>, supplier_name: Option<String>, receiving_date: String, note: Option<String>, created_at: String
+- id: i64, supplier_id: Option<i64>, supplier_name: Option<String>, receiving_date: String, note: Option<String>, created_at: String, canceled_at: Option<String>（取消の日時。有効なら None。D-163）
 
 **処理ステップ**:
 1. WHERE句構築: date_from/date_to → receiving_date >= ? / receiving_date <= ?
@@ -130,7 +130,7 @@ fn get_receiving_record_detail(conn: &DbConnection, record_id: i64) -> Result<Re
 ```
 
 **ReceivingRecordDetail構造体**:
-- id: i64, receiving_date: String, supplier_id: Option<i64>, supplier_name: Option<String>, note: Option<String>, status: String, created_at: String
+- id: i64, receiving_date: String, supplier_id: Option<i64>, supplier_name: Option<String>, note: Option<String>, status: String（`canceled_at` の有無で `"active"`・`"canceled"`。§10.5b）, canceled_at: Option<String>, cancel_reason: Option<String>, created_at: String
 - total_cost: i64
 - items: Vec<ReceivingRecordDetailItem>
 - movements: Vec<MovementRecord>
@@ -185,7 +185,7 @@ fn list_return_records(conn: &DbConnection, query: &ListQuery) -> Result<Paginat
 ```
 
 **ReturnRecordSummary構造体**:
-- id: i64, return_type: ReturnExchangeType, return_date: String, register_processed: bool, note: Option<String>, created_at: String
+- id: i64, return_type: ReturnExchangeType, return_date: String, register_processed: bool, note: Option<String>, created_at: String, canceled_at: Option<String>（取消の日時。有効なら None。D-163）
 
 #### get_return_record_detail
 
@@ -197,7 +197,7 @@ fn get_return_record_detail(conn: &DbConnection, record_id: i64) -> Result<Retur
 ```
 
 **ReturnRecordDetail構造体**:
-- id: i64, return_type: ReturnExchangeType, return_date: String, register_processed: bool, receipt_image_path: Option<String>, note: Option<String>, status: String, created_at: String
+- id: i64, return_type: ReturnExchangeType, return_date: String, register_processed: bool, receipt_image_path: Option<String>, note: Option<String>, status: String（`canceled_at` の有無で `"active"`・`"canceled"`。§10.5b）, canceled_at: Option<String>, cancel_reason: Option<String>, created_at: String
 - items: Vec<ReturnRecordDetailItem>
 - movements: Vec<MovementRecord>
 
@@ -250,7 +250,7 @@ fn get_manual_sale_record_detail(conn: &DbConnection, record_id: i64) -> Result<
 ```
 
 **ManualSaleRecordDetail構造体**:
-- id: i64, sale_date: String, reason: ManualSaleReason, note: Option<String>, status: String, created_at: String
+- id: i64, sale_date: String, reason: ManualSaleReason, note: Option<String>, status: String（`canceled_at` の有無で `"active"`・`"canceled"`。§10.5b）, canceled_at: Option<String>, cancel_reason: Option<String>, created_at: String
 - total_amount: i64
 - items: Vec<ManualSaleRecordDetailItem>
 - movements: Vec<MovementRecord>
@@ -303,7 +303,7 @@ fn list_disposal_records(conn: &DbConnection, query: &ListQuery) -> Result<Pagin
 ```
 
 **DisposalRecordSummary構造体**:
-- id: i64, disposal_date: String, created_at: String
+- id: i64, disposal_date: String, created_at: String, canceled_at: Option<String>（取消の日時。有効なら None。D-163）
 
 #### list_inventory_records
 
@@ -347,7 +347,7 @@ fn list_inventory_records(
    - 廃棄・破損: `disposal_records` + `disposal_items`
    - CSV取込み: `csv_imports` + `sale_records`。TRACE-D6 の履歴保持方針により `sale_records.is_voided=1` も `item_count` / `representative_item` に含める
    - 棚卸し: `stocktakes` + 差異 `inventory_movements`。差異母集団は `reference_type='stocktake' AND is_voided=0` に必ず絞る
-   - `status_expr`: CSV取込みは `CASE status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END`、棚卸しは `CASE status WHEN 'completed' THEN 'active' ELSE 'in_progress' END`、既存 4 種と振替は `'active'` 固定を継続する（取消〈D-163。proposed・未実装〉の後は header の `canceled_at` の有無で `'active'`・`'canceled'`。[65](65-inventory-record-traceability.md) §65.4.1）
+   - `status_expr`: CSV取込みは `CASE status WHEN 'rolled_back' THEN 'canceled' ELSE 'active' END`、棚卸しは `CASE status WHEN 'completed' THEN 'active' ELSE 'in_progress' END`、入庫・返品交換・手動販売・廃棄・振替の 5 種は header の `canceled_at` から `CASE WHEN canceled_at IS NULL THEN 'active' ELSE 'canceled' END`（D-163。[65](65-inventory-record-traceability.md) §65.4.1）
    - `date_expr`: CSV取込みは `settlement_date`、棚卸しは `DATE(COALESCE(completed_at, started_at))`。棚卸しの `DATE()` ラップは SELECT と日付範囲 WHERE の 2 箇所へ同じ式で入れ、外側 ORDER BY は `business_date` alias を継承するため変更しない
    - `created_at_col`: CSV取込みは `imported_at`、棚卸しは `started_at`。`csv_imports` / `stocktakes` のいずれにも `created_at` 列は存在しない
 3. WHERE句構築: 業務日付、record_id、department_id、product_keyword を条件化する。日付条件は `date_expr` を式として直接 WHERE に使い、`header_alias.` を機械的に前置しない
@@ -372,7 +372,9 @@ fn get_disposal_record_detail(
 **DisposalRecordDetail構造体**:
 - id: i64
 - disposal_date: String
-- status: String
+- status: String（`canceled_at` の有無で `"active"`・`"canceled"`。§10.5b）
+- canceled_at: Option<String>
+- cancel_reason: Option<String>
 - created_at: String
 - total_loss_cost: i64
 - items: Vec<DisposalRecordDetailItem>
@@ -452,7 +454,9 @@ fn get_transfer_record_detail(
 **TransferRecordDetail構造体**:
 - id: i64
 - transfer_date: String
-- status: String（今は常に `"active"`。取消〈[31](31-biz-inventory-service.md) §12.6c、D-163。proposed・未実装〉の後は `canceled_at` の有無で `"active"`・`"canceled"`）
+- status: String（`canceled_at` の有無で `"active"`・`"canceled"`。§10.5b、D-163）
+- canceled_at: Option<String>
+- cancel_reason: Option<String>
 - created_at: String
 - items: Vec<TransferRecordDetailItem>（減らす明細を先、同じ向きの中は明細の id の順）
 - movements: Vec<MovementRecord>
@@ -471,6 +475,23 @@ fn get_transfer_record_detail(
 2. transfer_items を products / departments と JOIN し、商品名・部門名・単位を付ける（`parse_stock_unit`。一覧に無い値は読取りの error。SPEC-UNIT-D11）
 3. inventory_movements から `reference_type='transfer_record'` かつ `reference_id=record_id` かつ `is_voided=0` の行を取得する
 4. movements は BIZ 層で source link を補完するため、IO 層では `source=None` のまま返す
+
+### 10.5b inventory_common — 記録の取消の列（D-163）
+
+入庫・返品交換・手動販売・廃棄・振替の 5 つの header の取消の列（`canceled_at`・`cancel_reason`。[transaction](../db-design/transaction-tables.md) §4-5 の「取消の列」、migration v15）の読み書き。5 つの表で SQL が表の名前だけ違うので、表の名前を受ける関数を 1 つずつ持つ。`table` は呼ぶ側の literal（`receiving_records`・`return_records`・`manual_sales`・`disposal_records`・`transfer_records`）だけを渡し、入力から作らない。取り消せる種類と表の対応は BIZ の 1 か所の match が持つ（[31](31-biz-inventory-service.md) §12.6c）。
+
+**シグネチャ**:
+```
+fn get_record_cancel(conn: &DbConnection, table: &'static str, record_id: i64) -> Result<(Option<String>, Option<String>), DbError>
+fn mark_record_canceled(conn: &DbConnection, table: &'static str, record_id: i64, canceled_at: &str, cancel_reason: &str) -> Result<usize, DbError>
+fn record_status(canceled_at: Option<&str>) -> String
+fn count_manual_sale_items(conn: &DbConnection, manual_sale_id: i64) -> Result<u64, DbError>
+```
+
+- `get_record_cancel`: その記録の `(canceled_at, cancel_reason)`。記録が無ければ `DbError::NotFound`。5 つの詳細の読取り（§10.2〜§10.5a の `get_*_record_detail`）と BIZ の取消の手順 2 が使う。
+- `mark_record_canceled`: `UPDATE {table} SET canceled_at = ?, cancel_reason = ? WHERE id = ? AND canceled_at IS NULL`。変えた行数（0 か 1）を返す（取消済みの行は変えない）。
+- `record_status`: `canceled_at` が NULL なら `"active"`、値があれば `"canceled"`（[65](65-inventory-record-traceability.md) §65.4.1。詳細の `status` の唯一の置き場）。
+- `count_manual_sale_items`（`manual_sale_repo`）: 手動販売の明細の数。取消で、結んだ売上の行の数（§11.1a）と比べる。
 
 ### 10.6 inventory_repo — movements集計（D-118 の (a) で外した）
 
@@ -543,6 +564,7 @@ fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result<i64
 - reason: Option<String>
 - note: Option<String>
 - stock_linked: bool（取込みのときの在庫連動。Z004 の確定だけが行の `pos_stock_sync` を渡し、手動の売上ほかは false。作る所が値を書く。[POS](../db-design/pos-tables.md)、b1）
+- manual_sale_id: Option<i64>（元の手動販売。手動販売の保存だけが渡し、Z004 の確定ほかは None。[POS](../db-design/pos-tables.md) §13、D-163）
 
 **処理ステップ**:
 1. INSERT INTO sale_records (..., is_voided, created_at) VALUES (..., 0, 現在日時)
@@ -552,3 +574,18 @@ fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result<i64
 - 前提: manual_sales ヘッダ→items→sale_records の INSERT は create_manual_sale の単一TX内で完了
 - TX外からの直接INSERT（source='manual'）は設計違反とする
 - ヘッダの idempotency_key UNIQUE が一意性の根拠
+
+### 11.1a void_sale_records_by_manual_sale
+
+**関数要求**: 手動販売の記録の取消（[31](31-biz-inventory-service.md) §12.6c の手順 3、D-163）で、その手動販売に結んだ有効な売上の行だけを無効にし、無効にした行数を返す。日付・商品・数量・金額では探さない（同じ日に同じ品を同じ額で 2 回売った行を取り違えない。[POS](../db-design/pos-tables.md) §13）。
+
+**シグネチャ**:
+```
+fn void_sale_records_by_manual_sale(conn: &DbConnection, manual_sale_id: i64) -> Result<u64, DbError>
+```
+
+**処理ステップ**:
+1. `UPDATE sale_records SET is_voided = 1 WHERE manual_sale_id = ? AND is_voided = 0`
+2. 変えた行数を返す（BIZ が明細の数と比べ、違えば拒んで TX ごと戻す）
+
+呼び出し元は transaction の中で呼ぶ（Z004 の取消の `void_sale_records_by_import` と同じ形。[24](24-io-csv-import-repo.md)）。

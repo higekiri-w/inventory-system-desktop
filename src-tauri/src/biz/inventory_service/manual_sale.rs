@@ -275,6 +275,7 @@ pub fn create_manual_sale(
                 reason: Some(req.reason.as_str().to_string()),
                 note: req.note.clone(),
                 stock_linked: false,
+                manual_sale_id: Some(sale_id),
             },
         )?;
 

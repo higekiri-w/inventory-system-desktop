@@ -360,9 +360,10 @@ mod tests {
                 ],
             ]
         );
+        // v15（22 §23）が後ろに manual_sale_id を足したので、その 1 つ前の列
         assert_eq!(
-            last("sale_records", 1),
-            vec![vec![
+            last("sale_records", 2)[..1],
+            [vec![
                 text("stock_linked"),
                 text("INTEGER"),
                 Value::Integer(1),

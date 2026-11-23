@@ -1061,6 +1061,7 @@ mod tests {
             reason: None,
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         sales_repo::insert_sale_record(conn, &record).unwrap();
     }
