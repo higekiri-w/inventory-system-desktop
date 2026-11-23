@@ -14,7 +14,7 @@
 
 レジ固有の形式は adapter、精算の並びと要再確認の判定は BIZ が所有する。時刻で前後を判定しない。EJ は在庫に使わない。
 
-> **現行構造の図**: [層・画面遷移・業務データフロー](diagrams/current-system.md)、[ER図](inventory_system_erd.html)。実装の照合結果と設計上の懸念は [図面監査](research/2026-09-16-diagram-audit.md) を参照。
+> **現行構造の図**: [層・画面遷移・業務データフロー](diagrams/current-system.md)、[ER図（schema v12 の時点）](inventory_system_erd.html)（今の表・列は [DB_DESIGN](DB_DESIGN.md) と `docs/db-design/` の各文書）。実装の照合結果と設計上の懸念は [図面監査](research/2026-09-16-diagram-audit.md) を参照。
 > **入力ドキュメント**: `docs/spec/requirements.md`（REQ inventory）、`docs/spec/requirements-coverage.md`（公開要求 coverage）、DB_DESIGN.md（テーブル定義書）、SCREEN_DESIGN.md（画面設計書）、screen_mockups.html（モックアップ）
 
 ---

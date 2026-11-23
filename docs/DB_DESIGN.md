@@ -12,7 +12,7 @@ EJ の記録の文を持つ表（`ej_records`、D-121、migration v14）: [POS](
 
 `products.stock_quantity` は記録から求め直した写しで、書くのは BIZ の求め直しの関数だけ（D-051 の原則、D-118）。migration は棚卸しか Z004 の取込みを持つ DB では止まり（開発・試験 DB はリリースの前まで作り直してよい。D-123）、持たない DB では列と表を足して既存の movement の鍵を埋め、写しを求め直す（(a) の migration v9 で実装済み。SQL・CHECK / FK / index・故障注入の試験は 22 §19 のテスト）。
 
-> **現行スキーマの入口**: [ER図](inventory_system_erd.html)、[業務データフロー](diagrams/current-system.md)。適用順序は `src-tauri/src/db/migration.rs` と `schema_v*.rs` を照合する。
+> **現行スキーマの入口**: 今の表・列は下の「テーブル定義（詳細）」から `db-design/` の各文書、流れは [業務データフロー](diagrams/current-system.md)。図は [ER図（schema v12 の時点）](inventory_system_erd.html)（v13 より後の表・列は無い）。適用順序は `src-tauri/src/db/migration.rs` と `schema_v*.rs` を照合する。
 > **図と本文の位置付け**: 現行構造と完成形の将来設計を区別する。[図面監査](research/2026-09-16-diagram-audit.md) に、実装と設計の不一致・再検討事項を記録する。
 
 ---
