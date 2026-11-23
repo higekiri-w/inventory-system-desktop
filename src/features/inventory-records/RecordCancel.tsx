@@ -245,7 +245,7 @@ export interface RecordDetailErrorProps {
  * 「状態をもう一度確かめる」へ導く。どちらも履歴から開き直させない。page root の PageShell は各 page が持つ
  */
 export function RecordDetailError({ title, cancel, query, backLinkProps }: RecordDetailErrorProps) {
-  // この画面が確かめた結果が無くても（成功の後の再取得の途中で開き直した）、詳細の cache が取消済みなら取消済み
+  // この画面が確かめた結果が無くても、詳細の cache が canceled の記録は取消済み
   const isCanceled = cancel.isCanceled || query.data?.status === "canceled";
   return (
     <>

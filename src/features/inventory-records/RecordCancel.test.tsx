@@ -26,7 +26,7 @@ import type {
   TransferRecordDetail,
 } from "@/lib/bindings";
 import { queryKeys } from "@/lib/query-keys";
-import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
+import { getWindowCloseGuardKinds, requestWindowClose } from "@/lib/window-close-guard";
 import { routeTree } from "@/routeTree.gen";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
 import { renderWithRouter } from "@/test/render-with-router";
@@ -1014,51 +1014,65 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
     expect(mockCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("開き直しの読取りと「状態をもう一度確かめる」が両方 canceled を返しても、C25 は 1 回だけ当てる", async () => {
-    const user = userEvent.setup();
-    const reopenRead = deferred<unknown>();
-    const manualRead = deferred<unknown>();
-    receiving.read
-      .mockResolvedValueOnce(ok(receivingDetail()))
-      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
-      .mockReturnValueOnce(reopenRead.promise)
-      .mockReturnValueOnce(manualRead.promise)
-      .mockResolvedValue(ok(receivingDetail(true)));
-    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
-    stockOf({ "RC-001": { stock: -2 } });
-    const queryClient = makeQueryClient();
-    const first = renderPage(receiving.page, queryClient);
+  it.each([
+    { label: "canceled を返す", manualReply: ok(receivingDetail(true)) },
+    { label: "失敗する", manualReply: cmdError("internal", "合成の読取りの失敗") },
+  ])(
+    "開き直しの読取りが canceled を返した後に「状態をもう一度確かめる」の読取りが $label: C25 は 1 回だけ当てる",
+    async ({ manualReply }) => {
+      const user = userEvent.setup();
+      const reopenRead = deferred<unknown>();
+      const manualRead = deferred<unknown>();
+      receiving.read
+        .mockResolvedValueOnce(ok(receivingDetail()))
+        .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+        .mockReturnValueOnce(reopenRead.promise)
+        .mockReturnValueOnce(manualRead.promise)
+        .mockResolvedValue(ok(receivingDetail(true)));
+      mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+      stockOf({ "RC-001": { stock: -2 } });
+      const queryClient = makeQueryClient();
+      const first = renderPage(receiving.page, queryClient);
 
-    const dialog = await openDialog(user);
-    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
-    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
-    first.unmount();
+      const dialog = await openDialog(user);
+      await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+      expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+      first.unmount();
 
-    // 詳細の cache が古くなった後に開き直す: 詳細の query の読み直しと、手動の再確認の読取りが重なる
-    await queryClient.invalidateQueries({
-      queryKey: RECEIVING_DETAIL_KEY,
-      exact: true,
-      refetchType: "none",
-    });
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    renderPage(receiving.page, queryClient);
-    await user.click(await screen.findByRole("button", { name: "状態をもう一度確かめる" }));
-    expect(receiving.read).toHaveBeenCalledTimes(4);
+      // 詳細の cache が古くなった後に開き直す: 詳細の query の読み直しと、手動の再確認の読取りが重なる
+      await queryClient.invalidateQueries({
+        queryKey: RECEIVING_DETAIL_KEY,
+        exact: true,
+        refetchType: "none",
+      });
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      renderPage(receiving.page, queryClient);
+      await user.click(await screen.findByRole("button", { name: "状態をもう一度確かめる" }));
+      expect(receiving.read).toHaveBeenCalledTimes(4);
 
-    reopenRead.resolve(ok(receivingDetail(true)));
-    expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
-    // 手動の再確認の応答を処理し終えるまで待つ（macrotask を 1 つ回す）
-    await act(async () => {
-      manualRead.resolve(ok(receivingDetail(true)));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    expectExactInvalidations(
-      invalidateSpy.mock.calls,
-      d052InvalidationOracle.inventoryRecordCancel(),
-    );
-    expect(await screen.findByText("RC-001: 在庫がマイナスになりました（-2）")).toBeInTheDocument();
-    expect(mockCancel).toHaveBeenCalledTimes(1);
-  });
+      reopenRead.resolve(ok(receivingDetail(true)));
+      expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+      // 手動の再確認の応答を処理し終えるまで待つ（macrotask を 1 つ回す）
+      await act(async () => {
+        manualRead.resolve(manualReply);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expectExactInvalidations(
+        invalidateSpy.mock.calls,
+        d052InvalidationOracle.inventoryRecordCancel(),
+      );
+      expect(
+        await screen.findByText("RC-001: 在庫がマイナスになりました（-2）"),
+      ).toBeInTheDocument();
+      // 手動の読取りが失敗しても、確かめた取消済みを未確認に戻さない
+      expect(screen.getByText("この記録は取消済みです")).toBeInTheDocument();
+      expect(screen.queryByText("取消の結果未確認")).toBeNull();
+      expect(
+        queryClient.getQueryData(queryKeys.recordCancelUnconfirmed("receiving_record", RECORD_ID)),
+      ).toBeUndefined();
+      expect(mockCancel).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("未確認の印の項目は、未確認になった記録にだけ作って回収させず、確かめたら消す", async () => {
     const user = userEvent.setup();
@@ -1260,6 +1274,60 @@ describe("取消の応答を待つ間の route の止め（REQ-208 / 65 §65.5b 
       expect(router.state.location.pathname).toBe("/inventory/records");
     },
   );
+});
+
+describe("取消の close の確認の窓（REQ-208 / 65 §65.5b / UI-USW-D5 / T10）", () => {
+  it("取消済みと確かめた後の「状態をもう一度確かめる」の読取りの間の × は、取消が途中とも終わったとも言わない", async () => {
+    const user = userEvent.setup();
+    const reopenRead = deferred<unknown>();
+    const manualRead = deferred<unknown>();
+    receiving.read
+      .mockResolvedValueOnce(ok(receivingDetail()))
+      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+      .mockReturnValueOnce(reopenRead.promise)
+      .mockReturnValueOnce(manualRead.promise)
+      .mockResolvedValue(ok(receivingDetail(true)));
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+    stockOf({ "RC-001": { stock: 0 } });
+    const queryClient = makeQueryClient();
+    const first = renderPage(receiving.page, queryClient);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    first.unmount();
+
+    // 詳細の cache が古くなった後に app で開き直す: 開き直しの読取りが先に canceled を返し、手動の読取りは保留
+    await queryClient.invalidateQueries({
+      queryKey: RECEIVING_DETAIL_KEY,
+      exact: true,
+      refetchType: "none",
+    });
+    renderApp(`/inventory/receiving/records/${String(RECORD_ID)}`, queryClient);
+    await user.click(await screen.findByRole("button", { name: "状態をもう一度確かめる" }));
+    reopenRead.resolve(ok(receivingDetail(true)));
+    expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+    expect(getWindowCloseGuardKinds()).toEqual(["inventory-record-cancel"]);
+
+    // ×（listener の判定）: 止めて確認の窓を出す
+    act(() => {
+      expect(requestWindowClose()).toBe(true);
+    });
+    const closeDialog = screen.getByRole("alertdialog", { name: "この画面を閉じますか" });
+    expect(closeDialog).toHaveAccessibleDescription(
+      "閉じた後は、次にアプリを開いてから「入出庫履歴」でこの記録を開き、取消済みかを確かめてください。取消済みでなければ、もう一度取り消してください。",
+    );
+    expect(closeDialog).not.toHaveTextContent(/取消の途中|取消が終わるまで/);
+    expect(within(closeDialog).getByRole("button", { name: "待つ" })).toBeInTheDocument();
+    expect(within(closeDialog).getByRole("button", { name: "閉じる" })).toBeInTheDocument();
+
+    // 読取りが終わると止めが解け、確認の窓は自動で閉じる
+    manualRead.resolve(ok(receivingDetail(true)));
+    await waitFor(() => {
+      expect(getWindowCloseGuardKinds()).toEqual([]);
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
 });
 
 describe("詳細で取り消して作業画面へ戻る（REQ-208 / D-052 C25 / T12）", () => {

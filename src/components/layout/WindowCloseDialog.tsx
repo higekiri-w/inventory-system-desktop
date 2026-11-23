@@ -92,13 +92,13 @@ const COPY: Record<WindowCloseGuardKind, WindowCloseDialogCopy> = {
     stay: "待つ",
     close: "閉じる",
   },
-  // 65 §65.5b: 入出庫の記録の取消。閉じた後は記録を開いて状態を確かめる（取消の完了を言い切らない。TD-839）
+  // 65 §65.5b: 入出庫の記録の取消。取消の応答を待つ間にも、「状態をもう一度確かめる」の読取りを待つ間
+  // （取消済みと確かめた後のこともある）にも出るので、取消が途中とも終わったとも言わず、
+  // 閉じた後に記録を開いて状態を確かめることだけを言う（TD-839）
   "inventory-record-cancel": {
-    title: "取消の途中です",
+    title: "この画面を閉じますか",
     description:
-      ROLLBACK_WAIT +
-      "閉じたときは、次にアプリを開いてから「入出庫履歴」でこの記録を開き" +
-      ROLLBACK_CHECK,
+      "閉じた後は、次にアプリを開いてから「入出庫履歴」でこの記録を開き" + ROLLBACK_CHECK,
     stay: "待つ",
     close: "閉じる",
   },

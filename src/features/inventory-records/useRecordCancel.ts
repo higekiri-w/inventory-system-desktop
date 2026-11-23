@@ -120,6 +120,8 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     try {
       fresh = await readDetail();
     } catch {
+      // 下の canceled の枝と同じ: 開き直した詳細の読取りが先に印を解いていれば、未確認に戻さない
+      if (wasUnconfirmed && queryClient.getQueryData(unconfirmedKey) === undefined) return;
       setUnconfirmed({ error, codes });
       return;
     }
