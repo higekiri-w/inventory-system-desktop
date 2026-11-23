@@ -782,6 +782,49 @@ mod tests {
         );
         assert_eq!(voided(&conn, ReferenceType::ManualSale, unlinked), [false]);
 
+        // 2 明細の片方だけ結びの無い手動販売: 結んだ 1 行を無効にした後で数の違いに気づくので、
+        // 拒否の前に書いた行が TX ごと戻る（上の例は結びが 1 つも無く、拒否の前に何も書かない）
+        let partly_linked = create_manual_sale(
+            &mut conn,
+            ManualSaleCreateRequest {
+                idempotency_key: "cn-partly-linked".to_string(),
+                sale_date: D.to_string(),
+                reason: ManualSaleReason::PluUnregistered,
+                note: None,
+                items: ["CN-001", "CN-002"]
+                    .into_iter()
+                    .map(|code| ManualSaleItemInput {
+                        product_code: code.to_string(),
+                        quantity: 1,
+                        amount: 500,
+                    })
+                    .collect(),
+                confirmation_token: None,
+            },
+        )
+        .unwrap()
+        .sale_id
+        .unwrap();
+        let unlinked_rows = conn
+            .execute(
+                "UPDATE sale_records SET manual_sale_id = NULL
+                 WHERE manual_sale_id = ?1 AND product_code = 'CN-001'",
+                [partly_linked],
+            )
+            .unwrap();
+        assert_eq!(unlinked_rows, 1);
+        assert_rejected(
+            &mut conn,
+            ReferenceType::ManualSale,
+            partly_linked,
+            REASON,
+            "この手動販売は売上の記録と結ばれていないため取り消せません（アプリの更新の前に保存した記録です）",
+        );
+        assert_eq!(
+            voided(&conn, ReferenceType::ManualSale, partly_linked),
+            [false, false]
+        );
+
         // 上限: 在庫が上限の商品を 1 売り、別の入庫で上限に戻してから、その販売を取り消す。
         // header・売上の行・movement を書いた後の求め直しで上限を 1 超え、TX 全体が戻る
         create_test_product(&conn, "CN-MAX", MAX_STOCK_QUANTITY);

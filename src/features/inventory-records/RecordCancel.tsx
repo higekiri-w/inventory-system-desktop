@@ -1,10 +1,12 @@
 // src/features/inventory-records/RecordCancel.tsx
 //
-// REQ-208: 入出庫の記録の詳細からの取消の部品（取消の button と確認の dialog、取消済みの表示）。
+// REQ-208: 入出庫の記録の詳細からの取消の部品（取消の button と確認の dialog、取消済みの表示、詳細の読取りの error）。
 // 入庫・返品交換・手動販売・廃棄・振替の 5 つの詳細が、同じ部品と hook（useRecordCancel.ts）を使う。
 // 設計: docs/function-design/65-inventory-record-traceability.md §65.5b（D-163）
 
-import { Loader2 } from "lucide-react";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useId } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -21,8 +23,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PageHeader } from "@/components/patterns/PageHeader";
 import { formatLengthOrPlain } from "@/features/stock-inquiry/lib/format-stock-display";
 import { formatDateTime } from "@/lib/date-time";
+import { describeError } from "@/lib/describe-error";
 import type { CancelableRecordDetail, RecordCancel } from "./useRecordCancel";
 
 /** 取り消した記録の「関連する在庫変動」の空の文（無効にした movement は出さない。§65.8.2） */
@@ -39,7 +43,8 @@ export interface RecordCancelButtonProps {
 /** 有効な記録の header の操作「この記録を取り消す」と、確認の dialog。取消済みには出さない */
 export function RecordCancelButton({ cancel, status, businessDate }: RecordCancelButtonProps) {
   const reasonId = useId();
-  if (status !== "active") return null;
+  // 取消済みと確かめた後は、詳細の再取得が終わる前（cache はまだ active）でも出さない
+  if (status !== "active" || cancel.isCanceled) return null;
   return (
     <>
       <Button
@@ -129,12 +134,14 @@ export function RecordCancelButton({ cancel, status, businessDate }: RecordCance
 
 export interface RecordCanceledAlertProps {
   cancel: RecordCancel;
-  detail: CancelableRecordDetail;
+  /** 読めている詳細。取消の日時・理由は取消済みの詳細から出す（読めていなければ、取消済みの知らせだけ） */
+  detail?: CancelableRecordDetail;
 }
 
 /** 取消済みの記録の header の下の表示（取消の日時・理由）と、取消で在庫が負になった商品の知らせ */
 export function RecordCanceledAlert({ cancel, detail }: RecordCanceledAlertProps) {
-  if (detail.status !== "canceled") return null;
+  const canceledDetail = detail?.status === "canceled" ? detail : undefined;
+  if (canceledDetail === undefined && !cancel.isCanceled) return null;
   // 応答を失った後に読んだ今の在庫: 0 未満だけ知らせる（作成の画面と同じ文。長さの商品は m）
   const negativeStocks = cancel.stockChecks.flatMap(({ productCode, product }) =>
     product !== undefined && product.stock_quantity < 0
@@ -152,16 +159,20 @@ export function RecordCanceledAlert({ cancel, detail }: RecordCanceledAlertProps
     <>
       <Alert>
         <AlertTitle>この記録は取消済みです</AlertTitle>
-        <AlertDescription>
-          <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
-            <dt className="text-muted-foreground">取消の日時</dt>
-            <dd className="font-mono tabular-nums">
-              {detail.canceled_at === null ? "—" : formatDateTime(detail.canceled_at)}
-            </dd>
-            <dt className="text-muted-foreground">取り消した理由</dt>
-            <dd className="break-words">{detail.cancel_reason ?? "—"}</dd>
-          </dl>
-        </AlertDescription>
+        {canceledDetail === undefined ? null : (
+          <AlertDescription>
+            <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
+              <dt className="text-muted-foreground">取消の日時</dt>
+              <dd className="font-mono tabular-nums">
+                {canceledDetail.canceled_at === null
+                  ? "—"
+                  : formatDateTime(canceledDetail.canceled_at)}
+              </dd>
+              <dt className="text-muted-foreground">取り消した理由</dt>
+              <dd className="break-words">{canceledDetail.cancel_reason ?? "—"}</dd>
+            </dl>
+          </AlertDescription>
+        )}
       </Alert>
       {warnings.length > 0 || failedChecks.length > 0 || isReadingStock ? (
         <Alert variant="warning">
@@ -190,6 +201,52 @@ export function RecordCanceledAlert({ cancel, detail }: RecordCanceledAlertProps
           </AlertDescription>
         </Alert>
       ) : null}
+    </>
+  );
+}
+
+export interface RecordDetailErrorProps {
+  /** 詳細を読めないときの page の題（例: 「入庫記録詳細」） */
+  title: string;
+  cancel: RecordCancel;
+  query: Pick<UseQueryResult, "error" | "isFetching" | "refetch">;
+  backLinkProps: { to: string; search: Record<string, unknown> };
+}
+
+/**
+ * 5 つの詳細の読取りの error の表示。取消済みと確かめた後の再取得の失敗では、取消済みの知らせと
+ * 負の在庫の警告を残し、詳細だけを読み直せる（取消の前の詳細は出さない）。page root の PageShell は各 page が持つ
+ */
+export function RecordDetailError({ title, cancel, query, backLinkProps }: RecordDetailErrorProps) {
+  return (
+    <>
+      <PageHeader title={title} />
+      <RecordCanceledAlert cancel={cancel} />
+      <Alert variant="destructive">
+        <AlertTitle>{describeError(query.error)}</AlertTitle>
+        <AlertDescription>
+          {cancel.isCanceled
+            ? "詳細を読み直せませんでした。「詳細を読み直す」を押してください"
+            : "記録IDを確認するか、入出庫履歴から開き直してください。"}
+        </AlertDescription>
+      </Alert>
+      {cancel.isCanceled ? (
+        <Button
+          type="button"
+          variant="outline"
+          disabled={query.isFetching}
+          onClick={() => void query.refetch()}
+        >
+          {query.isFetching ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+          詳細を読み直す
+        </Button>
+      ) : null}
+      <Button asChild variant="outline">
+        <Link {...backLinkProps}>
+          <ArrowLeft aria-hidden="true" />
+          前の画面へ戻る
+        </Link>
+      </Button>
     </>
   );
 }

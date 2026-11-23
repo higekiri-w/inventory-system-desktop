@@ -166,7 +166,7 @@ describe("window-close-guard (UI-12/UI-USW-D5)", () => {
     expect(requestWindowClose()).toBe(false);
   });
 
-  it("UI-USW-D5 の 8 / UI-11b-D13: 進行中の getter は進行中の 4 つの種類だけを数え、未保存は数えない", () => {
+  it("UI-USW-D5 の 8 / UI-11b-D13: 進行中の getter は進行中の 7 つの種類だけを数え、未保存は数えない", () => {
     const { rerender } = render(<Guard kind="dirty" active />);
     expect(hasBusyWindowCloseGuard()).toBe(false);
 
@@ -175,6 +175,9 @@ describe("window-close-guard (UI-12/UI-USW-D5)", () => {
       "z004-rollback",
       "daily-report-import",
       "daily-report-rollback",
+      "sd-bulk-import",
+      "ej-import",
+      "inventory-record-cancel",
     ] as const) {
       rerender(
         <>

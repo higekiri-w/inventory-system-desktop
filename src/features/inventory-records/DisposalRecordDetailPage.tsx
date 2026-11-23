@@ -6,7 +6,6 @@ import { ArrowLeft, PackageSearch } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -29,7 +28,6 @@ import {
 } from "@/features/stock-inquiry/lib/format-stock-display";
 import { MovementTable, stockUnitMap } from "@/features/stock-movements/components/MovementTable";
 import { commands } from "@/lib/bindings";
-import { describeError } from "@/lib/describe-error";
 import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { returnToLinkProps } from "@/lib/return-to";
@@ -38,6 +36,7 @@ import {
   CANCELED_MOVEMENTS_EMPTY_DESCRIPTION,
   RecordCancelButton,
   RecordCanceledAlert,
+  RecordDetailError,
 } from "./RecordCancel";
 import { useRecordCancel } from "./useRecordCancel";
 import { formatRecordStatus, formatYen } from "./types";
@@ -89,19 +88,12 @@ function DisposalRecordDetailBody({ recordId, returnTo }: DisposalRecordDetailPa
   if (detailQuery.isError) {
     return (
       <PageShell>
-        <PageHeader title="廃棄・破損詳細" />
-        <Alert variant="destructive">
-          <AlertTitle>{describeError(detailQuery.error)}</AlertTitle>
-          <AlertDescription>
-            記録IDを確認するか、入出庫履歴から開き直してください。
-          </AlertDescription>
-        </Alert>
-        <Button asChild variant="outline">
-          <Link {...backLinkProps}>
-            <ArrowLeft aria-hidden="true" />
-            前の画面へ戻る
-          </Link>
-        </Button>
+        <RecordDetailError
+          title="廃棄・破損詳細"
+          cancel={cancel}
+          query={detailQuery}
+          backLinkProps={backLinkProps}
+        />
       </PageShell>
     );
   }

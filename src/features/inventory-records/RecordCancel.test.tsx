@@ -25,6 +25,7 @@ import type {
   ReturnRecordDetail,
   TransferRecordDetail,
 } from "@/lib/bindings";
+import { queryKeys } from "@/lib/query-keys";
 import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { routeTree } from "@/routeTree.gen";
 import { d052InvalidationOracle, expectExactInvalidations } from "@/test/invalidation-oracle";
@@ -78,6 +79,11 @@ const BUSINESS_DATE = "2026-11-18";
 const REASON = "打ち間違い";
 const CANCELED_AT = "2026-11-21T10:00:00";
 const FAILED_TOAST = "取り消しに失敗しました。もう一度お試しください";
+const UNCONFIRMED_TEXT =
+  "取り消せたか確かめられませんでした。「状態をもう一度確かめる」を押してください";
+const READING_STOCK_TEXT = "取り消した後の在庫を確かめています…";
+const STOCK_ALERT_TITLE = "取り消した後の在庫を確かめてください";
+const REREAD_TEXT = "詳細を読み直せませんでした。「詳細を読み直す」を押してください";
 
 type Reply<T> = { status: "ok"; data: T } | { status: "error"; error: CmdError };
 
@@ -392,6 +398,44 @@ describe.each(PAGES)(
         expect(getWindowCloseGuardKinds()).toEqual([]);
       });
     });
+
+    it("成功の後に詳細の再取得だけが失敗: 取消済みと負の在庫の文を残し、詳細だけを読み直せる", async () => {
+      const user = userEvent.setup();
+      const warning = "RC-001: 在庫がマイナスになりました（-2）";
+      read
+        .mockResolvedValueOnce(ok(detail()))
+        .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+        .mockResolvedValue(ok(detail(true)));
+      mockCancel.mockResolvedValue(ok({ stock_warnings: [warning] }));
+      renderPage(page);
+
+      const dialog = await openDialog(user);
+      await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+
+      // 確かめた取消の結果は詳細の読取りと別に持つ（読取りの失敗で失わない）
+      expect(await screen.findByText(REREAD_TEXT)).toBeInTheDocument();
+      expect(screen.getByText("この記録は取消済みです")).toBeInTheDocument();
+      expect(screen.getByText(warning)).toBeInTheDocument();
+      expect(mockToast.success).toHaveBeenCalledWith("記録を取り消しました", { duration: 8000 });
+      // 開き直させない。取消の前の詳細（取消の button）も出さない
+      expect(
+        screen.queryByText("記録IDを確認するか、入出庫履歴から開き直してください。"),
+      ).toBeNull();
+      expect(screen.queryByRole("button", { name: "この記録を取り消す" })).toBeNull();
+      await waitFor(() => {
+        expect(getWindowCloseGuardKinds()).toEqual([]);
+      });
+
+      // 詳細だけを読み直す（取消は送らず、在庫も読まない）
+      await user.click(screen.getByRole("button", { name: "詳細を読み直す" }));
+      expect(await screen.findByText("2026-11-21 10:00:00")).toBeInTheDocument();
+      expect(screen.getByText(REASON)).toBeInTheDocument();
+      expect(screen.getByText(warning)).toBeInTheDocument();
+      expect(screen.queryByText(REREAD_TEXT)).toBeNull();
+      expect(read).toHaveBeenCalledTimes(3);
+      expect(mockCancel).toHaveBeenCalledTimes(1);
+      expect(mockGetStockDetail).not.toHaveBeenCalled();
+    });
   },
 );
 
@@ -504,7 +548,15 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
     mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
     // 増やした商品（RC-002）だけ読めない
     stockOf({ "RC-001": { stock: 8 } });
-    renderPage(transfers.page);
+    // 取消の前に在庫照会で読んだ RC-002 の在庫が cache に残っている
+    const queryClient = makeQueryClient();
+    queryClient.setQueryData(
+      queryKeys.stockInquiry.detail("RC-002"),
+      makeMockStockDetail({
+        product: makeMockProductWithRelations({ product_code: "RC-002", stock_quantity: -9 }),
+      }),
+    );
+    renderPage(transfers.page, queryClient);
 
     const dialog = await openDialog(user);
     await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
@@ -513,6 +565,8 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
     expect(await screen.findByText("RC-002: 在庫を確かめられませんでした")).toBeInTheDocument();
     expect(screen.getByText("この記録は取消済みです")).toBeInTheDocument();
     expect(screen.queryByText(/RC-001: /)).toBeNull();
+    // 読めなかった商品に、cache の前の数（-9）を今の在庫として出さない
+    expect(screen.queryByText(/RC-002: 在庫がマイナスになりました/)).toBeNull();
     expect(mockToast.info).not.toHaveBeenCalled();
 
     // その商品だけ読み直す
@@ -542,11 +596,7 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
     const submit = within(dialog).getByRole("button", { name: "取り消す" });
     await user.click(submit);
 
-    expect(
-      await within(dialog).findByText(
-        "取り消せたか確かめられませんでした。「状態をもう一度確かめる」を押してください",
-      ),
-    ).toBeInTheDocument();
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
     // 詳細は error の表示に替えず、dialog と理由を残す。Toast で成否を言わない
     // 開いている dialog の後ろは支援技術から隠れるので、hidden を含めて探す
     expect(
@@ -612,6 +662,114 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
       );
     });
     expect(await screen.findByText("RC-001: 在庫がマイナスになりました（-1）")).toBeInTheDocument();
+  });
+
+  it("未確認のまま画面を離れて同じ詳細を開き直しても、状態を確かめ直すまで「取り消す」を押せない", async () => {
+    const user = userEvent.setup();
+    receiving.read
+      .mockResolvedValueOnce(ok(receivingDetail()))
+      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+      .mockResolvedValue(ok(receivingDetail()));
+    const returns = PAGES[1];
+    returns.read.mockResolvedValue(ok(returnDetail()));
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+    const queryClient = makeQueryClient();
+    const first = renderPage(receiving.page, queryClient);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    first.unmount();
+
+    // 未確認は記録の種類と ID ごと: 同じ ID の別の種類の記録には及ばない
+    const other = renderPage(returns.page, queryClient);
+    const otherDialog = await openDialog(user);
+    expect(within(otherDialog).queryByText(UNCONFIRMED_TEXT)).toBeNull();
+    expect(within(otherDialog).getByRole("button", { name: "取り消す" })).toBeEnabled();
+    other.unmount();
+
+    // 開き直した詳細は cache の active を出す（読み直していない）が、「取り消す」は押せない
+    renderPage(receiving.page, queryClient);
+    const reopened = await openDialog(user);
+    expect(receiving.read).toHaveBeenCalledTimes(2);
+    expect(within(reopened).getByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    const submit = within(reopened).getByRole("button", { name: "取り消す" });
+    expect(submit).toBeDisabled();
+    await user.click(submit);
+    expect(mockCancel).toHaveBeenCalledTimes(1);
+
+    // 新しい読取りで active を確かめると、押せる
+    await user.click(within(reopened).getByRole("button", { name: "状態をもう一度確かめる" }));
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(FAILED_TOAST);
+    });
+    expect(receiving.read).toHaveBeenCalledTimes(3);
+    expect(within(reopened).queryByText(UNCONFIRMED_TEXT)).toBeNull();
+    expect(submit).toBeEnabled();
+  });
+
+  it("取り直しが canceled: C25 の再取得を待たずに、在庫を確かめる商品を「確認中」にして待ちの止めを解く", async () => {
+    const user = userEvent.setup();
+    const refresh = deferred<Reply<ReceivingRecordDetail>>();
+    receiving.read
+      .mockResolvedValueOnce(ok(receivingDetail()))
+      .mockResolvedValueOnce(ok(receivingDetail(true)))
+      // C25 の再取得は終わらせない
+      .mockReturnValue(refresh.promise);
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+    const stock = deferred<Awaited<ReturnType<typeof commands.getStockDetail>>>();
+    mockGetStockDetail.mockReturnValue(stock.promise);
+    renderPage(receiving.page);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+
+    expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+    expect(await screen.findByText(READING_STOCK_TEXT)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getWindowCloseGuardKinds()).toEqual([]);
+    });
+
+    // 読めて 0 なら警告を出さない（「確認中」と見分けられる）
+    stock.resolve(
+      ok(
+        makeMockStockDetail({
+          product: makeMockProductWithRelations({ product_code: "RC-001", stock_quantity: 0 }),
+        }),
+      ),
+    );
+    await waitFor(() => {
+      expect(screen.queryByText(READING_STOCK_TEXT)).toBeNull();
+    });
+    expect(screen.queryByText(STOCK_ALERT_TITLE)).toBeNull();
+    refresh.resolve(ok(receivingDetail(true)));
+  });
+
+  it("成功: Toast の後は C25 の再取得を待たずに待ちの止めを解き、取消済みを出して取消の button を消す", async () => {
+    const user = userEvent.setup();
+    const refresh = deferred<Reply<ReceivingRecordDetail>>();
+    receiving.read.mockResolvedValueOnce(ok(receivingDetail())).mockReturnValue(refresh.promise);
+    // 負の在庫が無い（stock_warnings が 0 件）
+    mockCancel.mockResolvedValue(ok({ stock_warnings: [] }));
+    renderPage(receiving.page);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+
+    expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+    expect(mockToast.success).toHaveBeenCalledWith("記録を取り消しました", { duration: 8000 });
+    await waitFor(() => {
+      expect(getWindowCloseGuardKinds()).toEqual([]);
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "この記録を取り消す" })).toBeNull();
+    expect(screen.queryByText(STOCK_ALERT_TITLE)).toBeNull();
+    expect(mockCancel).toHaveBeenCalledTimes(1);
+
+    // 取消の日時と理由は、再取得した詳細が出す
+    refresh.resolve(ok(receivingDetail(true)));
+    expect(await screen.findByText("2026-11-21 10:00:00")).toBeInTheDocument();
+    expect(screen.getByText(REASON)).toBeInTheDocument();
   });
 });
 

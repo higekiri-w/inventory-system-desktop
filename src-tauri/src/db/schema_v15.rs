@@ -150,6 +150,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index, 1);
+        // 同じ名前の index が別の列に付いていない
+        let index_columns: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM pragma_index_info('idx_sale_records_manual_sale_id')
+                 ORDER BY seqno",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(index_columns, ["manual_sale_id"]);
         let link = |source: &str, manual_sale_id: i64| {
             conn.execute(
                 "UPDATE sale_records SET manual_sale_id = ?2 WHERE source = ?1",
@@ -160,5 +172,21 @@ mod tests {
         assert!(link("auto", 1).is_err());
         assert!(link("manual", 999).is_err());
         assert_eq!(link("manual", 1).unwrap(), 1);
+        // CHECK の 2 つの条件を片方ずつ破る行も拒む（上の Z004 の行は 2 つとも破るので、片方が欠けても拒まれる）:
+        // 結んだ手動の行に CSV取込みの親を付ける（source は 'manual' のまま）
+        assert!(conn
+            .execute(
+                "UPDATE sale_records SET csv_import_id = 1 WHERE source = 'manual'",
+                [],
+            )
+            .is_err());
+        // CSV取込みの親の無い auto の行を手動販売に結ぶ（csv_import_id は NULL）
+        assert!(conn
+            .execute(
+                "UPDATE sale_records SET csv_import_id = NULL, manual_sale_id = 1
+                 WHERE source = 'auto'",
+                [],
+            )
+            .is_err());
     }
 }

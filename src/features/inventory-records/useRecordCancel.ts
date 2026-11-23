@@ -4,7 +4,14 @@
 // 5 つの詳細が同じ hook と部品（RecordCancel.tsx）を使う。
 // 設計: docs/function-design/65-inventory-record-traceability.md §65.5b（D-163）
 
-import { useMutation, useQueries, useQueryClient, type QueryKey } from "@tanstack/react-query";
+import {
+  skipToken,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -36,6 +43,18 @@ interface UseRecordCancelOptions<T extends CancelableRecordDetail> {
   readDetail: () => Promise<T>;
 }
 
+/** 取消が済んだかを確かめられていない記録: 取消の error と、取消の前の関連 movement の商品 */
+interface Unconfirmed {
+  error: unknown;
+  codes: string[];
+}
+
+/** 確かめた取消の結果: 成功の応答の負の在庫の文か、応答を失った後に今の在庫を読む商品 */
+interface Confirmed {
+  stockWarnings: string[];
+  stockCheckCodes: string[];
+}
+
 const FAILED_MESSAGE = "取り消しに失敗しました。もう一度お試しください";
 
 /** 拒否の応答（validation）で届いた文。それ以外の error は null */
@@ -55,19 +74,34 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   // 取消の失敗・結果不明の後に、状態の取り直しも失敗した（取消が済んだかを言い切れない）。
-  // 「状態をもう一度確かめる」が使う、取消の error と取消の前の関連 movement の商品を持つ
-  const [unconfirmed, setUnconfirmed] = useState<{ error: unknown; codes: string[] } | null>(null);
+  // 記録の種類と ID ごとに query の cache に持つ: 画面を離れても詳細の cache に取消の前の active が残るので、
+  // 同じ詳細を開き直しても「状態をもう一度確かめる」で active を確かめるまで「取り消す」を押させない
+  // （置き場が詳細の cache と同じ QueryClient なら、片方だけが残ることがない）。
+  // ponytail: 印を消すのはこの hook の取り直しだけ。開き直した詳細の query が先に取消済みを読んだときは、
+  // 取消の button が出ないので印は残り、今の在庫も読まない（初めから取消済みの記録を開いたのと同じ表示）。
+  // その経路でも負の在庫を知らせる要求が出たら、開いたときに印があれば取り直す
+  const unconfirmedKey = queryKeys.recordCancelUnconfirmed(recordType, recordId);
+  const unconfirmed =
+    useQuery<Unconfirmed | null>({
+      queryKey: unconfirmedKey,
+      queryFn: skipToken,
+      gcTime: Number.POSITIVE_INFINITY,
+    }).data ?? null;
+  const setUnconfirmed = (next: Unconfirmed | null) => {
+    queryClient.setQueryData(unconfirmedKey, next);
+  };
   const [isChecking, setIsChecking] = useState(false);
-  // 成功の応答の負の在庫の文
-  const [stockWarnings, setStockWarnings] = useState<string[]>([]);
-  // 応答を失った後に取消済みと分かったとき、今の在庫を読む商品（取消の前の関連 movement の商品）
-  const [stockCheckCodes, setStockCheckCodes] = useState<string[]>([]);
+  // 確かめた取消の結果。詳細の読取りと別に持つ（詳細の再取得が遅い・失敗しても、取消済みと負の在庫を出す）
+  const [confirmed, setConfirmed] = useState<Confirmed | null>(null);
+  const stockCheckCodes = confirmed?.stockCheckCodes ?? [];
 
-  const applyCanceled = async () => {
+  const applyCanceled = (result: Confirmed) => {
     setOpen(false);
     setReason("");
     setUnconfirmed(null);
-    await invalidateByContract(queryClient, invalidationContract.inventoryRecordCancel());
+    setConfirmed(result);
+    // 再取得の完了を待たない（知らせの後は待ちの止めを解く。詳細の再取得の失敗は RecordDetailError が受ける）
+    void invalidateByContract(queryClient, invalidationContract.inventoryRecordCancel());
   };
 
   // 失敗・結果不明のたびに同じ詳細の状態を取り直し、取り直した状態で分ける。
@@ -85,9 +119,8 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     if (fresh.status === "canceled") {
       // commit の後に応答を失った、別の画面で先に取り消した
       if (rejection !== null) toast.info(rejection);
-      await applyCanceled();
-      // 成功の応答の stock_warnings は無いので、再取得の後に今の在庫を読む
-      setStockCheckCodes(codes);
+      // 成功の応答の stock_warnings は無いので、取消の前の関連 movement の商品の今の在庫を読む
+      applyCanceled({ stockWarnings: [], stockCheckCodes: codes });
       return;
     }
     setUnconfirmed(null);
@@ -101,17 +134,16 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
         cmd: "cancel_inventory_record",
       }),
     retry: 0,
-    onSuccess: async (result) => {
-      setStockWarnings(result.stock_warnings);
+    onSuccess: (result) => {
       // 取消は破壊的操作の完了通知なので、既定より長く出す（useRollbackCsvImport と同じ表示時間）
       toast.success("記録を取り消しました", { duration: 8000 });
-      await applyCanceled();
+      applyCanceled({ stockWarnings: result.stock_warnings, stockCheckCodes: [] });
     },
     onError: (error, variables) => recheck(error, variables.codes),
   });
 
   // 応答を待つ間は route の移動・リロード等の page の離脱・native の window の close（UI-USW-D5）を止める。
-  // pending は onSuccess / onError の後に外れるので、成功・失敗・結果不明の知らせの後に解ける
+  // pending は onSuccess / onError の後に外れるので、成功の Toast・失敗と結果不明の取り直しの後に解ける
   useBlocker({
     shouldBlockFn: () => mutation.isPending,
     enableBeforeUnload: () => mutation.isPending,
@@ -132,8 +164,8 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     })),
   }).map((query, index) => ({
     productCode: stockCheckCodes[index] ?? "",
-    // 読み直しの間は前の値（取消の前の在庫かもしれない）を出さない
-    product: query.isFetching ? undefined : query.data?.product,
+    // 読み直しの間と読めなかったときは、cache の前の値（取消の前の在庫かもしれない）を出さない
+    product: query.isFetching || query.isError ? undefined : query.data?.product,
     isError: query.isError && !query.isFetching,
     retry: () => void query.refetch(),
   }));
@@ -175,7 +207,9 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
         setIsChecking(false);
       });
     },
-    stockWarnings,
+    /** 取消済みと確かめた（詳細の再取得が終わる前・失敗した後も、取消済みの知らせを出す） */
+    isCanceled: confirmed !== null,
+    stockWarnings: confirmed?.stockWarnings ?? [],
     stockChecks,
   };
 }
