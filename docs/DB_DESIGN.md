@@ -127,7 +127,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - sale_records(sale_date) — 日次売上一覧の検索用
 - sale_records(product_code, sale_date) — 商品別売上集計用
 - sale_records(csv_import_id) — ロールバック時の関連レコード特定用
-- sale_records(manual_sale_id) — `idx_sale_records_manual_sale_id`。手動販売の記録の取消で売上の行を特定する（proposed・未実装、D-163。[22](function-design/22-mnt-migration.md) §23）
+- sale_records(manual_sale_id) — `idx_sale_records_manual_sale_id`。手動販売の記録の取消で売上の行を特定する（D-163。[22](function-design/22-mnt-migration.md) §23）
 - daily_report_imports(report_date) — 日報取込みの対象日検索用
 - daily_report_imports(bundle_hash) — 同一Z001/Z002/Z005束の重複検知用
 - daily_report_summary_lines(daily_report_import_id) — 日報表示用

@@ -99,7 +99,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 - どちらかの表が 0 行の間は保存ボタンを disabled にし、理由を「減らす商品と増やす商品を 1 つ以上ずつ入れてください」と出す。
 - 保存ボタンは `詰め替え・切り分けを保存`。保存成功・command 失敗ではページ先頭へスクロールする（UI-05 と同じ）。
 - 保存結果: 「詰め替え・切り分けを記録しました（記録 #{record_id}）」、減らした商品と増やした商品の一覧（数量と単位、行ごとの「在庫を見る」）、stock_warnings、`idempotent_replay` なら「同じ内容の再送として処理済み」。
-- 最近の記録は日付、記録ID、代表商品、記録日時、「詳細を見る」。取り消した記録の行には「取消済み」を文字で出す（一覧の `status`。[65](65-inventory-record-traceability.md) §65.5b、D-163。proposed・未実装）。作成画面に詳細本文・編集・取消は出さない。
+- 最近の記録は日付、記録ID、代表商品、記録日時、「詳細を見る」。取り消した記録の行には「取消済み」を文字で出す（一覧の `status`。[65](65-inventory-record-traceability.md) §65.5b、D-163）。作成画面に詳細本文・編集・取消は出さない。
 
 ## 79.6 Error / Recovery
 
@@ -108,7 +108,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 - 日付不正、どちらかの表が 0 行、数量 0 以下・形の誤り・上限越え: command の前に日本語の field error。ページ先頭へはスクロールしない。
 - BIZ validation error（[31](31-biz-inventory-service.md) §12.6b の手順 0・1・2・5 の文。画面の検証を通らずに届くのは同じ商品の重複と、画面の後に変わった商品の不在）: form state を保持する。入力を直して再送するときは新しい `idempotencyKey`。
 - internal error: 入力と `idempotencyKey` を保持し、同内容のまま再試行できる。
-- 誤った振替を保存した後: 記録の詳細（§79.8）で取り消してから、この画面で入れ直す。日付の打ち間違いでなければ、日付は元の記録の日付を選ぶ（日付の既定は今日なので、そのままだと、元の日と今日の間に計数のある商品は在庫が合わなくなる。取消の dialog が元の日付を名指す）（[65](65-inventory-record-traceability.md) §65.5b・§65.7.2、D-163。proposed・未実装）。取消は減らす商品と増やす商品の全部の movement を無効にして求め直すので、どちらの在庫も「その振替が無かった」値に戻り、要再確認を新しく作らない。2026-11-20 に、向きを入れ替えた振替で戻す案内（D-143 (5)。戻す記録は同じ日付の別の記録で、同じ日の fresh な計数があると要再確認になった）を置き換えた（owner の決定 TD-848）。
+- 誤った振替を保存した後: 記録の詳細（§79.8）で取り消してから、この画面で入れ直す。日付の打ち間違いでなければ、日付は元の記録の日付を選ぶ（日付の既定は今日なので、そのままだと、元の日と今日の間に計数のある商品は在庫が合わなくなる。取消の dialog が元の日付を名指す）（[65](65-inventory-record-traceability.md) §65.5b・§65.7.2、D-163）。取消は減らす商品と増やす商品の全部の movement を無効にして求め直すので、どちらの在庫も「その振替が無かった」値に戻り、要再確認を新しく作らない。2026-11-20 に、向きを入れ替えた振替で戻す案内（D-143 (5)。戻す記録は同じ日付の別の記録で、同じ日の fresh な計数があると要再確認になった）を置き換えた（owner の決定 TD-848）。
 
 ## 79.7 Cache / Navigation
 
@@ -120,7 +120,7 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 
 - route `/inventory/transfer/records/$recordId`、本体 `src/features/inventory-records/TransferRecordDetailPage.tsx`（ほかの記録の詳細と同じ置き場と形。[65](65-inventory-record-traceability.md) TRACE-D14）。
 - 見出しは「詰め替え・切り分け #{id}」、記録ID・日付・作成日時・状態。「減らした商品」と「増やした商品」の 2 つの表（商品コード・商品名・部門・数量と単位）と、関連する在庫変動（既存の `MovementTable`）。
-- 取消は他の入出庫の記録の詳細と同じ（[65](65-inventory-record-traceability.md) §65.5b の CTA・dialog・取消済みの表示・成功と失敗。D-163。proposed・未実装）。dialog の「この記録で動いた在庫を元に戻します」は、減らした商品と増やした商品の両方を戻す。入れ直しの文は振替の日付を名指す（§79.6、65 §65.5b）。今の「向きを入れ替えて、もう一度記録してください」の案内（`TRANSFER_CORRECTION_GUIDE`）は取消に置き換えて外す（§79.6）。訂正の CTA は出さない（TRACE-D5）。
+- 取消は他の入出庫の記録の詳細と同じ（[65](65-inventory-record-traceability.md) §65.5b の CTA・dialog・取消済みの表示・成功と失敗。D-163）。dialog の「この記録で動いた在庫を元に戻します」は、減らした商品と増やした商品の両方を戻す。入れ直しの文は振替の日付を名指す（§79.6、65 §65.5b）。今の「向きを入れ替えて、もう一度記録してください」の案内（`TRANSFER_CORRECTION_GUIDE`）は取消に置き換えて外す（§79.6）。訂正の CTA は出さない（TRACE-D5）。
 - 「前の画面へ戻る」は `returnTo`（DSR-18）、欠落・不正は `/inventory/records`。
 - 記録が無い（NotFound）ときは他の記録の詳細と同じ not found の表示。
 
@@ -156,4 +156,4 @@ route の入れ子は廃棄の `src/routes/inventory/disposal.tsx`・`disposal/i
 | 2026-11-02 | stock-transfer の是正（PR #216） | UI-16-D7 にリセット・「続けて」の前の検索応答を採らない契約と、保存失敗後は UI-05-D15 に従って採る契約を明記した（「保存失敗後は採る」は 2026-11-12 の行で「採らない」に改めた）。 |
 | 2026-11-02 | main との同期（PR #216） | #212 の D-141 が D-052 の C23 を先に取ったので、振替の invalidation の entry を C24 に振り直した（owner 判断 TD-562。集合は変えない）。 |
 | 2026-11-12 | stock-transfer の是正（PR #216、closure 832 の P2） | owner の決定（repo 外の回答台帳 TD-655）で、UI-16-D7 を 64 UI-05-D15 と同じ形に改めた: 保存 event の先頭で lock と検索の世代を進め、保存の失敗で unlock した後に届いた、保存を押す前に始めた直接検索の応答を採らない（その後に始めた検索は採る）。直接検索の入口も lock ref を読む。§79.10 の UI-16-D7 を合わせた。 |
-| 2026-11-20 | record-cancel の起票（D-163、導入の前の関門 18） | owner の決定（repo 外の回答台帳 TD-848）で振替も入出庫の記録の取消に入れた: §79.5 の最近の記録の「取消済み」、§79.6 の誤った振替の戻し方、§79.8 の取消、§79.9・§79.10 を直した（proposed・未実装。[Plan Packet](../plans/2026-11-20-record-cancel.md)）。 |
+| 2026-11-20 | record-cancel の起票（D-163、導入の前の関門 18） | owner の決定（repo 外の回答台帳 TD-848）で振替も入出庫の記録の取消に入れた: §79.5 の最近の記録の「取消済み」、§79.6 の誤った振替の戻し方、§79.8 の取消、§79.9・§79.10 を直した（[Plan Packet](../plans/2026-11-20-record-cancel.md)。実装は PR #297）。 |

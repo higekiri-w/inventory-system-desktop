@@ -174,6 +174,7 @@ struct ReceivingRecordWithSupplier {
     receiving_date: String,
     note: Option<String>,
     created_at: String,
+    canceled_at: Option<String>,   // 取消の日時。有効なら None（§23.7b、D-163）
 }
 ```
 
@@ -324,6 +325,7 @@ struct ReturnRecordSummary {
     register_processed: bool,
     note: Option<String>,
     created_at: String,
+    canceled_at: Option<String>,   // 取消の日時。有効なら None（§23.7b、D-163）
 }
 ```
 
@@ -457,6 +459,7 @@ struct DisposalRecordSummary {
     id: i64,
     disposal_date: String,
     created_at: String,
+    canceled_at: Option<String>,   // 取消の日時。有効なら None（§23.7b、D-163）
 }
 ```
 
@@ -537,7 +540,9 @@ struct ReceivingRecordDetail {
     supplier_id: Option<i64>,
     supplier_name: Option<String>,
     note: Option<String>,
-    status: String,
+    status: String,                // "active" | "canceled"（canceled_at の有無。§23.7b）
+    canceled_at: Option<String>,
+    cancel_reason: Option<String>,
     created_at: String,
     items: Vec<ReceivingRecordDetailItem>,
     total_cost: i64,
@@ -578,7 +583,9 @@ struct ReturnRecordDetail {
     register_processed: bool,
     receipt_image_path: Option<String>,
     note: Option<String>,
-    status: String,
+    status: String,                // "active" | "canceled"（canceled_at の有無。§23.7b）
+    canceled_at: Option<String>,
+    cancel_reason: Option<String>,
     created_at: String,
     items: Vec<ReturnRecordDetailItem>,
     movements: Vec<MovementRecord>,
@@ -609,7 +616,9 @@ struct ManualSaleRecordDetail {
     sale_date: String,
     reason: ManualSaleReason,
     note: Option<String>,
-    status: String,
+    status: String,                // "active" | "canceled"（canceled_at の有無。§23.7b）
+    canceled_at: Option<String>,
+    cancel_reason: Option<String>,
     created_at: String,
     items: Vec<ManualSaleRecordDetailItem>,
     total_amount: i64,
@@ -639,7 +648,9 @@ fn get_disposal_record(
 struct DisposalRecordDetail {
     id: i64,
     disposal_date: String,
-    status: String,
+    status: String,                // "active" | "canceled"（canceled_at の有無。§23.7b）
+    canceled_at: Option<String>,
+    cancel_reason: Option<String>,
     created_at: String,
     total_loss_cost: i64,
     items: Vec<DisposalRecordDetailItem>,
@@ -729,7 +740,7 @@ fn get_transfer_record(
 
 ---
 
-### 23.7b 入出庫の記録の取消コマンド（D-163、proposed・未実装）
+### 23.7b 入出庫の記録の取消コマンド（D-163）
 
 BIZ は [31](31-biz-inventory-service.md) §12.6c、画面は [65](65-inventory-record-traceability.md) §65.5b。
 

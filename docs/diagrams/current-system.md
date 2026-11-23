@@ -192,7 +192,7 @@ flowchart TB
 - 日報は商品別売上へ擬似展開しない。商品別売上と公式日報の総額も足し合わせない。
 - 共有JANは `product_code ASC` の先頭商品へ売上を割り当て、warningを表示する。JANから色・サイズの個別SKUは復元できない。[DATA-2](../research/2026-09-16-diagram-audit.md#data-2-共有janの売上は個別skuを識別できない)
 - `reference_type + reference_id` は業務記録への論理参照。初期在庫のような元記録を持たないmovementもある。
-- 通常業務記録の取消・訂正は将来設計。CSV rollbackの仕組みを入庫・廃棄等に実装済みとして流用描写しない。
+- 入庫・返品交換・手動販売・廃棄・振替の記録の取消は、その記録の movement（手動販売は結んだ売上の行も）を無効にして写しを求め直す（D-163。CSV rollback と同じ形で、補償の movement は作らない。図には取消の線を足していない）。訂正の操作は持たない（取り消してから入れ直す）。
 - 商品別CSV（Z004）の取込みの確定（図の `Z4`）と取消（図の `ROLLBACK`）は、D-118 の b1 で精算の鍵と求め直しの新しい経路に置き換えた（取消は補償の movement を作らず、記録から写しを求め直す。[停止 ADR](../adr/2026-09-23-legacy-stocktake-z004-write-stop.md) は superseded）。
 
 根拠: [入出庫BIZ](../../src-tauri/src/biz/inventory_service/mod.rs)、[商品別CSV BIZ](../../src-tauri/src/biz/csv_import_service/mod.rs)、[日報BIZ](../../src-tauri/src/biz/daily_report_import_service/mod.rs)、[記録追跡設計](../function-design/65-inventory-record-traceability.md)。整合性補正は例外として写しを記録から求め直した値へ直接合わせ（`recompute_stock`）、movementを増やさず、before/afterの操作ログを同一TXで必須保存する（[integrity_service](../../src-tauri/src/biz/integrity_service.rs)）。この一致は実在庫の正しさまで保証しない。

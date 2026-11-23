@@ -19,6 +19,8 @@ src-tauri/src/
     schema_v11.rs -- Z004の精算の鍵・売上の連動・棚卸しの完了の列（§20 の vZ）
     schema_v12.rs -- 日報の束の精算回数の列（§17 の vS）
     schema_v13.rs -- 振替の種類と振替の記録の表（§21 の vT。先に merge する側が小さい番号を取る、§21）
+    schema_v14.rs -- EJ の記録の文の表（§22 の vE）
+    schema_v15.rs -- 入出庫の記録の取消の列と手動販売の売上の結び（§23 の vC）
 ```
 
 ### 3.2 migrate
@@ -534,9 +536,9 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **テスト**: 列と型と NULL の可否、`printed_at` の index と UNIQUE の index があること（`schema_v14::tests::test_req401_v14_creates_ej_records_with_index_and_unique`）、`mode`・`kind`・`settlement_report` の一覧に無い値と `record_no` の 5 桁・`machine_prefix` の 3 桁が CHECK で拒まれ、同じ `(machine_prefix, record_no)` の 2 回目が拒まれ、別の `machine_prefix` の同じ番号は通ること（`test_req401_v14_rejects_bad_values_and_duplicate_key`）。`migration.rs` の `expected_tables` に `ej_records` を足す。mode・kind の enum と CHECK の値の集合の parity は `finite_enum_contract_tests.rs`（D-061）。
 
-## 23. MNT-03 追加: 入出庫の記録の取消の列と、手動販売の売上の行の結びの migration（D-163、proposed・未実装）
+## 23. MNT-03 追加: 入出庫の記録の取消の列と、手動販売の売上の行の結びの migration（D-163）
 
-**MNT-03-D24 / D-163**: 入出庫の記録の取消の lane（Plan Packet `docs/plans/2026-11-20-record-cancel.md`、導入の前の関門 18）の migration（以下 vC）。列の意味の正本は [transaction](../db-design/transaction-tables.md) の §4-5 の「取消の列」と [POS](../db-design/pos-tables.md) §13 の `manual_sale_id`。節・ID・版の番号は起票の時点の見込み（2026-11-20 の main の最大は v13。PR #294 が v14 と §22・MNT-03-D23 を足す。導入の前の関門 16 の lane も次の版と §23・MNT-03-D24 を見込む）で、先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す（§21 と同じ規則、`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。欠けは §21 の連番の test が CI で止める）。description は `入出庫の記録の取消の列と手動販売の売上の結び（D-163）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v15.rs`（取り直したら版の番号に合わせる）。
+**MNT-03-D24 / D-163**: 入出庫の記録の取消の lane（Plan Packet `docs/plans/2026-11-20-record-cancel.md`、導入の前の関門 18）の migration（以下 vC）。列の意味の正本は [transaction](../db-design/transaction-tables.md) の §4-5 の「取消の列」と [POS](../db-design/pos-tables.md) §13 の `manual_sale_id`。版の番号は v15（PR #294 の v14・§22・MNT-03-D23 の次。同期の時点の main の最大は v14）。版の番号の規則は §21 と同じ（先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す。`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。欠けは §21 の連番の test が CI で止める。導入の前の関門 16 の lane は次の版と節を取り直す）。description は `入出庫の記録の取消の列と手動販売の売上の結び（D-163）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v15.rs`。
 
 **手順**（1 つの transaction。表を作り直さないので `foreign_keys` は変えない。止まる検査は置かない: 足す列は全て NULL を許し、既存の行は全て新しい CHECK を通る）:
 
@@ -549,4 +551,4 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **回復**: §16 の「回復」と同じ（vC が COMMIT した DB は vC を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vC の後に入れた記録と取消は戻らない）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
 
-**テスト**（取消の lane の完了条件。名前と期待は packet の Test Plan）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・半角空白だけの理由（SQLite の `trim` は半角空白だけを除くので、全角空白・tab だけの理由は DB を通り、BIZ が拒む。31 §12.6c の手順 1）・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。
+**テスト**（`schema_v15::tests::migration_v15_adds_cancel_columns_and_manual_sale_link`。packet の Test Plan の T9）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・半角空白だけの理由（SQLite の `trim` は半角空白だけを除くので、全角空白・tab だけの理由は DB を通り、BIZ が拒む。31 §12.6c の手順 1）・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。
