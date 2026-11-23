@@ -120,11 +120,15 @@ jobs:
           & $exe --version
           "path=$exe" >> $env:GITHUB_OUTPUT
 
+      # Smoke-only build (D-164): WebView2 must open a debugging port for msedgedriver. wry always passes its
+      # own default browser arguments, so the port that msedgedriver sets through the environment is ignored.
+      # The shipped tauri.conf.json is unchanged; only this build adds the argument to each window.
       - name: Build the release app
         if: steps.diff.outputs.changed == 'true'
-        run: >-
-          npm run tauri -- build --no-bundle --config
-          '{"app":{"windows":[{"title":"在庫管理システム","width":1280,"height":800,"minWidth":1024,"minHeight":720,"dragDropEnabled":false,"center":true,"additionalBrowserArgs":"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"}]}}'
+        shell: bash
+        run: |
+          node -e 'const fs = require("fs"); const c = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")); for (const w of c.app.windows) w.additionalBrowserArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"; fs.writeFileSync(process.argv[1], JSON.stringify({ app: { windows: c.app.windows } }));' "$RUNNER_TEMP/l3-smoke.conf.json"
+          npm run tauri -- build --no-bundle --config "$RUNNER_TEMP/l3-smoke.conf.json"
 
       # The script ends itself within 300 seconds; the step timeout is only the backstop.
       - name: Check the home heading
