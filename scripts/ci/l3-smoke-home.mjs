@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const EXPECTED_HEADING = "ホーム";
 const DRIVER_URL = "http://127.0.0.1:4444";
-const ELEMENT_KEY = "element-6066-11e4-a52f-4a52f4a52f4a";
+const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"; // W3C WebDriver §12.1 web element identifier
 // One overall deadline; cleanup fits inside it (270 + 15 + 10, the last 5 seconds close the pipes).
 const TOTAL_MS = 300_000;
 const WORK_MS = 270_000;
