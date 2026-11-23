@@ -33,9 +33,9 @@ import {
   RecordCancelButton,
   RecordCanceledAlert,
   RecordDetailError,
+  RecordStatusBadge,
 } from "./RecordCancel";
 import { useRecordCancel } from "./useRecordCancel";
-import { formatRecordStatus } from "./types";
 
 export interface ReturnRecordDetailPageProps {
   recordId: number;
@@ -157,7 +157,7 @@ function ReturnRecordDetailBody({ recordId, returnTo }: ReturnRecordDetailPagePr
           <div>
             <span className="text-muted-foreground">状態</span>
             <div>
-              <Badge variant="outline">{formatRecordStatus(detail.status)}</Badge>
+              <RecordStatusBadge cancel={cancel} status={detail.status} />
             </div>
           </div>
           <div>

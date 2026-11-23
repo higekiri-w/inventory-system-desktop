@@ -3,7 +3,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { configure, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState, type ReactElement } from "react";
 import { toast } from "sonner";
@@ -83,6 +83,7 @@ const UNCONFIRMED_TEXT =
   "取り消せたか確かめられませんでした。「状態をもう一度確かめる」を押してください";
 const READING_STOCK_TEXT = "取り消した後の在庫を確かめています…";
 const STOCK_ALERT_TITLE = "取り消した後の在庫を確かめてください";
+const CANCELED_EMPTY_TEXT = "取り消したので、この記録は在庫を動かしていません";
 const REREAD_TEXT = "詳細を読み直せませんでした。「詳細を読み直す」を押してください";
 
 type Reply<T> = { status: "ok"; data: T } | { status: "error"; error: CmdError };
@@ -247,6 +248,7 @@ const PAGES = [
 ] as const;
 
 const receiving = PAGES[0];
+const RECEIVING_DETAIL_KEY = queryKeys.inventoryRecords.receivingDetail(RECORD_ID);
 
 function makeQueryClient() {
   return new QueryClient({
@@ -435,6 +437,62 @@ describe.each(PAGES)(
       expect(read).toHaveBeenCalledTimes(3);
       expect(mockCancel).toHaveBeenCalledTimes(1);
       expect(mockGetStockDetail).not.toHaveBeenCalled();
+    });
+
+    it("成功: 再取得を待つ間も「有効」と取消の前の movement を出さず、その間に開き直しても「この記録を取り消す」を出さない", async () => {
+      const user = userEvent.setup();
+      const warning = "RC-001: 在庫がマイナスになりました（-2）";
+      // C25 の再取得は終わらせない
+      const refresh = deferred<unknown>();
+      read.mockResolvedValueOnce(ok(detail())).mockReturnValue(refresh.promise);
+      mockCancel.mockResolvedValue(ok({ stock_warnings: [warning] }));
+      const queryClient = makeQueryClient();
+      const first = renderPage(page, queryClient);
+
+      const dialog = await openDialog(user);
+      await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+      expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+
+      const expectCanceledView = () => {
+        expect(screen.getByText("取消済み")).toBeInTheDocument();
+        expect(screen.queryByText("有効")).toBeNull();
+        expect(screen.getByText(CANCELED_EMPTY_TEXT)).toBeInTheDocument();
+        // 取消の日時・理由は再取得した詳細が出す（それまで空の値を出さない）
+        expect(screen.queryByText("取消の日時")).toBeNull();
+        expect(screen.queryByRole("button", { name: "この記録を取り消す" })).toBeNull();
+      };
+      expectCanceledView();
+      expect(screen.getByText(warning)).toBeInTheDocument();
+
+      // 再取得が終わる前に画面を離れて、同じ詳細を開き直す
+      first.unmount();
+      renderPage(page, queryClient);
+      expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+      expectCanceledView();
+      // 成功の応答の負の在庫の文は、取り消したその画面の知らせ
+      expect(screen.queryByText(warning)).toBeNull();
+      expect(mockCancel).toHaveBeenCalledTimes(1);
+
+      refresh.resolve(ok(detail(true)));
+      expect(await screen.findByText("2026-11-21 10:00:00")).toBeInTheDocument();
+      expect(screen.getByText(REASON)).toBeInTheDocument();
+    });
+
+    it("取消と取り直しの両方が失敗: 詳細の状態は「結果未確認」で、「有効」と言い切らない", async () => {
+      const user = userEvent.setup();
+      read
+        .mockResolvedValueOnce(ok(detail()))
+        .mockResolvedValue(cmdError("internal", "合成の読取りの失敗"));
+      mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+      renderPage(page);
+
+      const dialog = await openDialog(user);
+      await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+      expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+
+      // dialog の後ろの詳細（支援技術からは隠れる）も、cache の active を「有効」と出さない
+      expect(screen.getByText("結果未確認")).toBeInTheDocument();
+      expect(screen.queryByText("有効")).toBeNull();
     });
   },
 );
@@ -770,6 +828,200 @@ describe("取消の失敗・結果不明の後の取り直し（REQ-208 / 65 §6
     refresh.resolve(ok(receivingDetail(true)));
     expect(await screen.findByText("2026-11-21 10:00:00")).toBeInTheDocument();
     expect(screen.getByText(REASON)).toBeInTheDocument();
+  });
+
+  it("未確認の記録を開き直すと、dialog を開く前から詳細に「結果未確認」と「状態をもう一度確かめる」を出し、「有効」と言い切らない", async () => {
+    const user = userEvent.setup();
+    receiving.read
+      .mockResolvedValueOnce(ok(receivingDetail()))
+      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+      .mockResolvedValue(ok(receivingDetail()));
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+    const queryClient = makeQueryClient();
+    const first = renderPage(receiving.page, queryClient);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    first.unmount();
+
+    // 開き直した詳細は cache の active（読み直していない）: dialog を開く前から未確認を知らせる
+    renderPage(receiving.page, queryClient);
+    expect(await screen.findByText("結果未確認")).toBeInTheDocument();
+    expect(screen.queryByText("有効")).toBeNull();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    expect(receiving.read).toHaveBeenCalledTimes(2);
+
+    // 詳細の画面の「状態をもう一度確かめる」は読取りだけ（取消は送らない）。active を読めたら「有効」に戻る
+    await user.click(screen.getByRole("button", { name: "状態をもう一度確かめる" }));
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(FAILED_TOAST);
+    });
+    expect(receiving.read).toHaveBeenCalledTimes(3);
+    expect(mockCancel).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("有効")).toBeInTheDocument();
+    expect(screen.queryByText("結果未確認")).toBeNull();
+    expect(screen.queryByText(UNCONFIRMED_TEXT)).toBeNull();
+  });
+
+  it.each([
+    {
+      label: "詳細の cache が回収された後に開き直し、詳細の query が読み直す",
+      arrange: (queryClient: QueryClient) => {
+        queryClient.removeQueries({ queryKey: RECEIVING_DETAIL_KEY, exact: true });
+      },
+    },
+    {
+      label: "開き直す前に、詳細の cache が取消済みを持っている（mount の時点で canceled）",
+      arrange: (queryClient: QueryClient) => {
+        queryClient.setQueryData(RECEIVING_DETAIL_KEY, receivingDetail(true));
+      },
+    },
+  ])(
+    "未確認の記録を開き直した詳細が canceled（$label）: 印の商品の今の在庫を確かめて C25 を 1 回だけ当て、印を消す",
+    async ({ arrange }) => {
+      const user = userEvent.setup();
+      receiving.read
+        .mockResolvedValueOnce(ok(receivingDetail()))
+        .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+        // 応答を失った取消は commit されていた
+        .mockResolvedValue(ok(receivingDetail(true)));
+      mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+      const stock = deferred<Awaited<ReturnType<typeof commands.getStockDetail>>>();
+      mockGetStockDetail.mockReturnValue(stock.promise);
+      const queryClient = makeQueryClient();
+      const first = renderPage(receiving.page, queryClient);
+
+      const dialog = await openDialog(user);
+      await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+      expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+      first.unmount();
+
+      arrange(queryClient);
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+      // main.tsx と同じく root を StrictMode で包む（mount の effect が 2 回走る）。それでも 1 回だけ
+      configure({ reactStrictMode: true });
+      try {
+        renderPage(receiving.page, queryClient);
+      } finally {
+        configure({ reactStrictMode: false });
+      }
+
+      expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+      expect(await screen.findByText(READING_STOCK_TEXT)).toBeInTheDocument();
+      stock.resolve(
+        ok(
+          makeMockStockDetail({
+            product: makeMockProductWithRelations({ product_code: "RC-001", stock_quantity: -2 }),
+          }),
+        ),
+      );
+      expect(
+        await screen.findByText("RC-001: 在庫がマイナスになりました（-2）"),
+      ).toBeInTheDocument();
+      expect(new Set(mockGetStockDetail.mock.calls.map(([code]) => code))).toEqual(
+        new Set(["RC-001"]),
+      );
+      expectExactInvalidations(
+        invalidateSpy.mock.calls,
+        d052InvalidationOracle.inventoryRecordCancel(),
+      );
+      expect(
+        queryClient.getQueryData(queryKeys.recordCancelUnconfirmed("receiving_record", RECORD_ID)),
+      ).toBeUndefined();
+      expect(screen.queryByText("結果未確認")).toBeNull();
+      expect(screen.queryByRole("button", { name: "この記録を取り消す" })).toBeNull();
+      expect(mockCancel).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("未確認の記録を開き直した読取りが失敗: error の表示に結果未確認の知らせを出し、関連 movement の無い記録は canceled を確かめても在庫を読まない", async () => {
+    const user = userEvent.setup();
+    const returns = PAGES[1];
+    // レジで読んで戻した返品（この保存で在庫を動かしていない。D-148）: 関連 movement が 0 件
+    const active: ReturnRecordDetail = {
+      ...returnDetail(),
+      register_processed: true,
+      movements: [],
+    };
+    returns.read
+      .mockResolvedValueOnce(ok(active))
+      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+      .mockResolvedValueOnce(cmdError("internal", "合成の読取りの失敗"))
+      .mockResolvedValue(ok({ ...active, ...state(true, []) } satisfies ReturnRecordDetail));
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+    const queryClient = makeQueryClient();
+    const first = renderPage(returns.page, queryClient);
+
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    first.unmount();
+
+    // 詳細の cache が回収された後に開き直し、その読取りも失敗する
+    queryClient.removeQueries({
+      queryKey: queryKeys.inventoryRecords.returnDetail(RECORD_ID),
+      exact: true,
+    });
+    renderPage(returns.page, queryClient);
+    expect(await screen.findByText("取消の結果未確認")).toBeInTheDocument();
+    expect(screen.getByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    expect(screen.queryByText("この記録は取消済みです")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "状態をもう一度確かめる" }));
+    expect(await screen.findByText("この記録は取消済みです")).toBeInTheDocument();
+    expect(screen.getByText("取消済み")).toBeInTheDocument();
+    expect(screen.queryByText("取消の結果未確認")).toBeNull();
+    // 商品が 0 件: 在庫は読まず、在庫の知らせ（「確認中」を含む）も出さない
+    expect(mockGetStockDetail).not.toHaveBeenCalled();
+    expect(screen.queryByText(STOCK_ALERT_TITLE)).toBeNull();
+    expect(mockCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("未確認の印の項目は、未確認になった記録にだけ作って回収させず、確かめたら消す", async () => {
+    const user = userEvent.setup();
+    // 既定の gcTime が短い client でも、未確認の印だけは画面を離れた後に残る
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const markers = () =>
+      queryClient.getQueryCache().findAll({ queryKey: ["record-cancel-unconfirmed"] });
+    let readFails = false;
+    vi.mocked(commands.getReceivingRecord).mockImplementation((id: number) =>
+      Promise.resolve(
+        readFails ? cmdError("internal", "合成の読取りの失敗") : ok({ ...receivingDetail(), id }),
+      ),
+    );
+    mockCancel.mockRejectedValue(new Error("合成の応答の消失"));
+
+    // 取消を試していない記録を開いて閉じても、項目を作らない
+    for (const recordId of [RECORD_ID, RECORD_ID + 1]) {
+      const view = renderPage(<ReceivingRecordDetailPage recordId={recordId} />, queryClient);
+      await screen.findByRole("button", { name: "この記録を取り消す" });
+      view.unmount();
+    }
+    expect(markers()).toHaveLength(0);
+
+    // 未確認になった記録の印は、画面を離れても回収されない
+    const first = renderPage(receiving.page, queryClient);
+    const dialog = await openDialog(user);
+    readFails = true;
+    await user.click(within(dialog).getByRole("button", { name: "取り消す" }));
+    expect(await within(dialog).findByText(UNCONFIRMED_TEXT)).toBeInTheDocument();
+    first.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(markers().map((query) => query.gcTime)).toEqual([Number.POSITIVE_INFINITY]);
+
+    // 開き直して active を確かめたら、項目ごと消す
+    readFails = false;
+    renderPage(receiving.page, queryClient);
+    expect(await screen.findByText("結果未確認")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "状態をもう一度確かめる" }));
+    await waitFor(() => {
+      expect(mockToast.error).toHaveBeenCalledWith(FAILED_TOAST);
+    });
+    expect(markers()).toHaveLength(0);
   });
 });
 

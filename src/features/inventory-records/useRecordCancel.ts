@@ -4,16 +4,9 @@
 // 5 つの詳細が同じ hook と部品（RecordCancel.tsx）を使う。
 // 設計: docs/function-design/65-inventory-record-traceability.md §65.5b（D-163）
 
-import {
-  skipToken,
-  useMutation,
-  useQueries,
-  useQuery,
-  useQueryClient,
-  type QueryKey,
-} from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { commands, type ReferenceType } from "@/lib/bindings";
@@ -74,20 +67,25 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   // 取消の失敗・結果不明の後に、状態の取り直しも失敗した（取消が済んだかを言い切れない）。
-  // 記録の種類と ID ごとに query の cache に持つ: 画面を離れても詳細の cache に取消の前の active が残るので、
-  // 同じ詳細を開き直しても「状態をもう一度確かめる」で active を確かめるまで「取り消す」を押させない
+  // 印は記録の種類と ID ごとに query の cache に置く: 画面を離れても詳細の cache に取消の前の active が残るので、
+  // 同じ詳細を開き直しても、確かめるまで「有効」と言い切らず、「取り消す」を押させない
   // （置き場が詳細の cache と同じ QueryClient なら、片方だけが残ることがない）。
-  // ponytail: 印を消すのはこの hook の取り直しだけ。開き直した詳細の query が先に取消済みを読んだときは、
-  // 取消の button が出ないので印は残り、今の在庫も読まない（初めから取消済みの記録を開いたのと同じ表示）。
-  // その経路でも負の在庫を知らせる要求が出たら、開いたときに印があれば取り直す
+  // cache の項目は未確認の間だけ持ち（取消を試していない記録には作らず、確かめたら消す）、この画面の state はその写し。
+  // ponytail: 開き直した詳細の query が新しく active を読んでも印は解かない（cache の active が取消の前の読取りか
+  // 後の読取りかを見分けない）。「状態をもう一度確かめる」で解く。自動で解く要求が出たら、印に時刻を持たせて
+  // 詳細の dataUpdatedAt と比べる
   const unconfirmedKey = queryKeys.recordCancelUnconfirmed(recordType, recordId);
-  const unconfirmed =
-    useQuery<Unconfirmed | null>({
-      queryKey: unconfirmedKey,
-      queryFn: skipToken,
-      gcTime: Number.POSITIVE_INFINITY,
-    }).data ?? null;
+  const [unconfirmed, setUnconfirmedState] = useState(
+    () => queryClient.getQueryData<Unconfirmed>(unconfirmedKey) ?? null,
+  );
   const setUnconfirmed = (next: Unconfirmed | null) => {
+    setUnconfirmedState(next);
+    if (next === null) {
+      queryClient.removeQueries({ queryKey: unconfirmedKey, exact: true });
+      return;
+    }
+    // 読取りではないので取り直せない: 印の項目だけは、画面を離れた後も既定の gcTime で回収させない
+    queryClient.setQueryDefaults([unconfirmedKey[0]], { gcTime: Number.POSITIVE_INFINITY });
     queryClient.setQueryData(unconfirmedKey, next);
   };
   const [isChecking, setIsChecking] = useState(false);
@@ -103,6 +101,16 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     // 再取得の完了を待たない（知らせの後は待ちの止めを解く。詳細の再取得の失敗は RecordDetailError が受ける）
     void invalidateByContract(queryClient, invalidationContract.inventoryRecordCancel());
   };
+
+  // 未確認の記録を開き直した詳細の読取りが、先に取消済みを読んだ: 取り直しの canceled と同じに扱う。
+  // 詳細の変化は page の useQuery の再描画が運ぶので、描画のたびに見る。印は cache から読む
+  // （1 回目が印を消すので、StrictMode の 2 回の effect でも 2 回通さない）
+  useEffect(() => {
+    const marker = queryClient.getQueryData<Unconfirmed>(unconfirmedKey);
+    if (marker !== undefined && queryClient.getQueryData<T>(queryKey)?.status === "canceled") {
+      applyCanceled({ stockWarnings: [], stockCheckCodes: marker.codes });
+    }
+  });
 
   // 失敗・結果不明のたびに同じ詳細の状態を取り直し、取り直した状態で分ける。
   // 詳細の query を通さずに読む（読取りの失敗で画面の全体を error の表示に替えず、dialog と理由を残す）
@@ -137,6 +145,12 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     onSuccess: (result) => {
       // 取消は破壊的操作の完了通知なので、既定より長く出す（useRollbackCsvImport と同じ表示時間）
       toast.success("記録を取り消しました", { duration: 8000 });
+      // 再取得を待つ間（その間に開き直したときも）、取消の前の「有効」・関連 movement・取消の button を出さない。
+      // 取消の日時・理由は再取得した詳細が補う
+      queryClient.setQueryData<T>(
+        queryKey,
+        (old) => old && { ...old, status: "canceled", movements: [] },
+      );
       applyCanceled({ stockWarnings: result.stock_warnings, stockCheckCodes: [] });
     },
     onError: (error, variables) => recheck(error, variables.codes),
@@ -184,7 +198,7 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     setReason,
     isPending: mutation.isPending,
     isChecking,
-    /** 取消が済んだかを確かめられていない（「取り消す」は押せず、「状態をもう一度確かめる」を出す） */
+    /** 取消が済んだかを確かめられていない（詳細は「結果未確認」、「取り消す」は押せず、「状態をもう一度確かめる」を出す） */
     isUnconfirmed: unconfirmed !== null,
     canSubmit: trimmedReason !== "" && !isBusy && unconfirmed === null,
     /** 「取り消す」: 取消を送る。取消の前の関連 movement の商品を、応答を失ったときの在庫の読取りに残す */

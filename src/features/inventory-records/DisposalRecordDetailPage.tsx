@@ -6,7 +6,6 @@ import { ArrowLeft, PackageSearch } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -37,9 +36,10 @@ import {
   RecordCancelButton,
   RecordCanceledAlert,
   RecordDetailError,
+  RecordStatusBadge,
 } from "./RecordCancel";
 import { useRecordCancel } from "./useRecordCancel";
-import { formatRecordStatus, formatYen } from "./types";
+import { formatYen } from "./types";
 
 export interface DisposalRecordDetailPageProps {
   recordId: number;
@@ -132,7 +132,7 @@ function DisposalRecordDetailBody({ recordId, returnTo }: DisposalRecordDetailPa
           <div>
             <span className="text-muted-foreground">状態</span>
             <div>
-              <Badge variant="outline">{formatRecordStatus(detail.status)}</Badge>
+              <RecordStatusBadge cancel={cancel} status={detail.status} />
             </div>
           </div>
           <div>

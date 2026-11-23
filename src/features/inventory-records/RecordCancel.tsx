@@ -1,6 +1,7 @@
 // src/features/inventory-records/RecordCancel.tsx
 //
-// REQ-208: 入出庫の記録の詳細からの取消の部品（取消の button と確認の dialog、取消済みの表示、詳細の読取りの error）。
+// REQ-208: 入出庫の記録の詳細からの取消の部品（取消の button と確認の dialog、状態の badge、取消済み・結果未確認の表示、
+// 詳細の読取りの error）。
 // 入庫・返品交換・手動販売・廃棄・振替の 5 つの詳細が、同じ部品と hook（useRecordCancel.ts）を使う。
 // 設計: docs/function-design/65-inventory-record-traceability.md §65.5b（D-163）
 
@@ -20,6 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,11 +29,34 @@ import { PageHeader } from "@/components/patterns/PageHeader";
 import { formatLengthOrPlain } from "@/features/stock-inquiry/lib/format-stock-display";
 import { formatDateTime } from "@/lib/date-time";
 import { describeError } from "@/lib/describe-error";
+import { formatRecordStatus } from "./types";
 import type { CancelableRecordDetail, RecordCancel } from "./useRecordCancel";
 
 /** 取り消した記録の「関連する在庫変動」の空の文（無効にした movement は出さない。§65.8.2） */
 export const CANCELED_MOVEMENTS_EMPTY_DESCRIPTION =
   "取り消したので、この記録は在庫を動かしていません";
+
+const UNCONFIRMED_MESSAGE =
+  "取り消せたか確かめられませんでした。「状態をもう一度確かめる」を押してください";
+
+/** 「状態をもう一度確かめる」（確認の dialog と詳細の画面の結果未確認の知らせが、同じ操作を出す） */
+function RecheckButton({ cancel }: { cancel: RecordCancel }) {
+  return (
+    <Button type="button" variant="outline" disabled={cancel.isChecking} onClick={cancel.recheck}>
+      {cancel.isChecking ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+      状態をもう一度確かめる
+    </Button>
+  );
+}
+
+/** 詳細の「状態」の badge。取消が済んだかを確かめられていない間は、cache の active を「有効」と言い切らない */
+export function RecordStatusBadge({ cancel, status }: { cancel: RecordCancel; status: string }) {
+  return (
+    <Badge variant="outline">
+      {cancel.isUnconfirmed && status === "active" ? "結果未確認" : formatRecordStatus(status)}
+    </Badge>
+  );
+}
 
 export interface RecordCancelButtonProps {
   cancel: RecordCancel;
@@ -43,7 +68,7 @@ export interface RecordCancelButtonProps {
 /** 有効な記録の header の操作「この記録を取り消す」と、確認の dialog。取消済みには出さない */
 export function RecordCancelButton({ cancel, status, businessDate }: RecordCancelButtonProps) {
   const reasonId = useId();
-  // 取消済みと確かめた後は、詳細の再取得が終わる前（cache はまだ active）でも出さない
+  // 取消済みと確かめた後は、詳細の cache の状態によらず出さない（確かめた結果は詳細の読取りと別に持つ）
   if (status !== "active" || cancel.isCanceled) return null;
   return (
     <>
@@ -90,19 +115,9 @@ export function RecordCancelButton({ cancel, status, businessDate }: RecordCance
             {cancel.isUnconfirmed ? (
               <div className="space-y-2">
                 <p role="alert" className="text-destructive">
-                  取り消せたか確かめられませんでした。「状態をもう一度確かめる」を押してください
+                  {UNCONFIRMED_MESSAGE}
                 </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={cancel.isChecking}
-                  onClick={cancel.recheck}
-                >
-                  {cancel.isChecking ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  ) : null}
-                  状態をもう一度確かめる
-                </Button>
+                <RecheckButton cancel={cancel} />
               </div>
             ) : null}
           </div>
@@ -138,10 +153,23 @@ export interface RecordCanceledAlertProps {
   detail?: CancelableRecordDetail;
 }
 
-/** 取消済みの記録の header の下の表示（取消の日時・理由）と、取消で在庫が負になった商品の知らせ */
+/**
+ * 取消済みの記録の header の下の表示（取消の日時・理由）と、取消で在庫が負になった商品の知らせ。
+ * 取消が済んだかを確かめられていない記録には、dialog を開く前から結果未確認の知らせと「状態をもう一度確かめる」を出す
+ */
 export function RecordCanceledAlert({ cancel, detail }: RecordCanceledAlertProps) {
   const canceledDetail = detail?.status === "canceled" ? detail : undefined;
-  if (canceledDetail === undefined && !cancel.isCanceled) return null;
+  if (canceledDetail === undefined && !cancel.isCanceled) {
+    return cancel.isUnconfirmed ? (
+      <Alert variant="warning">
+        <AlertTitle>取消の結果未確認</AlertTitle>
+        <AlertDescription>
+          <p>{UNCONFIRMED_MESSAGE}</p>
+          <RecheckButton cancel={cancel} />
+        </AlertDescription>
+      </Alert>
+    ) : null;
+  }
   // 応答を失った後に読んだ今の在庫: 0 未満だけ知らせる（作成の画面と同じ文。長さの商品は m）
   const negativeStocks = cancel.stockChecks.flatMap(({ productCode, product }) =>
     product !== undefined && product.stock_quantity < 0
@@ -155,21 +183,19 @@ export function RecordCanceledAlert({ cancel, detail }: RecordCanceledAlertProps
   const isReadingStock = cancel.stockChecks.some(
     (check) => check.product === undefined && !check.isError,
   );
+  // 成功の直後は cache の状態だけが取消済み: 日時・理由は再取得した詳細が持つまで出さない（空の値を見せない）
+  const canceledAt = canceledDetail?.canceled_at ?? null;
   return (
     <>
       <Alert>
         <AlertTitle>この記録は取消済みです</AlertTitle>
-        {canceledDetail === undefined ? null : (
+        {canceledAt === null ? null : (
           <AlertDescription>
             <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-[auto_1fr]">
               <dt className="text-muted-foreground">取消の日時</dt>
-              <dd className="font-mono tabular-nums">
-                {canceledDetail.canceled_at === null
-                  ? "—"
-                  : formatDateTime(canceledDetail.canceled_at)}
-              </dd>
+              <dd className="font-mono tabular-nums">{formatDateTime(canceledAt)}</dd>
               <dt className="text-muted-foreground">取り消した理由</dt>
-              <dd className="break-words">{canceledDetail.cancel_reason ?? "—"}</dd>
+              <dd className="break-words">{canceledDetail?.cancel_reason ?? "—"}</dd>
             </dl>
           </AlertDescription>
         )}
