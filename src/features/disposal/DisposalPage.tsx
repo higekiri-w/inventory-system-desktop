@@ -718,7 +718,14 @@ export function DisposalPage() {
             <TableBody>
               {recentRecords.map((item) => (
                 <TableRow key={item.id}>
-                  <TableCell>{item.disposal_date}</TableCell>
+                  <TableCell>
+                    {item.disposal_date}
+                    {item.canceled_at !== null ? (
+                      <Badge variant="outline" className="ml-2">
+                        取消済み
+                      </Badge>
+                    ) : null}
+                  </TableCell>
                   <TableCell>{item.id}</TableCell>
                   <TableCell className="font-mono tabular-nums">
                     {formatDateTime(item.created_at)}

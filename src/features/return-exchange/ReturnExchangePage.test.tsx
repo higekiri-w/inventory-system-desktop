@@ -329,6 +329,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
             register_processed: false,
             note: "袋破れ",
             created_at: "2026-06-27T10:00:00",
+            canceled_at: null,
           },
         ],
         total_count: 1,
@@ -380,6 +381,46 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
     expect(within(resultRegion).getByText("サイズ交換のため確認済み")).toBeInTheDocument();
   });
 
+  it("REQ-208 / 65 §65.5b（T12）: 直近の一覧は取り消した行だけに「取消済み」を文字で出す", async () => {
+    mockListReturns.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            id: 31,
+            return_date: "2026-11-18",
+            return_type: "return",
+            register_processed: false,
+            note: null,
+            created_at: "2026-11-18T10:00:00",
+            canceled_at: "2026-11-21T10:00:00",
+          },
+          {
+            id: 30,
+            return_date: "2026-11-17",
+            return_type: "return",
+            register_processed: false,
+            note: null,
+            created_at: "2026-11-17T10:00:00",
+            canceled_at: null,
+          },
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
+
+    renderWithClient(<ReturnExchangePage />);
+
+    const recentRegion = await screen.findByRole("region", { name: "直近の返品・交換" });
+    const canceled = (await within(recentRegion).findByText("2026-11-18")).closest("tr");
+    const active = within(recentRegion).getByText("2026-11-17").closest("tr");
+    if (canceled === null || active === null) throw new Error("expected table rows");
+    expect(within(canceled).getByText("取消済み")).toBeInTheDocument();
+    expect(within(active).queryByText("取消済み")).not.toBeInTheDocument();
+  });
+
   it("REQ-202/REQ-206/UI-03-D19: recent list shows note text and fallback", async () => {
     mockListReturns.mockResolvedValue({
       status: "ok",
@@ -392,6 +433,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
             register_processed: false,
             note: "袋破れ",
             created_at: "2026-06-27T10:00:00",
+            canceled_at: null,
           },
           {
             id: 31,
@@ -400,6 +442,7 @@ describe("ReturnExchangePage (UI-03 / REQ-202)", () => {
             register_processed: true,
             note: null,
             created_at: "2026-06-28T11:00:00",
+            canceled_at: null,
           },
         ],
         total_count: 2,

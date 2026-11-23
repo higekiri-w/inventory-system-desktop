@@ -367,6 +367,7 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
             supplier_name: "テスト商事",
             note: "午前便",
             created_at: "2026-06-27T09:00:00",
+            canceled_at: null,
           },
         ],
         total_count: 1,
@@ -596,6 +597,45 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
     expect(mockCreateReceiving.mock.calls[1][0].idempotency_key).not.toBe(firstKey);
   });
 
+  it("REQ-208 / 65 §65.5b（T12）: 直近の一覧は取り消した行だけに「取消済み」を文字で出す", async () => {
+    mockListReceivings.mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        items: [
+          {
+            id: 2,
+            supplier_id: null,
+            supplier_name: null,
+            receiving_date: "2026-11-18",
+            note: null,
+            created_at: "2026-11-18T10:00:00",
+            canceled_at: "2026-11-21T10:00:00",
+          },
+          {
+            id: 1,
+            supplier_id: null,
+            supplier_name: null,
+            receiving_date: "2026-11-17",
+            note: null,
+            created_at: "2026-11-17T10:00:00",
+            canceled_at: null,
+          },
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 10,
+      },
+    });
+
+    renderWithClient(<ReceivingPage />);
+
+    const canceled = (await screen.findByText("2026-11-18")).closest("tr");
+    const active = screen.getByText("2026-11-17").closest("tr");
+    if (canceled === null || active === null) throw new Error("expected table rows");
+    expect(within(canceled).getByText("取消済み")).toBeInTheDocument();
+    expect(within(active).queryByText("取消済み")).not.toBeInTheDocument();
+  });
+
   it("renders recent receiving success empty and error states", async () => {
     mockListReceivings.mockResolvedValueOnce({
       status: "ok",
@@ -608,6 +648,7 @@ describe("ReceivingPage (UI-02 / REQ-201)", () => {
             receiving_date: "2026-06-25",
             note: "午前便",
             created_at: "2026-06-25T10:00:00",
+            canceled_at: null,
           },
         ],
         total_count: 1,
@@ -1176,6 +1217,7 @@ it.each([
           supplier_id: 1,
           note,
           created_at: "2026-09-08T10:00:00",
+          canceled_at: null,
         },
       ],
       total_count: 1,

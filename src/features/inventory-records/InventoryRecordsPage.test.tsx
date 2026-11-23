@@ -235,6 +235,32 @@ describe("InventoryRecordsPage (REQ-206)", () => {
     expect(within(row as HTMLElement).queryByText("明細なし")).not.toBeInTheDocument();
   });
 
+  it("REQ-208 / 65 §65.4.1（T12）: 取り消した記録の行は状態を「取消済み」で出す", async () => {
+    mockListInventoryRecords.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          makeRecord({
+            record_type: "transfer_record",
+            record_id: 61,
+            status: "canceled",
+            detail_route: "/inventory/transfer/records/61",
+          }),
+        ],
+        total_count: 1,
+        page: 1,
+        per_page: 50,
+      },
+    });
+
+    renderWithClient(<InventoryRecordsPage search={{}} onSearchChange={vi.fn()} />);
+
+    const row = (await screen.findByRole("link", { name: "詳細を見る" })).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("取消済み")).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByText("有効")).not.toBeInTheDocument();
+  });
+
   it("REQ-206: formatRecordStatusは4値options経由で進行中を表示する", () => {
     expect(formatRecordStatus("in_progress")).toBe("進行中");
     expect(formatRecordStatus("active")).toBe("有効");

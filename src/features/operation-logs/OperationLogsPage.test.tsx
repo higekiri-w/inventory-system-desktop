@@ -490,6 +490,30 @@ describe("UI-11c REQ-902", () => {
     expect(listTypes).toHaveBeenCalledTimes(1);
   });
 
+  it("REQ-208 / 74（T12）: 記録の取消の種類は「入出庫記録の取消」で出て、「その他」にならない", async () => {
+    listLogs.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            ...log('{"record_type":"transfer_record","record_id":7,"voided_movement_count":3}'),
+            operation_type: "inventory_record_cancel",
+          },
+        ],
+        total_count: 1,
+        page: 1,
+        per_page: 20,
+      },
+    });
+    renderPage();
+
+    const badge = (await screen.findAllByText("入出庫記録の取消")).find(
+      (element) => element.dataset.slot === "badge",
+    );
+    expect(badge).toBeVisible();
+    expect(screen.queryByText("その他（inventory_record_cancel）")).not.toBeInTheDocument();
+  });
+
   it("conveys known and unknown operation types with visible badge text, not color alone", async () => {
     listLogs.mockResolvedValue({
       status: "ok",

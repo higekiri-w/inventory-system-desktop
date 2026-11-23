@@ -30,6 +30,12 @@ import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { returnToLinkProps } from "@/lib/return-to";
 import { formatDateTime } from "@/lib/date-time";
+import {
+  CANCELED_MOVEMENTS_EMPTY_DESCRIPTION,
+  RecordCancelButton,
+  RecordCanceledAlert,
+} from "./RecordCancel";
+import { useRecordCancel } from "./useRecordCancel";
 import { formatRecordStatus } from "./types";
 
 export interface ReturnRecordDetailPageProps {
@@ -62,19 +68,28 @@ function hasNote(value: string | null | undefined): boolean {
   return (value?.trim() ?? "") !== "";
 }
 
-export function ReturnRecordDetailPage({ recordId, returnTo }: ReturnRecordDetailPageProps) {
+export function ReturnRecordDetailPage(props: ReturnRecordDetailPageProps) {
+  // 取消の途中の状態（dialog・理由・在庫の知らせ）は表示している記録のものだけ（65 §65.5b）。同じ route の param が
+  // 変わっても component は再 mount されないので、記録ID で作り直す
+  return <ReturnRecordDetailBody key={props.recordId} {...props} />;
+}
+
+function ReturnRecordDetailBody({ recordId, returnTo }: ReturnRecordDetailPageProps) {
   const backLinkProps = returnToLinkProps(returnTo) ?? { to: "/inventory/records", search: {} };
+  const queryKey = queryKeys.inventoryRecords.returnDetail(recordId);
+  const readDetail = () =>
+    unwrapResult(commands.getReturnRecord(recordId), {
+      source: "commands",
+      cmd: "get_return_record",
+    });
   const detailQuery = useQuery({
-    queryKey: queryKeys.inventoryRecords.returnDetail(recordId),
-    queryFn: () =>
-      unwrapResult(commands.getReturnRecord(recordId), {
-        source: "commands",
-        cmd: "get_return_record",
-      }),
+    queryKey,
+    queryFn: readDetail,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: 0,
   });
+  const cancel = useRecordCancel({ recordType: "return_record", recordId, queryKey, readDetail });
 
   if (detailQuery.isLoading) {
     return (
@@ -114,14 +129,22 @@ export function ReturnRecordDetailPage({ recordId, returnTo }: ReturnRecordDetai
       <PageHeader
         title={`返品・交換 #${String(detail.id)}`}
         actions={
-          <Button asChild variant="outline">
-            <Link {...backLinkProps}>
-              <ArrowLeft aria-hidden="true" />
-              前の画面へ戻る
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link {...backLinkProps}>
+                <ArrowLeft aria-hidden="true" />
+                前の画面へ戻る
+              </Link>
+            </Button>
+            <RecordCancelButton
+              cancel={cancel}
+              status={detail.status}
+              businessDate={detail.return_date}
+            />
+          </>
         }
       />
+      <RecordCanceledAlert cancel={cancel} detail={detail} />
 
       <section className="rounded-md border p-4">
         <div className="grid gap-3 text-sm sm:grid-cols-6">
@@ -229,7 +252,11 @@ export function ReturnRecordDetailPage({ recordId, returnTo }: ReturnRecordDetai
           <EmptyState
             icon={PackageSearch}
             title="関連する在庫変動がありません"
-            description="レジでバーコードを読んで戻した記録で、どの商品も売上データ（Z004）の取込みで在庫に戻ります"
+            description={
+              detail.status === "canceled"
+                ? CANCELED_MOVEMENTS_EMPTY_DESCRIPTION
+                : "レジでバーコードを読んで戻した記録で、どの商品も売上データ（Z004）の取込みで在庫に戻ります"
+            }
           />
         ) : (
           <MovementTable

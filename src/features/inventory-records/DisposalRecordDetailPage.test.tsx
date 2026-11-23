@@ -28,6 +28,8 @@ function makeDetail(overrides: Partial<DisposalRecordDetail> = {}): DisposalReco
     id: 7,
     disposal_date: "2026-06-27",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-06-27T10:30:00",
     total_loss_cost: 480,
     items: [

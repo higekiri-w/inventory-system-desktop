@@ -41,6 +41,8 @@ function makeReceivingDetail(): ReceivingRecordDetail {
     supplier_name: "テスト商事",
     note: "午前便",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-06-27T09:00:00",
     total_cost: 1221,
     items: [
@@ -91,6 +93,8 @@ function makeReturnDetail(): ReturnRecordDetail {
     receipt_image_path: "receipts/20260627.png",
     note: "サイズ交換",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-06-27T10:00:00",
     items: [
       {
@@ -127,6 +131,8 @@ function makeManualSaleDetail(): ManualSaleRecordDetail {
     reason: "plu_unregistered",
     note: "店頭販売",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-06-27T11:00:00",
     total_amount: 980,
     items: [

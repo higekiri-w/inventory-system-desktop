@@ -90,10 +90,7 @@ export function formatRecordStatus(status: string): string {
   const searchStatus = INVENTORY_RECORD_STATUS_OPTIONS.find(
     ({ value }) => value !== "all" && value === status,
   );
-  if (searchStatus !== undefined) return searchStatus.label;
-  if (status === "canceled") return "取消済み";
-  if (status === "corrected") return "訂正済み";
-  return status;
+  return searchStatus?.label ?? status;
 }
 
 export function formatRecordType(recordType: string): string {

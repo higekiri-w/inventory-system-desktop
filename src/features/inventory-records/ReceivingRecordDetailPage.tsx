@@ -34,6 +34,12 @@ import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { returnToLinkProps } from "@/lib/return-to";
 import { formatDateTime } from "@/lib/date-time";
+import {
+  CANCELED_MOVEMENTS_EMPTY_DESCRIPTION,
+  RecordCancelButton,
+  RecordCanceledAlert,
+} from "./RecordCancel";
+import { useRecordCancel } from "./useRecordCancel";
 import { formatRecordStatus, formatYen } from "./types";
 
 export interface ReceivingRecordDetailPageProps {
@@ -41,18 +47,32 @@ export interface ReceivingRecordDetailPageProps {
   returnTo?: string;
 }
 
-export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecordDetailPageProps) {
+export function ReceivingRecordDetailPage(props: ReceivingRecordDetailPageProps) {
+  // 取消の途中の状態（dialog・理由・在庫の知らせ）は表示している記録のものだけ（65 §65.5b）。同じ route の param が
+  // 変わっても component は再 mount されないので、記録ID で作り直す
+  return <ReceivingRecordDetailBody key={props.recordId} {...props} />;
+}
+
+function ReceivingRecordDetailBody({ recordId, returnTo }: ReceivingRecordDetailPageProps) {
   const backLinkProps = returnToLinkProps(returnTo) ?? { to: "/inventory/records", search: {} };
+  const queryKey = queryKeys.inventoryRecords.receivingDetail(recordId);
+  const readDetail = () =>
+    unwrapResult(commands.getReceivingRecord(recordId), {
+      source: "commands",
+      cmd: "get_receiving_record",
+    });
   const detailQuery = useQuery({
-    queryKey: queryKeys.inventoryRecords.receivingDetail(recordId),
-    queryFn: () =>
-      unwrapResult(commands.getReceivingRecord(recordId), {
-        source: "commands",
-        cmd: "get_receiving_record",
-      }),
+    queryKey,
+    queryFn: readDetail,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: 0,
+  });
+  const cancel = useRecordCancel({
+    recordType: "receiving_record",
+    recordId,
+    queryKey,
+    readDetail,
   });
 
   if (detailQuery.isLoading) {
@@ -93,14 +113,22 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
       <PageHeader
         title={`入庫記録 #${String(detail.id)}`}
         actions={
-          <Button asChild variant="outline">
-            <Link {...backLinkProps}>
-              <ArrowLeft aria-hidden="true" />
-              前の画面へ戻る
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link {...backLinkProps}>
+                <ArrowLeft aria-hidden="true" />
+                前の画面へ戻る
+              </Link>
+            </Button>
+            <RecordCancelButton
+              cancel={cancel}
+              status={detail.status}
+              businessDate={detail.receiving_date}
+            />
+          </>
         }
       />
+      <RecordCanceledAlert cancel={cancel} detail={detail} />
 
       <section className="rounded-md border p-4">
         <div className="grid gap-3 text-sm sm:grid-cols-6">
@@ -188,7 +216,11 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
           <EmptyState
             icon={PackageSearch}
             title="関連する在庫変動がありません"
-            description="この記録に紐づく在庫変動は見つかりません"
+            description={
+              detail.status === "canceled"
+                ? CANCELED_MOVEMENTS_EMPTY_DESCRIPTION
+                : "この記録に紐づく在庫変動は見つかりません"
+            }
           />
         ) : (
           <MovementTable
