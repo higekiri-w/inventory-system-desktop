@@ -68,8 +68,7 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
   const [reason, setReason] = useState("");
   // 取消の失敗・結果不明の後に、状態の取り直しも失敗した（取消が済んだかを言い切れない）。
   // 印は記録の種類と ID ごとに query の cache に置く: 画面を離れても詳細の cache に取消の前の active が残るので、
-  // 同じ詳細を開き直しても、確かめるまで「有効」と言い切らず、「取り消す」を押させない
-  // （置き場が詳細の cache と同じ QueryClient なら、片方だけが残ることがない）。
+  // 同じ詳細を開き直しても、確かめるまで「有効」と言い切らず、「取り消す」を押させない。
   // cache の項目は未確認の間だけ持ち（取消を試していない記録には作らず、確かめたら消す）、この画面の state はその写し。
   // ponytail: 開き直した詳細の query が新しく active を読んでも印は解かない（cache の active が取消の前の読取りか
   // 後の読取りかを見分けない）。「状態をもう一度確かめる」で解く。自動で解く要求が出たら、印に時刻を持たせて
@@ -115,6 +114,8 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
   // 失敗・結果不明のたびに同じ詳細の状態を取り直し、取り直した状態で分ける。
   // 詳細の query を通さずに読む（読取りの失敗で画面の全体を error の表示に替えず、dialog と理由を残す）
   const recheck = async (error: unknown, codes: string[]) => {
+    // 印があれば「状態をもう一度確かめる」の読取り（取消の直後の取り直しには、まだ印が無い）
+    const wasUnconfirmed = queryClient.getQueryData(unconfirmedKey) !== undefined;
     let fresh: T;
     try {
       fresh = await readDetail();
@@ -127,6 +128,8 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     if (fresh.status === "canceled") {
       // commit の後に応答を失った、別の画面で先に取り消した
       if (rejection !== null) toast.info(rejection);
+      // 読取りの間に、開き直した詳細の読取りが先に取消済みを読んで印を解いた（上の effect）: C25 は 1 回だけ
+      if (wasUnconfirmed && queryClient.getQueryData(unconfirmedKey) === undefined) return;
       // 成功の応答の stock_warnings は無いので、取消の前の関連 movement の商品の今の在庫を読む
       applyCanceled({ stockWarnings: [], stockCheckCodes: codes });
       return;
@@ -156,13 +159,12 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     onError: (error, variables) => recheck(error, variables.codes),
   });
 
-  // 応答を待つ間は route の移動・リロード等の page の離脱・native の window の close（UI-USW-D5）を止める。
+  // 取消の応答と「状態をもう一度確かめる」の読取りを待つ間は、route の移動・リロード等の page の離脱・native の
+  // window の close（UI-USW-D5）を止める（離れて開き直した画面には、その応答が届かない）。
   // pending は onSuccess / onError の後に外れるので、成功の Toast・失敗と結果不明の取り直しの後に解ける
-  useBlocker({
-    shouldBlockFn: () => mutation.isPending,
-    enableBeforeUnload: () => mutation.isPending,
-  });
-  useWindowCloseGuard("inventory-record-cancel", mutation.isPending);
+  const isBusy = mutation.isPending || isChecking;
+  useBlocker({ shouldBlockFn: () => isBusy, enableBeforeUnload: () => isBusy });
+  useWindowCloseGuard("inventory-record-cancel", isBusy);
 
   // 応答を失った後の負の在庫の知らせ: 商品ごとに今の在庫を読む（読めなかった商品はその商品だけ読み直せる）
   const stockChecks = useQueries({
@@ -184,7 +186,6 @@ export function useRecordCancel<T extends CancelableRecordDetail>({
     retry: () => void query.refetch(),
   }));
 
-  const isBusy = mutation.isPending || isChecking;
   const trimmedReason = reason.trim();
 
   return {

@@ -235,28 +235,33 @@ export interface RecordDetailErrorProps {
   /** 詳細を読めないときの page の題（例: 「入庫記録詳細」） */
   title: string;
   cancel: RecordCancel;
-  query: Pick<UseQueryResult, "error" | "isFetching" | "refetch">;
+  query: Pick<UseQueryResult<CancelableRecordDetail>, "data" | "error" | "isFetching" | "refetch">;
   backLinkProps: { to: string; search: Record<string, unknown> };
 }
 
 /**
- * 5 つの詳細の読取りの error の表示。取消済みと確かめた後の再取得の失敗では、取消済みの知らせと
- * 負の在庫の警告を残し、詳細だけを読み直せる（取消の前の詳細は出さない）。page root の PageShell は各 page が持つ
+ * 5 つの詳細の読取りの error の表示。取消済みの記録の再取得の失敗では、取消済みの知らせと
+ * 負の在庫の警告を残し、詳細だけを読み直せる（取消の前の詳細は出さない）。結果未確認の記録は
+ * 「状態をもう一度確かめる」へ導く。どちらも履歴から開き直させない。page root の PageShell は各 page が持つ
  */
 export function RecordDetailError({ title, cancel, query, backLinkProps }: RecordDetailErrorProps) {
+  // この画面が確かめた結果が無くても（成功の後の再取得の途中で開き直した）、詳細の cache が取消済みなら取消済み
+  const isCanceled = cancel.isCanceled || query.data?.status === "canceled";
   return (
     <>
       <PageHeader title={title} />
-      <RecordCanceledAlert cancel={cancel} />
+      <RecordCanceledAlert cancel={cancel} detail={query.data} />
       <Alert variant="destructive">
         <AlertTitle>{describeError(query.error)}</AlertTitle>
         <AlertDescription>
-          {cancel.isCanceled
+          {isCanceled
             ? "詳細を読み直せませんでした。「詳細を読み直す」を押してください"
-            : "記録IDを確認するか、入出庫履歴から開き直してください。"}
+            : cancel.isUnconfirmed
+              ? "詳細を読み直せませんでした。「状態をもう一度確かめる」を押してください"
+              : "記録IDを確認するか、入出庫履歴から開き直してください。"}
         </AlertDescription>
       </Alert>
-      {cancel.isCanceled ? (
+      {isCanceled ? (
         <Button
           type="button"
           variant="outline"
