@@ -122,7 +122,7 @@ jobs:
 
       - name: Build the release app
         if: steps.diff.outputs.changed == 'true'
-        run: npm run tauri -- build --no-bundle
+        run: npm run tauri -- build --no-bundle --features tauri/devtools
 
       # The script ends itself within 300 seconds; the step timeout is only the backstop.
       - name: Check the home heading
