@@ -122,7 +122,7 @@ jobs:
 
       - name: Build the release app
         if: steps.diff.outputs.changed == 'true'
-        run: npm run tauri -- build --no-bundle
+        run: npm run tauri -- build --no-bundle --features tauri/devtools
 
       - name: Probe the app without the driver (temporary)
         if: steps.diff.outputs.changed == 'true'
@@ -130,12 +130,15 @@ jobs:
         timeout-minutes: 3
         run: |
           $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+          $udf = Join-Path $env:RUNNER_TEMP 'probe-udf'
+          $env:WEBVIEW2_USER_DATA_FOLDER = $udf
           $p = Start-Process -FilePath 'src-tauri\target\release\inventory-system-tauri-scaffold.exe' -PassThru
           Start-Sleep -Seconds 25
           Write-Output "app alive: $(-not $p.HasExited) exit: $($p.ExitCode)"
           Get-Process | Where-Object { $_.ProcessName -match 'inventory|msedgewebview2' } | Format-Table Id,ProcessName,MainWindowTitle -AutoSize | Out-String | Write-Output
           try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 http://127.0.0.1:9222/json/version).Content | Write-Output } catch { Write-Output "devtools port: $($_.Exception.Message)" }
-          Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue -Path $env:LOCALAPPDATA,$env:APPDATA,$env:TEMP -Filter DevToolsActivePort | ForEach-Object { Write-Output "DevToolsActivePort: $($_.FullName)" }
+          Write-Output "udf exists: $(Test-Path $udf)"; Get-ChildItem -Force -ErrorAction SilentlyContinue $udf | ForEach-Object { Write-Output "udf: $($_.FullName)" }
+          Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue -Path $env:LOCALAPPDATA,$env:APPDATA,$env:TEMP,$env:RUNNER_TEMP -Filter DevToolsActivePort | ForEach-Object { Write-Output "DevToolsActivePort: $($_.FullName)" }
           foreach ($d in @("$env:APPDATA\com.inventory-system.desktop","$env:LOCALAPPDATA\com.inventory-system.desktop")) { Write-Output "== $d"; Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $d | Select-Object -First 40 | ForEach-Object { Write-Output $_.FullName } }
           Get-ChildItem -Recurse -ErrorAction SilentlyContinue "$env:APPDATA\com.inventory-system.desktop" -Include *.log | ForEach-Object { Write-Output "== $($_.FullName)"; Get-Content $_.FullName -Tail 30 }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
