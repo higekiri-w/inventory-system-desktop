@@ -123,7 +123,7 @@ jobs:
       - name: Build the release app
         if: steps.diff.outputs.changed == 'true'
         run: >-
-          npm run tauri -- build --no-bundle --features tauri/devtools --config
+          npm run tauri -- build --no-bundle --config
           '{"app":{"windows":[{"title":"在庫管理システム","width":1280,"height":800,"minWidth":1024,"minHeight":720,"dragDropEnabled":false,"center":true,"additionalBrowserArgs":"--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"}]}}'
 
       # The script ends itself within 300 seconds; the step timeout is only the backstop.
