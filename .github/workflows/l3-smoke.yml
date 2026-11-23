@@ -133,4 +133,12 @@ jobs:
         env:
           L3_SMOKE_APP: src-tauri/target/release/inventory-system-tauri-scaffold.exe
           L3_SMOKE_NATIVE_DRIVER: ${{ steps.driver.outputs.path }}
-        run: node scripts/ci/l3-smoke-home.mjs
+        run: |
+          set +e
+          node scripts/ci/l3-smoke-home.mjs
+          rc=$?
+          echo "probe: node rc=$rc"
+          tasklist //FI "IMAGENAME eq msedgedriver.exe"
+          tasklist //FI "IMAGENAME eq inventory-system-tauri-scaffold.exe"
+          tasklist //FI "IMAGENAME eq tauri-driver.exe"
+          exit $rc
