@@ -12,7 +12,7 @@ EJ の記録の文を持つ表（`ej_records`、D-121、migration v14）: [POS](
 
 `products.stock_quantity` は記録から求め直した写しで、書くのは BIZ の求め直しの関数だけ（D-051 の原則、D-118）。migration は棚卸しか Z004 の取込みを持つ DB では止まり（開発・試験 DB はリリースの前まで作り直してよい。D-123）、持たない DB では列と表を足して既存の movement の鍵を埋め、写しを求め直す（(a) の migration v9 で実装済み。SQL・CHECK / FK / index・故障注入の試験は 22 §19 のテスト）。
 
-> **現行スキーマの入口**: [ER図](inventory_system_erd.html)、[業務データフロー](diagrams/current-system.md)。適用順序は `src-tauri/src/db/migration.rs` と `schema_v*.rs` を照合する。
+> **現行スキーマの入口**: 今の表・列は下の「テーブル定義（詳細）」から `db-design/` の各文書、流れは [業務データフロー](diagrams/current-system.md)。図は [ER図（schema v12 の時点）](inventory_system_erd.html)（v13 より後の表・列は無い）。適用順序は `src-tauri/src/db/migration.rs` と `schema_v*.rs` を照合する。
 > **図と本文の位置付け**: 現行構造と完成形の将来設計を区別する。[図面監査](research/2026-09-16-diagram-audit.md) に、実装と設計の不一致・再検討事項を記録する。
 
 ---
@@ -98,10 +98,7 @@ EJ の記録の文を持つ表（`ej_records`、D-121、migration v14）: [POS](
 
 商業用の在庫管理として、入庫・返品交換・手動販売出庫・廃棄破損・CSV取込み・棚卸し補正は、作成後に一覧・詳細・在庫変動履歴から追跡できる必要がある。完成形の DB 方針は [function-design/65-inventory-record-traceability.md](function-design/65-inventory-record-traceability.md) §65.6 を正とする。
 
-- 業務記録ヘッダは `active` / `canceled` / `corrected` の状態を持つ方向で設計する。
-- 取消は物理削除せず、取消理由と取消日時を残す。
-- 訂正は元記録を取消/訂正済みにし、新しい記録を作る。
-- 在庫戻しは既存 movement を消さず、逆方向 movement を追加する。
+- 取消は物理削除せず、ヘッダに取消の日時と理由を書き、その記録の movement を `is_voided=1` にして求め直す（逆向きの movement・状態の列・訂正の列は持たない。訂正は取り消してから入れ直す。[D-163](decision-log.md)、65 §65.6）。
 - `operation_logs` は監査・保守ログであり、業務記録や在庫変動履歴の正本にはしない。
 
 ### CHECK制約方針（指摘#17対応）
@@ -130,6 +127,7 @@ jan_codeとfile_hash以外に、以下のインデックスを初期設定する
 - sale_records(sale_date) — 日次売上一覧の検索用
 - sale_records(product_code, sale_date) — 商品別売上集計用
 - sale_records(csv_import_id) — ロールバック時の関連レコード特定用
+- sale_records(manual_sale_id) — `idx_sale_records_manual_sale_id`。手動販売の記録の取消で売上の行を特定する（D-163。[22](function-design/22-mnt-migration.md) §23）
 - daily_report_imports(report_date) — 日報取込みの対象日検索用
 - daily_report_imports(bundle_hash) — 同一Z001/Z002/Z005束の重複検知用
 - daily_report_summary_lines(daily_report_import_id) — 日報表示用

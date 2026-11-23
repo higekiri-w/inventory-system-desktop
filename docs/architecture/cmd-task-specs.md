@@ -61,6 +61,7 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | get_stock_detail | product_code | BIZ-01 在庫詳細 | StockDetail（stock_quantity, selling_price, cost_price_centi, last_receiving_date, last_sale_date） |
 | list_low_stock | LowStockQuery（include_discontinued?） | BIZ-01 在庫少一覧 | LowStockList（items[]） |
 | list_movements | MovementQuery（product_code, date_from?, date_to?〈業務日〉, movement_type?, page, per_page） | BIZ-02 在庫変動履歴（movement と計数の合成） | PaginatedResult<StockHistoryItem>（items[]〈movement か計数の行〉, total_count, page, per_page。[44](../function-design/44-cmd-inventory.md)） |
+| cancel_inventory_record | record_type（`ReferenceType`。入庫・返品交換・手動販売・廃棄・振替の 5 つ）, record_id, reason | BIZ-02 入出庫の記録の取消（[31](../function-design/31-biz-inventory-service.md) §12.6c） | RecordCancelResult（stock_warnings[]。[44](../function-design/44-cmd-inventory.md) §23.7b、D-163） |
 
 ### CMD-07: Z004商品別CSV取込みコマンド群
 

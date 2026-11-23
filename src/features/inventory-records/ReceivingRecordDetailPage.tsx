@@ -6,8 +6,6 @@ import { ArrowLeft, PackageSearch } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -29,30 +27,51 @@ import {
 } from "@/features/stock-inquiry/lib/format-stock-display";
 import { MovementTable, stockUnitMap } from "@/features/stock-movements/components/MovementTable";
 import { commands } from "@/lib/bindings";
-import { describeError } from "@/lib/describe-error";
 import { unwrapResult } from "@/lib/invoke";
 import { queryKeys } from "@/lib/query-keys";
 import { returnToLinkProps } from "@/lib/return-to";
 import { formatDateTime } from "@/lib/date-time";
-import { formatRecordStatus, formatYen } from "./types";
+import {
+  CANCELED_MOVEMENTS_EMPTY_DESCRIPTION,
+  RecordCancelButton,
+  RecordCanceledAlert,
+  RecordDetailError,
+  RecordStatusBadge,
+} from "./RecordCancel";
+import { useRecordCancel } from "./useRecordCancel";
+import { formatYen } from "./types";
 
 export interface ReceivingRecordDetailPageProps {
   recordId: number;
   returnTo?: string;
 }
 
-export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecordDetailPageProps) {
+export function ReceivingRecordDetailPage(props: ReceivingRecordDetailPageProps) {
+  // 取消の途中の状態（dialog・理由・在庫の知らせ）は表示している記録のものだけ（65 §65.5b）。同じ route の param が
+  // 変わっても component は再 mount されないので、記録ID で作り直す
+  return <ReceivingRecordDetailBody key={props.recordId} {...props} />;
+}
+
+function ReceivingRecordDetailBody({ recordId, returnTo }: ReceivingRecordDetailPageProps) {
   const backLinkProps = returnToLinkProps(returnTo) ?? { to: "/inventory/records", search: {} };
+  const queryKey = queryKeys.inventoryRecords.receivingDetail(recordId);
+  const readDetail = () =>
+    unwrapResult(commands.getReceivingRecord(recordId), {
+      source: "commands",
+      cmd: "get_receiving_record",
+    });
   const detailQuery = useQuery({
-    queryKey: queryKeys.inventoryRecords.receivingDetail(recordId),
-    queryFn: () =>
-      unwrapResult(commands.getReceivingRecord(recordId), {
-        source: "commands",
-        cmd: "get_receiving_record",
-      }),
+    queryKey,
+    queryFn: readDetail,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
     retry: 0,
+  });
+  const cancel = useRecordCancel({
+    recordType: "receiving_record",
+    recordId,
+    queryKey,
+    readDetail,
   });
 
   if (detailQuery.isLoading) {
@@ -68,19 +87,12 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
   if (detailQuery.isError) {
     return (
       <PageShell>
-        <PageHeader title="入庫記録詳細" />
-        <Alert variant="destructive">
-          <AlertTitle>{describeError(detailQuery.error)}</AlertTitle>
-          <AlertDescription>
-            記録IDを確認するか、入出庫履歴から開き直してください。
-          </AlertDescription>
-        </Alert>
-        <Button asChild variant="outline">
-          <Link {...backLinkProps}>
-            <ArrowLeft aria-hidden="true" />
-            前の画面へ戻る
-          </Link>
-        </Button>
+        <RecordDetailError
+          title="入庫記録詳細"
+          cancel={cancel}
+          query={detailQuery}
+          backLinkProps={backLinkProps}
+        />
       </PageShell>
     );
   }
@@ -93,14 +105,22 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
       <PageHeader
         title={`入庫記録 #${String(detail.id)}`}
         actions={
-          <Button asChild variant="outline">
-            <Link {...backLinkProps}>
-              <ArrowLeft aria-hidden="true" />
-              前の画面へ戻る
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link {...backLinkProps}>
+                <ArrowLeft aria-hidden="true" />
+                前の画面へ戻る
+              </Link>
+            </Button>
+            <RecordCancelButton
+              cancel={cancel}
+              status={detail.status}
+              businessDate={detail.receiving_date}
+            />
+          </>
         }
       />
+      <RecordCanceledAlert cancel={cancel} detail={detail} />
 
       <section className="rounded-md border p-4">
         <div className="grid gap-3 text-sm sm:grid-cols-6">
@@ -115,7 +135,7 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
           <div>
             <span className="text-muted-foreground">状態</span>
             <div>
-              <Badge variant="outline">{formatRecordStatus(detail.status)}</Badge>
+              <RecordStatusBadge cancel={cancel} status={detail.status} />
             </div>
           </div>
           <div>
@@ -188,7 +208,11 @@ export function ReceivingRecordDetailPage({ recordId, returnTo }: ReceivingRecor
           <EmptyState
             icon={PackageSearch}
             title="関連する在庫変動がありません"
-            description="この記録に紐づく在庫変動は見つかりません"
+            description={
+              detail.status === "canceled"
+                ? CANCELED_MOVEMENTS_EMPTY_DESCRIPTION
+                : "この記録に紐づく在庫変動は見つかりません"
+            }
           />
         ) : (
           <MovementTable

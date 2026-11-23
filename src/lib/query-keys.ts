@@ -75,6 +75,10 @@ export const queryKeys = {
     stocktakeDetail: (stocktakeId: number) =>
       ["inventory-records", "stocktake-detail", { stocktakeId }] as const,
   },
+  // 65 §65.5b: 取消が済んだかを確かめられていない記録の印（読取りではなく画面の状態。
+  // inventoryRecords.root() の下に置かず、D-052 の invalidate の対象にしない）
+  recordCancelUnconfirmed: (recordType: string, recordId: number) =>
+    ["record-cancel-unconfirmed", { recordType, recordId }] as const,
   // UI-01a 商品検索・一覧
   // 設計: docs/function-design/50-ui-product-list.md §50.5
   productList: {

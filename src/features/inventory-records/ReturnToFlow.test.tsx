@@ -53,6 +53,8 @@ function receivingDetail(): ReceivingRecordDetail {
     supplier_name: null,
     note: "synthetic",
     status: "active",
+    canceled_at: null,
+    cancel_reason: null,
     created_at: "2026-07-15T10:00:00",
     total_cost: 120,
     items: [
@@ -259,6 +261,8 @@ describe("REQ-207 / UI-11c-D16 / DSR-18 returnTo route flow", () => {
         id: 7,
         disposal_date: "2026-06-27",
         status: "active",
+        canceled_at: null,
+        cancel_reason: null,
         created_at: "2026-06-27T10:30:00",
         total_loss_cost: 300,
         items: [

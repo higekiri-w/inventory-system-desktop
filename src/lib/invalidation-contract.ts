@@ -4,7 +4,7 @@ import { queryKeys } from "./query-keys";
 
 export type InvalidationKey = QueryKey;
 
-/** D-052-C1〜C22、C23（D-141）、C24（D-143）: mutation 成功時に stale 化する consumer query の SSOT。 */
+/** D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）: mutation 成功時に stale 化する consumer query の SSOT。 */
 export const invalidationContract = {
   productCreate: () => [
     queryKeys.productList.root(),
@@ -104,6 +104,22 @@ export const invalidationContract = {
     queryKeys.productList.root(),
     queryKeys.lowStock(false),
     queryKeys.stockInquiryRoot(),
+    queryKeys.stockMovements.root(),
+    queryKeys.productForm.root(),
+    queryKeys.stocktake.itemsRoot(),
+    queryKeys.stocktake.recheckList(),
+  ],
+  // D-052-C25（65 §65.5b）: 入出庫の記録の取消。作業画面の直近の一覧の 3 つの root は、どの種類の取消でも同じ集合
+  inventoryRecordCancel: () => [
+    queryKeys.receivings.root(),
+    queryKeys.returns.root(),
+    queryKeys.disposals.root(),
+    queryKeys.inventoryRecords.root(),
+    queryKeys.productList.root(),
+    queryKeys.lowStock(false),
+    queryKeys.stockInquiryRoot(),
+    queryKeys.dailySalesRoot(),
+    queryKeys.monthlySalesRoot(),
     queryKeys.stockMovements.root(),
     queryKeys.productForm.root(),
     queryKeys.stocktake.itemsRoot(),

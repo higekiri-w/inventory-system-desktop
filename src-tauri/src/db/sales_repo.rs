@@ -44,6 +44,8 @@ pub struct NewSaleRecord {
     pub note: Option<String>,
     /// 取込みのときの在庫連動（Z004 の確定だけが `pos_stock_sync` を渡し、手動の売上ほかは false。pos-tables）
     pub stock_linked: bool,
+    /// 元の手動販売（手動販売の保存だけが渡す。Z004 の行ほかは None。pos-tables §13、D-163）
+    pub manual_sale_id: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,8 +60,8 @@ pub struct NewSaleRecord {
 pub fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result<i64, DbError> {
     let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     conn.execute(
-        "INSERT INTO sale_records (csv_import_id, product_code, sale_date, quantity, amount, source, source_line_no, reason, note, is_voided, created_at, stock_linked)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11)",
+        "INSERT INTO sale_records (csv_import_id, product_code, sale_date, quantity, amount, source, source_line_no, reason, note, is_voided, created_at, stock_linked, manual_sale_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12)",
         rusqlite::params![
             record.csv_import_id,
             record.product_code,
@@ -72,6 +74,7 @@ pub fn insert_sale_record(conn: &DbConnection, record: &NewSaleRecord) -> Result
             record.note,
             now,
             record.stock_linked,
+            record.manual_sale_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -543,6 +546,22 @@ pub fn void_sale_records_by_import(
     let affected = conn.execute(
         "UPDATE sale_records SET is_voided = 1 WHERE csv_import_id = ?1 AND is_voided = 0",
         rusqlite::params![csv_import_id],
+    )?;
+    Ok(affected as u64)
+}
+
+/// 手動販売に結んだ有効な売上の行（`manual_sale_id`）を無効にし、無効にした行数を返す（記録の取消用）
+///
+/// 注: 呼び出し元はトランザクション内で呼ぶこと（BIZ-02 の取消の TX 内で使用）
+///
+/// 21-io-inventory-repo.md §11.1a
+pub fn void_sale_records_by_manual_sale(
+    conn: &DbConnection,
+    manual_sale_id: i64,
+) -> Result<u64, DbError> {
+    let affected = conn.execute(
+        "UPDATE sale_records SET is_voided = 1 WHERE manual_sale_id = ?1 AND is_voided = 0",
+        rusqlite::params![manual_sale_id],
     )?;
     Ok(affected as u64)
 }
@@ -1784,6 +1803,7 @@ mod tests {
             reason: Some("plu_unregistered".to_string()),
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         let id = insert_sale_record(&conn, &record).unwrap();
         assert!(id > 0);
@@ -1826,6 +1846,7 @@ mod tests {
             reason: None,
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         let id = insert_sale_record(&conn, &record).unwrap();
         assert!(id > 0);
@@ -1857,6 +1878,7 @@ mod tests {
             reason: None,
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         let result = insert_sale_record(&conn, &record);
         assert!(
@@ -1883,6 +1905,7 @@ mod tests {
             reason: None,
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         let result = insert_sale_record(&conn, &record);
         assert!(
@@ -2087,6 +2110,7 @@ mod tests {
                 reason: None,
                 note: None,
                 stock_linked: false,
+                manual_sale_id: None,
             },
         )
         .unwrap();
@@ -2103,6 +2127,7 @@ mod tests {
                 reason: None,
                 note: None,
                 stock_linked: false,
+                manual_sale_id: None,
             },
         )
         .unwrap();
@@ -2226,6 +2251,7 @@ mod tests {
                 reason: None,
                 note: None,
                 stock_linked: false,
+                manual_sale_id: None,
             };
             insert_sale_record(&conn, &record).unwrap();
         }
@@ -3130,6 +3156,7 @@ mod tests {
             reason: None,
             note: None,
             stock_linked: false,
+            manual_sale_id: None,
         };
         let id = insert_sale_record(conn, &record).unwrap();
         if is_voided {

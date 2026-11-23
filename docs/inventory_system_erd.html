@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>現行DBのER図 — 在庫管理</title>
+<title>DBのER図（schema v12 の時点） — 在庫管理</title>
 <style>
   :root { color-scheme: light; font-family: system-ui, sans-serif; color: #292524; background: #fafaf9; }
   body { margin: 0; padding: 24px; }
@@ -21,13 +21,13 @@
 </style>
 </head>
 <body><main>
-<h1>現行DBのER図</h1>
+<h1>DBのER図（schema v12 の時点）</h1>
 <p><a href="diagrams/current-system.md">現行構造・画面遷移・業務フロー</a> · <a href="DB_DESIGN.md">テーブル定義</a> · <a href="research/2026-09-16-diagram-audit.md">図面からの設計点検</a></p>
-<p class="note">対象は <code>src-tauri/src/db/migration.rs</code> が登録する現行 schema（v1〜v12）。実店舗DBは参照していない。図は実装の説明であり、業務上の正しさの保証ではない。採用済み仕様と実装が食い違う点は設計点検に分けて記録する。</p>
+<p class="note">対象は <code>src-tauri/src/db/migration.rs</code> が登録する schema の v1〜v12 の時点の資料で、v13 より後に足した表・列・外部キーは図に無い。今の定義は <a href="DB_DESIGN.md">DB_DESIGN.md</a> と <code>db-design/</code> の各文書を読む（入出庫の記録の取消の列 <code>canceled_at</code>・<code>cancel_reason</code> は <a href="db-design/transaction-tables.md">transaction-tables.md</a> の §4-5、手動販売の売上の行の外部キー <code>sale_records.manual_sale_id</code> は <a href="db-design/pos-tables.md">pos-tables.md</a> の §13）。実店舗DBは参照していない。図は実装の説明であり、業務上の正しさの保証ではない。採用済み仕様と実装が食い違う点は設計点検に分けて記録する。</p>
 <ul>
 <li>線は<strong>物理FKのみ</strong>。点線は非識別関係（子の主キーに親キーを含まない）。端の丸は0を許容し、三つ又は複数を表す。親側が0..1の参照はNULL許容。</li>
 <li><code>inventory_movements.reference_type + reference_id</code> と <code>plu_slots.scanning_code = products.jan_code</code> はアプリ側の論理関連で、FKの線を引かない。</li>
-<li>数量の非負、JANの有効性、取込み元とsourceの組合せなど、業務条件の全てがDB制約にあるわけではない。通常業務記録の取消・訂正用カラムは未実装。</li>
+<li>数量の非負、JANの有効性、取込み元とsourceの組合せなど、業務条件の全てがDB制約にあるわけではない。</li>
 <li>カラムの型・PK/FK・NULL許容・既定値と主要CHECK値を記載。全INDEXのDDLはschema正本を参照。PLUコードのUNIQUEは external / reserved / active に限る部分INDEX。TEXT PRIMARY KEYのNOT NULL未指定もそのまま明記。</li>
 <li><code>schema_versions</code> はmigration管理。SQLite内部の <code>sqlite_sequence</code> は図から除く。画像の実体とバックアップファイルはDB外。</li>
 </ul>

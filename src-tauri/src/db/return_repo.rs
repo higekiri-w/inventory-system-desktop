@@ -2,7 +2,7 @@
 //!
 //! 21-io-inventory-repo.md §10.3 に基づく実装。
 
-use super::inventory_common::{validate_and_offset, ListQuery};
+use super::inventory_common::{get_record_cancel, record_status, validate_and_offset, ListQuery};
 use super::inventory_repo::MovementRecord;
 use super::product_repo::{parse_stock_unit, ProductStockUnit};
 use super::{DbConnection, DbError, PaginatedResult};
@@ -99,6 +99,8 @@ pub struct ReturnRecordSummary {
     pub register_processed: bool,
     pub note: Option<String>,
     pub created_at: String,
+    /// 取消の日時。有効なら None（直近の一覧の「取消済み」。D-163）
+    pub canceled_at: Option<String>,
 }
 
 /// 返品・交換記録詳細の明細行
@@ -123,6 +125,10 @@ pub struct ReturnRecordDetail {
     pub receipt_image_path: Option<String>,
     pub note: Option<String>,
     pub status: String,
+    /// 取消の日時（`YYYY-MM-DDTHH:MM:SS`）。有効なら None（D-163）
+    pub canceled_at: Option<String>,
+    /// 取消の理由。有効なら None
+    pub cancel_reason: Option<String>,
     pub created_at: String,
     pub items: Vec<ReturnRecordDetailItem>,
     pub movements: Vec<MovementRecord>,
@@ -202,7 +208,7 @@ pub fn list_return_records(
     )?;
 
     let data_sql = format!(
-        "SELECT id, return_type, return_date, register_processed, note, created_at \
+        "SELECT id, return_type, return_date, register_processed, note, created_at, canceled_at \
          FROM return_records {} \
          ORDER BY return_date DESC, id DESC \
          LIMIT ?{} OFFSET ?{}",
@@ -225,6 +231,7 @@ pub fn list_return_records(
                     register_processed: row.get(3)?,
                     note: row.get(4)?,
                     created_at: row.get(5)?,
+                    canceled_at: row.get(6)?,
                 })
             },
         )?
@@ -269,6 +276,8 @@ pub fn get_return_record_detail(
             Err(e) => return Err(DbError::from(e)),
         };
     let return_type = parse_return_exchange_type(return_type).map_err(DbError::from)?;
+
+    let (canceled_at, cancel_reason) = get_record_cancel(conn, "return_records", record_id)?;
 
     let mut item_stmt = conn.prepare(
         "SELECT
@@ -332,7 +341,9 @@ pub fn get_return_record_detail(
         register_processed,
         receipt_image_path,
         note,
-        status: "active".to_string(),
+        status: record_status(canceled_at.as_deref()),
+        canceled_at,
+        cancel_reason,
         created_at,
         items,
         movements,

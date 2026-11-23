@@ -123,6 +123,47 @@ beforeEach(() => {
 });
 
 describe("ManualSalePage (UI-04 / REQ-203)", () => {
+  it("REQ-208 / 65 §65.5b（T12）: 直近の一覧は取り消した手動販売を「取消済み」で出す", async () => {
+    mockListInventoryRecords.mockResolvedValue({
+      status: "ok",
+      data: {
+        items: [
+          {
+            record_type: "manual_sale",
+            record_id: 3,
+            business_date: "2026-11-18",
+            representative_item: "合成の商品",
+            item_count: 1,
+            status: "canceled",
+            created_at: "2026-11-18T10:00:00",
+            detail_route: "/inventory/manual-sale/records/3",
+          },
+          {
+            record_type: "manual_sale",
+            record_id: 2,
+            business_date: "2026-11-17",
+            representative_item: "合成の商品",
+            item_count: 1,
+            status: "active",
+            created_at: "2026-11-17T10:00:00",
+            detail_route: "/inventory/manual-sale/records/2",
+          },
+        ],
+        total_count: 2,
+        page: 1,
+        per_page: 5,
+      },
+    });
+
+    renderWithClient(<ManualSalePage />);
+
+    const canceled = (await screen.findByText("2026-11-18")).closest("tr");
+    const active = screen.getByText("2026-11-17").closest("tr");
+    if (canceled === null || active === null) throw new Error("expected table rows");
+    expect(within(canceled).getByText("取消済み")).toBeInTheDocument();
+    expect(within(active).getByText("有効")).toBeInTheDocument();
+  });
+
   // T6 (UI-04-D17): recent list returnTo contract.
   it("REQ-203/REQ-206: recent list exposes all-history and detail links", async () => {
     mockListInventoryRecords.mockResolvedValue({

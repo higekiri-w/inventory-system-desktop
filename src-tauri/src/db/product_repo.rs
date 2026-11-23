@@ -1278,7 +1278,8 @@ pub fn get_stock_detail(conn: &DbConnection, product_code: &str) -> Result<Stock
                 (SELECT MAX(rr.receiving_date)
                  FROM receiving_items ri
                  JOIN receiving_records rr ON ri.receiving_record_id = rr.id
-                 WHERE ri.product_code = p.product_code) AS last_receiving_date,
+                 WHERE ri.product_code = p.product_code
+                   AND rr.canceled_at IS NULL) AS last_receiving_date,
                 (SELECT MAX(sr.sale_date)
                  FROM sale_records sr
                  WHERE sr.product_code = p.product_code AND sr.is_voided = 0) AS last_sale_date

@@ -110,12 +110,13 @@ function collectUseBlockerUsers(): string[] {
 }
 
 describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
-  it("T16: useBlocker の直接使用は 55 §55.7 の進行中の処理のガードの hook と共通警告 hookだけに限定する", () => {
+  it("T16: useBlocker の直接使用は 55 §55.7・65 §65.5b の進行中の処理のガードの hook と共通警告 hookだけに限定する", () => {
     expect(collectUseBlockerUsers()).toEqual([
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
       "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
       "src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts",
+      "src/features/inventory-records/useRecordCancel.ts",
       "src/hooks/useUnsavedChangesWarning.ts",
     ]);
   });

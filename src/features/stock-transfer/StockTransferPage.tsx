@@ -710,7 +710,14 @@ export function StockTransferPage() {
             <TableBody>
               {recentRecords.map((record) => (
                 <TableRow key={record.record_id}>
-                  <TableCell>{record.business_date}</TableCell>
+                  <TableCell>
+                    {record.business_date}
+                    {record.status === "canceled" ? (
+                      <Badge variant="outline" className="ml-2">
+                        取消済み
+                      </Badge>
+                    ) : null}
+                  </TableCell>
                   <TableCell>{record.record_id}</TableCell>
                   <TableCell>{record.representative_item}</TableCell>
                   <TableCell className="font-mono tabular-nums">

@@ -7,7 +7,7 @@
 
 | 名称 | 整理すること | 今回の用途 |
 |---|---|---|
-| ER図（Entity Relationship Diagram） | データの構造・キー・関係 | [現行DB](../inventory_system_erd.html) |
+| ER図（Entity Relationship Diagram） | データの構造・キー・関係 | [ER図（schema v12 の時点）](../inventory_system_erd.html)（今の表・列は [DB_DESIGN](../DB_DESIGN.md) と `docs/db-design/` の各文書） |
 | シーケンス図（Sequence Diagram） | 誰がいつ何を呼ぶか | 下記のカウント・販売・取込み・確定の前後関係 |
 | ステートマシン図（State Machine Diagram） | 状態と許可する遷移 | 下記の棚卸し・未取込み売上の状態 |
 | アクティビティ図（Activity Diagram） | 作業の分岐・合流・担当 | 下記の検証手順。Mermaid flowchartによる簡略表現 |

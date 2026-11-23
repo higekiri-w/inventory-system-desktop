@@ -716,7 +716,14 @@ export function ReceivingPage() {
             <TableBody>
               {recentQuery.data.items.map((record) => (
                 <TableRow key={record.id}>
-                  <TableCell className="font-medium">{record.receiving_date}</TableCell>
+                  <TableCell className="font-medium">
+                    {record.receiving_date}
+                    {record.canceled_at !== null ? (
+                      <Badge variant="outline" className="ml-2">
+                        取消済み
+                      </Badge>
+                    ) : null}
+                  </TableCell>
                   <TableCell>{formatSupplierName(record.supplier_name)}</TableCell>
                   <TableCell
                     className="max-w-80 truncate"

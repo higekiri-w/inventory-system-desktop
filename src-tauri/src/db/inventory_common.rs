@@ -1,9 +1,9 @@
 //! 在庫ドメイン共通型・関数
 //!
-//! ListQuery, validate_and_offset を提供する。
-//! 入庫・返品・廃棄の各リポジトリから参照される。
+//! ListQuery, validate_and_offset と、記録の取消の列（D-163）の読み書きを提供する。
+//! 入庫・返品・手動販売・廃棄・振替の各リポジトリと BIZ の取消から参照される。
 
-use super::DbError;
+use super::{DbConnection, DbError};
 
 /// 一覧取得の共通クエリパラメータ
 ///
@@ -40,4 +40,58 @@ pub fn validate_and_offset(query: &ListQuery) -> Result<(i64, i64), DbError> {
     let limit = i64::from(query.per_page);
     let offset = i64::from(offset);
     Ok((limit, offset))
+}
+
+/// 記録の取消の列（`canceled_at`・`cancel_reason`）を読む。記録が無ければ `DbError::NotFound`
+///
+/// `table` は取消の列を持つ 5 つの header の表名（`receiving_records`・`return_records`・`manual_sales`・
+/// `disposal_records`・`transfer_records`）で、呼ぶ側の literal だけを渡す（入力から作らない）。
+///
+/// 21-io-inventory-repo.md §10.5b
+pub fn get_record_cancel(
+    conn: &DbConnection,
+    table: &'static str,
+    record_id: i64,
+) -> Result<(Option<String>, Option<String>), DbError> {
+    let result = conn.query_row(
+        &format!("SELECT canceled_at, cancel_reason FROM {table} WHERE id = ?1"),
+        rusqlite::params![record_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    );
+    match result {
+        Ok(row) => Ok(row),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err(DbError::NotFound),
+        Err(e) => Err(DbError::from(e)),
+    }
+}
+
+/// 有効な記録（`canceled_at IS NULL`）に取消の日時と理由を書き、変えた行数（0 か 1）を返す
+///
+/// 21-io-inventory-repo.md §10.5b
+pub fn mark_record_canceled(
+    conn: &DbConnection,
+    table: &'static str,
+    record_id: i64,
+    canceled_at: &str,
+    cancel_reason: &str,
+) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        &format!(
+            "UPDATE {table} SET canceled_at = ?2, cancel_reason = ?3
+             WHERE id = ?1 AND canceled_at IS NULL"
+        ),
+        rusqlite::params![record_id, canceled_at, cancel_reason],
+    )?)
+}
+
+/// 取消の列から決まる記録の状態（65 §65.4.1。NULL なら `active`、値があれば `canceled`）
+///
+/// 21-io-inventory-repo.md §10.5b
+pub fn record_status(canceled_at: Option<&str>) -> String {
+    if canceled_at.is_some() {
+        "canceled"
+    } else {
+        "active"
+    }
+    .to_string()
 }
