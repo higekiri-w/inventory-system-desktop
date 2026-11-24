@@ -22,7 +22,7 @@
   - 初期投入の手順（backlog の「初期投入の手順」）: 手順書は [initial-load-runbook.md](initial-load-runbook.md)（[PR #196](https://github.com/higekiri-w/inventory-system-desktop/pull/196)、[packet](archive/plans/2026-10-23-initial-load-procedure.md)）。残りは初回の導入の版の後の予行演習と店の PC での投入（手順書の流れ 2・流れ 3）で、CSV 作りと照合に Excel のある Windows と店の値札が要る（手順書の流れ 1、流れ 2 の手順 6。TD-437）。
   - デザインの刷新。owner は v1.0 の前に入れると決めた（TD-296）が、関門を決めた TD-345 より前の答えで、関門に足すかは owner が選ぶ。設計の lane は機能の関門が済んでから始める（owner の決定 2026-11-02、TD-569）。backlog の「デザインの刷新（v1.0 の前）」。
 - 関門（precondition-dependent）:
-  - 共有 JAN の色違いの群と JAN の無い品の v1.0 の扱い。今は店内コードができるまで在庫連動の外（ADR SPEC-STK-CNT-D4、TD-296）。方向は決まった（[D-165](decision-log.md)、TD-881: 独自コードを廃止し、JAN の形の店内コードを JAN が同じ色違いと JAN の無い品に当てる）。成り立つかは、先頭 2 の 13 桁をレジが受けるか（C1 の残り、次の訪店）に依る。backlog の「JAN の無い商品の店内コードと色ごとのバーコードの表」。
+  - 共有 JAN の色違いの群と JAN の無い品の v1.0 の扱い。今は店内コードができるまで在庫連動の外（ADR SPEC-STK-CNT-D4、TD-296）。方向は決まった（[D-165](decision-log.md)、TD-881: 独自コードを廃止し、JAN の形の店内コードを、JAN だけで分けられない品〈JAN が同じ色違いなど〉と JAN の無い品に、必要な場合だけ当てる）。成り立つかは、先頭 2 の 13 桁をレジが受けるか（C1 の残り、次の訪店）に依る。v1.0 の扱いは C1 の後に owner が決める（TD-461）。backlog の「JAN の無い商品の店内コードと色ごとのバーコードの表」。
   - Z004 の経路の受入台本の第 2 版と go-live の検証の流れ（D-070 の配布判定の入口条件。[受入台本](ACCEPTANCE_SCENARIO.md) の第 1 版は Z004 の経路を対象外とする）。台本の形は PLU を書いてから導入する（関門 14）と SD から Z004 を取り込む（関門 15）の形で決まる。backlog の「go-live の検証の流れ（受入台本の第 2 版）」。
 - 導入の後でよいと確かめたもの: ECR+ のサービス終了（2028 年 12 月末予定）、二重起動・途中の電源断（対策済み）、v8 より後の migration を足す lane の義務（初回の版の後から当たる）。
 

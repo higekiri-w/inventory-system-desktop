@@ -138,7 +138,7 @@ Keep it factual and stable.
 - No production DB / production import history exists yet in the real store; only dev/demo/test DBs exist — owner回答2026-09-19
 - 在庫の管理に紙はもう使っていない。店は owner が作った在庫管理のシート（Excel）を使い、穴埋め・追記しながら更新している。アプリの本番の DB は無いので、アプリとしては一からの導入に近い — owner 2026-11-24（repo 外の回答台帳 TD-882）。シートの商品コードは商品に付いているコード（JAN）をそのまま書いたもので、店が付けた独自のものではなく、JAN の無い商品は空欄（先頭 2 の 13 桁の行も商品に付いている番号）— owner 2026-11-24（TD-884）。前の答え（2026-09-19）は「レジの外は紙の運用、Excel シートの定着は未確認」だった
   - Excel シートの定着について、owner は運用できる見込みは薄く、店主をどう導けばよいかも分からないと述べた — owner回答2026-09-19。その後、シートは店で使われ更新されている（上の行、TD-882）
-- No prior electronic stock record exists; the Excel sheet the owner just handed the store is still being filled in — owner回答2026-09-19
+- No prior electronic stock record exists; the Excel sheet the owner just handed the store is still being filled in — owner回答2026-09-19。その後、シートが在庫の記録として使われ更新されている（上の在庫の管理の行、TD-882）
   - 日々の在庫の増減の電子記録は無いが、前年の棚卸しリスト（Word 等）は店の PC に残っている。今の棚卸しは、owner が新しく作って渡した Excel シートで行っている — owner回答2026-09-23
 - No electronic purchasing/ordering record; paper slips/lists are the base, though some vendor documents arrive as PDF/email — owner回答2026-09-19
 - No sales-record system other than the register; daily reports are register → Excel transcription → print only — owner回答2026-09-19
