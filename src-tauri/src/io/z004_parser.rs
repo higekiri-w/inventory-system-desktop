@@ -1230,6 +1230,7 @@ mod layout_a_tests {
         assert_eq!(err.error_type, ParseErrorType::InvalidJan);
         assert!(err.error_message.contains("正規化できません"));
         assert!(!err.error_message.contains("商品コードの無い枠"));
+        assert_eq!(err.raw_name.as_deref(), Some("合成独自C"));
     }
 
     #[test]
