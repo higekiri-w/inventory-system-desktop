@@ -101,7 +101,7 @@ sale_recordsとinventory_movementsで符号の意味が異なる。混同防止�
 - **is_voidedの理由（指摘#3対応）**: CSV取込みの取消と入出庫の業務記録の取消（D-163、[65-inventory-record-traceability.md](../function-design/65-inventory-record-traceability.md) §65.6.2）で、物理削除ではなく論理無効化で統一する。無効にした movement は在庫の求め直しと在庫変動の履歴に出ない。操作ログとの整合性を保つ
 
 ### 困りそうなケース
-- **レジでバーコードを読んで戻した返品**: register_processed=1の返品のうち、Z004 の取込みが在庫を動かす商品（13 桁の JAN が 1 商品だけに当たり在庫連動）の明細は、CSV取込み時にZ004のマイナス値を読んで、sale_recordsにはquantity=-1（売上帳票視点）、inventory_movementsにはquantity=+1（在庫視点: 在庫が1個戻る）として記録される。return_recordsはその明細の独自のinventory_movementsを作らない。これにより二重計上を防ぐ。Z004 の取込みが在庫を動かさない商品（`pos_stock_sync=false`・共有 JAN・JAN 無し・JAN が 13 桁でない）の明細は、返品・交換の保存で `return` の movement を作る（D-148）
+- **レジでバーコードを読んで戻した返品**: register_processed=1の返品のうち、Z004 の取込みが在庫を動かす商品（条件は [31](../function-design/31-biz-inventory-service.md) §12.4）の明細は、CSV取込み時にZ004のマイナス値を読んで、sale_recordsにはquantity=-1（売上帳票視点）、inventory_movementsにはquantity=+1（在庫視点: 在庫が1個戻る）として記録される。return_recordsはその明細の独自のinventory_movementsを作らない。これにより二重計上を防ぐ。Z004 の取込みが在庫を動かさない商品の明細は、返品・交換の保存で `return` の movement を作る（D-148）
 
 ---
 

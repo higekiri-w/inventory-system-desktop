@@ -50,7 +50,7 @@ Z004ファイルのパース成功時の結果。行単位エラーがあって�
 正常にパースできた1データ行。
 
 - line_no: usize（ファイル内の行番号。1始まり）
-- normalized_jan: String（正規化後の13桁JANコード）
+- normalized_jan: String（正規化後のJANコード。13桁かJAN-8の8桁。形は§13.5）
 - name: String（Z004上の商品名。半角カナ等そのまま）
 - quantity: i32（数量。マイナスあり＝返品）
 - amount: i32（金額。マイナスあり＝返品）
@@ -173,7 +173,7 @@ Ok(ParseResult {
 | SPEC-Z4A-D2 | layout Aのヘッダは5フィールド + 第2「コード」（半角カナ「ｺｰﾄﾞ」を含む）/第5「金額」の位置アンカーで検査し、先頭20行以内だけを走査する |
 | SPEC-Z4A-D3 | layout Aの精算日は「日付」ラベル行優先 + 最初の日付パターンfallbackとし、`YYYY-MM-DD` / `YYYY-M-D` / `YYYY/M/D`（月日1〜2桁）をゼロ埋め正規化する |
 | SPEC-Z4A-D4 | `ParseResult`系の型と意味論を変えず、line_noは物理行番号、total_data_linesはヘッダ後の試行行数とする |
-| SPEC-Z4A-D5 | `E`は14桁固定幅の右パディング。13桁JAN + Eは正規化し、8桁独自コード + EEEEEEは売上のある行だけInvalidJanとして可視化する（個数・金額とも0の行はSPEC-Z4A-D8で読み飛ばす。D-103で改訂） |
+| SPEC-Z4A-D5 | `E`は14桁固定幅の右パディング。13桁JAN + Eと8桁 + EEEEEEは除いてJANに正規化する（8桁はJAN-8。§13.5、D-166で改訂） |
 | SPEC-Z4A-D6 | layout Aの全スロットダンプを既存BIZ-03上限内で受理し、売上の無い枠（SPEC-Z4A-D8）をskipする。コード全桁0でも個数か金額が0でない行はskipしない（D-103で改訂） |
 | SPEC-Z4A-D7 | 個数・金額は3桁区切りのカンマ付きの整数も受理する（§13.4.1、D-103） |
 | SPEC-Z4A-D8 | 行の分類は個数・金額を先に読み、売上の有無で決める。コード全桁0で売上のある行（PLUの登録を消した枠、コードを持たない通常PLU）はInvalidJanの行エラーにし、黙って捨てない（§13.4.2、D-103） |
@@ -220,9 +220,9 @@ fn parse_data_line(line: &str, line_no: usize) -> Result<Option<ParsedRow>, Pars
    - 失敗 → Err(ParseError { line_no, error_type: InvalidNumber, error_message: "行{line_no}: 金額が数値ではありません: '{raw}'" })
 4. 売上の有無: has_sales = quantity ≠ 0 または amount ≠ 0
 5. scanning_code_raw → normalize_jan(scanning_code_raw, line_no) 呼び出し（分類は§13.4.2）
-   - Ok(None)（全桁ゼロ）かつ has_sales = false → Ok(None)（売上の無い枠。エラーにもカウントしない）
-   - Ok(None)（全桁ゼロ）かつ has_sales = true → Err(ParseError { line_no, error_type: InvalidJan, error_message: "行{line_no}: 商品コードの無い枠（メモリNo.{record_no}）に売上があります。PLU の登録を消した枠の売上などで、在庫には反映されません" })。record_no は第1フィールドを trim した値
-   - Err(msg) かつ has_sales = false → Ok(None)（売上の無い枠。8桁独自コード + EEEEEE の枠を含む）
+   - Ok(None)（全桁ゼロ・8桁の全部0 + EEEEEE）かつ has_sales = false → Ok(None)（売上の無い枠。エラーにもカウントしない）
+   - Ok(None)（全桁ゼロ・8桁の全部0 + EEEEEE）かつ has_sales = true → Err(ParseError { line_no, error_type: InvalidJan, error_message: "行{line_no}: 商品コードの無い枠（メモリNo.{record_no}）に売上があります。PLU の登録を消した枠の売上などで、在庫には反映されません" })。record_no は第1フィールドを trim した値
+   - Err(msg) かつ has_sales = false → Ok(None)（売上の無い枠）
    - Err(msg) かつ has_sales = true → Err(ParseError { line_no, error_type: InvalidJan, error_message: msg })
    - Ok(Some(normalized_jan)) → 次ステップへ（個数・金額とも0の行も返す。除外はBIZ-03 Stage 2）
 6. Ok(Some(ParsedRow { line_no, normalized_jan, name: name_raw.to_string(), quantity, amount }))
@@ -249,11 +249,11 @@ fn parse_data_line(line: &str, line_no: usize) -> Result<Option<ParsedRow>, Pars
 
 | コード欄 | 個数・金額とも0 | 個数か金額が0でない |
 |---|---|---|
-| 13桁JAN（13桁 + 右パディング1文字を含む） | Ok(Some)。BIZ-03 が空レコード（quantity=0 かつ amount=0）として除外する（D-118 で相殺の判定は持たない。[32](32-biz-csv-import-service.md) の冒頭の D-118 の節） | Ok(Some) |
-| 全桁0（未登録の枠、PLU の登録を消した枠、コードを持たない通常PLU） | Ok(None) | InvalidJan（商品コードの無い枠の売上） |
-| 13桁JANにならない（8桁独自コード + EEEEEE、その他の13桁にならない文字列） | Ok(None) | InvalidJan（normalize_jan の文言） |
+| JAN（§13.5 の `Ok(Some)`。13桁 + 右パディング1文字、8桁 + `EEEEEE` を含む） | Ok(Some)。BIZ-03 が空レコード（quantity=0 かつ amount=0）として除外する（D-118 で相殺の判定は持たない。[32](32-biz-csv-import-service.md) の冒頭の D-118 の節） | Ok(Some) |
+| 全桁0（未登録の枠、PLU の登録を消した枠、コードを持たない通常PLU。8桁の全部0 + `EEEEEE` を含む） | Ok(None) | InvalidJan（商品コードの無い枠の売上） |
+| JANにならない（§13.5 の `Err`） | Ok(None) | InvalidJan（normalize_jan の文言） |
 
-根拠: PLU の登録を消した（clear した）枠は、名前が空・コード全桁0のまま、精算の前の数量と金額を持って次の Z004 に残る（2026-09-28 の検証、持ち帰りデータの手元集計 2026-09-29）。従来の「全桁0 = 空スロット」は、この売上を数量・金額を見ずに捨て、在庫にもエラーにも出さなかった。owner 決定 TD-105（2026-10-04）で、エラーとして知らせ、元の商品へ戻すことはしない。8桁独自コード + EEEEEE の枠は 2026-07-06 以降の Z004 に毎回あり（持ち帰りデータの手元集計 2026-10-04）、従来は売上が無くても毎回 InvalidJan になり、取込みは毎回 completed_partial になっていた。売上の無い枠を毎回のエラーに出すと、本当に知らせたい行（上の表の右列）が同じ一覧に埋もれる。
+根拠: PLU の登録を消した（clear した）枠は、名前が空・コード全桁0のまま、精算の前の数量と金額を持って次の Z004 に残る（2026-09-28 の検証、持ち帰りデータの手元集計 2026-09-29）。従来の「全桁0 = 空スロット」は、この売上を数量・金額を見ずに捨て、在庫にもエラーにも出さなかった。owner 決定 TD-105（2026-10-04）で、エラーとして知らせ、元の商品へ戻すことはしない。JANにならないコードの枠（D-103 の時点では 8桁 + EEEEEE の枠。D-166 から JAN-8 として受ける）は 2026-07-06 以降の Z004 に毎回あり（持ち帰りデータの手元集計 2026-10-04）、従来は売上が無くても毎回 InvalidJan になり、取込みは毎回 completed_partial になっていた。売上の無い枠を毎回のエラーに出すと、本当に知らせたい行（上の表の右列）が同じ一覧に埋もれる。
 
 知らせ方: 既存の行エラーの経路をそのまま使う。BIZ-03 が `invalid_jan` の ErrorRow にし、取込みは completed_partial になり、`csv_import_errors` に残る。プレビューのエラー詳細と取込み記録の詳細の「メッセージ」「内容」列に上の文言が出る。プレビューのエラー詳細（最大100件）では invalid_jan の行が他の種別の行より先に選ばれ、未登録 JAN の行が多くても落ちない（[32 §15.3 手順 5c](32-biz-csv-import-service.md)）。normalized_jan は None（画面は「(不明)」「—」）、raw_quantity / raw_amount は元の文字列。
 
@@ -263,7 +263,7 @@ fn parse_data_line(line: &str, line_no: usize) -> Result<Option<ParsedRow>, Pars
 - 名前が空であることも条件にする: コードを持たない通常PLU（名前あり）の売上も同じく在庫に反映されないので、同じく知らせる。名前の有無に依らない
 - コードの判定を先に、数量の判定を後にする（従来の順）: 売上の有無で分類できない
 
-Revisit: 通常PLU（番号打ちの PLU）を店が日常に使い始め、毎回の取込みにこのエラーが出るようになったとき。後続の lane が「商品コードの無い枠の売上」を種別で数える必要が出たとき。8桁独自コードの商品を商品マスタに結び付ける設計を入れるとき。
+Revisit: 通常PLU（番号打ちの PLU）を店が日常に使い始め、毎回の取込みにこのエラーが出るようになったとき。後続の lane が「商品コードの無い枠の売上」を種別で数える必要が出たとき。
 
 **CSVフィールド分割の仕様**:
 - ダブルクォート囲み: フィールド値がダブルクォートで囲まれている場合は除去する
@@ -275,7 +275,7 @@ Revisit: 通常PLU（番号打ちの PLU）を店が日常に使い始め、毎�
 
 ### 13.5 normalize_jan（内部関数）
 
-**関数要求**: Z004のスキャニングコードをJANコード13桁に正規化する。全桁ゼロはOk(None)で返す（売上の有無による分類は呼出し側の§13.4.2）
+**関数要求**: Z004のスキャニングコードをJANコード（13桁か、JAN-8の8桁）に正規化する。全桁ゼロはOk(None)で返す（売上の有無による分類は呼出し側の§13.4.2）
 
 **シグネチャ**:
 ```
@@ -285,18 +285,17 @@ fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>, String>
 **処理ステップ**:
 1. 前後空白をtrim
 2. 全桁ゼロ判定: 全文字が '0' → Ok(None)
-   - 桁数を問わない: 13桁ゼロ `0000000000000`・14桁ゼロ `00000000000000` のほか、他の桁数の全ゼロ（例 `0`、`00000000`）もOk(None)。空文字（trim後）はこの判定に当たらず、手順5のErr
-3. 14桁かつ末尾がASCIIアルファベット（a-z, A-Z）→ 14桁固定幅の右パディング1文字を除去して13桁化
-4. 結果が13桁かつ全文字が数字 → Ok(Some(normalized))
-5. それ以外 → Err("行{line_no}: JANコード '{raw}' を正規化できません")
+   - 桁数を問わない: 13桁ゼロ `0000000000000`・14桁ゼロ `00000000000000` のほか、他の桁数の全ゼロ（例 `0`、`00000000`）もOk(None)。空文字（trim後）はこの判定に当たらず、手順6のErr
+3. 末尾の大文字 `EEEEEE` を除いた値（無ければそのまま）が ASCII 数字8桁 → 8桁が全部0なら Ok(None)、それ以外は Ok(Some(8桁))（JAN-8。D-166）
+4. 14桁かつ末尾がASCIIアルファベット（a-z, A-Z）→ 14桁固定幅の右パディング1文字を除去して13桁化
+5. 結果が13桁かつ全文字が数字 → Ok(Some(normalized))
+6. それ以外 → Err("行{line_no}: JANコード '{raw}' を正規化できません")
 
 **正規化ルール**:
 - 先頭ゼロは保持する（JANコードの正当な構成要素）
 - チェックデジット検証はしない（レジ出力をそのまま信頼。DB_DESIGN.md準拠）
-- 13桁未満は不正（Err）
-- 14桁超は不正（Err）
+- 8桁（素の8桁か8桁 + 大文字 `EEEEEE`）と13桁（素の13桁か13桁 + 右パディング1文字）以外の長さは不正（Err）。他の英字の詰め・小文字の `e`・`E` が6個でない詰めも不正（D-166）
 - 14桁で末尾が数字の場合は不正（Err）。末尾アルファベットは識別子ではなく、コード欄を14桁固定幅にする右パディングとして除去する（SPEC-Z4A-D5）
-- 8桁独自コード + `EEEEEE` は右パディング除去後も13桁JANにならないためErr。parse_data_line は売上のある行だけを InvalidJan の行単位エラーにし、個数・金額とも0の行は読み飛ばす（§13.4.2）
 
 **入力→出力例**:
 
@@ -306,6 +305,10 @@ fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>, String>
 | `"4976383262108E"` | Ok(Some("4976383262108")) | 14桁末尾E除去 |
 | `"00000000000000"` | Ok(None) | 14桁全ゼロ（売上の有無は§13.4.2） |
 | `"0000000000000"` | Ok(None) | 13桁全ゼロ（売上の有無は§13.4.2） |
+| `"12345678EEEEEE"` | Ok(Some("12345678")) | 8桁 + EEEEEE（JAN-8） |
+| `"12345678"` | Ok(Some("12345678")) | 8桁そのまま（JAN-8） |
+| `"00000000EEEEEE"` | Ok(None) | 8桁全ゼロ + EEEEEE（売上の有無は§13.4.2） |
+| `"12345678ABCDEF"` | Err(...) | EEEEEE 以外の詰め＝不正 |
 | `"497638326210"` | Err(...) | 12桁＝桁数不足 |
 | `"49763832621089"` | Err(...) | 14桁末尾数字＝不正 |
 | `"ABCDEFGHIJKLM"` | Err(...) | 数字以外＝不正 |
