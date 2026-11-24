@@ -136,8 +136,8 @@ Keep it factual and stable.
 ### 無いもの（owner回答 2026-09-19、種類2 全13件）
 
 - No production DB / production import history exists yet in the real store; only dev/demo/test DBs exist — owner回答2026-09-19
-- Everything outside the register is currently paper operation; this app is close to a from-scratch (greenfield) introduction — owner回答2026-09-19。owner が用意した Excel シートが店舗に渡っており、データの初期投入にも使える想定だが、Excel シートの運用定着は未確認
-  - Excel シートの定着について、owner は運用できる見込みは薄く、店主をどう導けばよいかも分からないと述べた — owner回答2026-09-19
+- 在庫の管理に紙はもう使っていない。店は owner が作った在庫管理のシート（Excel）を使い、穴埋め・追記しながら更新している。アプリの本番の DB は無いので、アプリとしては一からの導入に近い — owner 2026-11-24（repo 外の回答台帳 TD-882）。シートの商品コードは商品に付いているコード（JAN）をそのまま書いたもので、店が付けた独自のものではなく、JAN の無い商品は空欄（先頭 2 の 13 桁の行も商品に付いている番号）— owner 2026-11-24（TD-884）。前の答え（2026-09-19）は「レジの外は紙の運用、Excel シートの定着は未確認」だった
+  - Excel シートの定着について、owner は運用できる見込みは薄く、店主をどう導けばよいかも分からないと述べた — owner回答2026-09-19。その後、シートは店で使われ更新されている（上の行、TD-882）
 - No prior electronic stock record exists; the Excel sheet the owner just handed the store is still being filled in — owner回答2026-09-19
   - 日々の在庫の増減の電子記録は無いが、前年の棚卸しリスト（Word 等）は店の PC に残っている。今の棚卸しは、owner が新しく作って渡した Excel シートで行っている — owner回答2026-09-23
 - No electronic purchasing/ordering record; paper slips/lists are the base, though some vendor documents arrive as PDF/email — owner回答2026-09-19
@@ -145,7 +145,7 @@ Keep it factual and stable.
 - Single store, not multiple locations — owner回答2026-09-19
 - No multi-user/employee-account concept; effectively single-operator, low concurrency — owner回答2026-09-19
 - No off-PC or network backup destination is in use now — owner回答2026-09-19。導入では、アプリが USB メモリへ自動で写す PC の外の控えを型 C（2 本の入れ替え。1 本を差しっぱなし、1 本を owner が持ち帰る）で使い、「外部に保存するなら置き場所は店」（owner回答2026-09-23）はこれで見直した。USB は用意済みで、USB の控えは任意。クラウドは範囲外（外部のサービスに頼らない）— owner決定2026-10-08・2026-10-20・2026-10-22（repo 外の回答台帳 TD-196・TD-346・TD-381）— `docs/decision-log.md`（D-114）
-- No accounting/bookkeeping software; the Excel sheet above is the closest thing, and its operational adoption is unconfirmed — owner回答2026-09-19
+- No accounting/bookkeeping software; the Excel sheet above is the closest thing — owner回答2026-09-19。シートは店で使われ更新されている — owner 2026-11-24（TD-882）
 - No barcode label printer in the store; rejected earlier as impractical for a non-IT elderly-adjacent operator and because some items have no JAN — owner回答2026-09-19
 - No wheeled/mobile work table in the store — owner回答2026-09-19
 - `suppliers` table intentionally holds maker/brand only, not the wholesaler order channel — owner回答2026-09-19
