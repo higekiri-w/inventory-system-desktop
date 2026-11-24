@@ -1,6 +1,6 @@
 # Plan Packet: PLU の書出しの見直しの runtime（枠を消さない・占有は毎日の SD の読取りで照合する。関門 14 の前提、D-117・D-160）
 
-起票: 2026-11-24。出所は [backlog](../backlog.md) の「PLU の書出しの見直しの runtime」。設計は D-117（設計の lane は PR #163）と D-160（PR #292）で正本に入っていて、この lane は code・migration・bindings・test をその形に合わせる。計画の review と実装は次の session。
+起票: 2026-11-24。出所は [backlog](../backlog.md) の「PLU の書出しの見直しの runtime」。設計は D-117（設計の lane は PR #163）と D-160（PR #292）で正本に入っていて、この lane は code・migration・bindings・test をその形に合わせる。owner の決定（2026-11-25、repo 外の回答台帳 TD-896・TD-902・TD-904）で、実機の L3 の当て方（D-073）と枠を使い回さない決まり（D-117 (1)）を D-168 で改める。計画の review と実装は次の session。
 
 ## Workflow State
 
@@ -15,7 +15,7 @@
 Risk: R4
 
 Reason:
-`docs/DEV_WORKFLOW.md` Risk Tiers の R4 の行に 2 つ当たる。(1)「破壊的なデータの lifecycle」: migration が行のある `plu_slots`（どの JAN をレジのどの枠に書いたかの記録）を作り直し（全行を写して `DROP TABLE`）、`release_pending` を `external` に書き換え、列 `released_at` と `app_settings` の key を消す。写し方を誤ると、次の書出しがレジの別の枠を上書きし、レジに書いたものは DB を戻しても戻らない。先例は行のある表の作り直しを R4 とした `docs/plans/2026-10-29-stock-transfer.md`（空の DB を通ることは R4 を下げる理由にしない、と書いた）。(2)「backup の復元」: restore の後処理（71 §71.7）に key を消す処理を足す。あわせて R3 の行の DB・PLU TSV（clear 行を書かなくなる）・Tauri command の DTO・route と search の状態（商品一覧の `plu`）・operator の業務の流れに当たる。backlog は「R3 見込み」と書いていたが、設計の時点の見込みで、migration の形と restore を Risk Tiers に当てたのはこの起票が初めて。workflow の file（`.github/`・`scripts/`・classifier の `workflow=true` の docs）には触れない。
+`docs/DEV_WORKFLOW.md` Risk Tiers の R4 の行に 2 つ当たる。(1)「破壊的なデータの lifecycle」: migration が行のある `plu_slots`（どの JAN をレジのどの枠に書いたかの記録）を作り直し（全行を写して `DROP TABLE`）、`release_pending` を `external` に書き換え、列 `released_at` と `app_settings` の key を消す。写し方を誤ると、次の書出しがレジの別の枠を上書きし、レジに書いたものは DB を戻しても戻らない。先例は行のある表の作り直しを R4 とした `docs/plans/2026-10-29-stock-transfer.md`（空の DB を通ることは R4 を下げる理由にしない、と書いた）。(2)「backup の復元」: restore の後処理（71 §71.7）に key を消す処理を足す。あわせて R3 の行の DB・PLU TSV（clear 行を書かなくなる）・Tauri command の DTO・route と search の状態（商品一覧の `plu`）・operator の業務の流れに当たる。backlog は「R3 見込み」と書いていたが、設計の時点の見込みで、migration の形と restore を Risk Tiers に当てたのはこの起票が初めて。売り切った廃番の商品の枠の使い回し（S13）は、レジにある前の商品の登録を上書きし、これも DB を戻しても戻らない。workflow の file（`.github/`・`scripts/`・classifier の `workflow=true` の docs）には触れない。
 
 ## Goal
 
@@ -25,6 +25,7 @@ Goal Invariant:
 
 - 店主が締めで「SD から読む」を押すだけで、レジの PLU の占有が照合される（Z004 を選ぶ操作が無い）。PLU 書出しの画面は最終照合日時を 1 行で出し、一度も照合していなければ書出しを拒んで売上データ取込みへ案内する。
 - アプリは枠を消さない: 書き出す file に clear 行が無く、商品を対象から外す・廃番にする・JAN を変える操作で枠の状態が変わらない。
+- 空き枠が少なくなったときだけ、新しい商品の枠に、売り切った廃番の商品（廃番で在庫 0）の枠を上書きで使う。PLU 書出しの画面が、書き出す前に前の商品を名指しして知らせる。空きが足りている間は今までどおり空き枠を使い、何も出さない。
 - 古い SD（精算回数が前回の照合より小さい）を読んでも照合せず、その場で理由つきで知らせる。
 - 商品の修正で名称・部門・税率を変えると未反映になる。
 - 段階導入の道具（商品一覧の「PLU」列・`plu` の絞り込み・一括の対象化）、件数の要約、「レジメモリNo.」が画面と wire から消える。
@@ -37,6 +38,7 @@ Goal Invariant:
 - 古い SD の Z004 で照合して、前回の照合を上書きする。
 - 照合の失敗で SD の読取り（日報の候補の一覧）が失敗になる。
 - 書出しに、対象の商品を持たない JAN の枠・`external`・`free` の行が出る。
+- 在庫のある商品・廃番でない商品・商品を持たない JAN の枠を使い回す。知らせずに使い回す。
 - 店の毎日の操作が増える。
 
 ### 非目的
@@ -45,7 +47,9 @@ Goal Invariant:
 - 部門リンクの決め方と 21 個目の部門（D-117 の範囲外。backlog の同名の項目）、JAN-8 と店内コードの書出し（D-165 の lane）。
 - Z004 を SD の一括取込みに入れること（関門 15 の (B)。この lane が入れる手順 10 に依る。snapshot の `z004_files`・`z004_new_count` は (B) が足す）。
 - 2 段（書出し → 未反映から外す）、Diff と Full、SD に書かないこと（D-117 (6)。変えない）。
-- 初回の本番の PLU の書込みの手順書（D-160 (2)。下の「owner に決めてもらう事項」の O2）。
+- 初回の本番の PLU の書込みの手順書（D-160 (2)。部門リンクの決め方の後の docs の lane で `docs/initial-load-runbook.md` の流れ 3 に書く。owner の決定 TD-896）。
+- CV17・SR-S4000 の実機の L3（owner の決定 TD-902。書く行の形を変えない lane。下の L3 と D-168）。
+- 枠を空ける操作・clear 行・解除待ちの状態（owner の決定 TD-904。使い回しは新しい商品の行で上書きするだけ）。
 - 操作ログの過去の記録の label（`product_bulk_plu_target`・`plu_register_snapshot_import`）の削除（過去の記録の表示に要る。74 は変えない）。
 
 ## Scope
@@ -60,19 +64,28 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
   - BIZ-08: `src-tauri/src/biz/daily_report_import_service/scan.rs`・`mod.rs` に手順 10 と snapshot の `plu_register_z004s` を足す（読取りと形の検査は手順 5 の関数を使う）。読む本数（backlog の P3 の (3)）は窓の中の全部のまま、絞る規則を足さない（scan の時間は未実測。L3-1 で遅さを見る）。
   - CMD-12: `src-tauri/src/cmd/daily_report_import_cmd.rs` の `scan_register_sd_with_state` に手順 2a、`RegisterSdScanResponse` に `plu_snapshot_skipped_older`。CMD-08 の `import_plu_register_snapshot` と `src-tauri/src/lib.rs` の登録（2 つの列）を外す。
 - S4 SD を読んだ画面の知らせと invalidation（55 UI-07-D15 (8)、67 §67.10、D-052、D-160 (4)）: `src/features/daily-report-import/` の `types.ts`・`reducer.ts`・`hooks/useDailyReportImportFlow.ts`・`DailyReportImportPage.tsx`（`tidy_failure` の知らせ〈(7)〉と同じ表示の形）。`src/lib/invalidation-contract.ts`・`src/test/invalidation-oracle.ts`・`src/lib/invalidation-contract.meta.test.ts`: C17 を「SD の読取りの成功で slot summary と未反映一覧を stale にする」に置き換え、C19 を外す（番号は詰めない）。`docs/UI_TECH_STACK.md` の D-052 の段落の件数は実装の時点で測り直す。
-- S5 UI-08（67 UI-08-D5・D11、§67.4 手順 3、§67.8.1）: `src/features/plu-export/PluExportPage.tsx` から FilePicker の step・件数の要約・上限の警告・解除待ちの説明を外し、最終照合日時の 1 行と未照合の導線にする。復帰状態の旧い形（`overLimitWarning`・`row_kind`）は schema 不一致として捨てる。
+- S5 UI-08（67 UI-08-D5・D11、§67.4 手順 3、§67.8.1）: `src/features/plu-export/PluExportPage.tsx` から FilePicker の step・件数の要約・上限の警告・解除待ちの説明を外し、最終照合日時の 1 行と未照合の導線にする。CV17 に取り込めなかったときの案内を §67.9 の文（書き出し直す。前に保存した file は取り込まない。UI-08-D4・D9）にする（今の build は「保存済みファイルを再投入するか」と書く。2026-11-25 に `rg -n '保存済みファイルを再投入' src/features/plu-export` で `PluExportPage.tsx` の 2 行と test の 2 行）。復帰状態の旧い形（`overLimitWarning`・`row_kind`）は schema 不一致として捨てる。
 - S6 段階導入の道具の撤去（30 §4.9.1、40、20、50 UI-01a-D10〜D12、D-117 (2)）: `product_service.rs` の `bulk_set_plu_target`、`src-tauri/src/cmd/product_cmd.rs` と `lib.rs` の登録、`product_repo.rs` の `find_products_for_bulk_plu_target`・`PluMigrationFilter`・`ProductSearchQuery.plu`・`ProductBulkFilter`、`src-tauri/src/biz/mod.rs` の再 export、`src/features/products/` の `ProductListPage.tsx`・`components/ProductTable.tsx`・`components/PluBulkTargetConfirmDialog.tsx`（削除）・`search.ts`・`lib/return-to.ts`・`priceRevisionSearch.ts`。URL に残った `plu` は無視する。
 - S7 「レジメモリNo.」の撤去（51 UI-01b-D19、D-117 (5)）: `product_repo.rs` の `plu_memory_no` の JOIN、`src/features/products/ProductFormPage.tsx`、`plu_memory_no` を持つ test の fixture（`rg -l 'plu_memory_no' src` で全件）。
 - S8 `plu_dirty`（30 §4.4 手順 4b・4c、D-160 (5)）: `update_product` で名称・部門・税率の変更を足す。最初の commit は red の test（今の code が立てないこと）。JAN の変更は商品 CSV の上書きが今も `plu_dirty=1` にする（変えない。test で固定する）。
 - S9 restore の後処理（33 §16.8、D-160 (7)）: `src-tauri/src/mnt/restore.rs` の committed の後処理（`cleanup_committed`。直後と次回起動の持ち越しの両方が通る）で `plu_register_snapshot_at` だけを消す。消せなければ committed の manifest を残して次回起動へ持ち越す（監査記録と同じ扱い）。`src-tauri/src/db/system_repo.rs` に key を消す関数は無い（`get_setting`・`get_all_settings`・`upsert_setting` だけ）ので、要る 1 つだけを足す。71 §71.7 に手順と判断の ID を足す。
-- S10 L3 の入力物: `src-tauri/src/io/l3_fixtures.rs` の `write_sd_bulk_l3_fixtures` と同じ形（env の `INVENTORY_L3_DAY`・`INVENTORY_L3_OUT`、ignore の test）で、全枠の Z004（5,000 行、CP932・CRLF）を持つ合成の SD の folder を作る。
+- S10 L3 の入力物: `src-tauri/src/io/l3_fixtures.rs` の `write_sd_bulk_l3_fixtures` と同じ形（env の `INVENTORY_L3_DAY`・`INVENTORY_L3_OUT`、ignore の test）で、全枠の Z004（5,000 行、CP932・CRLF）を持つ合成の SD の folder を 3 つ作る: `sd-a`、`sd-b`（精算回数が `sd-a` より小さい）、`sd-c`（精算回数が `sd-a` より大きく、`free` が 0 になる占有。L3-4 の商品の枠はその JAN のまま）。
 - S11 test: 下の Test Plan。撤去した機能の test（clear 行・解放・一括の対象化・移行の絞り込み・件数の要約）は、D-117 の設計の改訂を理由に、新しい契約の test へ書き換えるか消す（消す test の名前と理由を PR に並べる）。`src-tauri/tests/design_compliance_test.rs` は対応表に変更が要るときだけ触る。
 - S12 設計正本と docs（同じ PR）:
   - 「runtime の状態」の注記・未実装の印・撤去する signature を消す: 33（冒頭・§16.6・§16.8）、plu-tables、25、23 §13.3.1、30（§4.4・§4.9.1）、37 §37.9、45 §45.6a、55 UI-07-D15 (8)、40、41（§17.6 ほか）、20、50、51、67、task-specs の BIZ-01・BIZ-04・IO-04・CMD-01・CMD-08・UI-01a・UI-01b・UI-08、`docs/SCREEN_DESIGN.md`、`docs/DB_DESIGN.md` D-2、`docs/spec/requirements.md` の REQ-907 の注、`docs/project-memory.md`。
   - PR #292 の P3 の 4 件: 67 UI-08-D5 の Why を D-160 の Guarantee range への参照に、55 UI-07-D15 (8) の最後の 2 文の出所（この lane の文、D-127）、`docs/SCREEN_DESIGN.md` の SD の読取りの知らせの要約に (8)、D-160 (7) の穴（下の Contract Ledger の行）を D-168 に。
-  - `docs/decision-log.md` の末尾に D-168（予約済み）: D-052 の C17 の置換えと C19 の撤去、精算回数の読取りと読む本数、restore の後処理の置き場と D-160 (7) の穴、migration の形。D-052 に Superseded in part の行（merge 済みの D の本文は書き換えない）。
-  - `docs/plu-export-and-real-csv-verification.md` の PLU-21・PLU-25 に L3 の記録、`docs/diagrams/current-system.md`、`docs/inventory_system_erd.html`（`plu_slots` の列と status）。
-  - 片付け（TD-765 の B）: backlog の項目を済みの形にし（関連の「廃番表示 3 択…」「PLU slot 後続 follow-up」の runtime への参照も）、`docs/Plans.md` の関門 14 の「前提の lane は … 未起票」を今の形にする。backlog の P3 の (1)（書き出す前にその日の SD を読む、の手順書の文）は O2 の答えの置き場へ送る。
+  - `docs/decision-log.md` の末尾に D-168（予約済み）: D-052 の C17 の置換えと C19 の撤去、精算回数の読取りと読む本数、restore の後処理の置き場と D-160 (7) の穴、migration の形、下の 2 つ。merge 済みの D の本文は書き換えず、D-052・D-073・D-117 に `Superseded in part by: D-168` の行を足す。
+    - 実機の L3 の当て方（owner の決定 TD-902）: PLU の file の行の形が変わらない lane は、記録のある前の実機の確かめで CV17 の受理を受け、CV17・レジの実機の L3 を置かない。行の形を変える lane は今までどおり置く。D-073 の (3)（UI-08 の operator flow）は開発の build の L3 で見る。D-117 は Compatibility の「CV17 / SR-S4000 の L3 が要る」。
+    - 枠の使い回し（S13、owner の決定 TD-904）: D-117 は (1) の「別の JAN に使い回さない」、Guarantee range の「アプリが書いた枠は…レジに残る」、Revisit の空き枠の契機（clear を戻さず、使い回しで受ける）。Guarantee range に Design Readiness の残る穴を書く。
+  - 上の当て方に合わせる: `docs/plu-export-and-real-csv-verification.md` の冒頭の段と PLU-21・PLU-25 の行の「D-117 の runtime の lane の L3 で確かめる」を、PLU-21 は 2026-08-20 の店の PC での L3 の記録（repo 外の回答台帳 L-012）と owner の答えで受ける、PLU-25 はこの lane の L3-4 と T20・T28 で受ける、にする。67 §67.12 の適用範囲の段と CV17 へ投入する 2 項目。
+  - `docs/diagrams/current-system.md`、`docs/inventory_system_erd.html`（`plu_slots` の列と status）。
+  - 片付け（TD-765 の B）: backlog の項目を済みの形にし（関連の「廃番表示 3 択…」「PLU slot 後続 follow-up」の runtime への参照も）、`docs/Plans.md` の関門 14 の「前提の lane は … 未起票」と「流れ 3 の中の位置と手順は、前提の lane か手順書の改訂で決める」を今の形にする（手順書は部門リンクの決め方の後の docs の lane、TD-896）。backlog の P3 の (1)（書き出す前にその日の SD を読む、の手順書の文）は、その docs の lane の入力として backlog の「PLU をレジへ書く時期と D-070 の自動在庫連動」へ移す。
+- S13 売り切った廃番の商品の枠の使い回し（owner の決定 TD-904。正本に無い新しい振舞いで、33 §16.2〜§16.4・§16.6・§16.9、plu-tables の状態遷移、41 §17.6、67 に同じ PR で入れる。「別の JAN に使い回さない」と書く 33 の冒頭と §16.9・plu-tables・biz-task-specs の BIZ-04・`docs/DB_DESIGN.md`・`docs/project-memory.md` も直す〈2026-11-25 に `rg -n '使い回|reuses' docs` の PLU の文〉）:
+  - 候補の枠: `reserved` / `active` の枠のうち、その JAN を持つ商品があり、その全部が廃番（`products.is_discontinued=1`）で在庫 0（`products.stock_quantity=0`）のもの。商品を持たない JAN の枠（JAN を直した商品の前の JAN。D-122 の別名が依る）と `external` は使わない。
+  - prepare（33 §16.4 手順 5）: 枠も同じコードの `external` も持たない対象の JAN に枠を割り当てるたびに `free` を数え、閾値以下で候補があれば、選び方の順の 1 つを新しい JAN の `reserved` に書き換える（`reserved_at` は今、`activated_at` は NULL）。候補が無ければ今までどおり最小の `free`、それも無ければ `no_free_slot`。file には新しい商品の product 行がその memory No. で出るだけで、行の形は変えない。閾値と選び方は Design Readiness の候補。`src-tauri/src/biz/plu_export_service.rs`、`src-tauri/src/db/plu_slot_repo.rs`（候補を引く関数を 1 つ）。
+  - 前の商品: `plu_target`（廃番化で 0）・`plu_dirty`・在庫を変えない。枠を持たない JAN になるだけで、廃番を解除して対象へ戻せば、ほかの新しい JAN と同じに枠を取る。`plu_slots` に前の JAN が残らないので、使い回しは operation_logs に残す（memory No. と前の商品コード。既存の種別に足すか、74 の label の要る新しい種別かは計画の review）。
+  - 照合（33 §16.3 の表）: 使い回して予約した枠は、書込みがレジに届くまで前のコードを持つ。今の表の「別コード × `reserved` → `external`・`reservation_dropped`」のままだと、SD を読むたびに予約が外れて次の候補を使う。観測したコードが候補の条件を満たす JAN なら `reserved` を保つ行を足す（案。Design Readiness）。前の商品の JAN をレジが別の枠にも持つ観測は今の表のまま（その枠は `external`、直さない）。
+  - 知らせ（UI-08）: 次の書出しで使い回す枠があるとき、書き出す前に warning の Alert で前の商品を名指しする（read-only の見込み。prepare と同じ規則の関数で求める）。prepare の結果も使い回した枠の前の商品を返し、保存の後の画面に出す。空きが足りていて使い回さないときは何も出さない。`src-tauri/src/cmd/plu_export_cmd.rs`、`src/features/plu-export/PluExportPage.tsx`。
 - 生成物: `src/lib/bindings.ts`（`cargo run --bin generate_bindings`）、`docs/function-design/90-traceability.md`（`cargo run --bin generate_traceability`）。`src/routeTree.gen.ts` は route を足さないので変わらない見込み。
 
 ### 並走の lane と重なる file の所有
@@ -85,36 +98,44 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | `src-tauri/src/biz/daily_report_import_service/`、`cmd/daily_report_import_cmd.rs`、`lib.rs` の登録、37・45・55 | scan の手順 10 と `plu_register_z004s`、`scan_register_sd` の手順 2a と response の 1 field、`import_plu_register_snapshot`・`bulk_set_plu_target` の登録の削除、37 §37.9・45 §45.6a・55 UI-07-D15 (8)。EJ の閲覧（`ej.rs`・§37.11・§45.6c・UI-07-D17）は持たない | 関門 19 |
 | `src/lib/invalidation-contract.ts`・`src/test/invalidation-oracle.ts`・meta test、`docs/UI_TECH_STACK.md` の D-052 の段落 | C17・C19 の entry と、その説明の文。件数の文は後に merge する側が測り直す | 関門 19、PR #300（UI_TECH_STACK のほかの節） |
 | `src/lib/bindings.ts`、`docs/function-design/90-traceability.md`、`docs/spec/requirements.md` | 生成物は作り直す。requirements は REQ-907 の行と注だけ | 関門 19 |
-| `docs/decision-log.md` | D-168 と、D-052 への Superseded の行（末尾の追記は merge 順で両方を残す） | 関門 17（D-167）、関門 19（D-169）、PR #300（D-164）、PR #304（D-166） |
-| 23、`docs/plu-export-and-real-csv-verification.md` | 23 §13.3.1 の入力の文、PLU-21・PLU-25 の行。`z004_parser.rs` は触らない | PR #304（23 §13.4.2・§13.5、Z004 の 8 桁の行） |
+| `docs/decision-log.md` | D-168 と、D-052・D-073・D-117 への Superseded の行（末尾の追記は merge 順で両方を残す） | 関門 17（D-167）、関門 19（D-169）、PR #300（D-164）、PR #304（D-166） |
+| 23、`docs/plu-export-and-real-csv-verification.md` | 23 §13.3.1 の入力の文、冒頭の段の PLU-21・PLU-25 の文と PLU-21・PLU-25 の行。`z004_parser.rs` は触らない | PR #304（23 §13.4.2・§13.5、Z004 の 8 桁の行） |
 | `docs/backlog.md` | 「PLU の書出しの見直しの runtime」と上の関連の 2 項目 | PR #300（E-1 の項目） |
 
 ## Acceptance Criteria
 
 - AC1（S1）: 5 つの status の行を持つ直前の版の DB で migration が成功し、`release_pending` が `external` になり、ほかの行の全列と、4,784 行の memory No. の集合が同じ。`released_at` 列と key `plu_register_snapshot_summary` が無い。同じ JAN の `external` が複数行と、`external` と `active` の同じ JAN を保存でき、`reserved` / `active` の同じ JAN の 2 行目は拒まれる。確かめの失敗で schema・値・版が何も変わらない（T1〜T4）。
-- AC2（S2）: 対象外化・廃番化・JAN の変更の後も枠の状態が変わらず、Diff / Full の file にその枠の行も clear 行も無い。対象へ戻すと同じ memory No. を使う（`cd src-tauri && cargo test --lib` の T10〜T12・T23 が PASS）。
+- AC2（S2）: 対象外化・廃番化・JAN の変更の後も枠の状態が変わらず、Diff / Full の file にその枠の行も clear 行も無い。対象へ戻すと同じ memory No. を使い、confirm の前の書き出し直しは Diff も Full も同じ memory No. を返す（`cd src-tauri && cargo test --lib` の T10〜T12・T23・T28 が PASS）。IO-04 の product 行の既存の test（T23）は期待値を変えずに通る（変える要が出たら行の形が変わるので、D-168 の条件で CV17 の実機の L3 を置き直す。止めて報告する）。
 - AC3（S3）: 精算回数が最大の 1 本だけを照合し、key が無い・より大きいときだけ照合する。等しい・小さい・key が読めない・使える Z004 が無いときは枠・app_settings・操作ログを何も変えない。33 §16.3 の表の全部の行が test にある（`cargo test --lib` の T5〜T9 が PASS）。
 - AC4（S3）: `scan_register_sd` は照合の `Err` でも成功を返し、`SkippedOlder` のときだけ `plu_snapshot_skipped_older` が `true`。cache の snapshot に Z004 の bytes が残らない（T14・T15）。
-- AC5（S4・S5）: 知らせの文は `true` のときだけ出て、読み直すと消える。SD の読取りの成功で slot summary と未反映一覧が stale になる。PLU 書出しの画面は未照合で warning と導線、照合済みで日時の 1 行（T20〜T22）。
+- AC5（S4・S5）: 知らせの文は `true` のときだけ出て、読み直すと消える。SD の読取りの成功で slot summary と未反映一覧が stale になる。PLU 書出しの画面は未照合で warning と導線、照合済みで日時の 1 行。CV17 に取り込めなかったときの案内は §67.9 の文で、保存の後と復帰の Alert の 2 か所に出る（T20〜T22）。
 - AC6（S6・S7）: 商品一覧に「PLU」列・PLU表示・一括操作が無く、URL の `plu` を無視する。商品フォームに「レジメモリNo.」が無い（T17〜T19）。
 - AC7（S8）: T13 は実装の前に red（`cd src-tauri && cargo test --lib -- test_update_product_req907_name_department_tax_change_sets_plu_dirty` が exit 101）、実装の後に exit 0。原価だけ・単位だけ・同じ値の更新では立てない。
 - AC8（S9）: restore の後に `plu_register_snapshot_at` が無く、`plu_register_snapshot_settlement_no` は backup の値のまま。書出しは `register_snapshot_required` で拒まれる。後処理が失敗したときは次回起動で消える（T16）。
-- AC9: Test Plan の mutation（M1〜M10）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
+- AC9: Test Plan の mutation（M1〜M13）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
 - AC10（撤去の検査）: `rg -n 'release_pending|released_at|PLU_CLEAR_ROW_ENABLED|release_plu_slot_for_jan|bulk_set_plu_target|bulkSetPluTarget|find_products_for_bulk_plu_target|PluMigrationFilter|over_limit_warning|PluPreparedRowKind|PluExportRowKind|plu_memory_no|plu_register_snapshot_summary|importPluRegisterSnapshot' src src-tauri/src src-tauri/tests` の当たりが、`schema_v5.rs`・この lane の `schema_v<N>.rs`・`migration.rs` の v5 の test・UI-08 の旧い復帰状態を捨てる test だけ。`rg -c 'runtime の状態' docs --glob '!docs/archive/**' --glob '!docs/plans/**' --glob '!docs/research/**' --glob '!docs/decision-log.md' --glob '!docs/backlog.md'` が 0 件（起票の時点の `1edcedc3` は 6 file で 11 行: biz-task-specs 3・cmd-task-specs 2・io-task-specs 1・ui-task-specs 3・plu-tables 1・33 1。どれも PLU の注記）。
 - AC11（gate）: `docs/DEV_WORKFLOW.md` Verification Gates の Rust・bindings・frontend・traceability・docs の command が全部通り、`bash scripts/doc-consistency-check.sh` が ERROR 0。`cargo check --release` が通る（L3 の前）。
+- AC12（S13）: `free` が閾値ちょうどで候補があれば、新しい JAN が候補の枠の memory No. で `reserved` になり、file にその行が出て、前の JAN の行も clear 行も無い。閾値より 1 つ多ければ `free` を使う。在庫 1 の廃番、廃番でない在庫 0、同じ JAN に在庫のある商品がある群、商品を持たない JAN の枠、`external` は使わない。候補が無ければ `free`、それも無ければ今の `no_free_slot`。前の商品の `plu_target`・`plu_dirty`・在庫は変わらず、operation_logs に 1 件残る（T24・T25）。
+- AC13（S13）: 使い回して予約した枠は、レジが前のコードを持つ照合で `reserved` のまま、新しいコードの観測で `active` になる（T26）。PLU 書出しの画面は、使い回す枠があるときだけ前の商品を名指しし、無いときは出さない。前の商品の在庫を直して戻ると消える（T27）。
 
 ## Design Readiness
 
-- 引用する設計正本: 33 §16（全節）、plu-tables、25 §12、23 §13.3・§13.3.1、30 §4.4（4b・4c）・§4.9.1、37 §37.9（手順 10）、45 §45.6a（手順 2a）、55 UI-07-D15 (8)、67（UI-08-D5・D11、§67.4・§67.8.1・§67.10）、40、41 §17.6、20、50 UI-01a-D10〜D12、51 UI-01b-D19、71 §71.7、22 §21（作り直しの形の先例）、`docs/UI_TECH_STACK.md` の D-052、decision-log の D-052・D-072・D-073・D-117・D-160。
-- 必要な設計成果物: 振舞いは existing sufficient（D-117・D-160 が正本に入れた）。updated in this PR は S12 と、22 の新しい節、71 §71.7 の後処理、D-168。
-- plan にしかない durable な判断の昇格先: 精算回数の読取りに `parse_z004` を使う・窓の中を全部読む → 33 §16.7・37 §37.9 手順 10・D-168。C17 の置換えと C19 の撤去 → D-168 と `docs/UI_TECH_STACK.md`。restore の後処理の置き場 → 71 §71.7 と D-168。migration の形 → 22 の新しい節。
+- 引用する設計正本: 33 §16（全節）、plu-tables、25 §12、23 §13.3・§13.3.1、30 §4.4（4b・4c）・§4.9.1、37 §37.9（手順 10）、45 §45.6a（手順 2a）、55 UI-07-D15 (8)、67（UI-08-D4・D5・D9・D11、§67.4・§67.8.1・§67.9・§67.10・§67.12）、40、41 §17.6、20、50 UI-01a-D10〜D12、51 UI-01b-D19、71 §71.7、22 §21（作り直しの形の先例）、`docs/UI_TECH_STACK.md` の D-052、decision-log の D-052・D-072・D-073・D-103・D-117・D-122・D-160。
+- 必要な設計成果物: S13 を除く振舞いは existing sufficient（D-117・D-160 が正本に入れた）。S13 は正本に無く、S13 の頭に挙げた節へ同じ PR で入れる。updated in this PR はほかに S12 と、22 の新しい節、71 §71.7 の後処理、D-168。
+- plan にしかない durable な判断の昇格先: 実機の L3 の当て方、枠の使い回しの条件と残る穴 → D-168（S12）と S13 の正本。精算回数の読取りに `parse_z004` を使う・窓の中を全部読む → 33 §16.7・37 §37.9 手順 10・D-168。C17 の置換えと C19 の撤去 → D-168 と `docs/UI_TECH_STACK.md`。restore の後処理の置き場 → 71 §71.7 と D-168。migration の形 → 22 の新しい節。
 - 前提・制約と延期した design gap（計画の review で確かめる）:
   - PR #292 の Residual: D-160 の wire（`PluRegisterSnapshotRefresh`、`plu_snapshot_skipped_older`、restore の後の key）は確定済みとして写さず、計画の review の対象にする。
   - restore の後処理の S9 の形（committed の後処理に置く、失敗は持ち越す）はこの起票の案で、71 に無い。best-effort で manifest を解放する枝（監査記録を書けなかったとき）でも key を消すかを 71 で決める。
   - migration を作り直さない代案: status の CHECK を 5 値のまま・`released_at` 列を残し、`UPDATE` と index の作り直しと key の削除だけにすれば、行のある表の作り直しが無くなる。plu-tables は作り直しと決めているので Scope は正本のまま。採るなら plu-tables と D-117 (1) の文の改訂が要り、Risk の理由の (1) が変わる（(2) の restore は残る）。
   - 本番の DB は無い（`docs/project-memory.md`）。migration の対象は開発・demo・試験の DB と owner の PC の DB。
   - scan で読む Z004 の本数と時間は未実測。
-- 絶対保証の例外と抜け道: 「アプリは枠を消さない・使い回さない」の例外は 33 §16.9 のとおり、照合でレジ側に別のコードを観測したときだけ。「古い SD で照合しない」は、restore の後は backup の時点の精算回数より大きく restore の前の最後の照合より小さい SD を照合しうる（Contract Ledger の D-160 (7) の行）。レジの精算回数が戻ると照合が止まり、自動の脱出は無い（D-117 の Revisit）。
+  - 使い回し（S13）を始める閾値の候補: (a) `free` が 0 のときだけ（定数を持たず、今 `no_free_slot` になる所で使い回す）。(b) `free` が N 以下（レジで手で登録する分の空きを残す。N を決める材料のレジ側の登録の増え方は未実測）。
+  - 使い回す枠の選び方の候補: (a) memory No. が最小（今の最小番号の規則と同じで、足す data が無い）。(b) 最も古く廃番にした商品から（`products` に廃番にした日の列は無く〈`is_discontinued` だけ〉、列を足すか operation_logs から引く）。
+  - 在庫 0 の端: 負の在庫、要再確認（`stock_recheck=1`）、在庫連動の外（`pos_stock_sync=0`。売上で在庫が減らない）の商品を候補に入れるか（案: どれも入れない）。
+  - 使い回した予約の照合の行: 案は列を足さない判定（S13）。代案は枠に前のコードを持つ列（S1 の作り直しに足す）。案では、予約の後に前の商品の在庫を直しても次の SD の照合まで予約が外れず、それまでの書き出し直しは同じ枠に書く。
+  - 知らせ: 文言、wire の置き場（`get_plu_slot_summary` に足すか別の read-only の command か）、在庫を動かした後に古い知らせが残らない読み直し（D-052 の集合に足すか、画面を開くたびに読むか）。
+  - 実機の L3 を外す前提（この lane が file で変えるのは clear 行が消えることだけ、TD-902）に S13 が足すもの: 埋まった枠へ別のコードの行を書く。行の形は同じで、今の設計も conflict の後の書き直しで同じことをする（33 §16.8）が、CV17 とレジが受けた記録が L-012 にあるかは、この改訂では確かめていない。無ければ D-168 の当て方の扱いを owner へ送る。
+- 絶対保証の例外と抜け道: 「アプリは枠を消さない」は変えない。「使い回さない」の例外は、照合でレジ側に別のコードを観測したとき（33 §16.9）と S13 の使い回しの 2 つ。S13 の残る穴（D-168 の Guarantee range に書く）: 在庫 0 の廃番の品が実は棚にあり、前の精算の後に売れていたら、その分は次の Z004 で新しい商品の売上として出る（D-103 と同じ型。上書きした枠での実測の記録は、この改訂では確かめていない）。防ぐのは書き出す前の知らせだけ。使い回した後、前のバーコードは、レジが別の枠に持っていなければレジで未登録になる。「古い SD で照合しない」は、restore の後は backup の時点の精算回数より大きく restore の前の最後の照合より小さい SD を照合しうる（Contract Ledger の D-160 (7) の行）。レジの精算回数が戻ると照合が止まり、自動の脱出は無い（D-117 の Revisit）。
 - 判定: ready（計画の review の前提として）。上の gap は計画の review の裁定で閉じ、Plan Commit の前に packet へ入れる。
 
 ## Contract Ledger
@@ -122,13 +143,13 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | 契約 ID | 設計正本の節 | 実装（Scope） | 自動 test | L3・非対象 |
 |---|---|---|---|---|
 | MNT-03-D9 の後の migration（D-117 (1)） | plu-tables の migration、22 の新しい節 | S1 | T1〜T4 | 非対象（L3 は空の DB。行のある DB は T1〜T4） |
-| BIZ-04-D3 / SPEC-PLS-D2 照合の表 | 33 §16.3 | S3 | T7・T8 | L3-4 |
+| BIZ-04-D3 / SPEC-PLS-D2 照合の表 | 33 §16.3 | S3 | T7・T8 | L3-1（照合が走ること。表の行は T7） |
 | D-117 (3) 精算回数の選択と key | 33 §16.3 手順 1〜3 | S3 | T5・T6 | L3-2 |
 | gate `register_snapshot_required` | 33 §16.3・§16.9 | S3・S5 | T9・T20 | L3-1 |
-| BIZ-04-D4 prepare（sticky・clear 無し） | 33 §16.4 | S2 | T10・T12 | L3-4 |
+| BIZ-04-D4 prepare（sticky・clear 無し） | 33 §16.4 | S2 | T10・T12・T28 | L3-4 |
 | BIZ-04-D5 confirm | 33 §16.5 | S2（clear の confirm を外す） | T10 と既存の confirm の test | L3-4 |
 | BIZ-04-D6 枠を解放しない | 33 §16.6、30 §4.4 4b | S2 | T11 | 非対象（BIZ） |
-| IO-04-D2・D4（IO-04-D3 の撤去） | 25 §12 | S2 | T23 | L3-4（CV17 の受理） |
+| IO-04-D2・D4（IO-04-D3 の撤去） | 25 §12 | S2 | T23 | 非対象（行の形を変えない。CV17 の受理は前の実機の記録で受ける、D-168） |
 | BIZ-08 手順 10 | 37 §37.9 | S3 | T14 | L3-1 |
 | CMD-12 手順 2a・`plu_snapshot_skipped_older` | 45 §45.6a | S3 | T15 | L3-2 |
 | CMD-08-D4 の撤去・summary の wire | 41 §17.6 | S3 | T20、bindings の差分 | 非対象 |
@@ -137,10 +158,14 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | UI-08-D5・D11 | 67 | S5 | T20 | L3-1 |
 | BIZ-01-D4・CMD-01-D4・UI-01a-D10〜D12 の撤去 | 30 §4.9.1、40、20、50 | S6 | T17・T18 | L3-3 |
 | UI-01b-D19・IO-01-D4 の `plu_memory_no` | 51、20 | S7 | T19 | L3-3 |
-| D-160 (5) `plu_dirty` | 30 §4.4 4c | S8 | T13 | L3-3 |
+| D-160 (5) `plu_dirty` | 30 §4.4 4c | S8 | T13 | L3-4 |
 | D-160 (7) restore の後の key | 33 §16.8、71 §71.7 | S9 | T16 | 非対象（restore の実機の確かめは足さない。71 の既存の L3 の範囲を変えない） |
 | D-160 (7) の穴（PR #292 の P3 の 4） | D-168 の Guarantee range | 直さない: restore の後、backup の時点より大きく最新より小さい精算回数の SD を読むと古い占有で照合する。締めで今の SD を読む普通の流れでは起きない | — | 非対象（受け入れる限界として書く） |
-| D-073 L3 の適用範囲 | decision-log D-073、67 §67.12 | L3-4・L3-5 | — | L3-4・L3-5 |
+| D-073 の当て方（TD-902）と PLU-21・PLU-25 | D-168、67 §67.12、UI-08-D4・D9、§67.9 | S5・S12 | T20・T23・T28 | L3-4（開発の build）。CV17・レジの実機は非対象 |
+| 使い回しの候補と prepare（TD-904。D-117 (1) の改め） | D-168、33 §16.4 手順 5・§16.6・§16.9、plu-tables | S13 | T24・T25 | L3-5 |
+| 使い回した予約の照合と、前の商品の JAN の別の枠の観測 | 33 §16.3 の表 | S13 | T26（別の枠の観測は T7 の `external` の行） | 非対象（BIZ） |
+| 使い回しの知らせ | 67（新しい判断の ID、§67.4・§67.8・§67.9）、41 §17.6 | S13 | T27 | L3-5 |
+| 使い回しの残る穴 | D-168 の Guarantee range | 直さない: 在庫 0 の廃番の品が棚にあって前の精算の後に売れていた分は、新しい商品の売上になる。書き出す前の知らせで防ぐ | — | 非対象（受け入れる限界として書く） |
 | 隣の契約（除外）: BIZ-03 の Z004 の取込み（32）、D-122 の別名、停止 ADR | 33 §16.3 の末尾 | 触らない | — | 非対象 |
 
 ## Test Plan
@@ -166,22 +191,27 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | search の状態 | URL の `plu` で絞り込む・戻り先に `plu` を運ぶ | frontend unit | T17 `search.test.ts`・`lib/return-to.test.ts` の `plu` を無視する case | schema に `plu` を残す |
 | UI-01a | 列・絞り込み・一括操作が残る | frontend | T18 `ProductListPage.test.tsx`・`components/ProductTable.test.tsx` | 列を残す |
 | UI-01b | 「レジメモリNo.」が残る | frontend | T19 `ProductFormPage.test.tsx` | 表示を残す |
-| UI-08 | 未照合で書出しへ進める、step・要約が残る、旧い復帰状態で壊れる | frontend（initial / pending / success / failure / retry / revisit / restart） | T20 `PluExportPage.test.tsx` | 未照合の分岐を外す |
+| UI-08 | 未照合で書出しへ進める、step・要約が残る、旧い復帰状態で壊れる、取り込めなかったときの案内が前の file の再投入を勧める | frontend（initial / pending / success / failure / retry / revisit / restart） | T20 `PluExportPage.test.tsx` | 未照合の分岐を外す |
 | UI-07-D15 (8) | `false` で出る・`true` で出ない・読み直しても残る | frontend（success / refetch） | T21 `DailyReportImportPage.sd.test.tsx` | 表示の条件を反転する（M7 の UI 側） |
 | D-052 | SD の読取りの後に summary・未反映一覧が古いまま | frontend（invalidate / refetch。oracle は独立に転記） | T22 `invalidation-contract.meta.test.ts` と scan の成功の handler の test | 集合から `pluDirty` を外す（M9） |
-| IO-04 | clear 行の形が残る・product 行が変わる | unit | T23 `plu_formatter.rs` の既存の product 行の test（clear 行の test は消す） | 列・桁を変える |
+| IO-04 | clear 行の形が残る・product 行が変わる | unit | T23 `plu_formatter.rs` の既存の product 行の test（期待値を変えない。clear 行の test は消す） | 列・桁を変える |
+| 使い回し（prepare） | 空きが足りているのに使い回す、在庫のある商品・廃番でない商品・商品を持たない JAN・`external` の枠を使う、前の JAN の行が file に出る、前の商品を変える | unit（境界と候補の条件の表） | T24 `test_prepare_plu_export_req907_reuses_sold_out_discontinued_slot_at_threshold` | 閾値の比較を 1 つずらす（M11）・在庫 0 の条件を外す（M12）・廃番の条件を外す（M13） |
+| 候補が無いとき | 候補が無いのに `free` 以外の枠を取る、`no_free_slot` が変わる | unit | T25 `test_prepare_plu_export_req907_no_free_slot_excludes_only_affected_groups`（既存） | 候補の条件を外して `external` を取る |
+| 使い回した予約の照合 | 書込みの前の観測で予約が外れる、前の商品が候補でなくなっても保つ | unit | T26 `test_import_plu_register_snapshot_req907_keeps_reused_reservation_until_written` | 足した行を外す |
+| 使い回しの知らせ | 使い回すのに出ない、使い回さないのに出る、在庫を直しても残る | frontend（initial / success / revisit）と BIZ の見込みの unit | T27 `PluExportPage.test.tsx` と `test_plu_slot_reuse_preview_req907_matches_prepare` | 一覧が空でも Alert を出す・見込みを prepare と別の規則で求める |
+| 書き出し直し（PLU-25） | confirm の前の書き出し直しで memory No. が変わる | unit | T28 `test_prepare_plu_export_req907_uses_min_free_and_sticky_allocation`（既存。Diff の後の Full が同じ memory No.） | 予約済みの枠の再利用を外す |
 
-mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M10 は表の「Would fail if...」の括弧のとおり。
+mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M13 は表の「Would fail if...」の括弧のとおり。
 
 ## L3
 
-D-073 の (1)・(3) に当たる（PLU file の形と UI-08 の operator flow）。L3-1〜L3-3 は開発用の Windows の native build・空の DB と S10 の合成の SD の folder（CP932・CRLF、「場所を選ぶ」で選ぶ）で行い、L3-4・L3-5 は CV17 と SR-S4000 の実機で行う（場と書く商品は O1）。lane の runtime の変更が止まり、並走の lane との同期が済んだ後に頼む。
+D-073 の (3)（UI-08 の operator flow）に当たるが、書く行の形を変えないので CV17・SR-S4000 の実機は使わない（owner の決定 TD-902、D-168）。全部を開発用の Windows の native build・空の DB と S10 の合成の SD の folder（CP932・CRLF、「場所を選ぶ」で選ぶ）で行う。商品と JAN は合成の値で、L3 の依頼に書く。lane の runtime の変更が止まり、並走の lane との同期が済んだ後に頼む。
 
 - L3-1 PLU 書出し / 空の DB で PLU 書出しを開く → 売上データ取込みで `sd-a` を読む → PLU 書出しへ戻る / 読む前は warning と売上データ取込みへの導線が出て書出しへ進めない。読んだ後は「レジの登録状況: {日時}」の 1 行が出て、Z004 を選ぶ step と件数の要約が無い。SD の読取りが待てる速さ。
 - L3-2 売上データ取込み / 続けて `sd-b`（精算回数が `sd-a` より小さい Z004 だけ）を読む / 読み終えた文の直下に、照合しなかったことと理由の文が出る。日報の一覧（か「新しい精算はありません」）は今までどおり出る。文が自然に読める。
-- L3-3 商品一覧と商品フォーム / 一覧を開き、商品を 1 つ修正して名称を変える / 一覧に「PLU」列・PLU表示・PLU 一括操作が無い。フォームに「レジメモリNo.」が無い。保存の後、ホームの未反映の知らせにその商品が出る。
-- L3-4（PLU-21） CV17 とレジ / 少数の商品を Diff で書き出し、CV17 で取り込み、SD 設定書込み → レジで設定読込み → 次の精算の後の SD を読む / CV17 が file を受ける。書いた商品がレジで呼び出せ、file に無い枠の登録が保たれる。SD を読んだ後、その商品が未反映に戻らない。
-- L3-5（PLU-25） CV17 / 書き出した file を取り込まずに、同じ mode で書き出し直す / 書き出し直した file の memory No. が前と同じで、未反映の一覧に商品が残る。書き出し直した file を取り込める。
+- L3-3 商品一覧と商品フォーム / 商品 A を登録し（13 桁の JAN、「レジにバーコード登録する」を入れる、初期在庫は空）、一覧と A の修正の画面を開く / 一覧に「PLU」列・PLU表示・PLU 一括操作が無い。フォームに「レジメモリNo.」が無い。
+- L3-4（PLU-25） PLU 書出し / 差分を書き出して保存する → 未反映から外さずに、全件を書き出して別の名前で保存する → 2 つの file をメモ帳で開く → 「この書出しを未反映から外す」を押す → A の修正で名称を変える / 保存の後に、書き出し直すことと、前に保存した file を取り込まないことの案内が出て、文が自然に読める。2 つの file の A の行のメモリNo. が同じ。外した後は A が未反映の一覧から消え、名称を変えるとホームの未反映の知らせに A が出る。
+- L3-5（使い回し） PLU 書出し / A を廃番にする → 売上データ取込みで `sd-c` を読む → 商品 B を登録する（別の JAN）→ PLU 書出しを開く → 差分を書き出して保存し、メモ帳で開く / 書き出す前に、A の枠を新しい商品に使うことと、A がまだ棚にあるなら在庫を直すことの知らせが、A を名指しして出る。文が自然に読める。file の B の行のメモリNo. が L3-4 の A と同じ。
 
 ## Recovery
 
@@ -189,16 +219,11 @@ D-073 の (1)・(3) に当たる（PLU file の形と UI-08 の operator flow）
 - migration の COMMIT の後: 前の版のアプリでは開けない（`SchemaNewerThanApp`）。戻すのは更新の前の backup（22 §16 の「回復」、`docs/migration-recovery-runbook.md`）。migration が捨てるのは `released_at` の値と、`release_pending` と `external` の区別で、この後の code はどちらも読まない。
 - code の revert: squash commit の revert では DB は戻らない（上の backup）。版の番号を取り直した build で開く前の扱いは 22 §21 の「版の番号の取り直しと開発・試験 DB」。
 - restore の後処理の失敗: committed の manifest が残り、次回起動で消し直す。key の削除は何度行っても同じ結果。
-- レジへ書いた PLU（L3-4・L3-5）は DB を戻しても戻らない。書く前に SD の設定 file（`AUTOPGM\FILE092P.092`）を PC へ写す（D-160 (2)）。写しから戻す手順を実機で試した記録は無い（PLU-05）。
+- 使い回して書いた枠（S13）: レジにあった前の商品の登録は、DB を戻しても戻らない。前の商品をまた売るときは、廃番を解除して対象へ戻し、書き出す（ほかの新しい JAN と同じに枠を取る）。この lane の L3 はレジへ書かない。
 
 ## Data Safety
 
-- commit しないもの: 店の SD の file・実 Z004・`FILE092P.092` の写し・店の DB・backup・書き出した PLU の file。L3-4・L3-5 で書いた商品の名前・JAN・値段は repo に書かず、記録は件数と匿名の枠の挙動だけ（PLU-21 の証跡の形）。
+- commit しないもの: 店の SD の file・実 Z004・店の DB・backup・書き出した PLU の file。L3 の商品と JAN は合成の値。
 - 合成だけの path: S10 の入力物は `INVENTORY_L3_OUT` の folder へ手元で作り、tracked にしない。test の Z004 と SD の tree は合成の値。
 - 操作ログ（`plu_register_snapshot_import`）は件数だけで、実コード・名称・単価を入れない（33 §16.3）。
 - migration は数量・在庫・売上・商品を変えない。写しの確かめ（S1）が通らなければ何も変えない。
-
-## owner に決めてもらう事項
-
-- O1 L3-4・L3-5 の場と書く商品。A: 次の訪店で、開発用の PC から、店で実際に売る商品の少数を書く（確かめた 3 部門の商品だけ。書いた枠は本番の登録として残り、本番の DB は後の SD の照合で引き継ぐ）。B: 合成の JAN で書く（レジに使わない枠が残る。アプリは枠を消さず、レジの取説に枠を消す操作は無い〈D-117 の Why〉）。C: この lane では実機の確かめを行わず、初回の本番の書込みで PLU-21・PLU-25 を取る（D-117 (7) と D-073 の改訂が要る）。推奨は A（candidate。部門リンクの決め方が未決でも、3 部門は CV17 の取込みで受理を確かめてある〈backlog の「PLU の部門リンクの値と 21 個目の部門」〉）。
-- O2 初回の本番の書込みの手順書（D-160 (2) は「この lane か手順書の改訂で決める」）。A: この lane に入れず、部門リンクの決め方の後の docs の lane で `docs/initial-load-runbook.md` の流れ 3 に書く。B: この lane の PR に入れる。推奨は A（candidate。手順は部門リンクの決め方に依り、この lane の範囲の外）。
