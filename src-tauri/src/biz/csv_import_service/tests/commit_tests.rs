@@ -833,6 +833,80 @@ fn test_commit_req401_reused_settlement_no_after_rollback_falls_back_to_dates() 
     }
 }
 
+// --- JAN-8 の Z004 の行（D-166）---
+
+fn csv_movement_count(conn: &crate::db::DbConnection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM inventory_movements WHERE reference_type = 'csv_import'",
+        [],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[test]
+fn test_commit_csv_import_req401_jan8_moves_stock() {
+    // REQ-401 / D-148 (2) / D-166: 在庫連動の JAN-8 の商品の 8 桁 + EEEEEE の行は行エラーにならず、確定で在庫が減る
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "J8-LINK", "49123456", 10, true);
+    let pv = parse_and_build_cache(
+        &conn,
+        make_z004_bytes(1, "2026-11-24", &[("49123456EEEEEE", "合成JAN8", 3, 300)]),
+        "Z004.CSV",
+    );
+    assert!(pv.error_rows.is_empty(), "{:?}", pv.error_rows);
+    let result = commit_cached(&mut conn, build_cached(pv), TEST_TODAY).unwrap();
+
+    assert_eq!(result.status, sales_repo::CsvImportStatus::Completed);
+    assert_eq!(stock_copy(&conn, "J8-LINK").0, 7);
+    assert_eq!(csv_movement_count(&conn), 1);
+}
+
+#[test]
+fn test_commit_csv_import_req401_jan8_negative_row_restores_stock() {
+    // REQ-401 / D-148 (2) / D-166: JAN-8 の負の個数の行（レジで読んで戻した返品）の確定で在庫が戻る
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "J8-RET", "49123456", 10, true);
+    commit_bytes(
+        &mut conn,
+        make_z004_bytes(1, "2026-11-24", &[("49123456EEEEEE", "合成JAN8", -2, -200)]),
+        "Z004.CSV",
+    )
+    .unwrap();
+
+    assert_eq!(stock_copy(&conn, "J8-RET").0, 12);
+    assert_eq!(csv_movement_count(&conn), 1);
+}
+
+#[test]
+fn test_commit_csv_import_req401_jan8_shared_or_unsynced_stays() {
+    // REQ-401 / D-148 (2) / D-166: 共有の JAN-8（候補 2）と在庫連動でない JAN-8 の行は在庫を動かさない
+    let (_dir, mut conn) = setup_test_db();
+    create_test_product_with_jan(&conn, "J8-SHARE-A", "49123456", 10, true);
+    create_test_product_with_jan(&conn, "J8-SHARE-B", "49123456", 10, true);
+    create_test_product_with_jan(&conn, "J8-NOSYNC", "49123457", 10, false);
+    let result = commit_bytes(
+        &mut conn,
+        make_z004_bytes(
+            1,
+            "2026-11-24",
+            &[
+                ("49123456EEEEEE", "合成共有", 1, 100),
+                ("49123457EEEEEE", "合成非連動", 1, 100),
+            ],
+        ),
+        "Z004.CSV",
+    )
+    .unwrap();
+
+    assert_eq!(result.status, sales_repo::CsvImportStatus::Completed);
+    assert_eq!(result.total_items, 2);
+    assert_eq!(stock_copy(&conn, "J8-SHARE-A").0, 10);
+    assert_eq!(stock_copy(&conn, "J8-SHARE-B").0, 10);
+    assert_eq!(stock_copy(&conn, "J8-NOSYNC").0, 10);
+    assert_eq!(csv_movement_count(&conn), 0);
+}
+
 // --- z004_moves_stock（D-148 (2)、31 §12.4 の置き換えの段）---
 
 #[test]
@@ -858,7 +932,7 @@ fn test_z004_moves_stock_req401_single_linked_only() {
 
 #[test]
 fn test_z004_moves_stock_req401_rejects_non_z004_jan_forms() {
-    // REQ-401 / D-148 (2) / B7b: 候補を 1 つの在庫連動に固定し、Z004 の行に当たらない JAN の形は false。
+    // REQ-401 / D-148 (2) / D-166 / B7b: 候補を 1 つの在庫連動に固定し、Z004 の行に当たらない JAN の形は false。
     // 形の条件が受ける ⇔ normalize_jan(s, 1) == Ok(Some(s))（Z004 の照合に現れる値の形と同じ）
     let (_dir, conn) = setup_test_db();
     create_test_product_with_jan(&conn, "B7B-LINK", "4901234567887", 0, true);
@@ -866,7 +940,11 @@ fn test_z004_moves_stock_req401_rejects_non_z004_jan_forms() {
     assert_eq!(candidates.len(), 1);
 
     for (jan, expected) in [
-        ("49123456", false),       // JAN-8
+        ("49123456", true),        // JAN-8（D-166）
+        ("12345678EEEEEE", false), // 正規化の前の Z004 の 8 桁の形
+        ("00000000", false),       // 8 桁の全桁ゼロ
+        ("4912345", false),        // 7 桁
+        ("491234567", false),      // 9 桁
         ("490123456788", false),   // 12 桁
         ("49012345678870", false), // 14 桁
         ("490123456788A", false),  // 13 桁に英字

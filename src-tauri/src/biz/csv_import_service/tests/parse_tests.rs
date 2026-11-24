@@ -459,7 +459,7 @@ fn test_parse_and_validate_req401_comma_amount_matched() {
 
 #[test]
 fn test_parse_and_validate_req401_non_jan_zero_rows_no_error() {
-    // REQ-401 / SPEC-Z4A-D8 / SPEC-Z4A-D5: 8桁独自コード + EEEEEE の0/0の枠は error_rows に入らない
+    // REQ-401 / SPEC-Z4A-D8 / SPEC-Z4A-D5: 8桁 + EEEEEE の0/0の枠（JAN-8 として IO が返し、BIZ-03 が除外する。D-166）は error_rows に入らない
     let (_dir, conn) = setup_test_db();
     create_test_product_with_jan(&conn, "TEST-001", "4912345678901", 10, true);
     let bytes = make_z004_bytes(

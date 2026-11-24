@@ -170,7 +170,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
    - return_recordsにINSERT → record_idを取得
    - 各return_itemについて:
      - return_itemsにINSERT
-     - register_processed=1（レジでバーコードを読んで戻した）かつ Z004 の取込みが在庫を動かす商品（`z004_moves_stock`: 13 桁の JAN が 1 商品だけに当たり在庫連動）の明細 → 在庫は動かさない（CSV取込みで自動反映）
+     - register_processed=1（レジでバーコードを読んで戻した）かつ Z004 の取込みが在庫を動かす商品（`z004_moves_stock`。条件は [31](../function-design/31-biz-inventory-service.md) §12.4）の明細 → 在庫は動かさない（CSV取込みで自動反映）
      - それ以外（register_processed=0、または Z004 が在庫を動かさない商品の明細。D-148）:
        - direction='in'（戻り）→ 共通在庫変動処理（quantity=+数量, movement_type='return'）
        - direction='out'（渡し）→ 共通在庫変動処理（quantity=-数量, movement_type='return'）
