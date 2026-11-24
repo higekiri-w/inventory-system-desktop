@@ -5,7 +5,7 @@ wave に属さない単独の lane。出所は [backlog](../backlog.md) の「SD
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: a51545519dbd9990794867234802574805e7e9a0
 - Amendments: none
 
 `Plan Commit`・`Amendments` は `scripts/plan-approve.sh` が書く（手で写さない）。
