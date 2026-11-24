@@ -78,7 +78,7 @@ const BUSY_COPY = [
     kind: "ej-import",
     title: "取込みの途中です",
     description:
-      "取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「売上データ取込み」の「日報取込み」タブで同じ SD を読み直し、「まとめて取り込む」が押せれば押してください。結果に欠けか読めないファイルの文が残っていれば、「EJ のファイルを選んで取り込む」で同じファイルを選び直してください。取り込み済みの控えは二重に入りません。",
+      "取込みが終わるまでお待ちください。終わると閉じられます。いま閉じると、取り込めたかどうかをこの画面で確かめられなくなります。閉じたときは、次にアプリを開いてから「レシートの控え」の「EJ のファイルを選んで取り込む」で同じファイルをもう一度選んでください。取り込み済みの控えは二重に入りません。",
   },
   {
     // 取消の応答を待つ間にも、確かめの読取りを待つ間（取消済みと確かめた後のこともある）にも出る:
@@ -224,6 +224,20 @@ describe("WindowCloseDialog (UI-12/UI-USW-D5)", () => {
       expect(tauriWindow.destroy).not.toHaveBeenCalled();
     },
   );
+
+  it("G2 REQ-908 / UI-USW-D5 の 4: ej-import の文は日報取込みと控えの画面のどちらから出ても当たり、Alert の有無を条件にしない", () => {
+    render(
+      <>
+        <Guard kind="ej-import" />
+        <WindowCloseDialog />
+      </>,
+    );
+    pressClose();
+    const dialog = screen.getByRole("alertdialog", { name: "取込みの途中です" });
+    expect(dialog).toHaveTextContent("「レシートの控え」の「EJ のファイルを選んで取り込む」");
+    expect(dialog).not.toHaveTextContent("日報取込み");
+    expect(dialog).not.toHaveTextContent("欠け");
+  });
 
   it("T4 UI-USW-D5: 進行中の窓は「待つ」で閉じ、destroy を呼ばない", async () => {
     const user = userEvent.setup();

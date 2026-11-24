@@ -4588,3 +4588,126 @@ fn test_req401_scan_without_ej_has_no_ej_item() {
         [("2026-03-21".to_string(), "imported")]
     );
 }
+
+// -----------------------------------------------------------------------
+// BIZ-08-D9 の閲覧（37 §37.11「処理ステップ（閲覧）」、UI-09c。Test Plan B1〜B4）
+// -----------------------------------------------------------------------
+
+fn ej_insert_at(conn: &crate::db::DbConnection, no: &str, printed_at: &str) -> i64 {
+    let record = crate::db::ej_repo::NewEjRecord {
+        machine_prefix: "0001".to_string(),
+        record_no: no.to_string(),
+        printed_at: printed_at.to_string(),
+        mode: crate::db::ej_repo::EjRecordModeCode::Normal,
+        kind: crate::db::ej_repo::EjRecordKindCode::Sale,
+        settlement_report: None,
+        settlement_completed: None,
+        total_amount: Some(500),
+        body_text: format!("control {no}"),
+    };
+    crate::db::ej_repo::insert_ej_record(conn, &record, "t").unwrap()
+}
+
+fn assert_ej_validation(result: Result<impl std::fmt::Debug, BizError>, message: &str) {
+    match result {
+        Err(BizError::ValidationFailed(actual)) => assert_eq!(actual, message),
+        other => panic!("ValidationFailed({message}) でない: {other:?}"),
+    }
+}
+
+#[test]
+fn test_req908_ej_list_b1_default_latest_and_date_shape() {
+    // REQ-908 / BIZ-08-D9 §37.11 閲覧（Test Plan B1・M3）: None は最新の日、記録 0 件は date None、暦に無い日・形の外れは BIZ の文
+    let (_dir, conn) = setup_test_db();
+    let empty = list_ej_records(&conn, None).unwrap();
+    assert_eq!(empty.date, None);
+    assert!(empty.records.is_empty() && !empty.truncated && empty.gaps.is_empty());
+    assert_eq!((empty.prev_date, empty.next_date), (None, None));
+
+    ej_insert_at(&conn, "000101", "2030-01-01 10:00");
+    ej_insert_at(&conn, "000102", "2030-01-03 09:00");
+    ej_insert_at(&conn, "000103", "2030-01-03 18:00");
+    let latest = list_ej_records(&conn, None).unwrap();
+    assert_eq!(latest.date.as_deref(), Some("2030-01-03"));
+    assert_eq!(
+        latest
+            .records
+            .iter()
+            .map(|r| r.record_no.as_str())
+            .collect::<Vec<_>>(),
+        vec!["000102", "000103"]
+    );
+    assert_eq!(latest.prev_date.as_deref(), Some("2030-01-01"));
+    assert_eq!(latest.next_date, None);
+    // 記録の無い日も形が正しければ空の日（隣の日はある）
+    let gap_day = list_ej_records(&conn, Some("2030-01-02".to_string())).unwrap();
+    assert!(gap_day.records.is_empty());
+    assert_eq!(gap_day.prev_date.as_deref(), Some("2030-01-01"));
+    assert_eq!(gap_day.next_date.as_deref(), Some("2030-01-03"));
+
+    for bad in ["2026-02-30", "2026-1-1", "", "2026-13-01", "２０２６-01-01"] {
+        assert_ej_validation(
+            list_ej_records(&conn, Some(bad.to_string())),
+            "日付の形が正しくありません",
+        );
+    }
+}
+
+#[test]
+fn test_req908_ej_list_b2_truncates_over_1000() {
+    // REQ-908 / BIZ-08-D9 §37.11 閲覧（Test Plan B2）: 1001 件は 1000 件と truncated、1000 件は false
+    let (_dir, conn) = setup_test_db();
+    for no in 1..=1000 {
+        ej_insert_at(&conn, &format!("{no:06}"), "2030-01-02 10:00");
+    }
+    let full = list_ej_records(&conn, Some("2030-01-02".to_string())).unwrap();
+    assert_eq!((full.records.len(), full.truncated), (1000, false));
+    ej_insert_at(&conn, "001001", "2030-01-02 11:00");
+    let over = list_ej_records(&conn, Some("2030-01-02".to_string())).unwrap();
+    assert_eq!((over.records.len(), over.truncated), (1000, true));
+    assert_eq!(over.records[999].record_no, "001000");
+}
+
+#[test]
+fn test_req908_ej_find_b3_record_no_shape_and_zero_pad() {
+    // REQ-908 / BIZ-08-D9 §37.11 閲覧（Test Plan B3・M4）: 7 桁・数字以外・空・全角は BIZ の文、12 は 000012 で当たる
+    let (_dir, conn) = setup_test_db();
+    let id = ej_insert_at(&conn, "000012", "2030-01-02 10:00");
+    for bad in ["1234567", "12a", "", "１２"] {
+        assert_ej_validation(
+            find_ej_records_by_no(&conn, bad.to_string()),
+            "記録の番号は 6 桁までの数字で入れてください",
+        );
+    }
+    let found = find_ej_records_by_no(&conn, "12".to_string()).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!((found[0].id, found[0].date.as_str()), (id, "2030-01-02"));
+    assert!(find_ej_records_by_no(&conn, "000013".to_string())
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn test_req908_ej_get_b4_not_found_and_gaps() {
+    // REQ-908 / BIZ-08-D9 §37.11 閲覧（Test Plan B4）: 無い id は NotFound、000101・000104 の日は欠け 000102〜000103
+    let (_dir, conn) = setup_test_db();
+    let id = ej_insert_at(&conn, "000101", "2030-01-02 10:00");
+    ej_insert_at(&conn, "000104", "2030-01-02 11:00");
+    assert!(matches!(
+        get_ej_record(&conn, 999),
+        Err(BizError::NotFound(_))
+    ));
+    assert_eq!(
+        get_ej_record(&conn, id).unwrap().body_text,
+        "control 000101"
+    );
+    let day = list_ej_records(&conn, None).unwrap();
+    assert_eq!(
+        day.gaps,
+        vec![EjNumberGap {
+            machine_prefix: "0001".to_string(),
+            from_no: "000102".to_string(),
+            to_no: "000103".to_string(),
+        }]
+    );
+}

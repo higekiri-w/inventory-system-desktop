@@ -4,7 +4,7 @@ import { queryKeys } from "./query-keys";
 
 export type InvalidationKey = QueryKey;
 
-/** D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）: mutation 成功時に stale 化する consumer query の SSOT。 */
+/** D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）、C26・C27（D-121、UI-09c）: mutation 成功時に stale 化する consumer query の SSOT。 */
 export const invalidationContract = {
   productCreate: () => [
     queryKeys.productList.root(),
@@ -156,6 +156,15 @@ export const invalidationContract = {
     queryKeys.dailySalesRoot(),
     queryKeys.monthlySalesRoot(),
   ],
+  // C26（55 UI-07-D17）: SD の一括取込みの成功。日報（C10）に控えを足す（C10 は ej_records を書かないので変えない）
+  sdBulkImport: () => [
+    queryKeys.dailyReportImportLists(),
+    queryKeys.dailySalesRoot(),
+    queryKeys.monthlySalesRoot(),
+    queryKeys.ejRecords.root(),
+  ],
+  // C27（45 §45.6c）: 手で選ぶ EJ の取込みの成功。控えだけ（日報・在庫・売上を変えない）
+  ejImport: () => [queryKeys.ejRecords.root()],
   stocktakeStart: () => [
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),
