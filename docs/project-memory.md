@@ -110,6 +110,7 @@ Keep it factual and stable.
   - PLU に登録した商品を小数の数量で売ると、Z004 の個数は小数 1 桁で出て、EJ と精算レシートにも小数で残る — 店主回答（フォーム）2026-10-07
 - Excluded long-dormant items（単品コードなし）are sold via department key + amount, tracked only in the owner's memory — 2026-08-22 owner原文 — `docs/evidence/issue-90/hearing-2026-08-21-22.sanitized.md`
 - Of 216 normal PLU slots, only 2 have real store-entered data; the remaining 214 are factory-default `PLU####` placeholders — see also「レジ・レジスターツール」節の訂正事実 — 2026-08-17 実機機械抽出 — `docs/plu-export-and-real-csv-verification.md`
+- An 8-digit JAN (JAN-8, valid check digit) product scanned and sold at the register appears in Z004's 14-character code column as the 8 digits left-aligned + `EEEEEE` padding (a 13-digit JAN is 13 digits + `E`); the current `normalize_jan` accepts only 13 digits, so such a sold row is `invalid_jan` and does not reach stock linkage. The product had no register entry, so the owner registered it as a scanning PLU on the spot (one more scanning PLU slot) — 2026-11-24 訪店（repo 外の回答台帳 TD-877、#289 の 2）
 - 10 scanning PLU slots hold an 8-digit code + `EEEEEE` padding; the owner rewrote them for a test and left them because PLU is unused (correcting the earlier "non-handicraft goods" description; the app treats them as `external` either way) — 2026-08-17 実機機械抽出 / owner回答 2026-10-07 — `docs/plu-export-and-real-csv-verification.md`
 - Fabric/ribbon/string receiving slips record quantity in `m`. Shown a list of 12 unit words prepared by the asking side (個・枚・本・袋・箱・巻・組・セット・玉・丁・m・cm), the store owner answered that none of them is unused and added no other word; this is not a record that the store counts items in each of the 12 (the words the store owner named unprompted on 2026-08-15 were 個・玉・枚・本・丁, and the 2026-09-12 version of the stock Excel had 0 rows in 巻 and cm; D-119) — 2026-09-14 店主回答（LINE の返信を owner が転記。旧記載の「owner原文」を訂正）— `docs/evidence/hearing-2026-09-14-stock-units.sanitized.md`
 - Some items are received boxed and sold individually after unboxing (e.g. one sewing-notion item) — 2026-09-14 owner原文 — `docs/evidence/hearing-2026-09-14-stock-units.sanitized.md`
@@ -129,7 +130,8 @@ Keep it factual and stable.
 - 店にネットワーク（Wi-Fi・LAN）がある — owner回答2026-09-19
 - 店での運用を想定した市販の USB HID バーコードリーダーを owner が用意し（owner 2026-08-09）、店の PC で Excel シートの JAN 入力に使っている — owner回答2026-09-23
 - 店の PC は Windows 11 Pro 64-bit、画面は 1366×768・表示倍率 100%、BIZ UDPゴシックが入っている — owner確認 2026-09-29
-- プリンタは Canon TR8630（既定のプリンタ、標準 TCP/IP ポート）。Wi-Fi か有線 LAN かの区別と、Edge からの A4 1 枚の印刷は次の訪店で確かめる — owner確認 2026-09-29
+- プリンタは Canon TR8630（既定のプリンタ、標準 TCP/IP ポート）— owner確認 2026-09-29。ネットワークでつながっている（標準 TCP/IP ポート）ことを 2026-11-24 に再び見た。Wi-Fi か有線 LAN かは未確認、Edge からの A4 1 枚の試し刷りは owner の判断で省いた — 2026-11-24 訪店（repo 外の回答台帳 TD-877）
+- 店の PC に Microsoft Edge WebView2 Runtime が入っている（MSI の手順書の M9）。Smart App Control はオフ。SD の読取り機（全スロット）の取外しの設定は既定のクイック削除 — 2026-11-24 訪店（repo 外の回答台帳 TD-877）
 
 ### 無いもの（owner回答 2026-09-19、種類2 全13件）
 
@@ -157,7 +159,7 @@ Keep it factual and stable.
 - 毎日の締めで EJ も取り込める（取込みの頻度は今は月 1 回ほど）— 店主回答（owner 経由の質問票）2026-09-29
 - PLU をレジに書いた後の値下げ品の売り方: バーコードのある商品は読んでから値引きキー、バーコードの無い商品は部門キー（今は PLU を使っておらず、全部の商品を部門キーで売る。PLU-24、2026-07-23。2026-09-17 の確かめも同じ） — 店主回答（owner 経由の質問票）2026-09-29
   - 導入の後、1 回の締めの間にアプリからの PLU の反映を 2 回以上することは「ありうる」 — 店主回答（フォーム）2026-10-07（repo 外の回答台帳 TD-148）
-  - 毎日の日計明細の精算とは別に PLU だけの精算をする運用にはしない見込み。Z004 は毎回の精算で日報と一緒に出ている — owner 回答 2026-10-07（repo 外の回答台帳 TD-135）。取扱説明書では、日計明細に PLU を含めるかは CV17 の設定（「PLU を含める」）で決まる。店のこの欄は画面では見ていない — CV17 の取扱説明書（`ECRCV17.pdf` 5.7.4）
+  - 毎日の日計明細の精算とは別に PLU だけの精算をする運用にはしない見込み。Z004 は毎回の精算で日報と一緒に出ている — owner 回答 2026-10-07（repo 外の回答台帳 TD-135）。取扱説明書では、日計明細に PLU を含めるかは CV17 の設定（「PLU を含める」）で決まる。店のこの欄は「はい」 — CV17 の取扱説明書（`ECRCV17.pdf` 5.7.4）/ 2026-11-24 訪店で店の PC の CV17 の画面を見た（repo 外の回答台帳 TD-877）
 - Daily register closing happens same-day, with the store kept open; during closing the SD card is imported through CV17, the reports are pasted into Excel and printed, and only then is the store closed — owner回答2026-09-22
 - Sales made between the day's register closing and the store's actual close are therefore folded into the next day's closing — Coordinator の推論（上の行の owner回答2026-09-22 からの帰結で、owner の発言ではない）
 - PC work such as product edits can also happen after the day's register closing — owner回答2026-09-22
@@ -251,7 +253,7 @@ Keep it factual and stable.
 - Files left in PC-side `EcrDatas` after SD import are "layout A"; CV17's explicit export is "layout B" (observed on daily reports; the Z004 parser accepts layout A only, layout B is not yet supported) — 2026-07 L3 — `docs/project-memory.md`
 - Z004 returns appear as negative quantity/amount — 2026-08-15 issue #76 実機バッチ — `docs/plu-export-and-real-csv-verification.md`
 - Non-JAN custom-code items are currently all sold via department key; there is no item-level register sale or automatic stock decrement for them — 2026-07-23 owner確認 — `docs/plu-export-and-real-csv-verification.md`
-- レジの部門は 1〜20。PLU の部門リンクは部門か「ノンリンク」で、部門にリンクしない PLU の合計は日計明細に「ノンリンク」の行で出る — 取扱説明書（SR-S4000 日本語版 p.33・p.35・p.75）。アプリの部門の初期データは 21 で、20 個はレジの部門 1〜20 と 1 対 1（店主回答〈フォーム〉2026-10-07、repo 外の回答台帳 TD-146）、21 個目の名前は「ノンリンク」（`docs/db-design/master-tables.md` の初期データ、2026-03-29 確定）。21 個目がレジのどれに当たるかを店に聞く問いは、問いが古いとして聞き直さず、CV17 の部門リンクに「ノンリンク」をどう書くかの確かめに置き換えた（2026-10-16、repo 外の回答台帳 TD-296）。CV17 の部門リンクの選択肢に「ノンリンク」がどう書かれているかは、店の PC の画面では未確認（次の訪店の C3、TD-459）。実機で受理を確かめた部門リンクの値は 3 部門（`docs/plu-export-and-real-csv-verification.md` の PLU-17）
+- レジの部門は 1〜20。PLU の部門リンクは部門か「ノンリンク」で、部門にリンクしない PLU の合計は日計明細に「ノンリンク」の行で出る — 取扱説明書（SR-S4000 日本語版 p.33・p.35・p.75）。アプリの部門の初期データは 21 で、20 個はレジの部門 1〜20 と 1 対 1（店主回答〈フォーム〉2026-10-07、repo 外の回答台帳 TD-146）、21 個目の名前は「ノンリンク」（`docs/db-design/master-tables.md` の初期データ、2026-03-29 確定）。21 個目がレジのどれに当たるかを店に聞く問いは、問いが古いとして聞き直さず、CV17 の部門リンクに「ノンリンク」をどう書くかの確かめに置き換えた（2026-10-16、repo 外の回答台帳 TD-296）。店の PC の CV17（1.1.1）で SD の設定を読み込み、部門とスキャニング PLU の一覧を書き出して照合した: 部門リンクの選択肢は「ノンリンク」+ 20 部門で、レジの 20 部門の名前と「ノンリンク」はアプリの初期データの 21 部門と文字まで全部一致し、既存のスキャニング PLU が使う部門リンクの値（13 種）も全部アプリの部門名と一致した — 2026-11-24 訪店（C3、repo 外の回答台帳 TD-877）。CV17 の PLU の取込みで受理を確かめた部門リンクの値は 3 部門（`docs/plu-export-and-real-csv-verification.md` の PLU-17）
 - レジは、登録の無いバーコードを読むと「新規商品です。単価を入れて部門キーを押してください。」と案内し、単価と部門キーで、その場の登録と売上を同時に行う — 取扱説明書（SR-S4000 日本語版 p.42）。どの枠に入るかと、この働きを止める設定は取扱説明書に書かれていない。店のレジでも、登録の無い商品のバーコードを試しに読んだときにこの案内が出た — 店主回答（owner の中継）2026-10-21（repo 外の回答台帳 TD-356）。店は今この働きを使っておらず、PLU をアプリで扱えるようになれば使うかもしれないと owner は答えた — owner 回答 2026-10-07（TD-133）
 - CASIO ECR+（スマホアプリ）has a planned service end and is not the long-term primary integration — 2026-09-19 owner が同じ認識を示し、既存記録との対応を確認済み — `docs/plu-export-and-real-csv-verification.md`（"サービス終了予定があるため長期の primary integration にはしない"）/ `docs/decision-log.md`（D-022 "despite service-end risk"）
   - CASIO の公式ページ（<https://web.casio.jp/ecr/ble/ecr.html>、2026-09-24 確認）では、ECR+ は新規申込受付を 2026年1月4日に終了し、サービス提供は 2028年12月末に終了予定。ECR+ の終了後にレシートの控えをアプリで見られる必要があるかという問いに、owner はまず分からないと答えたうえで、ECR+ が終わるならレジの入替えと同時でないと困り、続かないなら代わりを自分たちで作るしかないと見ている — owner回答2026-09-23
@@ -274,7 +276,7 @@ Keep it factual and stable.
 - Whether the store will want a network (UNC/NAS) backup destination is still open; current handling is low priority pending an explicit need — `docs/backlog.md`（バックアップ保存先のUNC/ネットワークパス対応 項）
 - 導入後、値上げのときに紙の前年リストを手で直す作業をやめるかは未確認。owner は、このアプリを渡すことがその作業の代わりになるはずと考えている — owner回答2026-09-23
 - 布・ファスナー以外に、複数の商品が同じバーコードを共有するものがあるかは、店主が確認中 — 店主回答（owner 経由の質問票）2026-09-29
-- スキャニング PLU の開始メモリ No. を 217 から変えられる範囲（通常 PLU の枠を減らす向きを含む）と、変えたときに登録済みの枠がどうなるかは未確認。CV17 の取扱説明書は設定の欄があることだけを書き、範囲は書いていない。owner は変えられる値のはずと理解している（未確認）。店の PC の CV17 の画面でこの欄を見た記録は無い — owner の理解 2026-11-17（repo 外の回答台帳 TD-773）/ CV17 の取扱説明書（`ECRCV17.pdf` 5.7.2）
+- スキャニング PLU の開始メモリ No. を 217 から変えられる範囲（通常 PLU の枠を減らす向きを含む）と、変えたときに登録済みの枠がどうなるかは未確認。CV17 の取扱説明書は設定の欄があることだけを書き、範囲は書いていない。owner は変えられる値のはずと理解している（未確認）— owner の理解 2026-11-17（repo 外の回答台帳 TD-773）/ CV17 の取扱説明書（`ECRCV17.pdf` 5.7.2）。店の PC の CV17 の画面でこの欄は 217 だった（変える範囲は見ていない）— 2026-11-24 訪店（repo 外の回答台帳 TD-877）
 - CV17 で、SD を差さずに設定の file（SD の写し）を開いて PLU の画面を見られるかは未確認。取扱説明書は、設定の読込みで「ファイルのパスを選択」を選べるとする（`ECRCV17.pdf` 5.2）。owner は、PLU の画面は SD が無いと開かないと思うと答えた（2026-10-07、repo 外の回答台帳 TD-144）。どちらも実機で確かめた記録は無い
 
 owner が既出の記憶があると答えた 2 件は、記録を探索した結果、以下のとおり見つかった（未確認へは回さない）。
