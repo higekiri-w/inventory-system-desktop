@@ -2,7 +2,7 @@
 
 > **対象**: アプリを管理する人。店の利用者の操作にしない。
 > **引く正本**: 起動の拒否は [22-mnt-migration.md](function-design/22-mnt-migration.md) §3.2 の MNT-03-D11、前の版へ戻す DB の手順は [22](function-design/22-mnt-migration.md) §16 の「回復」とその写しの [migration-recovery-runbook.md](migration-recovery-runbook.md)（以下 runbook）、backup と復元は [71-mnt-backup.md](function-design/71-mnt-backup.md) と [68-ui-backup-restore.md](function-design/68-ui-backup-restore.md)。本書は正本の契約を引いて手順を並べ、正本に無い所は安全側に倒した管理者の判断を足す（初回の導入の条件、保管の規則、更新を始めない条件、起動の後の照合、前へ進むか戻すかの場面の分け方、起動しないときの保全、予行演習の退避と復帰）。食い違えば正本が正しい。
-> **未確認の点**: 実機で確かめていない振舞いは「未確認（M*n*）」と書き、確かめ方を末尾の [確かめる項目](#確かめる項目) に載せる。M1〜M8 は 2026-10-24 に開発用の Windows で一度にまとめて確かめ（予行演習）、結果で本書を書き換えた。M9 は店の PC で初回の導入の前に確かめる。
+> **未確認の点**: 実機で確かめていない振舞いは「未確認（M*n*）」と書き、確かめ方を末尾の [確かめる項目](#確かめる項目) に載せる。M1〜M8 は 2026-10-24 に開発用の Windows で一度にまとめて確かめ（予行演習）、結果で本書を書き換えた。M9 は 2026-11-24 に店の PC で確かめた。
 
 ## 今の事実
 
@@ -141,7 +141,7 @@ DB を戻しても、レジの側（PLU の登録・販売）は戻らない。�
 
 ## 確かめる項目
 
-M1〜M8 は開発用の Windows（店の PC ではない）で、試験用のデータだけで確かめる。店のデータを使わない。owner の手が要る操作なので、M1〜M8 を一度の回にまとめる。M9 は店の PC で、初回の導入の前に確かめる。結果は配布の記録と同じ場所に残し、本書の「未確認」を結果で書き換える。M1〜M8 は 2026-10-24 に確かめ、下の表の「結果」の列と本文に書いた。
+M1〜M8 は開発用の Windows（店の PC ではない）で、試験用のデータだけで確かめる。店のデータを使わない。owner の手が要る操作なので、M1〜M8 を一度の回にまとめる。M9 は店の PC で、初回の導入の前に確かめる。結果は配布の記録と同じ場所に残し、本書の「未確認」を結果で書き換える。M1〜M8 は 2026-10-24 に、M9 は 2026-11-24 に確かめ、下の表の「結果」の列と本文に書いた。
 
 予行演習の準備と片付け（MSI のアプリと開発中のアプリは `identifier` が同じで、同じデータの folder〈`%APPDATA%\com.inventory-system.desktop`〉と同じ WebView の保存の folder〈`%LOCALAPPDATA%\com.inventory-system.desktop`。[22](function-design/22-mnt-migration.md) §16 の「確かめた前提」、[packet](archive/plans/2026-10-23-msi-fix.md) の Contract Probe P10〉を使う。M7 のアンインストールと試験用のデータの投入が、開発に使っているものに当たらないようにする）:
 
@@ -160,4 +160,4 @@ M1〜M8 は開発用の Windows（店の PC ではない）で、試験用のデ
 | M6 | 新しい版の上に前の版の MSI を入れられるか（`allowDowngrades`） | 版 B（migration の無い組で）で、試験用のデータの代表の商品・その在庫の数・履歴を控えてからアプリを止め、版 B の上に版 A を入れる。「設定 → アプリ」で版が版 A になり、版 A を起動して控えた商品・在庫の数・履歴が同じであることを見る。両方が合ったときだけ合格 | 流れ 5 の 1 | 合格。止まらずに入り、版 A に置き換わり、控えた商品・在庫の数が同じ |
 | M7 | アンインストールでデータの folder が残るか。MSI で入れた版で WebView の保存の folder が出来るか・残るか（場所は 22 §16 の「確かめた前提」と packet の P10） | 準備で退避した後の試験用のデータで、アンインストールして `%APPDATA%\com.inventory-system.desktop` を見る。版 A の最初の起動の後とアンインストールの後に、`%LOCALAPPDATA%` の中に `com.inventory-system.desktop` の folder があるかだけを見る（準備で退避した後なので、出来ていればアプリが作ったもの） | 流れ 5 の 1（前の版を入れる前の backup）、流れ 5（アンインストールを手順に入れるか）、確かめる項目の準備と片付け | アンインストールの後も、`%APPDATA%\com.inventory-system.desktop`（DB を含む）と `%LOCALAPPDATA%\com.inventory-system.desktop` は残る |
 | M8 | アプリが動いたまま MSI を開いたときの振舞い | 版 A を起動したまま版 B を入れる | 流れ 4 の手順 3 | Windows の「使用中のファイル」の画面が出て、既定の「アプリケーションを終了してから再起動する」のまま OK を押すと、アプリが閉じられ、更新の後に立ち上がり直す |
-| M9 | 店の PC に WebView2 が入っているか | 店の PC の「設定 → アプリ」で「Microsoft Edge WebView2 Runtime」を探す（初回の導入の前） | 流れ 2（network の無い所での導入の要否） | 未確認（店の PC で初回の導入の前に確かめる） |
+| M9 | 店の PC に WebView2 が入っているか | 店の PC の「設定 → アプリ」で「Microsoft Edge WebView2 Runtime」を探す（初回の導入の前） | 流れ 2（network の無い所での導入の要否） | 確かめた（2026-11-24、店の PC に「Microsoft Edge WebView2 Runtime」がある。あわせて Smart App Control はオフ。repo 外の回答台帳 TD-877） |
