@@ -30,7 +30,7 @@
 - 数量・金額とも 0 の行（日計 0）は今のまま売上も movement も作らない（相殺の判定に使わないので保持しない）。数量 0 で金額が 0 でない行の売上の記録は今のまま。
 - 正常な行が全て 0 の file（その精算で PLU の売上が無かった）は、今の空の対象の拒否をやめ、売上と movement を作らずに精算の識別メタだけを持つ取込みとして確定する（ADR D4。精算の並び・D3 の窓・欠けの判定に入る。取り込まないと、その精算が欠けとして残り、計数の窓が決まらない）。
 - preview の引き当てと確定の取り直しの食い違い（D-122 からの申し送り。2026-10-22、b1 の起票で決めた）: 確定の TX で JAN の候補を取り直した結果、preview の行（`MatchedRow`）の商品と違う商品に当たる行、または preview で引き当てた商品が無くなった行が 1 つでもあれば、何も書かずに `ImportError`（「商品の登録が読み込みの後に変わりました。ファイルを選び直してください」）を返す。理由: 利用者が preview で確かめた引き当てと違う商品へ黙って売上と在庫を入れない（D-127）。知らせて確定する案は、確かめていない引き当てで在庫を動かす。preview の後に変わった在庫連動の設定は、確定の TX の値を使う（`stock_linked` は確定の時点の `pos_stock_sync`）。
-- preview の cache の契約（上の食い違いの拒否と、確定の TX の順 1〜5 の取り直しに要る。b1 の Plan Review round 1 の是正、2026-10-22）: BIZ-03-D1 の「commit 最小内部契約」を次の形に改める（§15.2 の型の節と `src-tauri/tests/import_internal_contract_test.rs` の固定は b1 の実装で同じ形にする）。(1) `MatchedRow` は `line_no`・`normalized_jan`（IO-02 が正規化した 13 桁の JAN）・`product_code`（preview で引き当てた先頭の商品）・`shared_jan: bool`（preview の時点でその JAN を持つ商品が 2 つ以上）・`quantity: i64`（上の数量の換算の後の在庫の数量）・`amount` を持つ。`pos_stock_sync` は持たない（確定の TX で取り直す）。`normalized_jan` は表示のためでなく確定の判定のために持つので、「表示専用の JAN を cache へ複製しない」の理由に当たらない（D-122 からの申し送りの照合には、preview の時点の元の JAN が要る。商品コードと今の JAN からは、元の JAN の引当先が変わったことを求められない）。(2) `CachedPreview` は `created_at`・`matched_rows`・`error_rows`・`preview_data`・`settlement`（`machine_no`・`settlement_no`・`settlement_date`。parse の時点で順 1 を通った精算の識別メタ）を持つ。`active_same_date_import_ids` は外す（同じ日の追加の確認を Z004 で使わない）。(3) `CommitRequest` は `cached_data` と `today`（CMD が渡す PC の今日。知らせのため）を持ち、`additional_import_confirmed` は外す。(4) 確定の TX の照合: `settlement` で順 1〜5 を取り直す（file を読み直さない）。`matched_rows` の各行について `normalized_jan` で今の候補を引き、候補が無い、先頭の商品が `product_code` と違う、候補が 2 つ以上かどうかが `shared_jan` と違う、のどれかなら上の食い違いとして拒否する。`error_rows` のうち `unmatched_product` の行の JAN に今は候補がある場合も同じく拒否する（preview で「未登録」と確かめた行が、確定で黙って別の扱いにならない）。CMD は parse の結果から cache を作り、確定で token から復元して渡す（[41](41-cmd-pos.md)。cache の持ち主は今のまま CMD）。
+- preview の cache の契約（上の食い違いの拒否と、確定の TX の順 1〜5 の取り直しに要る。b1 の Plan Review round 1 の是正、2026-10-22）: BIZ-03-D1 の「commit 最小内部契約」を次の形に改める（§15.2 の型の節と `src-tauri/tests/import_internal_contract_test.rs` の固定は b1 の実装で同じ形にする）。(1) `MatchedRow` は `line_no`・`normalized_jan`（IO-02 が正規化した JAN。形は [23](23-io-z004-parser.md) §13.5）・`product_code`（preview で引き当てた先頭の商品）・`shared_jan: bool`（preview の時点でその JAN を持つ商品が 2 つ以上）・`quantity: i64`（上の数量の換算の後の在庫の数量）・`amount` を持つ。`pos_stock_sync` は持たない（確定の TX で取り直す）。`normalized_jan` は表示のためでなく確定の判定のために持つので、「表示専用の JAN を cache へ複製しない」の理由に当たらない（D-122 からの申し送りの照合には、preview の時点の元の JAN が要る。商品コードと今の JAN からは、元の JAN の引当先が変わったことを求められない）。(2) `CachedPreview` は `created_at`・`matched_rows`・`error_rows`・`preview_data`・`settlement`（`machine_no`・`settlement_no`・`settlement_date`。parse の時点で順 1 を通った精算の識別メタ）を持つ。`active_same_date_import_ids` は外す（同じ日の追加の確認を Z004 で使わない）。(3) `CommitRequest` は `cached_data` と `today`（CMD が渡す PC の今日。知らせのため）を持ち、`additional_import_confirmed` は外す。(4) 確定の TX の照合: `settlement` で順 1〜5 を取り直す（file を読み直さない）。`matched_rows` の各行について `normalized_jan` で今の候補を引き、候補が無い、先頭の商品が `product_code` と違う、候補が 2 つ以上かどうかが `shared_jan` と違う、のどれかなら上の食い違いとして拒否する。`error_rows` のうち `unmatched_product` の行の JAN に今は候補がある場合も同じく拒否する（preview で「未登録」と確かめた行が、確定で黙って別の扱いにならない）。CMD は parse の結果から cache を作り、確定で token から復元して渡す（[41](41-cmd-pos.md)。cache の持ち主は今のまま CMD）。
 - 数量（SPEC-UNIT-D8 の BIZ の換算のうち整数の数量の分。2026-10-22、b1 の起票で決めた）: 行の数量（IO-02 の整数）は、商品を引いた後に在庫の数量へ換える。個数の単位はそのまま、長さの単位（`m`）は × 100 の cm（レジの数量 1 = 1 m、SPEC-UNIT-D4 の不変条件）。売上の `sale_records.quantity` も同じ在庫の数量で書く（日次・月次の集計の `length_cm` と手動販売の売上と同じ単位）。× 100 の後の絶対値が 1 明細の数量の上限（[共通規則](10-common-rules.md) の「入力の上限と安全な整数の範囲」の `9999999`）を越える行は、preview の行の error（今の数量の上限の行の error と同じ文）にする。小数の数量（`quantity_hundredths`、整数でない個数の行の扱い）は [backlog](../backlog.md) の「単位の拡張の残りの申し送り」の P で、それまで今の parser の行の error のまま（黙って入らない）。
 - 知らせの wire: 欠けの区間の端（`from`・`to`）は上の表の順 1 の範囲の精算回数なので、wire の number で正確に運ぶ（文字列にしない）。
 
@@ -113,7 +113,7 @@ src-tauri/src/
 #### MatchedRow構造体（サーバ側キャッシュに保持、フロントエンドには送らない）
 
 - line_no: usize（Z004の行番号。1始まり）
-- normalized_jan: String（IO-02 が正規化した 13 桁の JAN。確定の TX で今の候補を引き直す）
+- normalized_jan: String（IO-02 が正規化した JAN。形は [23](23-io-z004-parser.md) §13.5。確定の TX で今の候補を引き直す）
 - product_code: String（preview で引き当てた先頭の商品コード）
 - shared_jan: bool（preview の時点でその JAN を持つ商品が 2 つ以上）
 - quantity: i64（在庫の数量に換えた後の値。長さの単位は × 100 の cm。正=販売、負=返品）
@@ -200,7 +200,7 @@ fn parse_and_validate(
 4. **Stage 2: Validate**
    a. 空レコード除外（エラーにもカウントしない）
       - quantity == 0 かつ amount == 0（PLU登録あるが当日販売なしのスロット）
-      - ※ コードが全桁ゼロか13桁JANにならない行は、IO-02 parse_data_line が個数・金額とも0なら読み飛ばし（Ok(None)）、どちらかが0でなければ invalid_jan の行エラーにする（[23 §13.4.2](23-io-z004-parser.md) SPEC-Z4A-D8、D-103）。parsed_rows には13桁JANの行だけが来るため、BIZ-03では全桁ゼロの再判定は不要
+      - ※ コードが全桁ゼロかJANにならない行は、IO-02 parse_data_line が個数・金額とも0なら読み飛ばし（Ok(None)）、どちらかが0でなければ invalid_jan の行エラーにする（[23 §13.4.2](23-io-z004-parser.md) SPEC-Z4A-D8、D-103）。parsed_rows には JAN（[23 §13.5](23-io-z004-parser.md) の `Ok(Some)`）の行だけが来るため、BIZ-03では全桁ゼロの再判定は不要
    b. 実データ行のマスタ照合: 各行について
       - product_repo::find_by_jan_code(conn, &normalized_jan) を呼び出し
       - ヒット1件 → MatchedRow { line_no, normalized_jan, product_code, shared_jan: false, quantity（在庫の数量に換えた後。上の「数量」）, amount }
