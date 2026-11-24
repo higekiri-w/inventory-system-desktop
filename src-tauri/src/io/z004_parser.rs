@@ -48,7 +48,7 @@ pub struct SettlementMetadata {
 pub struct ParsedRow {
     /// ファイル内行番号（1始まり）
     pub line_no: usize,
-    /// 正規化後13桁JANコード
+    /// `normalize_jan` の `Ok(Some)` の値（形は 23 §13.5）
     pub normalized_jan: String,
     /// Z004上の商品名（そのまま）
     pub name: String,
@@ -492,9 +492,7 @@ fn is_layout_a_header_line(line: &str) -> bool {
     fields.len() == 5 && contains_code_label(&fields[1]) && fields[4].contains("金額")
 }
 
-/// Z004のスキャニングコードをJANコード13桁に正規化する
-///
-/// 23-io-z004-parser.md セクション13.5
+/// Z004のスキャニングコードをJANコードに正規化する（受ける形は 23 §13.5）
 pub(crate) fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>, String> {
     let trimmed = raw.trim();
 
@@ -503,6 +501,12 @@ pub(crate) fn normalize_jan(raw: &str, line_no: usize) -> Result<Option<String>,
     // 売上があれば商品コードの無い枠として InvalidJan になる）
     if !trimmed.is_empty() && trimmed.chars().all(|c| c == '0') {
         return Ok(None);
+    }
+
+    // 8桁 + 右側 `EEEEEE` の詰め、または素の8桁 → JAN-8（D-166）。8桁が全部0なら Ok(None)
+    let jan8 = trimmed.strip_suffix("EEEEEE").unwrap_or(trimmed);
+    if jan8.len() == 8 && jan8.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(jan8.bytes().any(|b| b != b'0').then(|| jan8.to_string()));
     }
 
     let mut chars: Vec<char> = trimmed.chars().collect();
@@ -896,6 +900,41 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_jan_req401_8_digits_with_e_padding() {
+        // REQ-401 / SPEC-Z4A-D5 / D-166: 8桁 + 右側 E 6個の詰め → JAN-8
+        assert_eq!(
+            normalize_jan("12345678EEEEEE", 1).unwrap(),
+            Some("12345678".to_string())
+        );
+        assert_eq!(
+            normalize_jan(" 49123456EEEEEE ", 1).unwrap(),
+            Some("49123456".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_jan_req401_8_digit_boundaries() {
+        // REQ-401 / D-166: 素の8桁は受け、8桁の全部0は Ok(None)、他の英字・小文字・E 5個・7桁・9桁は Err
+        assert_eq!(
+            normalize_jan("12345678", 1).unwrap(),
+            Some("12345678".to_string())
+        );
+        assert_eq!(normalize_jan("00000000EEEEEE", 1).unwrap(), None);
+        assert_eq!(normalize_jan("00000000", 1).unwrap(), None);
+        for raw in [
+            "12345678ABCDEF",
+            "12345678eeeeee",
+            "12345678EEEEE",
+            "1234567EEEEEE",
+            "123456789EEEEEE",
+            "1234567",
+            "123456789",
+        ] {
+            assert!(normalize_jan(raw, 1).is_err(), "raw={raw}");
+        }
+    }
+
+    #[test]
     fn test_normalize_jan_req401_non_numeric_error() {
         // REQ-401: CSV取込み
         assert!(normalize_jan("ABCDEFGHIJKLM", 1).is_err());
@@ -1036,8 +1075,8 @@ mod layout_a_tests {
         let result = parse_z004(&raw).unwrap();
 
         assert_eq!(result.settlement_date, "2026-08-15");
-        assert_eq!(result.parsed_rows.len(), 2);
-        assert_eq!(result.parse_errors.len(), 1);
+        assert_eq!(result.parsed_rows.len(), 3);
+        assert_eq!(result.parse_errors.len(), 0);
         assert_eq!(result.total_data_lines, 5);
         assert_eq!(
             result.file_hash,
@@ -1057,6 +1096,12 @@ mod layout_a_tests {
         assert_eq!(returned.name, "合成返品B");
         assert_eq!(returned.quantity, -1);
         assert_eq!(returned.amount, -250);
+
+        let jan8 = &result.parsed_rows[2];
+        assert_eq!(jan8.line_no, 11);
+        assert_eq!(jan8.normalized_jan, "12345678");
+        assert_eq!(jan8.quantity, 1);
+        assert_eq!(jan8.amount, 100);
     }
 
     #[test]
@@ -1079,21 +1124,18 @@ mod layout_a_tests {
     }
 
     #[test]
-    fn test_parse_z004_req401_layout_a_8digit_code_invalid_jan() {
-        // REQ-401 / SPEC-Z4A-D5: 8桁 + E パディングは行単位エラーで可視化する
+    fn test_parse_z004_req401_layout_a_8digit_code_matches_as_jan8() {
+        // REQ-401 / SPEC-Z4A-D5 / D-166: 8桁 + E パディングの売上の行は JAN-8 の ParsedRow になり、行エラーにしない
         let result = parse_z004(&synthetic_layout_a_fixture()).unwrap();
 
-        assert_eq!(result.parsed_rows.len(), 2, "他の正常行は処理を継続する");
-        assert_eq!(result.parse_errors.len(), 1);
-        assert_eq!(result.parse_errors[0].line_no, 11);
-        assert_eq!(
-            result.parse_errors[0].error_type,
-            ParseErrorType::InvalidJan
-        );
-        assert_eq!(
-            result.parse_errors[0].raw_name.as_deref(),
-            Some("合成独自C")
-        );
+        assert!(result.parse_errors.is_empty());
+        let row = result
+            .parsed_rows
+            .iter()
+            .find(|row| row.line_no == 11)
+            .expect("8桁 + EEEEEE の行");
+        assert_eq!(row.normalized_jan, "12345678");
+        assert_eq!(row.name, "合成独自C");
     }
 
     #[test]
@@ -1173,19 +1215,22 @@ mod layout_a_tests {
                 "\"1\",\"9999999999990E\",\"合成商品A\",\"2\",\"600\"",
                 "\"2\",\"12345678EEEEEE\",\"合成独自0\",\"0\",\"0\"",
                 "\"3\",\"INVALID\",\"合成不正\",\"0\",\"0\"",
-                "\"4\",\"12345678EEEEEE\",\"合成独自C\",\"1\",\"100\"",
+                "\"4\",\"12345678ABCDEF\",\"合成独自C\",\"1\",\"100\"",
             ],
         ));
         let result = parse_z004(&raw).unwrap();
 
         assert_eq!(result.total_data_lines, 4);
-        assert_eq!(result.parsed_rows.len(), 1);
+        // 行1 と、JAN-8 の 0/0 の行2（IO が返し BIZ-03 が除外する。D-166）
+        assert_eq!(result.parsed_rows.len(), 2);
+        assert_eq!(result.parsed_rows[1].normalized_jan, "12345678");
         assert_eq!(result.parse_errors.len(), 1);
         let err = &result.parse_errors[0];
         assert_eq!(err.line_no, 6);
         assert_eq!(err.error_type, ParseErrorType::InvalidJan);
         assert!(err.error_message.contains("正規化できません"));
         assert!(!err.error_message.contains("商品コードの無い枠"));
+        assert_eq!(err.raw_name.as_deref(), Some("合成独自C"));
     }
 
     #[test]

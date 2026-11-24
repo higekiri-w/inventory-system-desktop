@@ -38,10 +38,10 @@ pub(crate) fn missing_ranges(present: &[i64]) -> Vec<SettlementGap> {
 ///
 /// `candidates` は `product_repo::find_by_jan_code(conn, jan_code)` の結果。返品・交換（`create_return`）と
 /// Z004 の確定（`commit.rs` の `recheck_matches`）が同じこの関数を通る。`jan_code` が Z004 の照合に現れうる形
-/// （ASCII 数字ちょうど 13 桁で全桁ゼロでない。23 §13.5 の `normalize_jan` の `Ok(Some)` の値の形。前後の空白も
-/// 削らずに比べる）で、候補が 1 商品だけ、かつその商品が在庫連動のときだけ true。`plu_target` は見ない（D-148）。
+/// （23 §13.5 の `normalize_jan` の `Ok(Some)` の値の形。前後の空白も削らずに比べる）で、候補が 1 商品だけ、
+/// かつその商品が在庫連動のときだけ true。`plu_target` は見ない（D-148・D-166）。
 pub(crate) fn z004_moves_stock(jan_code: &str, candidates: &[Product]) -> bool {
-    jan_code.len() == 13
+    matches!(jan_code.len(), 8 | 13)
         && jan_code.bytes().all(|b| b.is_ascii_digit())
         && jan_code.bytes().any(|b| b != b'0')
         && candidates.len() == 1
@@ -139,7 +139,7 @@ pub struct ErrorSummary {
 pub struct MatchedRow {
     /// Z004の行番号（1始まり）
     pub line_no: usize,
-    /// IO-02 が正規化した 13 桁の JAN（確定の TX の照合に使う）
+    /// IO-02 が正規化した JAN（形は 23 §13.5。確定の TX の照合に使う）
     pub normalized_jan: String,
     /// preview で引き当てた先頭の商品コード
     pub product_code: String,
