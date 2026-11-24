@@ -130,7 +130,7 @@ Keep it factual and stable.
 - 店にネットワーク（Wi-Fi・LAN）がある — owner回答2026-09-19
 - 店での運用を想定した市販の USB HID バーコードリーダーを owner が用意し（owner 2026-08-09）、店の PC で Excel シートの JAN 入力に使っている — owner回答2026-09-23
 - 店の PC は Windows 11 Pro 64-bit、画面は 1366×768・表示倍率 100%、BIZ UDPゴシックが入っている — owner確認 2026-09-29
-- プリンタは Canon TR8630（既定のプリンタ、標準 TCP/IP ポート）— owner確認 2026-09-29。2026-11-24 に再び見た。Wi-Fi か有線 LAN かは未確認、Edge からの A4 1 枚の試し刷りは owner の判断で省いた — 2026-11-24 訪店（repo 外の回答台帳 TD-877）
+- プリンタは Canon TR8630（既定のプリンタ、標準 TCP/IP ポート）— owner確認 2026-09-29。2026-11-24 にも標準 TCP/IP ポートでつながっていた。Wi-Fi か有線 LAN かは未確認、Edge からの A4 1 枚の試し刷りは owner の判断で省いた — 2026-11-24 訪店（repo 外の回答台帳 TD-877）
 - 店の PC に Microsoft Edge WebView2 Runtime が入っている（MSI の手順書の M9）。Smart App Control はオフ。SD の読取り機（全スロット）の取外しの設定は既定のクイック削除 — 2026-11-24 訪店（repo 外の回答台帳 TD-877）
 
 ### 無いもの（owner回答 2026-09-19、種類2 全13件）
