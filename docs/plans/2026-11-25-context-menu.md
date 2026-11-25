@@ -70,7 +70,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 ## Acceptance Criteria
 
 - AC1: `npx vitest run src/components/layout/TextFieldContextMenu.test.tsx` で T1〜T14 が全部 PASS。欄の外と開いたメニューの上の `contextmenu` は `defaultPrevented` でメニューが無く（T1・T11）、欄の中は `role="menuitem"` の 4 つだけ（T2）、押せない形（`aria-disabled`）が D2 のとおり（T3・T4）、閉じた後に focus が欄に戻り `selectionStart`・`selectionEnd` が開く前と同じ（T9）。
-- AC2: Test Plan の mutation M1〜M8（M4 は欠番）を 1 つずつ注入すると、名指しの test で `npx vitest run src/components/layout/TextFieldContextMenu.test.tsx` が exit 1、戻すと exit 0。
+- AC2: Test Plan の mutation M1〜M9（M4 は欠番）を 1 つずつ注入すると、名指しの test で `npx vitest run src/components/layout/TextFieldContextMenu.test.tsx` が exit 1、戻すと exit 0。
 - AC3: 既存の frontend の test が全部 PASS（`npx vitest run`）、`npm run typecheck`・`npm run lint`・`cd src-tauri && cargo run --bin generate_traceability -- --check` が exit 0。
 - AC4: `bash scripts/doc-consistency-check.sh` と `--target plan` が ERROR なし。設計正本の UI-CTX-D1〜D4 と D-171 が Scope の置き場にある（`rg -n 'UI-CTX-D[1-4]' docs/UI_TECH_STACK.md` と `rg -n '^## D-171' docs/decision-log.md`）。
 - AC5: L3-1〜L3-4 が owner の Windows の配る build（release）で PASS し、`python3 scripts/pr-gate.py record --kind manual` の記録がある。
@@ -118,7 +118,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 | D1 欄の中 | 4 つ以外の項目・項目の無いメニュー | unit（revisit は開き直したときに控えが新しい欄になることだけを確かめる。happy-dom だけの経路） | T2 `UI-CTX-D1: 文字の欄の右クリックで 4 つの項目だけが出る` | Item を足す・欠く |
 | D2 選択の有無 | 選択が無いのに切り取り・コピーが押せる | unit | T3 `UI-CTX-D2: 選択が無いと切り取り・コピーは押せない形` | 選択の判定を外す（M2） |
 | D2 読取り専用 | 読取り専用の欄に切り取り・貼り付けが効く | unit | T4 `UI-CTX-D2: readOnly の欄は切り取り・貼り付けを押せない形` | `readOnly` を見ない |
-| D3 コピー・切り取り | 欄に focus を戻さずに command を打つ | unit（`document.execCommand` の spy。happy-dom の実装の有無は未実測） | T5 `UI-CTX-D3: コピーは閉じた後に欄に focus を戻してから打つ` | command を `onSelect` の中で打つ（focus を戻す前） |
+| D3 コピー・切り取り | 欄に focus を戻さずに command を打つ | unit（`document.execCommand` の spy。happy-dom の実装の有無は未実測） | T5 `UI-CTX-D3: コピーは閉じた後に欄に focus を戻してから打つ` | command を `onSelect` の中で打つ（focus を戻す前。M9） |
 | D3 貼り付け | 読んだ文字が欄に入らない、欄に focus が戻る前に読む、読みの間に移った先の欄に入る | unit（`navigator.clipboard.readText` の mock。呼ばれた時の `activeElement` を控える。読みを待たせて別の欄へ移る形も） | T6 `UI-CTX-D3: 貼り付けは閉じた後に欄に focus を戻してから読み、同じ欄のときだけ insertText で入れる（待たせて別の欄へ移った後は insertText の spy が呼ばれない。読んだ文字が空なら呼ばない）` | `insertText` を `value` の直の代入に変える、`readText()` を focus を戻す前に呼ぶ（M6）、読み終えた時点の `activeElement` の確かめを外す（M8）、空の文字の判定を外す |
 | D3 貼り付けの失敗 | 失敗が黙って終わる | unit | T7 `UI-CTX-D3: 読めなかったら toast で Ctrl+V を案内し欄を変えない` | catch で何も出さない |
 | D3 すべて選択 | 全部が選ばれない | unit | T8 `UI-CTX-D3: すべて選択で欄の全文が選ばれる` | `select()` を呼ばない |
@@ -131,7 +131,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 
 状態の遷移: 閉じている → 開く（右クリック・キー）→ 項目を選ぶ（操作を控える）/ Esc・外の click（控えない）→ 閉じる（`onCloseAutoFocus` で focus を戻し、控えた操作があれば打つ）、貼り付けの読みの failure（T7。toast を出し欄は変えない）、読みの間に別の欄へ移る（T6。両方の欄を変えない）、開いたまま別の欄で右クリック（実機は開いている間の `pointer-events: none` で閉じるだけになりうる〈P0・L3-2〉。T2 の revisit は開き直したときに控えが新しい欄になることだけを確かめる）。
 
-mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1 欄の判定を常に真にする → T1・T11。M2 切り取り・コピーの `disabled` を外す → T3。M3 `onCloseAutoFocus` の復帰の処理ごと外す → T9。M4 は欠番。M5 composition の控えを外す → T12。M6 `readText()` を `onSelect` の中で呼ぶ（focus を戻す前）→ T6。M7 `document` の `contextmenu` の listener を外す → T1。M8 読み終えた時点の `activeElement` の確かめを外す → T6。
+mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1 欄の判定を常に真にする → T1・T11。M2 切り取り・コピーの `disabled` を外す → T3。M3 `onCloseAutoFocus` の復帰の処理ごと外す → T9。M4 は欠番。M5 composition の控えを外す → T12。M6 `readText()` を `onSelect` の中で呼ぶ（focus を戻す前）→ T6。M7 `document` の `contextmenu` の listener を外す → T1。M8 読み終えた時点の `activeElement` の確かめを外す → T6。M9 コピー・切り取りの command を `onSelect` の中で打つ（focus を戻す前）→ T5。
 
 ## L3
 
