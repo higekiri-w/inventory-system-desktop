@@ -120,29 +120,26 @@ jobs:
           & $exe --version
           "path=$exe" >> $env:GITHUB_OUTPUT
 
-      # Smoke-only build (D-164): WebView2 must open a debugging port for msedgedriver. wry always passes its
-      # own default browser arguments, so the port that msedgedriver sets through the environment is ignored.
-      # The shipped tauri.conf.json is unchanged; only this build adds the argument to each window.
+      # Smoke-only build (D-164): in the probe, msedgedriver connected only to a build whose windows open a WebView2
+      # debugging port (why the port from the environment alone was not enough is unconfirmed). The shipped config
+      # stays unchanged; this build writes each window's additionalBrowserArgs into a temporary --config file.
       - name: Build the release app
         if: steps.diff.outputs.changed == 'true'
-        shell: bash
         run: |
           node -e 'const fs = require("fs"); const c = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")); for (const w of c.app.windows) w.additionalBrowserArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"; fs.writeFileSync(process.argv[1], JSON.stringify({ app: { windows: c.app.windows } }));' "$RUNNER_TEMP/l3-smoke.conf.json"
           npm run tauri -- build --no-bundle --config "$RUNNER_TEMP/l3-smoke.conf.json"
 
-      # The script ends itself within 300 seconds; the step timeout is only the backstop.
+      # The script ends itself within 300 seconds; the step timeout is only the backstop. The verdict is the
+      # result file the script writes after its cleanup, not node's exit code (bash runs with -e -o pipefail).
       - name: Check the home heading
         if: steps.diff.outputs.changed == 'true'
         timeout-minutes: 10
         env:
           L3_SMOKE_APP: src-tauri/target/release/inventory-system-tauri-scaffold.exe
           L3_SMOKE_NATIVE_DRIVER: ${{ steps.driver.outputs.path }}
+          L3_SMOKE_RESULT: ${{ runner.temp }}/l3-smoke-result
         run: |
-          set +e
-          node scripts/ci/l3-smoke-home.mjs
-          rc=$?
-          echo "probe: node rc=$rc"
-          tasklist //FI "IMAGENAME eq msedgedriver.exe"
-          tasklist //FI "IMAGENAME eq inventory-system-tauri-scaffold.exe"
-          tasklist //FI "IMAGENAME eq tauri-driver.exe"
-          exit $rc
+          if [ -e "$L3_SMOKE_RESULT" ]; then echo "L3 smoke: FAIL: the result file existed before the run"; exit 1; fi
+          rc=0; node scripts/ci/l3-smoke-home.mjs || rc=$?
+          echo "L3 smoke: node exit code $rc"
+          if [ "$(cat "$L3_SMOKE_RESULT" 2>/dev/null)" != "PASS" ]; then echo "L3 smoke: FAIL: no PASS in the result file (node exit code $rc)"; exit 1; fi

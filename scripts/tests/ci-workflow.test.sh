@@ -6,6 +6,7 @@ WORKFLOW="$REPO_ROOT/.github/workflows/ci.yml"
 NPM_SECURITY_WORKFLOW="$REPO_ROOT/.github/workflows/npm-security-monitor.yml"
 WINDOWS_OBSERVE_WORKFLOW="$REPO_ROOT/.github/workflows/windows-observe.yml"
 L3_SMOKE_WORKFLOW="$REPO_ROOT/.github/workflows/l3-smoke.yml"
+L3_SMOKE_SCRIPT="$REPO_ROOT/scripts/ci/l3-smoke-home.mjs"
 NODE_VERSION_FILE="$REPO_ROOT/.node-version"
 PACKAGE_JSON="$REPO_ROOT/package.json"
 PR_TEMPLATE="$REPO_ROOT/.github/pull_request_template.md"
@@ -296,8 +297,17 @@ RUBY
 }
 
 # D-164: the L3 smoke runs only for PRs that change it, never fails a product PR, and keeps its red.
+# Arguments: workflow, src-tauri dir and smoke script; mutants pass copies.
 validate_l3_smoke() {
-    ruby - "$1" <<'RUBY'
+    local tauri_dir="${2:-$REPO_ROOT/src-tauri}" script="${3:-$L3_SMOKE_SCRIPT}" rc=0
+    # The shipped config never opens a WebView2 debugging port; rg 1 is "none", 2 (a bad path) is a failure.
+    rg -n -F remote-debugging "$tauri_dir/src" "$tauri_dir"/tauri*.json || rc=$?
+    case "$rc" in
+        1) ;;
+        0) echo "shipped config opens a debugging port" >&2; return 1 ;;
+        *) echo "remote-debugging search failed: rg exit $rc" >&2; return 1 ;;
+    esac
+    ruby - "$1" "$script" <<'RUBY'
 require "yaml"
 text = File.read(ARGV.fetch(0))
 workflow = YAML.safe_load(text, aliases: true)
@@ -341,13 +351,37 @@ cache = steps.find { |step| step["uses"] == "actions/cache@v5" }
 cache_paths = cache.dig("with", "path").to_s.lines.map(&:strip).reject(&:empty?)
 abort "smoke cache paths drifted: #{cache_paths.inspect}" unless cache_paths == %w[~/.cargo/registry/index/ ~/.cargo/registry/cache/ ~/.cargo/git/db/]
 runs = steps.map { |step| step["run"].to_s.strip }
-["npm ci --ignore-scripts", "cargo install tauri-driver --locked --version 2.1.0", "npm run tauri -- build --no-bundle"].each do |command|
+["npm ci --ignore-scripts", "cargo install tauri-driver --locked --version 2.1.0"].each do |command|
   abort "smoke command drifted: #{command}" unless runs.include?(command)
 end
-smoke = steps.find { |step| step["run"].to_s.strip == "node scripts/ci/l3-smoke-home.mjs" }
+# The smoke-only config file is written and passed with --config; the shipped config stays as it is.
+build_run = <<~'RUN'
+  node -e 'const fs = require("fs"); const c = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")); for (const w of c.app.windows) w.additionalBrowserArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"; fs.writeFileSync(process.argv[1], JSON.stringify({ app: { windows: c.app.windows } }));' "$RUNNER_TEMP/l3-smoke.conf.json"
+  npm run tauri -- build --no-bundle --config "$RUNNER_TEMP/l3-smoke.conf.json"
+RUN
+build = steps.find { |step| step["name"] == "Build the release app" }
+abort "smoke command drifted: build" unless build && build["run"] == build_run
+# The verdict is the result file after cleanup: a stale file fails, and -e must not end the step at node.
+smoke_run = <<~'RUN'
+  if [ -e "$L3_SMOKE_RESULT" ]; then echo "L3 smoke: FAIL: the result file existed before the run"; exit 1; fi
+  rc=0; node scripts/ci/l3-smoke-home.mjs || rc=$?
+  echo "L3 smoke: node exit code $rc"
+  if [ "$(cat "$L3_SMOKE_RESULT" 2>/dev/null)" != "PASS" ]; then echo "L3 smoke: FAIL: no PASS in the result file (node exit code $rc)"; exit 1; fi
+RUN
+smoke = steps.find { |step| step["name"] == "Check the home heading" }
 abort "smoke step is missing" unless smoke
+abort "smoke step run drifted" unless smoke["run"] == smoke_run
+abort "smoke result file drifted" unless smoke.dig("env", "L3_SMOKE_RESULT") == "${{ runner.temp }}/l3-smoke-result"
 step_timeout = smoke["timeout-minutes"]
 abort "smoke step timeout must be an integer below the job timeout" unless step_timeout.is_a?(Integer) && step_timeout.positive? && step_timeout < job_timeout
+# S2: PASS is written once, after cleanup and only when it finished, just before the last exit.
+script = File.read(ARGV.fetch(1))
+write = 'if (code === 0 && cleanedUp) writeFileSync(RESULT_FILE, "PASS");'
+lines = script.lines.map(&:chomp)
+last_exit = lines.rindex("process.exit(code);")
+abort "smoke result write drifted" unless last_exit && lines[last_exit - 1] == write
+abort "smoke result is written elsewhere" unless script.scan("writeFileSync(").length == 1 && script.scan("L3_SMOKE_RESULT").length == 1
+abort "smoke RESULT_FILE must be used only by its definition and the write" unless script.scan("RESULT_FILE").length == 2
 RUBY
 }
 
@@ -708,6 +742,35 @@ reject_smoke_mutant l3-smoke-unpinned-driver "$(smoke_mutant unpinned-driver 's/
 reject_smoke_mutant l3-smoke-git-driver "$(smoke_mutant git-driver '/cargo install tauri-driver/a\          cargo install --git https://github.com/chippers/msedgedriver-tool')"
 reject_smoke_mutant l3-smoke-npm-scripts "$(smoke_mutant npm-scripts 's/npm ci --ignore-scripts/npm ci/')"
 reject_smoke_mutant l3-smoke-target-cache "$(smoke_mutant target-cache '\|~/.cargo/git/db/|a\            src-tauri/target/')"
+reject_smoke_mutant l3-smoke-no-config "$(smoke_mutant no-config '/npm run tauri/s| --config "$RUNNER_TEMP/l3-smoke.conf.json"||')"
+reject_smoke_mutant l3-smoke-exit-code-verdict "$(smoke_mutant exit-code-verdict -e '/if \[ -e "$L3_SMOKE_RESULT"/d' -e '/node exit code/d' -e 's/rc=0; node scripts\/ci\/l3-smoke-home.mjs || rc=$?/node scripts\/ci\/l3-smoke-home.mjs/')"
+reject_smoke_mutant l3-smoke-stale-result "$(smoke_mutant stale-result '/if \[ -e "$L3_SMOKE_RESULT"/d')"
+reject_smoke_mutant l3-smoke-errexit "$(smoke_mutant errexit 's/rc=0; node scripts\/ci\/l3-smoke-home.mjs || rc=$?/node scripts\/ci\/l3-smoke-home.mjs; rc=$?/')"
+reject_smoke_script_mutant() {
+    assert_mutated "$L3_SMOKE_SCRIPT" "$2" "$1"
+    if validate_l3_smoke "$L3_SMOKE_WORKFLOW" "$REPO_ROOT/src-tauri" "$2" >/dev/null 2>&1; then
+        fail "L3 smoke validator accepted $1"
+    fi
+}
+smoke_script_mutant() {
+    local out="$mutation_dir/$1.mjs"
+    shift
+    sed "$@" "$L3_SMOKE_SCRIPT" > "$out"
+    printf '%s' "$out"
+}
+smoke_write='if (code === 0 \&\& cleanedUp) writeFileSync(RESULT_FILE, "PASS");'
+reject_smoke_script_mutant l3-smoke-early-result "$(smoke_script_mutant early-result -e "/^if (code === 0 && cleanedUp) writeFileSync/d" -e "/^    code = 0;\$/a\\    $smoke_write")"
+reject_smoke_script_mutant l3-smoke-unconditional-result "$(smoke_script_mutant unconditional-result 's/ && cleanedUp) writeFileSync/) writeFileSync/')"
+# The copy passes before the port is added, so the rejection comes from the port and not from a bad path.
+shipped_copy="$mutation_dir/src-tauri"
+mkdir -p "$shipped_copy"
+cp -R "$REPO_ROOT/src-tauri/src" "$REPO_ROOT"/src-tauri/tauri*.json "$shipped_copy/"
+validate_l3_smoke "$L3_SMOKE_WORKFLOW" "$shipped_copy" >/dev/null 2>&1 ||
+    fail "L3 smoke validator rejected an unchanged src-tauri copy"
+printf '%s\n' '{ "app": { "windows": [{ "additionalBrowserArgs": "--remote-debugging-port=0" }] } }' > "$shipped_copy/tauri.windows.conf.json"
+if validate_l3_smoke "$L3_SMOKE_WORKFLOW" "$shipped_copy" >/dev/null 2>&1; then
+    fail "L3 smoke validator accepted l3-smoke-shipped-debug-port"
+fi
 smoke_node_mutation="$(smoke_mutant node24 's/node-version-file: .node-version/node-version: 24/')"
 assert_mutated "$L3_SMOKE_WORKFLOW" "$smoke_node_mutation" l3-smoke-node24
 if validate_node_contract "$NODE_VERSION_FILE" "$PACKAGE_JSON" "$WORKFLOW" "$NPM_SECURITY_WORKFLOW" "$smoke_node_mutation" >/dev/null 2>&1; then

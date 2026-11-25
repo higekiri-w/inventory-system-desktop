@@ -2,19 +2,21 @@
 // heading is rendered. Node 24 standard library only (D-030): five WebDriver requests over fetch.
 // ponytail: one heading only; screen operations (E-2) would re-compare a WebDriver client dependency.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const EXPECTED_HEADING = "ホーム";
 const DRIVER_URL = "http://127.0.0.1:4444";
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"; // W3C WebDriver §12.1 web element identifier
-// One overall deadline; cleanup fits inside it (270 + 15 + 10, the last 5 seconds close the pipes).
+// One overall deadline; cleanup fits inside it (270 + 15 + 10, 5 seconds spare).
 const TOTAL_MS = 300_000;
 const WORK_MS = 270_000;
 const DELETE_MS = 15_000;
 const EXIT_WAIT_MS = 10_000;
 const RETRY_MS = 500;
+// The step reads this file for the verdict; the exit code is not used (Node can end with 127 after a PASS).
+const RESULT_FILE = process.env.L3_SMOKE_RESULT;
 
 const startedAt = Date.now();
 const work = AbortSignal.timeout(WORK_MS);
@@ -72,6 +74,7 @@ async function createSession(application, signal) {
 
 let sessionId;
 let code = 1;
+let cleanedUp = false;
 try {
   const application = requireFile("L3_SMOKE_APP");
   const nativeDriver = requireFile("L3_SMOKE_NATIVE_DRIVER");
@@ -126,9 +129,11 @@ try {
   }
 } finally {
   stage = "cleanup";
-  if (sessionId !== undefined) {
+  let sessionDeleted = sessionId === undefined;
+  if (!sessionDeleted) {
     try {
       await webdriver("DELETE", `/session/${sessionId}`, undefined, AbortSignal.timeout(DELETE_MS));
+      sessionDeleted = true;
     } catch (error) {
       console.error(`L3 smoke: DELETE /session failed: ${error?.message ?? error}`);
     }
@@ -140,5 +145,8 @@ try {
     if (!driverExit)
       console.error(`L3 smoke: tauri-driver did not exit within ${EXIT_WAIT_MS / 1000} s`);
   }
+  cleanedUp = sessionDeleted && driverExit !== undefined;
+  if (code === 0 && !cleanedUp) console.error("L3 smoke: FAIL: cleanup did not finish");
 }
+if (code === 0 && cleanedUp) writeFileSync(RESULT_FILE, "PASS");
 process.exit(code);
