@@ -17,9 +17,9 @@ import type {
   EjRecordRef,
   EjRecordSummary,
 } from "@/lib/bindings";
+import { queryKeys } from "@/lib/query-keys";
 import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { EjReceiptsPage } from "./EjReceiptsPage";
-import { EJ_RECEIPT_FONT_FAMILY } from "./lib/receipt-format";
 import type { EjReceiptsSearch } from "./types";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -110,11 +110,14 @@ function serveDays(days: Record<string, EjRecordDay>) {
 
 function renderPage(initial: EjReceiptsSearch = {}) {
   const onSearchChange = vi.fn();
+  // サイドバー・戻るのように、moveTo を通らずに search を外から替える
+  let setSearchFromOutside!: (next: EjReceiptsSearch) => void;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   function Harness() {
     const [search, setSearch] = useState<EjReceiptsSearch>(initial);
+    setSearchFromOutside = setSearch;
     return (
       <EjReceiptsPage
         search={search}
@@ -130,8 +133,18 @@ function renderPage(initial: EjReceiptsSearch = {}) {
       <Harness />
     </QueryClientProvider>,
   );
-  return { onSearchChange, queryClient };
+  return {
+    onSearchChange,
+    queryClient,
+    setSearch: (next: EjReceiptsSearch) => {
+      act(() => {
+        setSearchFromOutside(next);
+      });
+    },
+  };
 }
+
+type DayResponse = Awaited<ReturnType<typeof commands.listEjRecords>>;
 
 function rowOf(no: string): HTMLElement {
   return screen.getByRole("row", { name: new RegExp(no) });
@@ -315,11 +328,21 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByRole("grid");
+    // roving tabindex: 選ぶ前は先頭の行、選んだ後は選んだ行だけが Tab で止まる（80 §80.3）
+    expect(rowOf("000106")).toHaveAttribute("tabindex", "0");
+    expect(rowOf("000107")).toHaveAttribute("tabindex", "-1");
+    await user.click(rowOf("000107"));
+    expect(rowOf("000107")).toHaveAttribute("tabindex", "0");
+    expect(rowOf("000106")).toHaveAttribute("tabindex", "-1");
     await user.click(rowOf("000106"));
     const section = await screen.findByRole("region", { name: "控えの文" });
     const pre = section.querySelector("pre");
     expect(pre?.textContent).toBe(body);
-    expect(pre).toHaveStyle({ whiteSpace: "pre", fontFamily: EJ_RECEIPT_FONT_FAMILY });
+    // 80 §80.4 の字形の順（本番の定数を写さない独立の期待値）
+    expect(pre).toHaveStyle({
+      whiteSpace: "pre",
+      fontFamily: '"BIZ UDGothic", "MS Gothic", monospace',
+    });
 
     fireEvent.keyDown(rowOf("000106"), { key: "ArrowDown" });
     expect(rowOf("000107")).toHaveAttribute("aria-selected", "true");
@@ -328,6 +351,105 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(rowOf("000106")).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(rowOf("000107"), { key: "Enter" });
     expect(rowOf("000107")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("U8: 選んだ控えは表示中の日に結ぶ。行を選んだ後に search の日を外から替えると控えの文が消える", async () => {
+    serveDays({
+      latest: day(),
+      "2026-11-19": day({ date: "2026-11-19", records: [summary(9, "000101")] }),
+      "2026-11-20": day(),
+    });
+    const user = userEvent.setup();
+    const { setSearch } = renderPage();
+    await screen.findByRole("grid");
+    await user.click(rowOf("000106"));
+    expect(await screen.findByText("body id1")).toBeInTheDocument();
+
+    // サイドバーの「レシートの控え」・戻る（moveTo を通らない日の移動）
+    setSearch({ date: "2026-11-19" });
+    expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "控えの文" })).not.toBeInTheDocument();
+    expect(rowOf("000101")).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("U8: 日を移る間に前の表の行を押しても、移った後にその控えを残さない", async () => {
+    let resolvePrev!: (value: DayResponse) => void;
+    mockList.mockImplementation((date) =>
+      date === "2026-11-19"
+        ? new Promise((resolve) => {
+            resolvePrev = resolve;
+          })
+        : Promise.resolve(ok(day())),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("grid");
+    await user.click(screen.getByRole("button", { name: "前の日" }));
+    // 前の日の応答の前は前の表が残る（keepPreviousData）。その行を押す
+    await user.click(rowOf("000106"));
+    act(() => {
+      resolvePrev(ok(day({ date: "2026-11-19", records: [summary(1, "000106")] })));
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("日付を選択")).toHaveValue("2026-11-19");
+    });
+    // 同じ id の行が移った先にあっても、前の日で選んだものは選ばない
+    expect(rowOf("000106")).toHaveAttribute("aria-selected", "false");
+    expect(screen.queryByRole("region", { name: "控えの文" })).not.toBeInTheDocument();
+  });
+
+  it("U6: 番号の件数は今回の応答で判定する（C27 で無効にした cache が 1 件でも、応答が 2 件なら移らず候補を出す）", async () => {
+    serveDays({ latest: day() });
+    let resolveFind!: (value: Awaited<ReturnType<typeof commands.findEjRecordsByNo>>) => void;
+    mockFind.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFind = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    const { onSearchChange, queryClient } = renderPage();
+    await screen.findByRole("grid");
+    // 前の検索の 1 件が cache に残り、取込みの C27 で無効になった
+    queryClient.setQueryData(queryKeys.ejRecords.byNo("102"), [{ id: 5000, date: "2026-11-19" }]);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.ejRecords.root() });
+
+    await user.type(screen.getByLabelText("番号で探す"), "102{Enter}");
+    await waitFor(() => {
+      expect(mockFind).toHaveBeenCalledWith("102");
+    });
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "控えの文" })).not.toBeInTheDocument();
+
+    act(() => {
+      resolveFind(
+        ok<EjRecordRef[]>([
+          { id: 5000, date: "2026-11-19" },
+          { id: 6000, date: "2026-11-20" },
+        ]),
+      );
+    });
+    expect(await screen.findByText("同じ番号の控えが 2 件あります")).toBeInTheDocument();
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(mockGet).not.toHaveBeenCalledWith(5000);
+  });
+
+  it("U6: 番号の取り直しが失敗したら、cache の 1 件で移らず失敗の文を出す", async () => {
+    serveDays({ latest: day() });
+    mockFind.mockResolvedValueOnce(
+      err("validation", "記録の番号は 6 桁までの数字で入れてください"),
+    );
+    const user = userEvent.setup();
+    const { onSearchChange, queryClient } = renderPage();
+    await screen.findByRole("grid");
+    queryClient.setQueryData(queryKeys.ejRecords.byNo("102"), [{ id: 5000, date: "2026-11-19" }]);
+    await queryClient.invalidateQueries({ queryKey: queryKeys.ejRecords.root() });
+
+    await user.type(screen.getByLabelText("番号で探す"), "102{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "記録の番号は 6 桁までの数字で入れてください",
+    );
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(screen.queryByText(/同じ番号の控え/)).not.toBeInTheDocument();
   });
 
   it("U9: 欠けは warning の Alert が icon・見出し・区間ごとの文で示し、無ければ Alert を出さない。下の補助のリンクは常にある", async () => {
@@ -465,5 +587,18 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
       await screen.findByText("この日の控えが多いため、先頭 1000 件だけを出しています"),
     ).toBeInTheDocument();
     expect(mockList).toHaveBeenCalledTimes(2);
+  });
+
+  it("U10: 日の一覧を読めない間も、取込みの失敗の理由をリンクの近くに出す", async () => {
+    mockList.mockResolvedValue(
+      err("internal", "データベースエラーが発生しました。もう一度お試しください"),
+    );
+    mockImport.mockResolvedValueOnce(err("validation", "ファイルサイズが上限(20MB)を超えています"));
+    vi.mocked(open).mockResolvedValue(["C:\\tmp\\EJ261119.TXT"]);
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByText("レシートの控えを読めませんでした")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" }));
+    expect(await screen.findByText("ファイルサイズが上限(20MB)を超えています")).toBeInTheDocument();
   });
 });

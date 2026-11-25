@@ -191,8 +191,11 @@ function ReceiptBody({ id }: { id: number }) {
 
 export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) {
   const dayQuery = useEjRecordDay(search.date ?? null);
-  // 選んだ行は画面の状態（URL に持たない。80 §80.3）
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // 選んだ行は画面の状態（URL に持たない。80 §80.3）。日と組で持ち、表示中の日と同じときだけ使う
+  // （サイドバー・戻る・前の表の行の click など moveTo を通らない日の移動でも外れる）
+  const [selected, setSelected] = useState<{ id: number; date: string } | null>(null);
+  const selectedId =
+    selected !== null && dayQuery.data?.date === selected.date ? selected.id : null;
   const [numberInput, setNumberInput] = useState("");
   const [submittedNo, setSubmittedNo] = useState<string | null>(search.no ?? null);
   const byNo = useEjRecordsByNo(submittedNo);
@@ -209,20 +212,23 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
 
   // UI-09c-D3: 1 件ならその日に移って行を選ぶ。`?no=` は search を { date, no: undefined } に replace で替える
   const fromLink = search.no !== undefined;
+  // 件数は今回の検索の応答で判定する（C27 で無効にした cache・取り直し中の値で移らない）
+  const numberResult =
+    submittedNo !== null && byNo.isSuccess && !byNo.isFetching ? byNo.data : undefined;
+  const numberError = submittedNo !== null && byNo.isError && !byNo.isFetching;
   useEffect(() => {
-    if (submittedNo === null || byNo.data?.length !== 1) return;
-    const [found] = byNo.data;
-    setSelectedId(found.id);
+    if (numberResult?.length !== 1) return;
+    const [found] = numberResult;
+    setSelected({ id: found.id, date: found.date });
     setSubmittedNo(null);
     onSearchChange({ date: found.date, no: undefined }, { replace: fromLink });
-  }, [byNo.data, submittedNo, onSearchChange, fromLink]);
+  }, [numberResult, onSearchChange, fromLink]);
 
   const moveTo = (date: string, id: number | null = null) => {
-    setSelectedId(id);
+    setSelected(id === null ? null : { id, date });
     onSearchChange({ date, no: undefined });
   };
 
-  const showNumberResult = submittedNo !== null && !byNo.isFetching;
   const manualResult = <ManualEjResult result={ejImport.result} error={ejImport.error} />;
 
   const renderDay = (day: EjRecordDay) => {
@@ -270,21 +276,21 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
                 setSubmittedNo(normalizeComposedDigits(numberInput.trim()));
               }}
             />
-            {showNumberResult && byNo.isError && (
+            {numberError && (
               <p className="text-sm font-medium text-destructive" role="alert">
                 {describeError(byNo.error)}
               </p>
             )}
-            {showNumberResult && byNo.data?.length === 0 && (
+            {numberResult?.length === 0 && (
               <p className="text-sm" role="status">
                 その番号の控えはありません
               </p>
             )}
-            {showNumberResult && byNo.data !== undefined && byNo.data.length > 1 && (
+            {numberResult !== undefined && numberResult.length > 1 && (
               <div className="space-y-1 text-sm" role="status">
-                <p>{`同じ番号の控えが ${String(byNo.data.length)} 件あります`}</p>
+                <p>{`同じ番号の控えが ${String(numberResult.length)} 件あります`}</p>
                 <ul className="flex flex-wrap gap-2">
-                  {byNo.data.map((ref) => (
+                  {numberResult.map((ref) => (
                     <li key={ref.id}>
                       <Button
                         type="button"
@@ -328,7 +334,13 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
           {day.records.length === 0 ? (
             <p>この日の控えはありません</p>
           ) : (
-            <RecordTable records={day.records} selectedId={selectedId} onSelect={setSelectedId} />
+            <RecordTable
+              records={day.records}
+              selectedId={selectedId}
+              onSelect={(id) => {
+                setSelected(day.date === null ? null : { id, date: day.date });
+              }}
+            />
           )}
           {selectedId !== null && <ReceiptBody id={selectedId} />}
         </div>
@@ -358,7 +370,9 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
       )}
 
       {/* UI-09c-D5: 補助のリンク（記録の無い日・空の DB でも常に置く） */}
-      <div className="border-t pt-3">
+      <div className="space-y-2 border-t pt-3">
+        {/* 日の一覧が読込み中・失敗の間も取込みは押せるので、結果と error はリンクの上に出す */}
+        {!dayQuery.isSuccess && manualResult}
         <Button
           type="button"
           variant="link"

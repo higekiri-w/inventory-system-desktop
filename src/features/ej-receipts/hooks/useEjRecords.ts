@@ -28,6 +28,8 @@ export function useEjRecordsByNo(recordNo: string | null) {
         cmd: "find_ej_records_by_no",
       }),
     enabled: recordNo !== null,
+    // 形の誤りは取り直しても同じなので、文をすぐ出す
+    retry: false,
   });
 }
 

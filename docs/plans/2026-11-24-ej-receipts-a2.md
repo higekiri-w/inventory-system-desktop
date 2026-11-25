@@ -118,7 +118,7 @@ Non-scope: `ej_records` の schema と migration、EJ の取込みの規則（BI
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
 | R1 日の一覧 | 前の日・翌日の 00:00 の記録が入る／1001 件目を落とさない | Rust | `ej_repo` の test: `D 23:59` は入り翌日 `00:00` は入らない、1001 件を入れて 1001 件返る | 範囲を `<=`・`LIMIT 1000` にする（M1） |
-| R2 隣の日と最新 | 記録の無い日に飛ぶ・端で値を返す | Rust | 3 日に記録、間に空の日 → 前後が記録のある日、端は None、空の表で最新は None | 前後を ±1 日で求める |
+| R2 隣の日と最新 | 記録の無い日に飛ぶ・端で値を返す | Rust | 3 日に記録、間に空の日 → 前後が記録のある日、端は None、空の表で最新は None。その日の `00:00` の記録は前の日にしない | 前後を ±1 日で求める・前の日の `<` を `<=` にする |
 | R3 番号で探す | 別の 4 桁の欄の同じ番号を落とす | Rust | 2 つの欄に同じ番号 → 2 件、`(date, id)` の昇順 | `machine_prefix` で絞る |
 | R4 控えの文（negative） | 無い id で error、行末の空白を削る | Rust | 無い id → `None`、行末の空白と `"\n"` のつなぎを含む文が完全一致 | `trim_end` を入れる |
 | R5 mode・kind を読む（negative） | 外れた TEXT を既定の値にする | Rust（mutation） | 生 SQL で CHECK の外の値を入れられないので、match の関数に直接外れた文字列 → `DbError`。enum の全 variant が `as_str` と往復する | match に `_ =>` の既定を足す（M2） |
@@ -133,11 +133,11 @@ Non-scope: `ej_records` の schema と migration、EJ の取込みの規則（BI
 | U3 初期・読込み中・成功 | 既定の日でない・読込み中に空の文 | Vitest | 読込み中は空の文を出さない、成功で最新の日の表（時刻・番号・種類・合計） | 読込み中に空の状態を出す |
 | U4 隣の日へ（状態の遷移） | 記録の無い日に行く・端で押せる | Vitest | 前の日・次の日で `prev_date`・`next_date` へ移る、None なら disabled、日付の入力で移り、その日の記録が無ければ 80 の文 | ±1 日で移る |
 | U5 種類と金額 | 色だけ・返品を取引と出す | Vitest（純関数） | kind × mode の表の全行（返品は `sale` + `return`）、`null` → 「—」、0 → 「0円」、`1234` → 「1,234円」 | 返品の分岐を消す（M5） |
-| U6 番号で探す 3 つ | 2 件で勝手に移る・0 件で黙る | Vitest | 1 件 → その日に移り行を選ぶ（本文は ID で `get_ej_record` から読み、一覧の 1,000 件の外の ID でも出る）、2 件 → 移らず「同じ番号の控えが 2 件あります」と日付の link（押すとその id の行）、0 件 → 「その番号の控えはありません」、形の誤り → BIZ の文 | 2 件で先頭へ移る |
-| U7 IME と `?no=` | 変換の Enter で送る・link の番号で探さない | Vitest | `isComposing` の Enter は送らない、`１０２` は `102` で送る、`?no=000123` で開くと探して行を選び、search が `{ date: <その日> }` に replace で替わり、その後に次の日へ移れる | `isComposing` を見ない（M6） |
-| U8 控えの文 | 行末の空白・並びが崩れる | Vitest | 行末の空白を含む文が `<pre>` の text と完全一致、`white-space: pre`、80 の font の指定 | 文を `trim` する・`<p>` で出す |
+| U6 番号で探す 3 つ | 2 件で勝手に移る・0 件で黙る | Vitest | 1 件 → その日に移り行を選ぶ（本文は ID で `get_ej_record` から読み、一覧の 1,000 件の外の ID でも出る）、2 件 → 移らず「同じ番号の控えが 2 件あります」と日付の link（押すとその id の行）、0 件 → 「その番号の控えはありません」、形の誤り → BIZ の文。件数は今回の応答で判定（C27 で無効にした cache の 1 件で移らず、応答 2 件で候補、取り直しの失敗で文） | 2 件で先頭へ移る・cache の値で判定する |
+| U7 IME と `?no=` | 変換の Enter で送る・link の番号で探さない | Vitest | `isComposing` の Enter は送らない、`１０２` は `102` で送る、`?no=000123` で開くと探して行を選び、search が `{ date: <その日> }` に replace で替わり、その後に次の日へ移れる。実の Router で戻ると `?no=` の前の画面 | `isComposing` を見ない（M6）・route の `replace` を落とす |
+| U8 控えの文 | 行末の空白・並びが崩れる | Vitest | 行末の空白を含む文が `<pre>` の text と完全一致、`white-space: pre`、80 §80.4 の字形の順（独立の期待値）、選んだ行だけ `tabindex=0`。選んだ控えは表示中の日に結ぶ（search の日を外から替える・前の表の行を移る間に押す → 移った後に文を出さない） | 文を `trim` する・`<p>` で出す・選択を id だけで持つ |
 | U9 欠けの Alert | 欠けを出さない・無いのに出す | Vitest | `gaps` 2 区間 → icon + 見出し + 「記録 n〜m の控えがありません。」2 行、`role` と文字で示す。空なら Alert なし、下の補助の link は常にある | Alert の条件を外す |
-| U10 手で選ぶ EJ（状態の遷移） | 成功の後に Alert が古いまま・待ちに離れられる | Vitest | 選んで成功 → C27 で日の一覧を取り直し Alert が消える、追加ありと追加 0 件の両方で toast、読めない file と conflict を `EjNotes` で名指し、待つ間は `useBlocker` と close の集合に `ej-import`、応答の後に解ける。失敗 → error を出し再試行できる | 成功で invalidate しない（M7） |
+| U10 手で選ぶ EJ（状態の遷移） | 成功の後に Alert が古いまま・待ちに離れられる | Vitest | 選んで成功 → C27 で日の一覧を取り直し Alert が消える、追加ありと追加 0 件の両方で toast、読めない file と conflict を `EjNotes` で名指し、待つ間は `useBlocker` と close の集合に `ej-import`、応答の後に解ける。失敗 → error を出し再試行できる（日の一覧が失敗の間もリンクの近くに出す）。hook の test で 20MB 超は `importEjFiles` を呼ばず文を出す | 成功で invalidate しない（M7）・一覧が成功のときだけ結果を描く |
 | U11 空・失敗・1000 件 | 空の文が無い・失敗で黙る | Vitest | 0 件 → SCREEN_DESIGN の文と「売上データ取込みへ」、空の DB でも下の「EJ のファイルを選んで取り込む」が出る、失敗 → 原因と再試行で取り直す、`truncated` → 「この日の控えが多いため、先頭 1000 件だけを出しています」 | 失敗を空として出す |
 | I1 D-052 の独立 oracle | entry の欠け・過剰 | Vitest | meta test の 27 entry と oracle の完全一致、C26 = C10 + `ejRecords.root()`、C27 = `ejRecords.root()` | C10 に `ejRecords` を足す・C26 を C10 のままにする（M8） |
 | I2 handler の呼出し | 一括の成功が C10 のまま | Vitest | 一括の成功で C26（既存の `DailyReportImportPage.sd.test.tsx:570` あたりの一括の期待を C26 の独立の期待に更新する）、手で選ぶ EJ の成功で C27、日報の個別の取込みと取消は C10 のまま | `useDailyReportImportFlow.ts` の一括を戻す |
