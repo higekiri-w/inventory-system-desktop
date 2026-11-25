@@ -7,6 +7,7 @@ import type { DailyReportPreviewResponse, DailyReportSourceFileRequest } from "@
 import { describeError } from "@/lib/describe-error";
 import { extractFilename } from "@/lib/extractFilename";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
+import { queryKeys } from "@/lib/query-keys";
 import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/invoke";
 import { useWindowCloseGuard } from "@/lib/window-close-guard";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -196,6 +197,8 @@ export function useDailyReportImportFlow() {
     onSuccess: async (response) => {
       dispatch({ type: "bulk_succeeded", response });
       // C26: 一括は日報に加えて控えも入れる（UI_TECH_STACK §2.5）
+      // 控えの画面を離れても走っている読取り（取込みの前に読んだもの）に無効化が相乗りしないよう、先に止める
+      await queryClient.cancelQueries({ queryKey: queryKeys.ejRecords.root() });
       await invalidateByContract(queryClient, invalidationContract.sdBulkImport());
     },
     onError: (error: unknown) => {
