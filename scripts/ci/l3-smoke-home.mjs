@@ -142,7 +142,7 @@ try {
       console.error(`L3 smoke: DELETE /session failed: ${error?.message ?? error}`);
     }
   }
-  if (child && !driverExited) {
+  if (child && !driverExit) {
     // tauri-driver 2.1.0 puts itself and the native driver in a kill-on-close Job Object on Windows.
     child.kill();
     await Promise.race([exited, sleep(EXIT_WAIT_MS)]);

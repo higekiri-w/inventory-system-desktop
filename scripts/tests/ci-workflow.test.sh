@@ -405,6 +405,10 @@ last_exit = lines.rindex("process.exit(code);")
 abort "smoke result write drifted" unless last_exit && lines[last_exit - 1] == write
 abort "smoke result is written elsewhere" unless script.scan("writeFileSync(").length == 1 && script.scan("L3_SMOKE_RESULT").length == 1
 abort "smoke RESULT_FILE must be used only by its definition and the write" unless script.scan("RESULT_FILE").length == 2
+# F1: cleanup is done only when the exit event was seen; an error event (spawn or kill failure) never sets it.
+exited_at = lines.index("      driverExited = true;")
+abort "smoke cleanup must rest on the exit event" unless lines.include?("  cleanedUp = sessionDeleted && driverExited;") &&
+  script.scan("driverExited = true").length == 1 && exited_at && exited_at >= 2 && lines[exited_at - 2].include?('child.on("exit"')
 RUBY
 }
 
@@ -786,6 +790,7 @@ smoke_script_mutant() {
 }
 smoke_write='if (code === 0 \&\& cleanedUp) writeFileSync(RESULT_FILE, "PASS");'
 reject_smoke_script_mutant l3-smoke-early-result "$(smoke_script_mutant early-result -e "/^if (code === 0 && cleanedUp) writeFileSync/d" -e "/^    code = 0;\$/a\\    $smoke_write")"
+reject_smoke_script_mutant l3-smoke-cleanup-any-event "$(smoke_script_mutant cleanup-any-event 's/  cleanedUp = sessionDeleted \&\& driverExited;/  cleanedUp = sessionDeleted \&\& driverExit !== undefined;/')"
 reject_smoke_script_mutant l3-smoke-unconditional-result "$(smoke_script_mutant unconditional-result 's/ && cleanedUp) writeFileSync/) writeFileSync/')"
 # The copy passes before the port is added, so the rejection comes from the port and not from a bad path.
 shipped_copy="$mutation_dir/src-tauri"
