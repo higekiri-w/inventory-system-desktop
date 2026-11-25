@@ -209,6 +209,7 @@ Use concise ADR-style entries.
 - Why: The store has products without JAN codes (4 field-confirmed categories: pre-JAN-era stock, group-code variants without individual codes, spot sale items, made-to-order staples), and "has a valid JAN" does not equal "sold by scanning" (group-code products have JANs the store does not scan; spot items should not consume PLU slots). Under the previous design, one JAN-less product made Full export permanently fail, left `plu_dirty=1` unrecoverable (Diff deadlock), and permanently polluted the UI-00 PLU notification. Pure derivation from JAN validity cannot express the operator's per-product decision, matching the precedent of `pos_stock_sync` (指摘#9: explicit flag over automatic derivation).
 - Impact: `products.plu_target BOOLEAN NOT NULL DEFAULT 0` is added by migration v3 (ALTER TABLE + same-transaction backfill: `is_discontinued=0` and 13-digit-numeric `jan_code` → 1). `prepare_plu_export` extracts only `plu_target=1` products, returns JAN-defective and same-JAN price-mismatched products as an `excluded` needs-fix list without blocking generation, dedups same-JAN groups to one representative row (lowest product_code) while `target_product_codes` carries all group members so `confirm_plu_export_saved` clears the whole group, and drops the confirm-side count-limit check. `find_plu_dirty_products` / both `_for_plu` queries gain `plu_target=1`, which also scopes the UI-00 notification. UI-01b proposes the initial flag value from the JAN field and lets the operator change it. Because CV17 import is a memory-No.-keyed partial update (`ECRCV17.pdf` p.71-73) and the formatter renumbers from 217 every export, only Full export files may be imported into CV17 until persistent slot allocation is designed (Plans.md backlog).
 - Alternatives considered: keep the all-or-nothing validation failure (Full export can never succeed with real store data); derive PLU eligibility purely from JAN validity with an operational rule "leave jan_code empty for non-scanned products" (destroys jan_code's reference value for invoice matching and Z004 lookup); in-store EAN-13 issuance with printed labels for JAN-less products (label printer plus per-item labeling is unrealistic for the elderly non-IT operator); per-JAN slot persistence in this same change (deferred to its own design to avoid scope creep).
+- Superseded in part by: D-165（Alternatives considered の店内コード〈in-store EAN-13〉の不採用。JAN の形の店内コードを、JAN だけで分けられない商品と JAN の無い商品に当てる方向にした。JAN の無い品をレジで読む方法は D-165 の lane で決める）
 
 ## D-029
 - Decision: Keep npm and adopt its native supply-chain hardening: enable `min-release-age=7` in `.npmrc` now, plan `allowScripts` adoption at npm 11.16+ / v12, and decline pnpm migration.
@@ -902,6 +903,7 @@ Use concise ADR-style entries.
 - Guarantee range: 個数か金額が 0 でない行は、正常な行・`invalid_jan`・`invalid_number`・`invalid_format` のどれかになり、黙って捨てられない。個数・金額とも 0 の枠（売上と戻しが同じ精算で打ち消し合った枠を含む）は、コードが 13 桁 JAN でなければ読み飛ばす（在庫の増減は 0）。Z004 の業務 commit は停止中（[停止 ADR](adr/2026-09-23-legacy-stocktake-z004-write-stop.md) SPEC-STOP-D1）で、本決定が今の build で効くのはプレビューまで。小数の数量は単位の拡張で扱い、本決定では `invalid_number` のまま。
 - Compatibility: `ParseResult` / `ParsedRow` / `ParseError` の型、`ParseErrorType` の 3 値、`CsvImportErrorType` の 4 値、`csv_import_errors` の CHECK、Tauri command と `src/lib/bindings.ts`、画面の code、PLU 占有読取り mode（`parse_plu_register_snapshot`、SPEC-PLS-D2）は変えない。[時点証拠 ADR](adr/2026-09-18-stocktake-time-evidence.md) の「clear 前の売上は Z004 から落ちる」前提（D4 / D5 の clear 行の段と Consequences）は実物と食い違うが、本決定では ADR を変えず、ADR を直す lane の入力にする。
 - Revisit: 通常 PLU（番号打ち）を店が日常に使い始め、毎回の取込みにコードの無い枠のエラーが出るとき。後続の lane（例: ADR D5 の合計の照合）がコードの無い枠の売上を種別で数える必要が出たとき。8 桁独自コードの商品を商品マスタに結び付けるとき。Z004 の数量にカンマや小数の別の書式が観測されたとき。
+- Superseded in part by: D-166（2026-11-24。(2) の 8 桁 + `EEEEEE` の行の扱い: 売上のある行を `invalid_jan` にし 0/0 の行を読み飛ばす扱いを、JAN-8 に正規化して商品の照合へ進める扱いに置き換える。0/0 の行は 13 桁の JAN と同じく BIZ-03 が除外する）
 
 ## D-104: 日報の小数の個数、別の精算の混在、レコード列の対応（2026-10-04）
 
@@ -1338,6 +1340,7 @@ Use concise ADR-style entries.
 - Guarantee range: 返品・交換の保存と Z004 の確定の間に商品の `pos_stock_sync` や JAN を変えると、保存の時の判定と Z004 の判定が食い違い、二重か欠けが起きうる（次の計数で直る。D-118 の受け入れた穴と同じ形）。交換で片方だけをレジで読んだ組は記録ごとの 1 問では表せない（TD-575 の Q4。店の答えで明細ごとへ広げる。Revisit）。operator が「読んだ」を誤って選べば在庫連動の商品は Z004 に任され、戻らない（結果の行の「取込みで反映」で気づける。記録の取消は 63 の非対象のまま）。`plu_target=0`（PLU の書出しの対象外）の商品は判定に入れない: `plu_target` はアプリが PLU を書き出す対象かの設定で、レジがその商品を読めるかの証明ではなく（以前に書いた PLU や後から変えた設定がレジに残りうる。D-117 (7) のとおりアプリはレジへの反映を証明しない）、Z004 の確定（`recheck_matches`）は `plu_target` を見ずに JAN が当たれば在庫を動かす。判定に入れると、レジに PLU が残る商品で返品・交換と Z004 の確定が別の式になり二重に戻る（失敗定義の「判定が別々の式」）。入れないことで残るのは、レジで読めない商品に operator が「読んだ」を選んだ選び違いで、上の選び違いと同じく保存結果の行の「取込みで反映」で名指す。
 - owner の決定（repo 外の回答台帳、要旨）: TD-570（関門 10 に足す）、TD-575（Q1 既定を置かず必ず選ばせる、Q2 レジでバーコードを読んで戻したかを問う、Q3 レジの資料で戻らない商品の明細は BIZ がこの保存で動かし保存結果で名指す、Q4 今は記録ごとに 1 問）、TD-377〜TD-379 の (iii)（b1 の外の小さな lane）、TD-225（差額だけの戻しの交換の申し送り）。
 - Revisit: PLU をレジへ書く時期を決めるときに（TD-462）、交換の片方だけを読む打ち方があるかを店に確かめ、あれば明細ごとの問いを別の lane で足す（TD-575）。
+- Superseded in part by: D-166（2026-11-24。Decision (2) の `jan_code` の形の条件: 13 桁だけ〈8 桁は false〉を、13 桁か 8 桁〈JAN-8〉に置き換える。候補 1・在庫連動・全桁ゼロでない・返品と確定が同じ関数を通ることは残る）
 
 ## D-149: 取り込んだ精算の Z をアプリが SD の `XZ` から `XZ_BKUP` へ移し、CV17 の毎日の Z の取込みをやめられるようにする（2026-11-02）
 
@@ -1519,3 +1522,34 @@ Use concise ADR-style entries.
 - Guarantee range: runner の image と店の PC は同じでなく、L3 を置き換えない。見るのは見出し 1 つだけ（画面の中身と操作は E-2）。product の PR では走らないので、image や WebView2 の更新で壊れても次に smoke を変えるまで気づかない。差分の判定の時間切れで起動した run で checkout か差分の step が失敗すると、product の PR でも赤になり helper の `merge` が止まりうる（戻し方は job の再実行、[ci.md](ci.md) の L3 Smoke）。
 - Compatibility: `Merge gate`・ci.yml・`windows-observe.yml`・`scripts/pr-gate.py`・`scripts/ci/check-required-jobs.sh`・`classify-changes.sh`・`package.json`・`package-lock.json`・D-015 は変えない。
 - Revisit: E-2 を起票するとき、`tauri-driver` の major を上げるとき、WebView2 の Runtime と `msedgedriver` の不一致を観測したとき。
+
+## D-165: 独自コード（記号と数字）を廃止し、JAN の形の店内コードを、JAN だけで商品を分けられないときと JAN の無いときに当てる（方向、2026-11-24）
+
+- Status: accepted（方向の決定。owner の決定 TD-881、repo 外の回答台帳、2026-11-24）
+- Context: 今の独自コード（`{接頭辞}-NNNN`、30 BIZ-01-D6）はアプリの中でしか使えない。PLU のスキャニングコードは 13 桁の JAN の形でないと CV17 が受けず、Z004 の照合（`io/z004_parser.rs` の `normalize_jan`）も 13 桁の数字だけを受けるので、独自コードの商品はレジで読めず在庫連動に当たらない。PLU の書出し・Z004 の照合・返品の引当ては元の JAN（`products.jan_code`）を鍵にするので、JAN が同じ色違いは区別できず、店内コードができるまで在庫連動の外に置いてある（TD-296）。D-028 は JAN の無い商品に 13 桁の店内コードを発行する案を、ラベルプリンタと 1 点ごとの貼付けが店の負担になるとして採らなかった。2026-11-24 の訪店で、レジは PC の画面に出したバーコードを読み、8 桁の JAN は Z004 に「8 桁 + `EEEEEE`」で出た（TD-877）。店主は色ごとのバーコードを 1 枚の表に並べてレジで読む売り方を、自分でやるなら可能と答えている（Q-084）。
+- Decision: (1) 記号と数字の独自コードを廃止する。商品のコードは 13 桁か 8 桁の JAN の形だけにする。(2) 商品は元の JAN を持ち、必要な場合だけ店内コード（JAN の形）を持つ。当てるのは、JAN だけで商品の違いを表現できない商品（JAN が同じ色違いなど）と、JAN の無い商品。ほかにも必要な場合があれば当てていく。(3) 成り立つかは、レジが店内コード（先頭 2 の 13 桁）をスキャニング PLU として受けるかに依る（C1 の残り、次の訪店）。紙に刷ったバーコードをレジが読むことは確かめる項目にしない（owner の判断）。
+- Why: 独自コードはこのアプリだけのもの過ぎ、レジ・PLU・Z004 のどれにも乗らない。JAN の形なら、PLU の書出し・Z004 の照合・商品 CSV の検査（30 BIZ-01-D10 は先頭 2 の店内コードを通す）の既存の形に乗る。JAN が同じ色違いを店内コードで分けないと、色ごとの在庫を見られない（owner の原文、TD-880）。JAN が同じ色違いは、色ごとの表で売れば 1 点ごとの貼付けは要らない（Q-084）。JAN の無い品（D-028 が退けた対象）をレジでどう読むかは決まっておらず、lane で決める。
+- Alternatives: 今の独自コード（`{接頭辞}-NNNN`）を残す（レジで読めず、色違いと JAN の無い品が在庫連動の外に残る）; 全商品に店内コードを振る（JAN のある商品の元の JAN をレジで読めなくなり、当てる手間が大きい。必要な場合だけにする）; C1 の後に方向を決める（TD-461 の元の順。owner が前倒しで決めた）。
+- Guarantee range: 方向だけを決める。店内コードの桁（13 桁か 8 桁）と番号の振り方、元の JAN と店内コードの持ち方、PLU の書出し・Z004 の照合・返品で鍵をどう選ぶか、既存の独自コードの扱い、JAN の無い品をレジで読む方法（表・貼付け・部門キーで売る。D-028 が退けた 1 点ごとの貼付けを店主に負わせないか）、8 桁を使うときの `normalize_jan` の拡張（D-140 の Revisit）と PLU の書出しの 13 桁の制限（`plu_export_service.rs` の `validate_plu_jan`、CV17 のスキャニングコード）は lane で決める。店内コードの番号は、商品に付いている先頭 2 の番号（在庫管理のシートに 114 行、店の外で付けた番号。TD-884）とぶつけない。アプリの本番の DB は無い（店は在庫管理のシートで管理している、TD-882）ので、既存のデータの移し替えは初期投入の手順の側の話になる。
+- Compatibility: 今は code・設計正本を変えない。lane で 30 BIZ-01-D6（独自コードの発番）・BIZ-01-D11（JAN が他の商品にあるときの独自コード、D-141）、25（PLU の書出し）、23・32（Z004 の照合）、返品、商品 CSV、初期投入の手順書の J4 を書き換える。D-028 の Alternatives の店内コードの不採用はこの決定が置き換えた（D-028 の Superseded in part の行）。
+- owner の決定（repo 外の回答台帳 TD-881、2026-11-24。原文の要旨）: 独自コードの廃止と店内コードの導入。JAN コードだけで商品の違いを表現できない、もしくは JAN コードが無いなら店内コードを当てる。方向は今決める（A）。
+- Revisit: レジが先頭 2 の 13 桁をスキャニング PLU として受けないと分かったとき（8 桁の店内コードを試すか、方向を見直す）。店内コードを当てる商品が想定より多く、表で売る手間が運用の負担と分かったとき。
+
+## D-166: Z004 の 8 桁 + `EEEEEE` と素の 8 桁を JAN-8 として受け、13 桁の JAN と同じ形で商品に結び在庫を動かす（2026-11-24）
+
+- Status: accepted（lane の起票は owner の指示 TD-886〈起こせるレーンは起こす〉、前提の事実は 2026-11-24 の訪店〈repo 外の回答台帳 TD-877〉。Plan Packet `docs/plans/2026-11-24-z004-jan8-match.md`。正本は [23](function-design/23-io-z004-parser.md) §13.5 と [31](function-design/31-biz-inventory-service.md) §12.4）
+- Context: 在庫連動の JAN-8 の商品をレジで読んで売ると、Z004 のコードの欄は 8 桁 + `EEEEEE`（14 桁固定幅の右側の `E` の詰め）になる（TD-877）。`normalize_jan` は 13 桁だけを受けたので、その行は `invalid_jan` になり在庫に届かなかった（D-103 (2)）。返品・交換の判定 `z004_moves_stock` も 13 桁だけを受けた（D-148 (2)）。
+- Decision: (1) IO-02 の `normalize_jan` は、前後の空白を除いた値が ASCII 数字 8 桁 + 大文字の `EEEEEE` か素の ASCII 数字 8 桁なら 8 桁の JAN（JAN-8）を返す。8 桁が全部 0 なら `Ok(None)`。他の英字・小文字・`E` が 6 個でない詰め・7 桁・9 桁は `Err`。チェックデジットは見ない（13 桁と同じ）。13 桁・全桁ゼロの手順と §13.4.2 の分類は変えない。(2) `z004_moves_stock` の形の条件を 13 桁か 8 桁にする（候補 1・在庫連動・全桁ゼロでないは今のまま）。返品・交換と Z004 の確定は今までどおり同じ関数を通るので二重に動かさない。(3) D-140 の Revisit の「8 桁の JAN をレジが Z004 にどう書くか」の答えはこの形で、D-140 の決定は変えず、商品 CSV の F2（30 BIZ-01-D10）を 8 桁の `商品コード` に広げることは見送り、D-140 の Revisit を残す。
+- Why: JAN-8 の商品も 13 桁の JAN の商品と同じく、レジの売上と戻しで在庫が動くべきで、D-148 の「Z004 が在庫を動かす商品は返品の保存で動かさない」の判定とそろえる必要がある。素の 8 桁は第 2 欄に出る経路が実機にも code にも見つかっておらず、素の 13 桁を受けるのと同じ扱いにすると `z004_moves_stock` の形の条件と `normalize_jan(s) == Ok(Some(s))` が一致したままになる。
+- Alternatives: 8 桁 + `EEEEEE` だけを受け素の 8 桁を拒む（形の条件と正規化の値の一致が崩れる）; 8 桁にチェックデジットの検証を足す（13 桁も検証しない。レジの出力をそのまま信じる）; 任意の英字の詰めを受ける（`E` の詰めの観測の外の値を JAN として読む）。
+- Guarantee range: 10 枠の独自コード（8 桁 + `EEEEEE`）の売上のある行は `invalid_jan` から未登録の JAN の行（`unmatched_product`）に変わり、同じ 8 桁の JAN の商品がアプリにあればその商品の売上・在庫になる（手元の Z004 の数えで、10 種類のどれも在庫管理のシートの 8 桁の値と重ならない。Plan Packet の Design Readiness）。0/0 の枠は BIZ-03 が除外するのでエラーは増えない。レジで JAN-8 を戻した後の Z004 の行は未観測で、自動 test で固定し実機は次の訪店で確かめる。
+- Compatibility: 型・wire・bindings・DB・画面の code は変えない。返品・交換の画面の説明文（63 UI-03-D23）を「JAN が無いか 8 桁でも 13 桁でもない」に直す。D-103 と D-148 に Superseded in part の行を足した。PLU の書出しの 13 桁の制限（25、D-165 の lane）と PLU の空き枠の照合（`parse_plu_register_snapshot`）は変えない。
+- Revisit: レジで JAN-8 を戻した後の Z004 の行が 8 桁 + `EEEEEE` の負の個数でないと分かったとき。PLU の書出しで JAN-8 を書くとき（D-165 の lane）。8 桁の数字の商品コードの商品を CSV で上書きする運用が出たとき、または J4 を a にするとき（D-140 の Revisit）。
+
+## D-170: 導入の前の関門 16 を、入庫の日付の欄の名を「届いた日」にし後から打つときも届いた日を選ぶ案内を置くことで閉じる（届いた日の列・「届いた」の操作・migration を作らない）（2026-11-25）
+
+- Status: accepted（owner の決定 A'、repo 外の回答台帳 TD-899。店主の答え TD-888、owner の所感 TD-890）
+- Context: 関門 16（TD-763）は、品物が届く前に入庫を打つことが「たまにある」（Q-105、TD-762）を前提に、入庫・返品に届いた日を持たせる runtime（R4 見込み、migration）だった。店の答え（TD-888）で、それは入庫を先に打つことでなく、扱いたい商品を仕入れる前にリストへ書き足しておくことだったと分かった。入庫の日付の欄の意味はもとから「品が店に届いた日」（[61](function-design/61-ui-receiving.md) の冒頭、D-118）で、後から打つときも日付を届いた日にすれば ADR SPEC-STK-CNT-D3 の窓が合う。
+- Decision: 届いた日の列・「届いた」の操作・migration を作らない。入庫の画面（UI-02）の日付の欄の名と直近の一覧の列の見出しを `届いた日` にし、欄の下に「品物が店に届いた日です。後から入れるときは、届いた日を選んでください。」を出す。D-118 の受け入れた穴（届く前に入れた入庫の後に数えると、届いた後に在庫が実物より少なくなる。[ADR](adr/2026-10-16-stocktake-count-placement.md) の Consequences）は、店の流れに無い場面として残す。変えるのは TD-899 の A' が対象とした入庫の画面だけ。
+- Alternatives: 予定どおり届いた日の runtime を入れる（B。店の流れに無い場面のために列と操作と migration を足す）; 何もしない（C。欄の名が入庫日のままでは、後から打つときに打った日を選びやすい）; その日に打つ決まりを店に課す（owner の所感 TD-890 で採らない）。
+- Revisit: 届く前に入庫を打つ場面が店で出たとき。

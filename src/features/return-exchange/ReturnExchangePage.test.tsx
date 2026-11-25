@@ -68,7 +68,7 @@ const READ_AT_REGISTER = "レジでバーコードを読んで戻した";
 const NOT_READ_AT_REGISTER =
   "バーコードを読んでいない（部門キー・差額だけの戻し・レジを通していない）";
 const readAtRegisterDescription =
-  "在庫連動の商品は、売上データ（Z004）の取込みで在庫に戻ります。レジの資料に載らない商品（POS販売で在庫を減らさない・JAN が無いか 13 桁でない・JAN が同じ商品がある）は、この保存で在庫を動かします。";
+  "在庫連動の商品は、売上データ（Z004）の取込みで在庫に戻ります。レジの資料に載らない商品（POS販売で在庫を減らさない・JAN が無いか 8 桁でも 13 桁でもない・JAN が同じ商品がある）は、この保存で在庫を動かします。";
 const notReadAtRegisterDescription = "この保存で全部の商品の在庫を動かします。";
 const REGISTER_METHOD_REQUIRED = "レジでの戻し方を選んでください";
 

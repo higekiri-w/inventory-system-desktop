@@ -53,7 +53,7 @@ describe("receiving-request (UI-02-D7/D8 / REQ-201)", () => {
     );
 
     expect(result.request).toBeNull();
-    expect(result.errors.receivingDate).toBe("入庫日は必須です");
+    expect(result.errors.receivingDate).toBe("届いた日は必須です");
     expect(result.errors.rows?.["P-001"]).toContain("数量は1以上の整数");
     expect(result.errors.rows?.["P-001"]).toContain(
       "原価は0以上で、小数は2桁までで入力してください",

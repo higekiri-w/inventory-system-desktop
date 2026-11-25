@@ -387,17 +387,21 @@ export function ReceivingPage() {
         <h2 className="text-xl font-semibold">入庫内容</h2>
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)]">
           <div className="space-y-2">
-            <Label htmlFor="receiving-date">入庫日</Label>
+            <Label htmlFor="receiving-date">届いた日</Label>
             <Input
               id="receiving-date"
               type="date"
               value={values.receivingDate}
               disabled={isFormLocked}
               aria-invalid={errors.receivingDate !== undefined}
+              aria-describedby="receiving-date-description"
               onChange={(event) => {
                 updateValues((prev) => ({ ...prev, receivingDate: event.target.value }));
               }}
             />
+            <p id="receiving-date-description" className="text-sm text-muted-foreground">
+              品物が店に届いた日です。後から入れるときは、届いた日を選んでください。
+            </p>
             {errors.receivingDate !== undefined ? (
               <p className="text-sm text-destructive">{errors.receivingDate}</p>
             ) : null}
@@ -706,7 +710,7 @@ export function ReceivingPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>入庫日</TableHead>
+                <TableHead>届いた日</TableHead>
                 <TableHead>取引先</TableHead>
                 <TableHead>備考</TableHead>
                 <TableHead>記録日時</TableHead>

@@ -479,7 +479,7 @@ mod tests {
         assert_eq!(detail["idempotency_key"], "ret-log-key");
     }
 
-    /// 13 桁の数字の JAN を持ち、その JAN の商品が 1 つだけの在庫連動の商品（Z004 の取込みが在庫を動かす）
+    /// Z004 の取込みが在庫を動かす商品（`jan` は 31 §12.4 の `z004_moves_stock` が受ける形で、その JAN の商品はこれだけ・在庫連動）
     fn create_linked_jan_product(conn: &DbConnection, code: &str, jan: &str, stock: i64) {
         create_test_product_with_jan(conn, code, jan, stock, true);
     }
@@ -603,19 +603,29 @@ mod tests {
     }
 
     #[test]
-    fn test_create_return_req202_register_processed_jan8_moves_stock() {
-        // REQ-202 / D-148 (2) / B8: JAN-8 は Z004 の照合の形（13 桁）でないので、候補が 1 つの在庫連動でもこの保存で動かす
+    fn test_create_return_req202_register_processed_jan8_left_to_z004() {
+        // REQ-202 / D-148 (2) / D-166 / B8: 在庫連動の JAN-8 は Z004 の取込みが動かすのでこの保存で動かさず、
+        // 在庫連動でない JAN-8 は今どおりこの保存で動かす
         let (_dir, mut conn) = setup_test_db();
         create_linked_jan_product(&conn, "RTN-JAN8", "49123456", 10);
+        create_test_product_with_jan(&conn, "RTN-JAN8-NOSYNC", "49123457", 10, false);
 
-        let req = register_processed_return("ret-jan8", vec![return_item("RTN-JAN8", "in", 1)]);
+        let req = register_processed_return(
+            "ret-jan8",
+            vec![
+                return_item("RTN-JAN8", "in", 1),
+                return_item("RTN-JAN8-NOSYNC", "in", 1),
+            ],
+        );
         let result = create_return(&mut conn, req).unwrap();
 
-        assert_eq!(stock_of(&conn, "RTN-JAN8"), 11);
-        assert_eq!(return_movement_count(&conn, "RTN-JAN8"), 1);
+        assert_eq!(stock_of(&conn, "RTN-JAN8"), 10);
+        assert_eq!(return_movement_count(&conn, "RTN-JAN8"), 0);
+        assert_eq!(stock_of(&conn, "RTN-JAN8-NOSYNC"), 11);
+        assert_eq!(return_movement_count(&conn, "RTN-JAN8-NOSYNC"), 1);
         assert_eq!(
             result.stock_applied_product_codes,
-            vec!["RTN-JAN8".to_string()]
+            vec!["RTN-JAN8-NOSYNC".to_string()]
         );
     }
 
@@ -987,7 +997,7 @@ mod tests {
     fn test_create_return_req202_quantity_limit_applies_to_register_processed() {
         // REQ-202 / X1: 在庫を動かさない明細（レジでバーコードを読んで戻した在庫連動の商品）も同じ上限の検査を通る
         let (_dir, mut conn) = setup_test_db();
-        // D-148: 在庫を動かさない明細は Z004 が在庫を動かす商品（13 桁の JAN が 1 商品だけの在庫連動）
+        // D-148: 在庫を動かさない明細は Z004 が在庫を動かす商品（31 §12.4）
         create_linked_jan_product(&conn, "LIM-RP", "4901234567887", 7);
         let before = write_surface(&conn, &RETURN_TABLES);
         let mut over =
