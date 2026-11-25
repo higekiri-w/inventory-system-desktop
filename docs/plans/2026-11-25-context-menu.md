@@ -5,7 +5,7 @@ wave に属さない単独の lane。出所は owner の決定（repo 外の回�
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 6b8c786c218e33c636b33f198bb7f9819441bc96
 - Amendments: none
 
 `Plan Commit`・`Amendments` は `scripts/plan-approve.sh` が書く（手で写さない）。
