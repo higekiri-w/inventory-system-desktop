@@ -293,7 +293,7 @@
 - **レイアウト判断**:
   - route は `/inventory/receiving`。入出庫エリアの独立画面として扱い、商品一覧や在庫照会の query param で mode 切替しない
   - UI は generated `commands.createReceiving(req)` / `commands.listReceivings(page, perPage, dateFrom, dateTo)` のみを使う。実装 PR では CMD-02 を tauri-specta binding に追加する
-  - 入庫ヘッダは入庫日（既定は今日）、取引先（任意）、備考（任意）。取引先候補は `commands.listSuppliers()` 由来の complete master data とし、inline 新規取引先作成は初回実装では扱わない
+  - 入庫ヘッダは届いた日（欄の名。既定は今日。後から入れるときも届いた日を選ぶ案内を欄の下に出す。D-170）、取引先（任意）、備考（任意）。取引先候補は `commands.listSuppliers()` 由来の complete master data とし、inline 新規取引先作成は初回実装では扱わない
   - 商品追加欄は商品コード / JAN / 商品名を同じ入力で扱う。Enter で検索し、1件なら明細追加、複数件なら候補から選択、0件なら商品登録への導線を出す
   - 商品追加欄は入力中に live 候補プレビューを表示する（正本 = design-system/02-component-catalog.md ⑮。Enter commit 経路は不変）
   - バーコードスキャナは HID キーボード入力として商品追加欄に入る前提。初回実装ではグローバル検知を置かず、フォーカス中の入力欄 + Enter + 追加後フォーカス戻しに限定する
