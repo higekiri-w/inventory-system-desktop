@@ -216,8 +216,46 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(screen.getByRole("button", { name: "次の日" })).toBeEnabled();
 
     fireEvent.change(screen.getByLabelText("日付を選択"), { target: { value: "2026-11-10" } });
+    fireEvent.keyDown(screen.getByLabelText("日付を選択"), { key: "Enter" });
     expect(await screen.findByText("この日の控えはありません")).toBeInTheDocument();
     expect(mockList).toHaveBeenLastCalledWith("2026-11-10");
+  });
+
+  it("U4: 日付の欄は打っている間は日を移さず、Enter か欄から出たときに 1 回だけ移る。無効・空なら今の日へ戻す", async () => {
+    serveDays({
+      latest: day(),
+      "2026-11-10": day({ date: "2026-11-10", records: [] }),
+      "2026-11-19": day({ date: "2026-11-19", records: [summary(9, "000101")] }),
+    });
+    const { onSearchChange } = renderPage();
+    await screen.findByRole("grid");
+    const input = screen.getByLabelText("日付を選択");
+
+    // WebView2 は日の 2 桁目を待つ間も change を出す（`2` → `02`）。ここで移ると打ちかけが捨てられる
+    fireEvent.change(input, { target: { value: "2026-11-02" } });
+    fireEvent.change(input, { target: { value: "2026-11-10" } });
+    expect(onSearchChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("2026-11-10");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.focusOut(input);
+    expect(onSearchChange).toHaveBeenCalledTimes(1);
+    expect(onSearchChange).toHaveBeenLastCalledWith(
+      { date: "2026-11-10", no: undefined },
+      undefined,
+    );
+    expect(await screen.findByText("この日の控えはありません")).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "2026-11-19" } });
+    fireEvent.focusOut(input);
+    expect(onSearchChange).toHaveBeenCalledTimes(2);
+    expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
+
+    // 打ちかけで欄から出た（値が空）ときは移らず、今の日へ戻す
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.focusOut(input);
+    expect(onSearchChange).toHaveBeenCalledTimes(2);
+    expect(input).toHaveValue("2026-11-19");
   });
 
   it("U6: 番号で 1 件ならその日に移って行を選び、本文は一覧の外の ID でも get_ej_record で読む", async () => {

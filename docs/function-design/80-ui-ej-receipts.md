@@ -23,7 +23,7 @@
 | `src/routes/reports/receipts.tsx` | route `/reports/receipts`。`validateSearch` に feature の schema を渡し、`onSearchChange(next, { replace })` を `navigate` にする（`src/routes/reports/daily.tsx` と同じ形） |
 | `src/features/ej-receipts/types.ts` | search の schema `ejReceiptsSearchSchema`（§80.2） |
 | `src/features/ej-receipts/EjReceiptsPage.tsx` | 画面（`PageShell`）。表・控えの文・番号の欄・欠けの Alert・補助のリンク |
-| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。UI-09a の部品は変えない |
+| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（カレンダーの窓からの選択も同じ。無効・空なら今の日へ戻す）。UI-09a の部品は変えない |
 | `src/features/ej-receipts/hooks/useEjRecords.ts` | query の hook 3 つ（§80.5） |
 | `src/features/ej-receipts/lib/receipt-format.ts` | 種類の label・金額・時刻の純関数と、控えの文の字形の指定（§80.4） |
 | `src/features/daily-report-import/hooks/useImportEjFiles.ts` | 手で選ぶ EJ の取込み（55 UI-07-D17 と共有。§80.7） |
@@ -107,3 +107,4 @@
 |---|---|---|
 | 2026-11-25 | ej-receipts-a2（実装、PR #305） | 新設。UI-09c の画面の状態、search と選んだ行の持ち方、種類の label の表、番号で探す 3 つの結果、欠けと手で選ぶ EJ、query の key と D-052 の C26・C27、字形の指定（L3-1 の結果は未確認）を書いた（[Plan Packet](../plans/2026-11-24-ej-receipts-a2.md)）。 |
 | 2026-11-25 | ej-receipts-a2（Final の closure round 2 の是正、PR #305） | §80.3 の選んだ行の持ち方を、ID と日の組を表示中の日と同じときだけ使う形に置き換えた。§80.6 に同じ番号の Enter での取り直し、§80.7 に取込みの待ちの間に見つけた 1 件へ待ちの後に移ることを書いた。 |
+| 2026-11-26 | ej-receipts-a2（L3 の観察の是正、PR #305） | §80.1 の `EjDateNavigator` に、日付の欄は打っている間は日を移さず Enter か欄から出たときに移すことを書いた（WebView2 で日の 2 桁目の打ちかけが捨てられた）。 |
