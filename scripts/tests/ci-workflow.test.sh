@@ -344,7 +344,21 @@ abort "smoke diff base/head drifted" unless diff["env"] == {
   "BASE_SHA" => "${{ github.event.pull_request.base.sha }}",
   "HEAD_SHA" => "${{ github.event.pull_request.head.sha }}",
 }
+# Both branches are fixed: the no-diff branch must stay changed=false so a timed-out paths diff never builds.
+diff_run = <<~'RUN'
+  files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- .github/workflows/l3-smoke.yml scripts/ci/l3-smoke-home.mjs)"
+  if [ -z "$files" ]; then
+    echo "### L3 smoke: 実施保留（対象 2 file に差分なし）" >> "$GITHUB_STEP_SUMMARY"
+    echo "::notice title=L3 smoke::実施保留（対象 2 file に差分なし）"
+    echo "changed=false" >> "$GITHUB_OUTPUT"
+  else
+    printf '%s\n' "$files"
+    echo "changed=true"
+    echo "changed=true" >> "$GITHUB_OUTPUT"
+  fi
+RUN
 abort "smoke diff must read the same files as paths" unless diff["run"].to_s.include?(%(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- #{smoke_paths.join(" ")}))
+abort "smoke diff run drifted" unless diff["run"] == diff_run
 later = steps[(diff_index + 1)..]
 abort "smoke step runs without the diff guard" unless later.all? { |step| step["if"] == "steps.diff.outputs.changed == 'true'" }
 cache = steps.find { |step| step["uses"] == "actions/cache@v5" }
@@ -353,6 +367,15 @@ abort "smoke cache paths drifted: #{cache_paths.inspect}" unless cache_paths == 
 runs = steps.map { |step| step["run"].to_s.strip }
 ["npm ci --ignore-scripts", "cargo install tauri-driver --locked --version 2.1.0"].each do |command|
   abort "smoke command drifted: #{command}" unless runs.include?(command)
+end
+# msedgedriver comes only from Microsoft's host and is used only when Microsoft Corporation signed it.
+driver = steps.find { |step| step["id"] == "driver" }
+driver_lines = driver.to_h["run"].to_s.lines.map(&:strip)
+[
+  %(Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile $zip),
+  %(if ($sig.Status -ne 'Valid' -or $signer -cne 'Microsoft Corporation') {),
+].each do |line|
+  abort "smoke driver step drifted: #{line}" unless driver_lines.include?(line)
 end
 # The smoke-only config file is written and passed with --config; the shipped config stays as it is.
 build_run = <<~'RUN'
@@ -732,6 +755,9 @@ smoke_mutant() {
 reject_smoke_mutant l3-smoke-product-path "$(smoke_mutant product-path '/- "scripts\/ci\/l3-smoke-home.mjs"/a\      - "src-tauri/**"')"
 reject_smoke_mutant l3-smoke-extra-trigger "$(smoke_mutant extra-trigger '/^on:$/a\  workflow_dispatch:')"
 reject_smoke_mutant l3-smoke-no-diff-guard "$(smoke_mutant no-diff-guard '/name: Build the release app/{n;d}')"
+reject_smoke_mutant l3-smoke-no-diff-branch "$(smoke_mutant no-diff-branch 's/echo "changed=false" >> "$GITHUB_OUTPUT"/echo "changed=true" >> "$GITHUB_OUTPUT"/')"
+reject_smoke_mutant l3-smoke-driver-signature "$(smoke_mutant driver-signature "s/ -or \$signer -cne 'Microsoft Corporation'//")"
+reject_smoke_mutant l3-smoke-driver-host "$(smoke_mutant driver-host 's|https://msedgedriver.microsoft.com/|https://example.com/|')"
 reject_smoke_mutant l3-smoke-diff-paths "$(smoke_mutant diff-paths '/git diff --name-only/s|scripts/ci/l3-smoke-home.mjs|scripts/ci/other.mjs|')"
 reject_smoke_mutant l3-smoke-continue "$(smoke_mutant continue '/timeout-minutes: 10/a\        continue-on-error: true')"
 reject_smoke_mutant l3-smoke-no-step-timeout "$(smoke_mutant no-step-timeout '/timeout-minutes: 10/d')"

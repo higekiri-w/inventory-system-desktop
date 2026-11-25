@@ -23,6 +23,8 @@ const work = AbortSignal.timeout(WORK_MS);
 let child;
 let exited;
 let driverExit;
+// Only the exit event proves tauri-driver ended; an error event (spawn or kill failure) does not.
+let driverExited = false;
 let stage = "setup";
 
 // A grandchild that holds a pipe or a hung cleanup must not keep the step running.
@@ -89,6 +91,7 @@ try {
   exited = new Promise((resolveExit) => {
     child.on("exit", (exitCode, signal) => {
       driverExit = `exit code ${exitCode}, signal ${signal}`;
+      driverExited = true;
       resolveExit();
     });
   });
@@ -114,7 +117,7 @@ try {
   );
   console.log(`L3 smoke: heading text: ${text}`);
   if (text === EXPECTED_HEADING) {
-    console.log(`L3 smoke: PASS (${Math.round((Date.now() - startedAt) / 1000)} s)`);
+    console.log(`L3 smoke: heading matched (${Math.round((Date.now() - startedAt) / 1000)} s)`);
     code = 0;
   } else {
     console.error(
@@ -125,7 +128,8 @@ try {
   if (work.aborted) {
     console.error(`L3 smoke: FAIL: ${stage} timed out at the ${WORK_MS / 1000} s work deadline`);
   } else {
-    console.error(`L3 smoke: FAIL: ${stage}: ${error?.message ?? error}`);
+    const cause = error?.cause?.code ? ` (${error.cause.code})` : "";
+    console.error(`L3 smoke: FAIL: ${stage}: ${error?.message ?? error}${cause}`);
   }
 } finally {
   stage = "cleanup";
@@ -138,14 +142,14 @@ try {
       console.error(`L3 smoke: DELETE /session failed: ${error?.message ?? error}`);
     }
   }
-  if (child && !driverExit) {
+  if (child && !driverExited) {
     // tauri-driver 2.1.0 puts itself and the native driver in a kill-on-close Job Object on Windows.
     child.kill();
     await Promise.race([exited, sleep(EXIT_WAIT_MS)]);
-    if (!driverExit)
+    if (!driverExited)
       console.error(`L3 smoke: tauri-driver did not exit within ${EXIT_WAIT_MS / 1000} s`);
   }
-  cleanedUp = sessionDeleted && driverExit !== undefined;
+  cleanedUp = sessionDeleted && driverExited;
   if (code === 0 && !cleanedUp) console.error("L3 smoke: FAIL: cleanup did not finish");
 }
 if (code === 0 && cleanedUp) writeFileSync(RESULT_FILE, "PASS");
