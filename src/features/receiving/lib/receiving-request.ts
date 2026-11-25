@@ -42,7 +42,7 @@ export function buildReceivingRequest(
   const note = values.note.trim();
 
   if (receivingDate === "") {
-    errors.receivingDate = "入庫日は必須です";
+    errors.receivingDate = "届いた日は必須です";
   }
   if (values.rows.length === 0) {
     errors.items = "明細が1件以上必要です";
