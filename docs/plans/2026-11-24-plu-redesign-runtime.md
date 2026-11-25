@@ -33,11 +33,11 @@ Goal Invariant:
 ### 失敗定義
 
 - migration の後に、枠の memory No.・JAN・`reserved_at`・`activated_at` のどれかが変わる、または `reserved` / `active` の枠が別の状態になる。
-- 一度も照合していない状態・restore の直後に、書出しが空きを仮定して予約できる。
+- 一度も照合していない状態・restore の直後（前の版の app が `committed` まで進めた復元を、起動で引き継いだときを含む）に、書出しが空きを仮定して予約できる。
 - 古い SD の Z004 で照合して、前回の照合を上書きする。
 - 照合の失敗で SD の読取り（日報の候補の一覧）が失敗になる。
 - 書出しに、対象の商品を持たない JAN の枠・`external`・`free` の行が出る。
-- 保存の後に名称・部門・税率を変えた商品が、古い保存結果の「未反映から外す」で反映済みになる。共有 JAN の売価・税率の不一致を Diff が書き出す。
+- 保存の後に出力の行（S8 の照合の値の入力）が変わった商品が、古い保存結果の「未反映から外す」で反映済みになる。共有 JAN の売価・税率の不一致を Diff が書き出す。
 - 店の毎日の操作が増える。
 
 ### 非目的
@@ -69,8 +69,10 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 - S8 `plu_dirty` と、書き出した内容との照合（30 §4.4 手順 4b・4c、33 §16.4・§16.5、D-160 (5)）:
   - `update_product` で名称・部門・税率の変更を足す。最初の commit は red の test（今の code が立てないこと）。JAN の変更は商品 CSV の上書きが今も `plu_dirty=1` にする（変えない。test で固定する）。
   - Diff の群: 未反映の対象の商品から出力の候補の JAN を決め、その JAN の対象の商品の全員で不一致・代表の行・`target_product_codes` を決める（33 §16.4 手順 2・3。今の code は `find_plu_dirty_products_for_plu` の `plu_dirty=1` の商品だけで比べるので、共有 JAN の片方だけ売価・税率を直すと Diff が不一致を見逃して書き出す）。`plu_export_service.rs` の prepare と `product_repo.rs`、33 §16.4 手順 6 と 20 の文。
-  - confirm: prepare が行ごとに照合の値（出力の行の内容の hash。入れてある `sha2`）を返し、confirm は今の商品から同じ値を求め直して、一致する行の商品だけ `plu_dirty=0` にする。一致しない行の商品は未反映のまま残して結果に返す（知らせは S5）。復帰状態は照合の値を持ち、JAN・名称・価格の生の値は今までどおり持たない（67 §67.8.1）。33 §16.2・§16.5、41 §17.6、67 に入れる。
-- S9 restore の後の key（33 §16.8、D-160 (7)）: `src-tauri/src/mnt/restore.rs` の `restore_backup` で、復元した DB の接続を開いた後・manifest を `committed` にする前に `plu_register_snapshot_at` だけを消す。消せなければ接続を閉じて今の復元の失敗の経路（71 §71.7 ステップ 8 の巻き戻し）へ返し、復元した DB の接続を公開しない。`committed` の時点で key はもう無いので、`cleanup_committed`（best-effort で manifest を解放する枝と、次回起動の持ち越し）は変えない。`src-tauri/src/db/system_repo.rs` に key を消す関数は無い（`get_setting`・`get_all_settings`・`upsert_setting` だけ）ので、要る 1 つだけを足す。71 §71.7 に手順（ステップ 6 と 7a の間）と判断の ID を足す。
+  - confirm: prepare が行ごとに照合の値（IO-04 が file に書くその行の全 11 列〈メモリNo.〜部門リンク。25 §12〉の CP932 の byte 列の SHA-256。入れてある `sha2`）を返し、confirm は今の商品から同じ値を求め直して、一致する行の商品だけ `plu_dirty=0` にする。一致しない行の商品は未反映のまま残して結果に返す（知らせは S5）。合否はこの byte 列だけで決める（名称を変えても、CP932 の 16 バイトへの切り詰めで落ちる末尾だけの変更は行が同じなので外れる）。復帰状態は照合の値を持ち、JAN・名称・価格の生の値は今までどおり持たない（67 §67.8.1）。33 §16.2・§16.5、41 §17.6、67 に入れる。
+- S9 restore の後の key（33 §16.8、D-160 (7)）: 復元した DB の接続を返す 2 つの経路が、返す前に同じ 1 つの関数で `plu_register_snapshot_at` だけを消す（key が無ければ成功）。消せなければ、復元した DB の接続を公開しない。`src-tauri/src/db/system_repo.rs` に key を消す関数は無い（`get_setting`・`get_all_settings`・`upsert_setting` だけ）ので、要る 1 つだけを足す。`cleanup_committed` は変えない。71 §71.7 に手順（ステップ 6 と 7a の間、MNT-01-D5 の起動の `committed` の分岐）と判断の ID を足す。
+  - `src-tauri/src/mnt/restore.rs` の `restore_backup`: 復元した DB の接続を開いた後・manifest を `committed` にする前。消せなければ接続を閉じて今の復元の失敗の経路（71 §71.7 ステップ 8 の巻き戻し）へ返す（`committed` の後には元の DB へ戻す経路が無いので、前に置く）。
+  - 起動（`complete_reconciled_restore` と `src-tauri/src/lib.rs` の `prepare_database_with_init`）: manifest が `committed` なら、補完（log の記録と manifest の削除）の前。前の版の app が `committed` まで進めて止まった復元は、上の点を通っていない。消せなければ接続を返さず、`StartupDatabaseError::RestoreReconcile`（今ある起動の中止の文）に理由を付けて起動を止める。補完の失敗は今までどおり warn で持ち越す（manifest が残る間の起動は毎回消す。消しすぎても、書出しが次の照合まで止まるだけ）。
 - S10 L3 の入力物: `src-tauri/src/io/l3_fixtures.rs` の `write_sd_bulk_l3_fixtures` と同じ形（env の `INVENTORY_L3_DAY`・`INVENTORY_L3_OUT`、ignore の test）で、全枠の Z004（5,000 行、CP932・CRLF）を持つ合成の SD の folder を 2 つ作る: `sd-a`（読取りの窓の日数ぶんの、bytes の違う Z004）、`sd-b`（どの Z004 も精算回数が `sd-a` の最大より小さい）。
 - S11 test: 下の Test Plan。撤去した機能の test（clear 行・解放・一括の対象化・移行の絞り込み・件数の要約）は、D-117 の設計の改訂を理由に、新しい契約の test へ書き換えるか消す（消す test の名前と理由を PR に並べる）。`src-tauri/tests/design_compliance_test.rs` は対応表に変更が要るときだけ触る。
 - S12 設計正本と docs（同じ PR）:
@@ -78,7 +80,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
   - PR #292 の P3 の 4 件: 67 UI-08-D5 の Why を D-160 の Guarantee range への参照に、55 UI-07-D15 (8) の最後の 2 文の出所（この lane の文、D-127）、`docs/SCREEN_DESIGN.md` の SD の読取りの知らせの要約に (8)、D-160 (7) の穴（中身は Design Readiness の抜け道）を D-168 の Guarantee range に。
   - `docs/decision-log.md` の末尾に D-168（予約済み）: D-052 の C17 の置換えと C19 の撤去、精算回数の読取りと読む本数、restore で key を消す位置、migration の形、Diff の群と confirm の照合（S8）、下の 2 つ。merge 済みの D の本文は書き換えず、D-052・D-073・D-117 に `Superseded in part by: D-168` の行を足す。
     - 実機の L3 の当て方（owner の決定 TD-902）: PLU の file の行の形が変わらない lane は、記録のある前の実機の確かめで CV17 の受理を受け、CV17・レジの実機の L3 を置かない。行の形を変える lane は今までどおり置く。D-073 の (3)（UI-08 の operator flow）は開発の build の L3 で見る。D-117 は Compatibility の「CV17 / SR-S4000 の L3 が要る」。
-    - 前の実機の確かめが支える範囲（TD-902 の物差しの範囲として Coordinator が裁定した、2026-11-25）: 2026-08-20 の店の PC での L3 の記録（repo 外の回答台帳 L-012）が支えるのは差分の取込みと SD・レジへの設定の転送で、検証の条件は空き枠への追加だった（`docs/plu-export-and-real-csv-verification.md` の「店舗運用から導いた公開設計前提」）。この lane が新しく枠を取るのは空き枠と同じコードの `external` だけ（33 §16.4 手順 5）で、それは L-012 で足りる。別のコードが入った枠へ商品の行を書き直す経路（33 §16.3 の「別コード × active」の conflict と §16.8、D-117 (4)・Guarantee range）は今の main の build にもあり、この lane は広げない（S3 で、対象の商品を持たない JAN の枠の分だけ狭まる）。その経路の CV17・レジの受理と、前の精算の後の売上の出方は未実測で、次の訪店の上書きの実験（backlog の「売り切った廃番の商品の PLU の枠の使い回し」）が同じ操作を確かめる。
+    - 前の実機の確かめが支える範囲（TD-902 の物差しの範囲として Coordinator が裁定した、2026-11-25）: 2026-08-20 の店の PC での L3 の記録（repo 外の回答台帳 L-012）が支えるのは差分の取込みと SD・レジへの設定の転送で、検証の条件は空き枠への追加だった（`docs/plu-export-and-real-csv-verification.md` の「店舗運用から導いた公開設計前提」）。この lane が新しく枠を取るのは空き枠と同じコードの `external` だけ（33 §16.4 手順 5）で、空き枠は L-012 で足り、同じコードの `external` の採用は今の main のまま（この lane は変えない）。別のコードが入った枠へ商品の行を書き直す経路（33 §16.3 の「別コード × active」の conflict と §16.8、D-117 (4)・Guarantee range）は今の main の build にもあり、この lane は広げない（S3 で、対象の商品を持たない JAN の枠の分だけ狭まる）。その経路の CV17・レジの受理と、前の精算の後の売上の出方は未実測で、次の訪店の上書きの実験（backlog の「売り切った廃番の商品の PLU の枠の使い回し」）が同じ操作を確かめる。
   - 上の 2 つに合わせる: `docs/plu-export-and-real-csv-verification.md` の冒頭の段と PLU-21・PLU-25 の行の「D-117 の runtime の lane の L3 で確かめる」を、PLU-21 は L-012 と owner の答えで受け、支える範囲と未実測の範囲を上のとおりに分けて書く、PLU-25 はこの lane の L3-4 と T20・T28 で受ける、にする。67 §67.12 の適用範囲の段と CV17 へ投入する 2 項目。
   - `docs/diagrams/current-system.md`、`docs/inventory_system_erd.html`（`plu_slots` の列と status）。
   - 片付け（TD-765 の B）: backlog の項目を済みの形にし（関連の「廃番表示 3 択…」「PLU slot 後続 follow-up」の runtime への参照も）、`docs/Plans.md` の関門 14 の「前提の lane は … 未起票」と「流れ 3 の中の位置と手順は、前提の lane か手順書の改訂で決める」を今の形にする（手順書は部門リンクの決め方の後の docs の lane、TD-896）。backlog の P3 の (1)（書き出す前にその日の SD を読む、の手順書の文）は、その docs の lane の入力として backlog の「PLU をレジへ書く時期と D-070 の自動在庫連動」へ移す。
@@ -91,7 +93,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | 重なる file | この lane が持つ行・節 | 相手 |
 |---|---|---|
 | `src-tauri/src/db/migration.rs`・`db/mod.rs`、22 の末尾の節 | この lane の `schema_v<N>` の `mod`・`use`・`migrations()` の 1 件と 22 の 1 節。後に merge する側が版・file 名・節の番号を取り直す（22 §21 の「版の番号の取り直しと開発・試験 DB」。取り直しは runtime の変更なので L3 は同期の後） | 関門 17 |
-| `src-tauri/src/biz/daily_report_import_service/`、`cmd/daily_report_import_cmd.rs`、`lib.rs` の登録、37・45・55 | scan の手順 10 と `plu_register_z004s`、`scan_register_sd` の手順 2a と response の 1 field、`import_plu_register_snapshot`・`bulk_set_plu_target` の登録の削除、37 §37.9・45 §45.6a・55 UI-07-D15 (8)。EJ の閲覧（`ej.rs`・§37.11・§45.6c・UI-07-D17）は持たない | 関門 19 |
+| `src-tauri/src/biz/daily_report_import_service/`、`cmd/daily_report_import_cmd.rs`、`lib.rs` の登録、37・45・55 | scan の手順 10 と `plu_register_z004s`、`scan_register_sd` の手順 2a と response の 1 field、`import_plu_register_snapshot`・`bulk_set_plu_target` の登録の削除、起動の `prepare_database_with_init`（S9）、37 §37.9・45 §45.6a・55 UI-07-D15 (8)。EJ の閲覧（`ej.rs`・§37.11・§45.6c・UI-07-D17）は持たない | 関門 19 |
 | `src/lib/invalidation-contract.ts`・`src/test/invalidation-oracle.ts`・meta test、`docs/UI_TECH_STACK.md` の D-052 の段落 | C17・C19 の entry と、その説明の文。件数の文は後に merge する側が測り直す | 関門 19、PR #300（UI_TECH_STACK のほかの節） |
 | `src/lib/bindings.ts`、`docs/function-design/90-traceability.md`、`docs/spec/requirements.md` | 生成物は作り直す。requirements は REQ-907 の行と注だけ | 関門 19 |
 | `docs/decision-log.md` | D-168 と、D-052・D-073・D-117 への Superseded の行（末尾の追記は merge 順で両方を残す） | 関門 17（D-167）、関門 19（D-169）、PR #300（D-164）、PR #304（D-166） |
@@ -106,9 +108,9 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 - AC4（S3）: `scan_register_sd` は照合の `Err` でも成功を返し、`SkippedOlder` のときだけ `plu_snapshot_skipped_older` が `true`。cache の snapshot に Z004 の bytes が残らない（T14・T15）。
 - AC5（S4・S5）: 知らせの文は `true` のときだけ出て、読み直すと消える。SD の読取りの成功で slot summary と未反映一覧が stale になる。PLU 書出しの画面は未照合で warning と導線、照合済みで日時の 1 行。CV17 に取り込めなかったときの案内は §67.9 の文で、保存の後と復帰の Alert の 2 か所に出る（T20〜T22）。
 - AC6（S6・S7）: 商品一覧に「PLU」列・PLU表示・一括操作が無く、URL の `plu` を無視する。商品フォームに「レジメモリNo.」が無い（T17〜T19）。
-- AC7（S8）: T13 は実装の前に red（`cd src-tauri && cargo test --lib -- test_update_product_req907_name_department_tax_change_sets_plu_dirty` が exit 101）、実装の後に exit 0。原価だけ・単位だけ・同じ値の更新では立てない。共有 JAN の片方だけ税率を変えると、その JAN は Diff・Full とも `group_price_mismatch` で除外される。保存の後に名称・部門・税率を変えた商品は、復帰状態を経ても「未反映から外す」で未反映のまま残り、その場で名指しの知らせが出て、変えていない商品だけが外れる（T13・T20）。
-- AC8（S9）: restore の後に `plu_register_snapshot_at` が無く、`plu_register_snapshot_settlement_no` は backup の値のまま。書出しは `register_snapshot_required` で拒まれる。key の削除が失敗すると restore は失敗を返して元の DB に戻り、復元した DB の接続は公開されない（T16）。
-- AC9: Test Plan の mutation（M1〜M10・M14〜M17）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
+- AC7（S8）: T13 は実装の前に red（`cd src-tauri && cargo test --lib -- test_update_product_req907_name_department_tax_change_sets_plu_dirty` が exit 101）、実装の後に exit 0。原価だけ・単位だけ・同じ値の更新では立てない。共有 JAN の片方だけ税率を変えると、その JAN は Diff・Full とも `group_price_mismatch` で除外される。保存の後に出力の行（S8 の照合の値の入力）が変わった商品は、復帰状態を経ても「未反映から外す」で未反映のまま残り、その場で名指しの知らせが出て、行が変わっていない商品だけが外れる: 名称の先頭の 1 文字を変えた商品は残り、CP932 の 16 バイトへの切り詰めで落ちる末尾だけを変えた商品は外れる（T13・T20）。
+- AC8（S9）: `restore_backup` の後と、manifest が `committed` の DB での起動（前の版の app が `committed` の直後に止まった形）の後のどちらでも、返った接続に `plu_register_snapshot_at` が無く、`plu_register_snapshot_settlement_no` は元の値のまま。書出しは `register_snapshot_required` で拒まれる。key の削除が失敗すると、`restore_backup` は失敗を返して元の DB に戻り、起動は接続を返さずに理由つきで止まって manifest は `committed` のまま残る。どちらも復元した DB の接続は公開されない（T16）。
+- AC9: Test Plan の mutation（M1〜M10・M14〜M19）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
 - AC10（撤去の検査）: `rg -n 'release_pending|released_at|PLU_CLEAR_ROW_ENABLED|release_plu_slot_for_jan|bulk_set_plu_target|bulkSetPluTarget|find_products_for_bulk_plu_target|PluMigrationFilter|over_limit_warning|PluPreparedRowKind|PluExportRowKind|plu_memory_no|plu_register_snapshot_summary|importPluRegisterSnapshot|clear_row_enabled|with_clear_enabled|append_clear_rows' src src-tauri/src src-tauri/tests` の当たりが、`schema_v5.rs`・この lane の `schema_v<N>.rs`・`migration.rs` の v5 の test・UI-08 の旧い復帰状態を捨てる test だけ。`rg -c 'runtime の状態' docs --glob '!docs/archive/**' --glob '!docs/plans/**' --glob '!docs/research/**' --glob '!docs/decision-log.md' --glob '!docs/backlog.md'` が 0 件（起票の時点の `1edcedc3` は 6 file で 11 行: biz-task-specs 3・cmd-task-specs 2・io-task-specs 1・ui-task-specs 3・plu-tables 1・33 1。どれも PLU の注記）。
 - AC11（gate）: `docs/DEV_WORKFLOW.md` Verification Gates の Rust・bindings・frontend・traceability・docs の command が全部通り、`bash scripts/doc-consistency-check.sh` が ERROR 0。`cargo check --release` が通る（L3 の前）。
 
@@ -136,7 +138,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | D-117 (3) 精算回数の選択と key | 33 §16.3 手順 1〜3 | S3 | T5・T6 | L3-2 |
 | gate `register_snapshot_required` | 33 §16.3・§16.9 | S3・S5 | T9・T20 | L3-1 |
 | BIZ-04-D4 prepare（sticky・clear 無し・Diff の群） | 33 §16.4 | S2・S8 | T10・T12・T13・T28 | L3-4 |
-| BIZ-04-D5 confirm（書き出した内容が今と一致する分だけ外す） | 33 §16.5、41 §17.6、67 §67.8.1 | S2（clear の confirm を外す）・S8・S5 | T10・T13・T20 と既存の confirm の test | L3-4 |
+| BIZ-04-D5 confirm（IO-04 の行の byte 列が今と一致する分だけ外す） | 33 §16.5、41 §17.6、67 §67.8.1 | S2（clear の confirm を外す）・S8・S5 | T10・T13・T20 と既存の confirm の test | L3-4 |
 | BIZ-04-D6 枠を解放しない | 33 §16.6、30 §4.4 4b | S2 | T11 | 非対象（BIZ） |
 | IO-04-D2・D4（IO-04-D3 の撤去） | 25 §12 | S2 | T23 | 非対象（D-168） |
 | BIZ-08 手順 10 | 37 §37.9 | S3 | T14 | L3-1 |
@@ -148,7 +150,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | BIZ-01-D4・CMD-01-D4・UI-01a-D10〜D12 の撤去 | 30 §4.9.1、40、20、50 | S6 | T17・T18 | L3-3 |
 | UI-01b-D19・IO-01-D4 の `plu_memory_no` | 51、20 | S7 | T19 | L3-3 |
 | D-160 (5) `plu_dirty` | 30 §4.4 4c | S8 | T13 | L3-4 |
-| D-160 (7) restore の後の key | 33 §16.8、71 §71.7 | S9 | T16 | 非対象（restore の実機の確かめは足さない。71 の既存の L3 の範囲を変えない） |
+| D-160 (7) restore の後の key（`restore_backup` と、起動での `committed` の復元の完了） | 33 §16.8、71 §71.7（ステップ 6〜7a、MNT-01-D5 の `committed` の分岐） | S9 | T16 | 非対象（restore の実機の確かめは足さない。71 の既存の L3 の範囲を変えない） |
 | D-160 (7) の穴（PR #292 の P3 の 4） | D-168 の Guarantee range | 直さない（Design Readiness の抜け道） | — | 非対象 |
 | D-073 の当て方（TD-902）と PLU-21・PLU-25 | D-168、67 §67.12、UI-08-D4・D9、§67.9 | S5・S12 | T20・T23・T28 | L3-4（開発の build）。CV17・レジの実機は非対象 |
 | 隣の契約（除外）: BIZ-03 の Z004 の取込み（32）、D-122 の別名、停止 ADR | 33 §16.3 の末尾 | 触らない | — | 非対象 |
@@ -169,10 +171,10 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | clear 無し | 対象を持たない JAN の枠・clear 行が出る | unit | T10 `test_prepare_plu_export_req907_never_emits_rows_for_untargeted_slots` | prepare に対象外の枠の行を足す（M10） |
 | 枠を解放しない | 対象外化・廃番化・JAN の変更で枠が変わる | unit | T11 `test_product_service_req907_keeps_slot_on_untarget_discontinue_and_jan_change` | 解放の呼出しを戻す |
 | sticky | 再対象化で別の枠を取る | unit | T12 `test_prepare_plu_export_req907_retarget_reuses_same_memory_no` | 既存の枠の再利用を外す |
-| D-160 (5) と Diff の群・confirm の照合 | 名称・部門・税率の変更で未反映にならない／原価・単位だけで立つ、片方だけ税率を変えた共有 JAN を Diff が書き出す、保存の後に変えた商品が confirm で外れる | unit（red から。共有 JAN は Diff・Full の除外まで、confirm は一致する行と一致しない行の両方） | T13 `test_update_product_req907_name_department_tax_change_sets_plu_dirty`、`test_prepare_plu_export_req907_shared_jan_partial_change_excluded_in_diff_and_full`、`test_confirm_plu_export_saved_req907_clears_only_rows_with_unchanged_content` | 条件から税率を外す（M6）・Diff の群を未反映の商品だけで作る・confirm の照合を外す |
+| D-160 (5) と Diff の群・confirm の照合 | 名称・部門・税率の変更で未反映にならない／原価・単位だけで立つ、片方だけ税率を変えた共有 JAN を Diff が書き出す、保存の後に出力の行が変わった商品が confirm で外れる・行が同じ商品が残る | unit（red から。共有 JAN は Diff・Full の除外まで、confirm は保存の後に名称の先頭の 1 文字を変えると残る／切り詰めで落ちる末尾だけを変えると外れる、の対） | T13 `test_update_product_req907_name_department_tax_change_sets_plu_dirty`、`test_prepare_plu_export_req907_shared_jan_partial_change_excluded_in_diff_and_full`、`test_confirm_plu_export_saved_req907_clears_only_rows_with_unchanged_content` | 条件から税率を外す（M6）・Diff の群を未反映の商品だけで作る・confirm の照合を外す・照合の値を切り詰める前の名称から作る |
 | 手順 10 | 窓の外・読めない Z004 を渡す、同じ bytes を重ねる、DB へ書く | integration（合成の SD の tree） | T14 `test_scan_register_sd_req907_collects_window_z004_bytes` | 形の検査を飛ばす |
 | 手順 2a | 照合の `Err` で scan が失敗する・flag が違う・bytes が cache に残る | unit（CMD） | T15 `test_scan_register_sd_req907_refreshes_snapshot_and_reports_skipped_older` | flag を固定にする（M7） |
-| restore の後 | 2 つの key を消す・消さない、key の削除が失敗しても復元した DB の接続を公開する | integration（削除の失敗は、backup の fixture に `plu_register_snapshot_at` の `DELETE` を拒む trigger を置いて注入する。production に hook を足さない） | T16 `test_restore_backup_req907_clears_snapshot_at_keeps_settlement_no` | `settlement_no` も消す（M8）・key の削除の失敗を warn にして接続を返す（M17） |
+| restore の後 | 2 つの key を消す・消さない、key の削除が失敗しても復元した DB の接続を公開する（`restore_backup` と、manifest が `committed` の起動の両方） | integration（削除の失敗は、backup・DB の fixture に `plu_register_snapshot_at` の `DELETE` を拒む trigger を置いて注入する。production に hook を足さない。起動の 2 本は、key を持つ DB に `committed` の manifest を置いて〈前の版の app が `committed` の直後に止まった形〉、起動の DB の準備を通す） | T16 `test_restore_backup_req907_clears_snapshot_at_keeps_settlement_no`、`test_startup_req907_committed_restore_clears_snapshot_at_before_publishing`（key が無く、`settlement_no` は残り、書出しは `register_snapshot_required`）、`test_startup_req907_committed_restore_delete_failure_stops_startup`（接続を返さず、manifest は `committed` のまま） | `settlement_no` も消す（M8）・key の削除の失敗を warn にして接続を返す（M17）・起動の経路の削除を外す（M18）・起動の経路の削除の失敗を warn にして接続を返す（M19） |
 | search の状態 | URL の `plu` で絞り込む・戻り先に `plu` を運ぶ | frontend unit | T17 `search.test.ts`・`lib/return-to.test.ts` の `plu` を無視する case | schema に `plu` を残す |
 | UI-01a | 列・絞り込み・一括操作が残る | frontend | T18 `ProductListPage.test.tsx`・`components/ProductTable.test.tsx` | 列を残す |
 | UI-01b | 「レジメモリNo.」が残る | frontend | T19 `ProductFormPage.test.tsx` | 表示を残す |
@@ -182,7 +184,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | IO-04 | clear 行の形が残る・product 行が変わる | unit | T23 `plu_formatter.rs` の既存の product 行の test（期待値を変えない。clear 行の test は消す） | 列・桁を変える |
 | 書き出し直し（PLU-25） | confirm の前の書き出し直しで memory No. が変わる | unit | T28 `test_prepare_plu_export_req907_uses_min_free_and_sticky_allocation`（既存。Diff の後の Full が同じ memory No.） | 予約済みの枠の再利用を外す |
 
-mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M10・M14〜M17 は表の「Would fail if...」の括弧のとおり（T24〜T27・M11〜M13 は、後の lane に分けた枠の使い回しの分で欠番）。
+mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M10・M14〜M19 は表の「Would fail if...」の括弧のとおり（T24〜T27・M11〜M13 は、後の lane に分けた枠の使い回しの分で欠番）。
 
 ## L3
 
@@ -191,7 +193,7 @@ CV17・SR-S4000 の実機は使わない（S12 の D-168）。全部を開発用
 - L3-1 PLU 書出し / 空の DB で PLU 書出しを開く → 売上データ取込みで `sd-a` を読む → PLU 書出しへ戻る / 読む前は warning と売上データ取込みへの導線が出て書出しへ進めない。読んだ後は「レジの登録状況: {日時}」の 1 行が出て、Z004 を選ぶ step と件数の要約が無い。SD の読取りが待てる速さ。
 - L3-2 売上データ取込み / 続けて `sd-b`（精算回数が `sd-a` より小さい Z004 だけ）を読む / 読み終えた文の直下に、照合しなかったことと理由の文が出る。日報の一覧（か「新しい精算はありません」）は今までどおり出る。文が自然に読める。
 - L3-3 商品一覧と商品フォーム / 商品 A を登録し（13 桁の JAN、「レジにバーコード登録する」を入れる、初期在庫は既定の `0` のまま）、一覧と A の修正の画面を開く / 一覧に「PLU」列・PLU表示・PLU 一括操作が無い。フォームに「レジメモリNo.」が無い。
-- L3-4（PLU-25） PLU 書出し / 差分を書き出して保存する → 未反映から外さずに、全件を書き出して別の名前で保存する → 2 つの file をメモ帳で開く → 「この書出しを未反映から外す」を押す → A の修正で名称を変え、ホームと PLU 書出しを見る → 差分を書き出して保存する → A の名称をもう一度変える → PLU 書出しへ戻り「この書出しを未反映から外す」を押す / 保存の後に、書き出し直すことと、前に保存した file を取り込まないことの案内が出て、文が自然に読める。2 つの file の A の行のメモリNo. が同じ。外した後は A が未反映の一覧から消え、名称を変えるとホームに未反映 1 件が出て、PLU 書出しの一覧に A の名前が出る。保存の後に名称を変えた A は、外す操作の後も未反映の一覧に残り、書き出し直す知らせが A を名指しして出て、文が自然に読める。
+- L3-4（PLU-25） PLU 書出し / 差分を書き出して保存する → 未反映から外さずに、全件を書き出して別の名前で保存する → 2 つの file をメモ帳で開く → 「この書出しを未反映から外す」を押す → A の修正で名称の先頭の 1 文字を変え（英数字を別の英数字に。変える前後の名称は L3 の依頼に書く）、ホームと PLU 書出しを見る → 差分を書き出して保存する → A の名称の先頭の 1 文字をもう一度変える → PLU 書出しへ戻り「この書出しを未反映から外す」を押す / 保存の後に、書き出し直すことと、前に保存した file を取り込まないことの案内が出て、文が自然に読める。2 つの file の A の行のメモリNo. が同じ。外した後は A が未反映の一覧から消え、名称を変えるとホームに未反映 1 件が出て、PLU 書出しの一覧に A の名前が出る。保存の後に名称の先頭を変えた A は、外す操作の後も未反映の一覧に残り、書き出し直す知らせが A を名指しして出て、文が自然に読める。
 
 ## Recovery
 
@@ -199,6 +201,7 @@ CV17・SR-S4000 の実機は使わない（S12 の D-168）。全部を開発用
 - migration の COMMIT の後: 前の版のアプリでは開けない（`SchemaNewerThanApp`）。戻すのは更新の前の backup（22 §16 の「回復」、`docs/migration-recovery-runbook.md`）。migration が捨てるのは `released_at` の値と、`release_pending` と `external` の区別で、この後の code はどちらも読まない。
 - code の revert: squash commit の revert では DB は戻らない（上の backup）。版の番号を取り直した build で開く前の扱いは 22 §21 の「版の番号の取り直しと開発・試験 DB」。
 - restore で key を消せなかったとき: restore は失敗を返し、元の DB に戻る（71 §71.7 ステップ 8）。原因を直してから restore をやり直す。
+- restore の中断と key（S9）: `committed` の前の中断は、次の起動の reconcile が元の DB へ戻し、復元した DB は捨てる。`committed` の後の中断・持ち越し（前の版の app が `committed` にした復元を含む）は、次の起動が接続を返す前に key を消す。起動で消せなかったときは理由を出して止まり、manifest は `committed` のまま残って、次の起動でもう一度消す。
 
 ## Data Safety
 
@@ -206,3 +209,4 @@ CV17・SR-S4000 の実機は使わない（S12 の D-168）。全部を開発用
 - 合成だけの path: S10 の入力物は `INVENTORY_L3_OUT` の folder へ手元で作り、tracked にしない。test の Z004 と SD の tree は合成の値。
 - 操作ログ（`plu_register_snapshot_import`）は件数だけで、実コード・名称・単価を入れない（33 §16.3）。
 - migration は数量・在庫・売上・商品を変えない。写しの確かめ（S1）が通らなければ何も変えない。
+- 復元した DB の接続は、`plu_register_snapshot_at` を消した後にだけ公開する（S9 の 2 つの経路）。
