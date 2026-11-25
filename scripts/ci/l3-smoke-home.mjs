@@ -1,10 +1,11 @@
 // D-164 (L3 smoke, docs/ci.md L3 Smoke): start the app through tauri-driver and check that the home
 // heading is rendered. Node 24 standard library only (D-030): five WebDriver requests over fetch.
 // ponytail: one heading only; screen operations (E-2) would re-compare a WebDriver client dependency.
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { promisify } from "node:util";
 
 const EXPECTED_HEADING = "ホーム";
 const DRIVER_URL = "http://127.0.0.1:4444";
@@ -72,12 +73,37 @@ async function createSession(application, signal) {
   }
 }
 
+// Temporary M1 (revert): async command bounded by the time left before the overall deadline.
+const execFileAsync = promisify(execFile);
+async function m1Run(file, args) {
+  const timeout = TOTAL_MS - (Date.now() - startedAt) - 2_000;
+  if (timeout <= 0) return "(skipped: no time left)";
+  try {
+    return (await execFileAsync(file, args, { timeout, windowsHide: true })).stdout.trim();
+  } catch (error) {
+    return `(failed: ${error?.message ?? error})`;
+  }
+}
+const m1Images = ["msedgedriver.exe", basename(process.env.L3_SMOKE_APP ?? "")];
+const m1Tasklist = (image) =>
+  m1Run("tasklist", ["/FI", `IMAGENAME eq ${image}`, "/FO", "CSV", "/NH"]);
+let m1Pids = [];
+
 let sessionId;
 let code = 1;
 let cleanedUp = false;
 try {
   const application = requireFile("L3_SMOKE_APP");
   const nativeDriver = requireFile("L3_SMOKE_NATIVE_DRIVER");
+  const m1Block = join(process.env.APPDATA, "com.inventory-system.desktop");
+  writeFileSync(m1Block, "M1: a file where the app data directory goes\n");
+  console.log(`L3 smoke M1: created file ${m1Block}`);
+  const m1Known = await m1Run("pwsh", [
+    "-NoProfile",
+    "-Command",
+    "[Environment]::GetFolderPath('ApplicationData')",
+  ]);
+  console.log(`L3 smoke M1: ApplicationData=${m1Known} APPDATA=${process.env.APPDATA}`);
   child = spawn("tauri-driver", ["--native-driver", nativeDriver], {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -129,6 +155,12 @@ try {
   }
 } finally {
   stage = "cleanup";
+  for (const image of m1Images) {
+    const out = await m1Tasklist(image);
+    console.log(`L3 smoke M1: before stop, tasklist ${image}: ${out}`);
+    m1Pids.push(...[...out.matchAll(/^"[^"]*","(\d+)"/gm)].map((match) => match[1]));
+  }
+  console.log(`L3 smoke M1: PIDs before stop: ${m1Pids.join(", ") || "(none)"}`);
   let sessionDeleted = sessionId === undefined;
   if (!sessionDeleted) {
     try {
@@ -145,6 +177,17 @@ try {
     if (!driverExit)
       console.error(`L3 smoke: tauri-driver did not exit within ${EXIT_WAIT_MS / 1000} s`);
   }
+  // M1: up to 3 looks, 1 s apart; tasklist exits 0 on no match, so presence is read from the text.
+  let m1Last = "";
+  for (let round = 0; round < 3; round++) {
+    if (TOTAL_MS - (Date.now() - startedAt) < 4_000) break;
+    await sleep(1_000);
+    m1Last = (await Promise.all(m1Images.map(m1Tasklist))).join("\n");
+    m1Pids = m1Pids.filter((pid) => m1Last.includes(`","${pid}"`));
+    if (m1Pids.length === 0) break;
+  }
+  console.log(`L3 smoke M1: after exit, last tasklist:\n${m1Last || "(not run)"}`);
+  console.log(`L3 smoke M1: PIDs still running: ${m1Pids.join(", ") || "(none)"}`);
   cleanedUp = sessionDeleted && driverExit !== undefined;
   if (code === 0 && !cleanedUp) console.error("L3 smoke: FAIL: cleanup did not finish");
 }
