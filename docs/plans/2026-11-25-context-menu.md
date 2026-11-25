@@ -86,7 +86,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
   - React の制御された欄: `execCommand("insertText")`・`execCommand("cut")` は `input` event を出すので `onChange` に届く見込み（P2）。`value` を直に書くと React に届かないので使わない。
   - キーボードと部品: `radix-ui` 1.4.3 に ContextMenu があり、menu の role・矢印・Enter・Esc・typeahead・focus の閉じ込めを持つ。メニューキー・Shift+F10 は Chromium が focus の要素に `contextmenu` を出すので、同じ Trigger で開く見込みで、そのときの座標は未実測（P3）。
   - Radix の FocusScope は、開いている間は focus を menuitem に引き戻し（`onSelect` の中で欄に focus しても戻らない。round 1 で両 reviewer が happy-dom で再現）、閉じるときは input に `select()` をかける（`react-focus-scope` 1.1.7 の `focus(…, { select: true })`）。よって操作は `onCloseAutoFocus` で止めて自分で戻した後に打つ（T5・T6・T9、M3・M6・M8・M9）。
-- Contract Probe（実装の run の最初に行う。P1 のほかは `未実測`）:
+- Contract Probe（P1 は TD-907。P0 の開発の build・P2・P3・P5 は owner の実測 TD-913〈PR #309 の issuecomment-7167285898〉で計画の形のとおり成り立ち、Gated Amendment は要らなかった。残るのは P0 の配る build と P4 で、L3 で確かめる）:
   - P0: Windows の開発の build と release の build（`npm run tauri build` の MSI か `cargo build --release`）で、`preventDefault` した `contextmenu` で既定のメニューが出ないこと。メニューを開いたまま別の欄・表を右クリックしても既定のメニューが出ないこと（別の欄のときは閉じるだけでよく、もう一度の右クリックで開く。そのときの focus の在り処を記録する）。
   - P1（実測済み、TD-907）: 開発の build で `readText()` は許可の窓なしに通る（上の「貼り付け」）。配る build は L3-2。
   - P2: WebView2 で `execCommand("cut"|"copy"|"insertText")` が制御された欄の state に入り、Ctrl+Z で戻ること。`onCloseAutoFocus` の中で打つ `execCommand("cut"|"copy")` が効くこと（user activation の内か）。`type="number"` の欄で `insertText` の数字・非数字、`window.getSelection().toString()` で選択の有無が読めるか（読めれば D2 の切り取り・コピーの判定に使い、読めなければ押せる形のまま）。閉じた後に `focus()` だけで選択が開く前のままか（戻らなければ Gated Amendment）。
@@ -115,7 +115,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
 | D1 欄の外 | 欄の外か開いたメニューの上で既定のメニューかこのメニューが出る | unit（RTL） | T1 `UI-CTX-D1: 欄の外と開いたメニューの上の右クリックは既定を止めて何も出さない` | 欄の判定を外す（M1）、`document` の listener を外す（M7） |
-| D1 欄の中 | 4 つ以外の項目・項目の無いメニュー | unit（revisit は開き直したときに控えが新しい欄になることだけを確かめる） | T2 `UI-CTX-D1: 文字の欄の右クリックで 4 つの項目だけが出る` | Item を足す・欠く |
+| D1 欄の中 | 4 つ以外の項目・項目の無いメニュー | unit（revisit は開き直したときに控えが新しい欄になることだけを確かめる。focus を一つ目に置いたまま二つ目で開く経路も、H7） | T2 `UI-CTX-D1: 文字の欄の右クリックで 4 つの項目だけが出る` | Item を足す・欠く、`onCloseAutoFocus` の `preventDefault` だけを外す |
 | D2 選択の有無 | 選択が無いのに切り取り・コピーが押せる | unit | T3 `UI-CTX-D2: 選択が無いと切り取り・コピーは押せない形` | 選択の判定を外す（M2） |
 | D2 読取り専用 | 読取り専用の欄に切り取り・貼り付けが効く | unit | T4 `UI-CTX-D2: readOnly の欄は切り取り・貼り付けを押せない形` | `readOnly` を見ない |
 | D3 コピー・切り取り | 欄に focus を戻さずに command を打つ | unit（`document.execCommand` の spy。happy-dom の実装の有無は未実測） | T5 `UI-CTX-D3: コピーは閉じた後に欄に focus を戻してから打つ` | command を `onSelect` の中で打つ（focus を戻す前。M9） |
@@ -124,10 +124,14 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 | D3 すべて選択 | 全部が選ばれない | unit | T8 `UI-CTX-D3: すべて選択で欄の全文が選ばれる` | `select()` を呼ばない |
 | D3 閉じた後 | 閉じると全選択になる・focus が欄に戻らない | unit | T9 `UI-CTX-D3: 項目・Esc・外の click で閉じると focus が欄に戻り選択が開く前のまま` | `onCloseAutoFocus` の復帰の処理ごと外す（M3。`preventDefault` だけを外す形は round 1 の試しで red にならなかった） |
 | D4 キーボード | 矢印・Enter・Esc で操作できない、Esc の後に focus が戻らない | unit | T10 `UI-CTX-D4: focus の欄の contextmenu で開き矢印・Enter・Esc で操作できる` | Radix の Content を素の div に変える |
-| D1・D2 欄でない input | checkbox・`disabled`・`date`・`month`・`time` の欄でメニューが出る | unit | T11 `UI-CTX-D2: checkbox・disabled・日付・月・時刻の欄では何も出さない` | 欄の型の判定を外す（M1） |
+| D1・D2 欄でない input | checkbox・`disabled`・無効の `fieldset` の中・`date`・`month`・`time` の欄でメニューが出る | unit | T11 `UI-CTX-D2: checkbox・disabled・日付・月・時刻の欄では何も出さない` | 欄の型の判定を外す（M1） |
 | D2 IME | 変換中に開いて変換中の文字に command を打つ | unit（composition event） | T12 `UI-CTX-D2: IME の変換中は開かない` | composition の控えを外す（M5） |
 | D1 確認の窓の中 | Dialog の中の欄で開くと Dialog が閉じる・メニューが Esc で閉じない | unit（`Dialog` の中の欄） | T13 `UI-CTX-D1: 確認の窓の中の欄で開いても窓は開いたまま` | Portal・layer を外す |
 | D2 数字の欄 | 選択があるのに切り取り・コピーを押せない・選択が無いのに押せる | unit（`type="number"` の欄。`window.getSelection()` の spy。Contract Probe の P2 で `getSelection()` が選択を読めた、TD-913） | T14 `UI-CTX-D2: 数字の欄は選択があるときだけ切り取り・コピーを押せる形で開く` | `number` の選択を `getSelection()` で読まない（M2 でも red） |
+| D3 閉じる動きの間（Final round 1 の H1） | 閉じる動きの間に別の欄で開き直し、前の操作が後の欄に効く | unit（閉じる animation の模型: animation-name の style と `animationend`） | T15 `UI-CTX-D3: 閉じる動きの間に別の欄で右クリックしても控えた欄は替わらない` | 生きている間の開き直しの止めを外す |
+| D1 長押し（H2） | touch・pen の長押しで欄の外にも 4 項目が出て、前の欄に効く | unit（fake timers で 800 ms） | T16 `UI-CTX-D1: touch・pen の長押しではメニューを出さない` | 欄を控えていないときも Content を描く |
+| UI-12 mount（H5） | `main.tsx` の包みを外しても全部 green | unit（source の正規表現。`unsaved-changes-guard-sweep.test.ts` と同じ形） | T17 `UI-CTX-D1: src/main.tsx が RouterProvider を TextFieldContextMenu で包む`（`TextFieldContextMenu.mount.test.ts`） | 包みを外す |
+| D3 blur で保存する欄（H6） | 保存日数の欄でメニューを開くだけで打ちかけの値が保存される | unit（`BackupRestorePage` を包む） | T18 `REQ-901 / UI-CTX-D3: 保存日数の欄で右クリックのメニューを開いても打ちかけの値を保存せず、離れたときに保存する`（`BackupRestorePage.test.tsx`） | `relatedTarget` の確かめを外す |
 
 状態の遷移: 閉じている → 開く（右クリック・キー）→ 項目を選ぶ（操作を控える）/ Esc・外の click（控えない）→ 閉じる（`onCloseAutoFocus` で focus を戻し、控えた操作があれば打つ）、貼り付けの読みの failure（T7。toast を出し欄は変えない）、読みの間に別の欄へ移る（T6。両方の欄を変えない）、開いたまま別の欄で右クリック（実機は開いている間の `pointer-events: none` で閉じるだけになりうる〈P0・L3-2〉。T2 の revisit は開き直したときに控えが新しい欄になることだけを確かめる）。
 
@@ -136,6 +140,6 @@ mutation（実装の run で 1 つずつ注入して red を確かめ、戻す�
 ## L3
 
 - L3-1 入荷の画面・商品の編集の画面・ショートカット一覧の窓（Ctrl+/、欄の無い窓）/ Windows の build で、欄の外（見出し・表・余白・ボタン・確認の窓の本文）を右クリックし、メニューキーと Shift+F10 も押す / どれでも何も出ない（WebView2 の既定のメニューも出ない）。
-- L3-2 入荷の画面の商品追加の欄 / 文字を打ち、一部を選んで右クリック → 「コピー」、別の欄で右クリック → 「貼り付け」/ メニューに 4 つだけが出る。配る build でも貼り付けた文字が欄に入り、許可の窓は出ず（読めないときは toast で読めなかったことと Ctrl+V の案内が出て欄は変わらない）、その値で検索・保存が動く（表示だけ変わって古い値で動くことが無い）。「すべて選択」→「切り取り」で欄が空になる。閉じた後に打った文字が caret の位置に入る（全部が置き換わらない）。メニューを開いたまま別の欄を右クリックしたときは閉じるだけでよい（もう一度の右クリックで開く）。そのときの focus の在り処を記録する。
+- L3-2 入荷の画面の商品追加の欄 / 文字を打ち、一部を選んで右クリック → 「コピー」、別の欄で右クリック → 「貼り付け」/ メニューに 4 つだけが出る。配る build でも貼り付けた文字が欄に入り、許可の窓は出ず（読めないときは toast で読めなかったことと Ctrl+V の案内が出て欄は変わらない）、その値で検索・保存が動く（表示だけ変わって古い値で動くことが無い）。「すべて選択」→「切り取り」で欄が空になる。閉じた後に打った文字が caret の位置に入る（全部が置き換わらない）。メニューを開いたまま別の欄を右クリックしたときは閉じるだけでよい（もう一度の右クリックで開く）。そのときの focus の在り処を記録する。メニューが閉じかけのまま開き直って元の欄の横に残り、操作が別の欄に効くのは FAIL。入荷の画面で窓を縮め、下端までスクロールして操作のボタンに届く（`display: contents` の包みで画面の高さとスクロールが変わらない。P4）。観察（合否に数えない）: Excel の cell をコピーして貼り付けたときに、末尾に空白（改行）が付くかを記録する。
 - L3-3 商品の編集の画面の読取り専用の欄と、空の欄と、入荷の画面の数量の欄 / 右クリック / 読取り専用では切り取り・貼り付けが押せない形、選択の無い欄では切り取り・コピーが押せない形で読める。数量の欄で数字を選んでコピー → 別の数量の欄に貼り付けると、その数字が入る。
 - L3-4 入荷の画面の商品追加の欄 / focus を置いてメニューキーか Shift+F10、矢印で「すべて選択」、Enter、もう一度開いて Esc / 欄の近くに開き、矢印・Enter・Esc が効き、閉じた後も欄に focus がある。

@@ -73,6 +73,13 @@ const BACKUP_SETTING_KEYS = new Set([
   "backup_retention_days",
 ]);
 
+// UI-CTX-D3: 右クリックのメニューを開くと focus がメニューへ移って blur が出る。そのときは打ちかけの値を保存しない
+// （閉じると focus は欄に戻り、欄から離れたときに保存する）
+function movedToTextFieldMenu(event: React.FocusEvent): boolean {
+  const next = event.relatedTarget;
+  return next instanceof Element && next.closest('[data-slot="text-field-context-menu"]') !== null;
+}
+
 function settingValue(settings: AppSetting[] | undefined, key: string, fallback: string): string {
   return settings?.find((setting) => setting.key === key)?.value ?? fallback;
 }
@@ -657,9 +664,10 @@ export function BackupRestorePage() {
                   id="backup-time"
                   type="time"
                   defaultValue={backupTime}
-                  onBlur={(event) =>
-                    void updateBackupSetting("backup_time", event.currentTarget.value)
-                  }
+                  onBlur={(event) => {
+                    if (movedToTextFieldMenu(event)) return;
+                    void updateBackupSetting("backup_time", event.currentTarget.value);
+                  }}
                 />
               </div>
 
@@ -670,9 +678,10 @@ export function BackupRestorePage() {
                   type="number"
                   min={1}
                   defaultValue={backupRetentionDays}
-                  onBlur={(event) =>
-                    void updateBackupSetting("backup_retention_days", event.currentTarget.value)
-                  }
+                  onBlur={(event) => {
+                    if (movedToTextFieldMenu(event)) return;
+                    void updateBackupSetting("backup_retention_days", event.currentTarget.value);
+                  }}
                 />
               </div>
 

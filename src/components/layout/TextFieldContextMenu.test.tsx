@@ -37,7 +37,30 @@ beforeEach(() => {
 afterEach(() => {
   delete (document as { execCommand?: unknown }).execCommand;
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  document.head.querySelectorAll("style[data-test-animation]").forEach((style) => {
+    style.remove();
+  });
 });
+
+// 閉じる動き（tw-animate-css の exit）の模型: animationend が来るまで Content が残る
+function withCloseAnimation() {
+  const style = document.createElement("style");
+  style.setAttribute("data-test-animation", "");
+  style.textContent =
+    '[role="menu"][data-state="open"]{animation-name:enter}[role="menu"][data-state="closed"]{animation-name:exit}';
+  document.head.appendChild(style);
+}
+
+function endCloseAnimation() {
+  const menu = document.querySelector('[role="menu"]');
+  if (!menu) return;
+  const event = new Event("animationend", { bubbles: true });
+  Object.defineProperty(event, "animationName", { value: "exit" });
+  act(() => {
+    menu.dispatchEvent(event);
+  });
+}
 
 // 開いている間 body は pointer-events: none になるので、user-event の確かめを外す。
 // setup は navigator.clipboard を自分の stub に差し替えるので、その後に readText を差す
@@ -119,6 +142,72 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     });
     expect(document.activeElement).toBe(second);
     expect([first.selectionStart, first.selectionEnd]).toEqual([1, 1]);
+
+    // focus を一つ目の欄に置いたまま二つ目で開いても、閉じた後は二つ目に戻り一つ目は選ばれない
+    act(() => {
+      first.focus();
+      first.setSelectionRange(1, 1);
+      second.setSelectionRange(2, 2);
+    });
+    fireEvent.contextMenu(second);
+    await user().click(item("すべて選択"));
+    await waitClosed();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(second);
+    });
+    expect([second.selectionStart, second.selectionEnd]).toEqual([0, 5]);
+    expect([first.selectionStart, first.selectionEnd]).toEqual([1, 1]);
+  });
+
+  it("UI-CTX-D3: 閉じる動きの間に別の欄で右クリックしても控えた欄は替わらない", async () => {
+    withCloseAnimation();
+    renderWith(
+      <>
+        <input aria-label="一つ目" defaultValue="abcdef" />
+        <input aria-label="二つ目" defaultValue="uvwxyz" />
+      </>,
+    );
+    const first = screen.getByRole<HTMLInputElement>("textbox", { name: "一つ目" });
+    const second = screen.getByRole<HTMLInputElement>("textbox", { name: "二つ目" });
+    openOn(first, 0, 2);
+    await user().click(item("切り取り"));
+    expect(screen.getByRole("menu", { hidden: true })).toHaveAttribute("data-state", "closed");
+
+    // 閉じかけのメニューは開き直さず、既定のメニューも出さない
+    act(() => {
+      second.setSelectionRange(1, 3);
+    });
+    expect(fireEvent.contextMenu(second)).toBe(false);
+    expect(screen.getByRole("menu", { hidden: true })).toHaveAttribute("data-state", "closed");
+    await user().keyboard("{Escape}");
+    endCloseAnimation();
+    await waitClosed();
+    await waitFor(() => {
+      expect(commands("cut")).toHaveLength(1);
+    });
+    expect(commands("cut")[0].active).toBe(first);
+    expect(execCalls).toHaveLength(1);
+  });
+
+  it("UI-CTX-D1: touch・pen の長押しではメニューを出さない", () => {
+    vi.useFakeTimers();
+    renderWith(
+      <>
+        <h1>見出し</h1>
+        <input aria-label="商品名" defaultValue="abc" />
+      </>,
+    );
+    for (const [target, pointerType] of [
+      [screen.getByRole("heading"), "touch"],
+      [screen.getByRole("textbox"), "pen"],
+    ] as const) {
+      fireEvent.pointerDown(target, { pointerType, clientX: 10, clientY: 10 });
+      act(() => {
+        vi.advanceTimersByTime(800);
+      });
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    }
   });
 
   it("UI-CTX-D2: 選択が無いと切り取り・コピーは押せない形", async () => {
@@ -304,12 +393,23 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
         <input aria-label="checkbox" type="checkbox" />
         <input aria-label="disabled" defaultValue="abc" disabled />
         <textarea aria-label="disabled-area" defaultValue="abc" disabled />
+        <fieldset disabled>
+          <input aria-label="fieldset-disabled" defaultValue="abc" />
+        </fieldset>
         <input aria-label="date" type="date" />
         <input aria-label="month" type="month" />
         <input aria-label="time" type="time" />
       </>,
     );
-    for (const name of ["checkbox", "disabled", "disabled-area", "date", "month", "time"]) {
+    for (const name of [
+      "checkbox",
+      "disabled",
+      "disabled-area",
+      "fieldset-disabled",
+      "date",
+      "month",
+      "time",
+    ]) {
       expect(fireEvent.contextMenu(screen.getByLabelText(name))).toBe(false);
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     }

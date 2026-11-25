@@ -271,4 +271,4 @@ UI-12 内で唯一「処理 + エラーハンドリング + 書式規約」を�
 | 2026-09-16 | ㉔ mockup-c 採用 | `NavItem.description` をホーム入口 card の 1 行説明として追加。sidebar は参照せず、既存の navigation 契約を維持 |
 | 2026-11-14 | window-close-guard（plan-first、PR #250） | §52.1 の RootLayout の行に native の window の close の確認の窓の mount、接続点に `main.tsx` の listener の登録を足した（UI_TECH_STACK UI-USW-D5、D-153）。未実装の注は実装の PR で外す |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §52.1 の RootLayout の行と接続点の「未実装」の注を外した（`WindowCloseDialog` の mount、`main.tsx` の `installWindowCloseGuard()`。UI_TECH_STACK UI-USW-D5、D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
-| 2026-11-26 | context-menu（実装、PR #309） | §52.1 の接続点に `main.tsx` の `TextFieldContextMenu` の mount を足した（UI_TECH_STACK UI-CTX-D1〜D4、D-171。[Plan Packet](../plans/2026-11-25-context-menu.md)） |
+| 2026-11-26 | context-menu（実装、PR #309） | §52.1 の接続点に `main.tsx` の `TextFieldContextMenu` の mount を足した（UI_TECH_STACK UI-CTX-D1〜D4、D-171。[Plan Packet](../plans/2026-11-25-context-menu.md)）。mount の位置は `TextFieldContextMenu.mount.test.ts` が source で見張る |

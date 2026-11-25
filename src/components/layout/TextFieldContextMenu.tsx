@@ -8,6 +8,11 @@ import { toast } from "sonner";
 
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 type Action = "cut" | "copy" | "paste" | "selectAll";
+interface Target {
+  field: TextField;
+  readOnly: boolean;
+  selected: boolean;
+}
 
 // UI-CTX-D2: input の型が未指定（"text"）・text・search・number だけが文字の欄。date・month・time ほかは欄の外
 const TEXT_INPUT_TYPES = new Set(["text", "search", "number"]);
@@ -17,7 +22,10 @@ function textFieldOf(target: EventTarget): TextField | null {
   const isField =
     target instanceof HTMLTextAreaElement ||
     (target instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(target.type));
-  return isField && !target.disabled ? target : null;
+  // 無効の fieldset から継ぐ状態も外にする（happy-dom の :disabled は継がないので closest でも見る）
+  // ponytail: 無効の fieldset の最初の legend の中の欄（仕様では有効）も外に倒す。そこに欄を置く画面が出たら legend を除く
+  if (!isField) return null;
+  return target.closest(":disabled, fieldset:disabled") ? null : target;
 }
 
 function hasSelection(field: TextField): boolean {
@@ -53,10 +61,10 @@ const ITEMS: { action: Action; label: string }[] = [
 ];
 
 export function TextFieldContextMenu({ children }: { children: ReactNode }) {
-  const fieldRef = useRef<TextField | null>(null);
+  // 控えた欄。開いてから onCloseAutoFocus が走るまで（閉じる動きの間も）null でない
+  const [target, setTarget] = useState<Target | null>(null);
   const actionRef = useRef<Action | null>(null);
   const composingRef = useRef(false);
-  const [field, setField] = useState({ readOnly: false, selected: false });
 
   useEffect(() => {
     // bubble で付ける（capture だと Radix の Trigger が先に defaultPrevented を見て開かない）
@@ -70,9 +78,9 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
   }, []);
 
   const disabled: Record<Action, boolean> = {
-    cut: field.readOnly || !field.selected,
-    copy: !field.selected,
-    paste: field.readOnly,
+    cut: !target || target.readOnly || !target.selected,
+    copy: !target?.selected,
+    paste: !target || target.readOnly,
     selectAll: false,
   };
 
@@ -81,14 +89,13 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
       <ContextMenu.Trigger
         asChild
         onContextMenu={(event) => {
-          const target = textFieldOf(event.target);
-          if (!target || composingRef.current) {
-            // Radix の open を飛ばす（defaultPrevented なら開かない）
+          const field = textFieldOf(event.target);
+          // Radix の open を飛ばす（defaultPrevented なら開かない）。メニューが生きている間は開き直さない
+          if (target || !field || composingRef.current) {
             event.preventDefault();
             return;
           }
-          fieldRef.current = target;
-          setField({ readOnly: target.readOnly, selected: hasSelection(target) });
+          setTarget({ field, readOnly: field.readOnly, selected: hasSelection(field) });
         }}
       >
         <div
@@ -99,36 +106,40 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
           {children}
         </div>
       </ContextMenu.Trigger>
-      <ContextMenu.Portal>
-        <ContextMenu.Content
-          className="z-50 max-h-(--radix-context-menu-content-available-height) min-w-[8rem] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
-          onCloseAutoFocus={(event) => {
-            // Radix は閉じるとき欄に select() をかけるので止め、focus だけを戻して控えた操作を打つ
-            event.preventDefault();
-            const target = fieldRef.current;
-            const action = actionRef.current;
-            actionRef.current = null;
-            if (!target) return;
-            target.focus();
-            if (action === "selectAll") target.select();
-            else if (action === "paste") void paste(target);
-            // eslint-disable-next-line @typescript-eslint/no-deprecated -- 欄の選択の切り取り・コピーの代わりの標準 API が無い（UI-CTX-D3）
-            else if (action) document.execCommand(action);
-          }}
-        >
-          {ITEMS.map(({ action, label }) => (
-            <ContextMenu.Item
-              key={action}
-              disabled={disabled[action]}
-              // 開いている間は focus が menuitem に引き戻されるので、ここでは控えるだけ
-              onSelect={() => (actionRef.current = action)}
-              className="relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-            >
-              {label}
-            </ContextMenu.Item>
-          ))}
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
+      {/* touch・pen の長押しは onContextMenu を通らずに開くので、欄を控えたときだけ描く */}
+      {target && (
+        <ContextMenu.Portal>
+          <ContextMenu.Content
+            data-slot="text-field-context-menu"
+            className="z-50 max-h-(--radix-context-menu-content-available-height) min-w-[8rem] origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+            onCloseAutoFocus={(event) => {
+              // Radix は閉じるとき欄に select() をかけるので止め、focus だけを戻して控えた操作を打つ
+              event.preventDefault();
+              const { field } = target;
+              const action = actionRef.current;
+              actionRef.current = null;
+              setTarget(null);
+              field.focus();
+              if (action === "selectAll") field.select();
+              else if (action === "paste") void paste(field);
+              // eslint-disable-next-line @typescript-eslint/no-deprecated -- 欄の選択の切り取り・コピーの代わりの標準 API が無い（UI-CTX-D3）
+              else if (action) document.execCommand(action);
+            }}
+          >
+            {ITEMS.map(({ action, label }) => (
+              <ContextMenu.Item
+                key={action}
+                disabled={disabled[action]}
+                // 開いている間は focus が menuitem に引き戻されるので、ここでは控えるだけ
+                onSelect={() => (actionRef.current = action)}
+                className="relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:ring-[3px] focus:ring-ring focus:ring-inset data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+              >
+                {label}
+              </ContextMenu.Item>
+            ))}
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      )}
     </ContextMenu.Root>
   );
 }
