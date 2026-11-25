@@ -105,6 +105,14 @@ try {
     { using: "css selector", value: "h1" },
     work,
   );
+  // Temporary M2 (revert): hide the real h1 so the rendered text no longer matches.
+  stage = "h1 hide";
+  await webdriver(
+    "POST",
+    `/session/${sessionId}/execute/sync`,
+    { script: "arguments[0].hidden = true", args: [element] },
+    work,
+  );
   stage = "h1 text";
   const text = await webdriver(
     "GET",
