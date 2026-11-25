@@ -108,7 +108,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 - AC6（S6・S7）: 商品一覧に「PLU」列・PLU表示・一括操作が無く、URL の `plu` を無視する。商品フォームに「レジメモリNo.」が無い（T17〜T19）。
 - AC7（S8）: T13 は実装の前に red（`cd src-tauri && cargo test --lib -- test_update_product_req907_name_department_tax_change_sets_plu_dirty` が exit 101）、実装の後に exit 0。原価だけ・単位だけ・同じ値の更新では立てない。共有 JAN の片方だけ税率を変えると、その JAN は Diff・Full とも `group_price_mismatch` で除外される。保存の後に出力の行（S8 の照合の値の入力）が変わった商品は、復帰状態を経ても「未反映から外す」で未反映のまま残り、その場で名指しの知らせが出て、行が変わっていない商品だけが外れる: 名称の先頭の 1 文字を変えた商品は残り、CP932 の 16 バイトへの切り詰めで落ちる末尾だけを変えた商品は外れる（T13・T20）。
 - AC8（S9）: `restore_backup` の後、返った接続に `plu_register_snapshot_at` が無く、`plu_register_snapshot_settlement_no` は backup の値のまま。書出しは `register_snapshot_required` で拒まれる。key の削除が失敗すると `restore_backup` は失敗を返して元の DB に戻り、復元した DB の接続は公開されない（T16）。
-- AC9: Test Plan の mutation（M1〜M10・M14〜M17）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
+- AC9: Test Plan の mutation（M1〜M10・M14〜M17・M20）を 1 つずつ注入すると、名指しの test が red（Rust は `cargo test --lib -- <test 名>` が exit 101、frontend は `npm test -- <test の file>` が exit 1）になり、戻すと exit 0。
 - AC10（撤去の検査）: `rg -n 'release_pending|released_at|PLU_CLEAR_ROW_ENABLED|release_plu_slot_for_jan|bulk_set_plu_target|bulkSetPluTarget|find_products_for_bulk_plu_target|PluMigrationFilter|over_limit_warning|PluPreparedRowKind|PluExportRowKind|plu_memory_no|plu_register_snapshot_summary|importPluRegisterSnapshot|clear_row_enabled|with_clear_enabled|append_clear_rows' src src-tauri/src src-tauri/tests` の当たりが、`schema_v5.rs`・この lane の `schema_v<N>.rs`・`migration.rs` の v5 の test・UI-08 の旧い復帰状態を捨てる test だけ。`rg -c 'runtime の状態' docs --glob '!docs/archive/**' --glob '!docs/plans/**' --glob '!docs/research/**' --glob '!docs/decision-log.md' --glob '!docs/backlog.md'` が 0 件（起票の時点の `1edcedc3` は 6 file で 11 行: biz-task-specs 3・cmd-task-specs 2・io-task-specs 1・ui-task-specs 3・plu-tables 1・33 1。どれも PLU の注記）。
 - AC11（gate）: `docs/DEV_WORKFLOW.md` Verification Gates の Rust・bindings・frontend・traceability・docs の command が全部通り、`bash scripts/doc-consistency-check.sh` が ERROR 0。`cargo check --release` が通る（L3 の前）。
 
@@ -160,7 +160,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | migration | `release_pending` が残る・枠の memory No. と JAN の組が変わる・v5 で保存できる同じ JAN の 2 組（AC1）で失敗する | integration（期待値は migration の前の行から test が独立に作り、`memory_no` ごとに比べる） | T1 `test_migration_req907_plu_slots_rebuild_maps_release_pending_to_external` | status の対応づけを外す（M1）・旧い index を残して `UPDATE` する（M14）・写しで 2 枠の JAN を入れ替える（M15） |
 | partial UNIQUE | `external` の重複を保存できない・管理の重複を許す | integration | T2 `test_migration_req907_plu_slots_rebuild_unique_only_reserved_active` | index の条件に `external` を戻す（M2） |
 | migration の確かめ | 2 枠の JAN の入れ替えを見逃す、失敗の後に新しい schema・行・版が残る・key `plu_register_snapshot_summary` が消える | integration（test だけの hook〈`#[cfg(test)]`〉で、写しの後・確かめの前に 2 枠の JAN を入れ替える） | T3 `test_migration_req907_plu_slots_rebuild_verify_failure_rolls_back` | 確かめから `memory_no` ごとの比べを外す（M16）・TX の外で版を書く |
-| key の削除 | `plu_register_snapshot_summary`・`plu_register_snapshot_at` のどちらかが残る | integration | T4 `test_migration_req907_plu_slots_rebuild_drops_summary_key` | 手順 4 を落とす・消す key から `plu_register_snapshot_at` を外す |
+| key の削除 | `plu_register_snapshot_summary`・`plu_register_snapshot_at` のどちらかが残る | integration | T4 `test_migration_req907_plu_slots_rebuild_drops_summary_key` | 手順 4 を落とす・消す key から `plu_register_snapshot_at` を外す（M20） |
 | 最大の 1 本 | 古い Z004 を選ぶ・同じ精算回数で bytes の違う 2 本で照合する | unit | T5 `test_refresh_plu_register_snapshot_from_sd_req907_picks_max_settlement_no` | 最初の 1 本を選ぶ（M4） |
 | key の比較 | 等しい・小さい・読めない key で照合する（negative: 何も変えない） | unit | T6 `test_refresh_plu_register_snapshot_from_sd_req907_key_comparison` | 比較を `>=` にする（M3） |
 | 照合の表 | 表の行の結果が違う（重複 → `external`、対象なしの別コード → `external`、照合の前の状態で判定） | unit（表の行ごと） | T7 `test_import_plu_register_snapshot_req907_reconciliation_table` | 対象なしの別コードを conflict に戻す（M5） |
@@ -182,7 +182,7 @@ D-160 (1) のとおり 1 本の lane。分けるべき技術の理由は見つ�
 | IO-04 | clear 行の形が残る・product 行が変わる | unit | T23 `plu_formatter.rs` の既存の product 行の test（期待値を変えない。clear 行の test は消す） | 列・桁を変える |
 | 書き出し直し（PLU-25） | confirm の前の書き出し直しで memory No. が変わる | unit | T28 `test_prepare_plu_export_req907_uses_min_free_and_sticky_allocation`（既存。Diff の後の Full が同じ memory No.） | 予約済みの枠の再利用を外す |
 
-mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M10・M14〜M17 は表の「Would fail if...」の括弧のとおり（T24〜T27・M11〜M13 は、後の lane に分けた枠の使い回しの分で欠番）。
+mutation（実装の run で 1 つずつ注入して red を確かめ、戻す）: M1〜M10・M14〜M17・M20 は表の「Would fail if...」の括弧のとおり（T24〜T27・M11〜M13 は、後の lane に分けた枠の使い回しの分、M18・M19 は外した起動時の削除の分で欠番）。
 
 ## L3
 
