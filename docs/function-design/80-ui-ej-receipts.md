@@ -83,13 +83,13 @@
 
 ## 80.6 番号で探す（UI-09c-D3）
 
-- 番号の欄で Enter を押すと探す。IME の変換中の Enter（`KeyboardEvent.isComposing`）は送らない。送る前に既存の `src/components/patterns/normalizeComposedDigits.ts` の `normalizeComposedDigits` で全角の数字を半角にする（IME をオンのまま打った番号で「形が正しくない」と返さない。D-127。[51](51-ui-product-form.md) UI-01b-D16 と同じ部品で、写しを作らない）。BIZ の形の検査は今どおり ASCII の数字だけを受け、0 埋めは BIZ がする（37 §37.11）。
+- 番号の欄で Enter を押すと探す。同じ番号で Enter を押すと取り直し、その応答で件数か文を出す（一時の読取りの失敗から同じ入力でやり直せる）。IME の変換中の Enter（`KeyboardEvent.isComposing`）は送らない。送る前に既存の `src/components/patterns/normalizeComposedDigits.ts` の `normalizeComposedDigits` で全角の数字を半角にする（IME をオンのまま打った番号で「形が正しくない」と返さない。D-127。[51](51-ui-product-form.md) UI-01b-D16 と同じ部品で、写しを作らない）。BIZ の形の検査は今どおり ASCII の数字だけを受け、0 埋めは BIZ がする（37 §37.11）。
 - 結果は 3 つ: 1 件ならその日に移って行を選ぶ（§80.3）。2 件以上（別の 4 桁の欄。今のレジ 1 台の店では起きない）なら移らず、入力の下に「同じ番号の控えが N 件あります」と各件の日付のボタン（`EjRecordRef` の `date`・`id` の昇順。押すとその日に移ってその `id` の行を選ぶ）。0 件なら「その番号の控えはありません」。形の誤りは BIZ の文（「記録の番号は 6 桁までの数字で入れてください」）を入力の下に出す。
 
 ## 80.7 欠けと手で選ぶ EJ（UI-09c-D5）
 
 - 欠け（`gaps`、全期間）があれば、一覧の上に warning の Alert（icon + 見出し「控えが足りない所があります」+ 区間ごとに「記録 n〜m の控えがありません。」、1 つの番号は「記録 n の控えがありません。」）。無ければ出さない。
-- 画面の下に補助のリンク「EJ のファイルを選んで取り込む」を常に置く（記録が 1 件も無い日・欠けの無い日も。最大の番号の後ろの控えは欠けに出ないため）。押すと共有の hook `useImportEjFiles` が native の file dialog で複数を選び、20MB の検査をして `importEjFiles` を呼ぶ。待つ間（選択の確定から応答まで）は hook が route の移動・リロード・native の window の close（`ej-import`）を止め（55 §55.7、UI_TECH_STACK UI-USW-D5）、リンクを押せない。
+- 画面の下に補助のリンク「EJ のファイルを選んで取り込む」を常に置く（記録が 1 件も無い日・欠けの無い日も。最大の番号の後ろの控えは欠けに出ないため）。押すと共有の hook `useImportEjFiles` が native の file dialog で複数を選び、20MB の検査をして `importEjFiles` を呼ぶ。待つ間（選択の確定から応答まで）は hook が route の移動・リロード・native の window の close（`ej-import`）を止め（55 §55.7、UI_TECH_STACK UI-USW-D5）、リンクを押せない。待つ間に番号で 1 件見つかったら、待ちが終わってからその日へ移る（§80.6。検索を消さない）。
 - 成功で D-052 の C27 を当て、日の一覧を取り直す（埋まれば Alert が消える）。toast は `inserted(result, "選んだファイルから")`（追加ありは「選んだファイルから控え N 件を取り込みました」、0 件は「選んだファイルから新しい控えはありませんでした」）。Alert の下に、`SdBulkImport.tsx` の `EjNotes`（読めないファイルの名・食い違いの番号・保留。55 UI-07-D17 と同じ文、repo 外の回答台帳 TD-310）を出す。日報取込みの画面には成功の toast を出さない（その画面の結果の行が名指す）。
 - 読込みと command の失敗は Alert の下に文で出し、もう一度押せる。最後に成功した結果は再試行が失敗しても残る。
 
@@ -106,4 +106,4 @@
 | 日付 | PR | 内容 |
 |---|---|---|
 | 2026-11-25 | ej-receipts-a2（実装、PR #305） | 新設。UI-09c の画面の状態、search と選んだ行の持ち方、種類の label の表、番号で探す 3 つの結果、欠けと手で選ぶ EJ、query の key と D-052 の C26・C27、字形の指定（L3-1 の結果は未確認）を書いた（[Plan Packet](../plans/2026-11-24-ej-receipts-a2.md)）。 |
-| 2026-11-25 | ej-receipts-a2（Final の closure round 2 の是正、PR #305） | §80.3 の選んだ行の持ち方を、ID と日の組を表示中の日と同じときだけ使う形に置き換えた。 |
+| 2026-11-25 | ej-receipts-a2（Final の closure round 2 の是正、PR #305） | §80.3 の選んだ行の持ち方を、ID と日の組を表示中の日と同じときだけ使う形に置き換えた。§80.6 に同じ番号の Enter での取り直し、§80.7 に取込みの待ちの間に見つけた 1 件へ待ちの後に移ることを書いた。 |
