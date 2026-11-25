@@ -85,7 +85,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
   - 貼り付け（P1 の実測、TD-907）: 開発の build（`tauri dev`）の DevTools の Console で、アプリの画面に focus を戻してから `navigator.clipboard.readText()` を呼ぶと `OK 53` で、許可を求める窓は出なかった。よって Rust・`tauri.conf.json`・依存に触れずに読む。配る build（release）は未実測で、L3-2 で確かめる。
   - React の制御された欄: `execCommand("insertText")`・`execCommand("cut")` は `input` event を出すので `onChange` に届く見込み（P2）。`value` を直に書くと React に届かないので使わない。
   - キーボードと部品: `radix-ui` 1.4.3 に ContextMenu があり、menu の role・矢印・Enter・Esc・typeahead・focus の閉じ込めを持つ。メニューキー・Shift+F10 は Chromium が focus の要素に `contextmenu` を出すので、同じ Trigger で開く見込みで、そのときの座標は未実測（P3）。
-  - Radix の FocusScope は、開いている間は focus を menuitem に引き戻し（`onSelect` の中で欄に focus しても戻らない。round 1 で両 reviewer が happy-dom で再現）、閉じるときは input に `select()` をかける（`react-focus-scope` 1.1.7 の `focus(…, { select: true })`）。よって操作は `onCloseAutoFocus` で止めて自分で戻した後に打つ（T5・T6・T9、M3・M6・M8）。
+  - Radix の FocusScope は、開いている間は focus を menuitem に引き戻し（`onSelect` の中で欄に focus しても戻らない。round 1 で両 reviewer が happy-dom で再現）、閉じるときは input に `select()` をかける（`react-focus-scope` 1.1.7 の `focus(…, { select: true })`）。よって操作は `onCloseAutoFocus` で止めて自分で戻した後に打つ（T5・T6・T9、M3・M6・M8・M9）。
 - Contract Probe（実装の run の最初に行う。P1 のほかは `未実測`）:
   - P0: Windows の開発の build と release の build（`npm run tauri build` の MSI か `cargo build --release`）で、`preventDefault` した `contextmenu` で既定のメニューが出ないこと。メニューを開いたまま別の欄・表を右クリックしても既定のメニューが出ないこと（別の欄のときは閉じるだけでよく、もう一度の右クリックで開く。そのときの focus の在り処を記録する）。
   - P1（実測済み、TD-907）: 開発の build で `readText()` は許可の窓なしに通る（上の「貼り付け」）。配る build は L3-2。
@@ -115,7 +115,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 | Contract | Failure Mode | Test Type | Test Name | Would fail if... |
 |---|---|---|---|---|
 | D1 欄の外 | 欄の外か開いたメニューの上で既定のメニューかこのメニューが出る | unit（RTL） | T1 `UI-CTX-D1: 欄の外と開いたメニューの上の右クリックは既定を止めて何も出さない` | 欄の判定を外す（M1）、`document` の listener を外す（M7） |
-| D1 欄の中 | 4 つ以外の項目・項目の無いメニュー | unit（revisit は開き直したときに控えが新しい欄になることだけを確かめる。happy-dom だけの経路） | T2 `UI-CTX-D1: 文字の欄の右クリックで 4 つの項目だけが出る` | Item を足す・欠く |
+| D1 欄の中 | 4 つ以外の項目・項目の無いメニュー | unit（revisit は開き直したときに控えが新しい欄になることだけを確かめる） | T2 `UI-CTX-D1: 文字の欄の右クリックで 4 つの項目だけが出る` | Item を足す・欠く |
 | D2 選択の有無 | 選択が無いのに切り取り・コピーが押せる | unit | T3 `UI-CTX-D2: 選択が無いと切り取り・コピーは押せない形` | 選択の判定を外す（M2） |
 | D2 読取り専用 | 読取り専用の欄に切り取り・貼り付けが効く | unit | T4 `UI-CTX-D2: readOnly の欄は切り取り・貼り付けを押せない形` | `readOnly` を見ない |
 | D3 コピー・切り取り | 欄に focus を戻さずに command を打つ | unit（`document.execCommand` の spy。happy-dom の実装の有無は未実測） | T5 `UI-CTX-D3: コピーは閉じた後に欄に focus を戻してから打つ` | command を `onSelect` の中で打つ（focus を戻す前。M9） |
@@ -127,7 +127,7 @@ Non-scope: 各画面の file（入荷の画面 `ReceivingPage.tsx`〈#308〉を�
 | D1・D2 欄でない input | checkbox・`disabled`・`date`・`month`・`time` の欄でメニューが出る | unit | T11 `UI-CTX-D2: checkbox・disabled・日付・月・時刻の欄では何も出さない` | 欄の型の判定を外す（M1） |
 | D2 IME | 変換中に開いて変換中の文字に command を打つ | unit（composition event） | T12 `UI-CTX-D2: IME の変換中は開かない` | composition の控えを外す（M5） |
 | D1 確認の窓の中 | Dialog の中の欄で開くと Dialog が閉じる・メニューが Esc で閉じない | unit（`Dialog` の中の欄） | T13 `UI-CTX-D1: 確認の窓の中の欄で開いても窓は開いたまま` | Portal・layer を外す |
-| D2 数字の欄 | 切り取り・コピーを押せない | unit（`type="number"` の欄） | T14 `UI-CTX-D2: 数字の欄は切り取り・コピーを押せる形で開く` | `number` を `selectionStart` の選択の判定に通す |
+| D2 数字の欄 | 選択があるのに切り取り・コピーを押せない・選択が無いのに押せる | unit（`type="number"` の欄。`window.getSelection()` の spy。Contract Probe の P2 で `getSelection()` が選択を読めた、TD-913） | T14 `UI-CTX-D2: 数字の欄は選択があるときだけ切り取り・コピーを押せる形で開く` | `number` の選択を `getSelection()` で読まない（M2 でも red） |
 
 状態の遷移: 閉じている → 開く（右クリック・キー）→ 項目を選ぶ（操作を控える）/ Esc・外の click（控えない）→ 閉じる（`onCloseAutoFocus` で focus を戻し、控えた操作があれば打つ）、貼り付けの読みの failure（T7。toast を出し欄は変えない）、読みの間に別の欄へ移る（T6。両方の欄を変えない）、開いたまま別の欄で右クリック（実機は開いている間の `pointer-events: none` で閉じるだけになりうる〈P0・L3-2〉。T2 の revisit は開き直したときに控えが新しい欄になることだけを確かめる）。
 
