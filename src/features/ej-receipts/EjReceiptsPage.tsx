@@ -216,13 +216,15 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
   const numberResult =
     submittedNo !== null && byNo.isSuccess && !byNo.isFetching ? byNo.data : undefined;
   const numberError = submittedNo !== null && byNo.isError && !byNo.isFetching;
+  // 手で選ぶ EJ の取込みの待ちの間は route の移動が止まるので、待ちが終わってから移る（検索を消さない）
+  const importPending = ejImport.pending;
   useEffect(() => {
-    if (numberResult?.length !== 1) return;
+    if (numberResult?.length !== 1 || importPending) return;
     const [found] = numberResult;
     setSelected({ id: found.id, date: found.date });
     setSubmittedNo(null);
     onSearchChange({ date: found.date, no: undefined }, { replace: fromLink });
-  }, [numberResult, onSearchChange, fromLink]);
+  }, [numberResult, onSearchChange, fromLink, importPending]);
 
   const moveTo = (date: string, id: number | null = null) => {
     setSelected(id === null ? null : { id, date });
@@ -273,7 +275,10 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
                 // IME の変換の確定の Enter は送らない。全角の数字は半角にしてから送る（BIZ は ASCII だけを受ける）
                 if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
                 event.preventDefault();
-                setSubmittedNo(normalizeComposedDigits(numberInput.trim()));
+                const no = normalizeComposedDigits(numberInput.trim());
+                // 同じ番号の Enter は取り直す（一時の読取りの失敗から同じ入力でやり直せる）
+                if (no === submittedNo) void byNo.refetch();
+                else setSubmittedNo(no);
               }}
             />
             {numberError && (

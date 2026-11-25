@@ -17,6 +17,7 @@ import type {
   EjRecordRef,
   EjRecordSummary,
 } from "@/lib/bindings";
+import { createAppQueryClient } from "@/lib/query-client";
 import { queryKeys } from "@/lib/query-keys";
 import { getWindowCloseGuardKinds } from "@/lib/window-close-guard";
 import { EjReceiptsPage } from "./EjReceiptsPage";
@@ -108,13 +109,15 @@ function serveDays(days: Record<string, EjRecordDay>) {
   mockList.mockImplementation((date) => Promise.resolve(ok(days[date ?? "latest"])));
 }
 
-function renderPage(initial: EjReceiptsSearch = {}) {
+function renderPage(
+  initial: EjReceiptsSearch = {},
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  }),
+) {
   const onSearchChange = vi.fn();
   // サイドバー・戻るのように、moveTo を通らずに search を外から替える
   let setSearchFromOutside!: (next: EjReceiptsSearch) => void;
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
   function Harness() {
     const [search, setSearch] = useState<EjReceiptsSearch>(initial);
     setSearchFromOutside = setSearch;
@@ -452,6 +455,28 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(screen.queryByText(/同じ番号の控え/)).not.toBeInTheDocument();
   });
 
+  it("U6: 番号の検索が失敗した後、同じ番号の Enter で取り直し、その応答で件数を出す（本番の QueryClient）", async () => {
+    serveDays({ latest: day() });
+    mockFind
+      .mockResolvedValueOnce(
+        err("internal", "データベースエラーが発生しました。もう一度お試しください"),
+      )
+      .mockResolvedValueOnce(ok<EjRecordRef[]>([]));
+    const user = userEvent.setup();
+    renderPage({}, createAppQueryClient());
+    await screen.findByRole("grid");
+    const input = screen.getByLabelText("番号で探す");
+
+    await user.type(input, "102{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("データベースエラーが発生しました");
+    expect(mockFind).toHaveBeenCalledTimes(1);
+
+    await user.type(input, "{Enter}");
+    expect(await screen.findByText("その番号の控えはありません")).toBeInTheDocument();
+    expect(mockFind).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("U9: 欠けは warning の Alert が icon・見出し・区間ごとの文で示し、無ければ Alert を出さない。下の補助のリンクは常にある", async () => {
     serveDays({
       latest: day({
@@ -550,6 +575,46 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     await user.click(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" }));
     expect(await screen.findByText("ファイルサイズが上限(20MB)を超えています")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" })).toBeEnabled();
+  });
+
+  it("U10: 手で選ぶ EJ の待ちの間に番号で 1 件見つかっても移らず検索を残し、待ちが終わるとその日に移る", async () => {
+    serveDays({ latest: day(), "2026-11-19": day({ date: "2026-11-19", prev_date: null }) });
+    mockFind.mockResolvedValue(ok<EjRecordRef[]>([{ id: 1, date: "2026-11-19" }]));
+    let resolveImport!: (value: Awaited<ReturnType<typeof commands.importEjFiles>>) => void;
+    mockImport.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveImport = resolve;
+      }),
+    );
+    vi.mocked(open).mockResolvedValue(["C:\\tmp\\EJ261119.TXT"]);
+    const user = userEvent.setup();
+    const { onSearchChange } = renderPage();
+    await screen.findByRole("grid");
+
+    await user.click(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" }));
+    await waitFor(() => {
+      expect(mockImport).toHaveBeenCalled();
+    });
+    await user.type(screen.getByLabelText("番号で探す"), "102{Enter}");
+    await waitFor(() => {
+      expect(mockFind).toHaveBeenCalledWith("102");
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    // 待ちの間は route の移動が止まるので、移らない
+    expect(onSearchChange).not.toHaveBeenCalled();
+
+    act(() => {
+      resolveImport(ok(ejResult()));
+    });
+    await waitFor(() => {
+      expect(onSearchChange).toHaveBeenCalledWith(
+        { date: "2026-11-19", no: undefined },
+        { replace: false },
+      );
+    });
+    expect(await screen.findByRole("region", { name: "控えの文" })).toBeInTheDocument();
   });
 
   it("U11: 記録が 1 件も無ければ SCREEN_DESIGN の文と取込みへの link と、下の補助のリンクを出す", async () => {
