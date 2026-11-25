@@ -35,6 +35,10 @@ export function useImportEjFiles(options: { onSuccess?: (result: EjImportResult)
     onSuccess: async (data) => {
       setResult(data);
       onSuccess?.(data);
+      // data の無い query の走っている読取り（取込みの前に読んだもの）に無効化が相乗りしないよう、先に止める
+      await Promise.all(
+        invalidationContract.ejImport().map((queryKey) => queryClient.cancelQueries({ queryKey })),
+      );
       await invalidateByContract(queryClient, invalidationContract.ejImport());
     },
   });

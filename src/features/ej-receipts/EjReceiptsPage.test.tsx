@@ -477,6 +477,82 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["初回の検索", false],
+    ["失敗の後の同じ番号の取り直し", true],
+  ])(
+    "U6: %s が取込みの前から走り取込みの後に取込み前の 0 件を返しても、C27 の後の応答で件数を出す（本番の QueryClient）",
+    async (_label, retryAfterFailure) => {
+      serveDays({ latest: day(), "2026-11-19": day({ date: "2026-11-19", prev_date: null }) });
+      let resolvePreImport!: (
+        value: Awaited<ReturnType<typeof commands.findEjRecordsByNo>>,
+      ) => void;
+      if (retryAfterFailure) {
+        mockFind.mockResolvedValueOnce(
+          err("internal", "データベースエラーが発生しました。もう一度お試しください"),
+        );
+      }
+      mockFind
+        .mockReturnValueOnce(
+          new Promise((resolve) => {
+            resolvePreImport = resolve;
+          }),
+        )
+        .mockResolvedValue(ok<EjRecordRef[]>([{ id: 1, date: "2026-11-19" }]));
+      let resolveImport!: (value: Awaited<ReturnType<typeof commands.importEjFiles>>) => void;
+      mockImport.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveImport = resolve;
+        }),
+      );
+      vi.mocked(open).mockResolvedValue(["C:\\tmp\\EJ261119.TXT"]);
+      const user = userEvent.setup();
+      const { onSearchChange } = renderPage({}, createAppQueryClient());
+      await screen.findByRole("grid");
+      const input = screen.getByLabelText("番号で探す");
+      await user.type(input, "102{Enter}");
+      if (retryAfterFailure) {
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+          "データベースエラーが発生しました",
+        );
+        await user.type(input, "{Enter}");
+      }
+      const callsBeforeImport = retryAfterFailure ? 2 : 1;
+      await waitFor(() => {
+        expect(mockFind).toHaveBeenCalledTimes(callsBeforeImport);
+      });
+
+      const pick = screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" });
+      await user.click(pick);
+      await waitFor(() => {
+        expect(mockImport).toHaveBeenCalled();
+      });
+      act(() => {
+        resolveImport(ok(ejResult()));
+      });
+      // C27 の取り直しが始まった後に、取込みの前に読んだ 0 件が返る
+      await waitFor(() => {
+        expect(mockList.mock.calls.filter(([date]) => date === null)).toHaveLength(2);
+      });
+      act(() => {
+        resolvePreImport(ok<EjRecordRef[]>([]));
+      });
+      await waitFor(() => {
+        expect(pick).toBeEnabled();
+      });
+
+      expect(mockFind).toHaveBeenCalledTimes(callsBeforeImport + 1);
+      await waitFor(() => {
+        expect(onSearchChange).toHaveBeenCalledWith(
+          { date: "2026-11-19", no: undefined },
+          { replace: false },
+        );
+      });
+      expect(await screen.findByText("body id1")).toBeInTheDocument();
+      expect(screen.queryByText("その番号の控えはありません")).not.toBeInTheDocument();
+    },
+  );
+
   it("U9: 欠けは warning の Alert が icon・見出し・区間ごとの文で示し、無ければ Alert を出さない。下の補助のリンクは常にある", async () => {
     serveDays({
       latest: day({
