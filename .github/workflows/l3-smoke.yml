@@ -1,0 +1,145 @@
+name: L3 smoke
+
+# D-164: start the release build on Windows and check the home heading. Only PRs that change the smoke itself
+# run it, so a red run never stops a product PR and D-015 stays (exceptions: docs/ci.md L3 Smoke).
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+    paths:
+      - ".github/workflows/l3-smoke.yml"
+      - "scripts/ci/l3-smoke-home.mjs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: l3-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  l3_smoke:
+    name: L3 smoke
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        # The Windows default shell is pwsh.
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The three-dot diff below needs the merge base.
+          fetch-depth: 0
+
+      # GitHub runs the workflow when generating the paths diff times out, so check the same diff here.
+      - id: diff
+        name: Check the smoke files changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA" -- .github/workflows/l3-smoke.yml scripts/ci/l3-smoke-home.mjs)"
+          if [ -z "$files" ]; then
+            echo "### L3 smoke: 実施保留（対象 2 file に差分なし）" >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice title=L3 smoke::実施保留（対象 2 file に差分なし）"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$files"
+            echo "changed=true"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install Rust toolchain
+        if: steps.diff.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: npm ci
+        if: steps.diff.outputs.changed == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Install tauri-driver
+        if: steps.diff.outputs.changed == 'true'
+        run: cargo install tauri-driver --locked --version 2.1.0
+
+      # msedgedriver must match the WebView2 Runtime, so its version follows the registry pv on every run.
+      - id: driver
+        name: Install msedgedriver
+        if: steps.diff.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          $clients = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $pv = (Get-ItemProperty -Path "HKLM:\SOFTWARE\WOW6432Node\$clients" -Name pv -ErrorAction SilentlyContinue).pv
+          if (-not $pv -or $pv -eq '0.0.0.0') {
+            $pv = (Get-ItemProperty -Path "HKCU:\Software\$clients" -Name pv -ErrorAction SilentlyContinue).pv
+          }
+          if (-not $pv -or $pv -eq '0.0.0.0') {
+            Write-Output '::error title=L3 smoke::WebView2 Runtime pv is missing in the registry'
+            exit 1
+          }
+          Write-Output "WebView2 Runtime pv: $pv"
+          $dir = Join-Path $env:RUNNER_TEMP 'msedgedriver'
+          $zip = "$dir.zip"
+          Invoke-WebRequest -Uri "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $exe = Join-Path $dir 'msedgedriver.exe'
+          $sig = Get-AuthenticodeSignature -FilePath $exe
+          $signer = ''
+          if ($sig.SignerCertificate) {
+            $signer = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          }
+          Write-Output "msedgedriver signature: $($sig.Status), signer: $signer"
+          if ($sig.Status -ne 'Valid' -or $signer -cne 'Microsoft Corporation') {
+            Write-Output '::error title=L3 smoke::msedgedriver.exe is not validly signed by Microsoft Corporation'
+            exit 1
+          }
+          & $exe --version
+          "path=$exe" >> $env:GITHUB_OUTPUT
+
+      # Smoke-only build (D-164): in the probe, msedgedriver connected only to a build whose windows open a WebView2
+      # debugging port (why the port from the environment alone was not enough is unconfirmed). The shipped config
+      # stays unchanged; this build writes each window's additionalBrowserArgs into a temporary --config file.
+      - name: Build the release app
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          node -e 'const fs = require("fs"); const c = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8")); for (const w of c.app.windows) w.additionalBrowserArgs = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=0"; fs.writeFileSync(process.argv[1], JSON.stringify({ app: { windows: c.app.windows } }));' "$RUNNER_TEMP/l3-smoke.conf.json"
+          npm run tauri -- build --no-bundle --config "$RUNNER_TEMP/l3-smoke.conf.json"
+
+      # The script ends itself within 300 seconds; the step timeout is only the backstop. The verdict is the
+      # result file the script writes after its cleanup, not node's exit code (bash runs with -e -o pipefail).
+      - name: Check the home heading
+        if: steps.diff.outputs.changed == 'true'
+        timeout-minutes: 10
+        env:
+          L3_SMOKE_APP: src-tauri/target/release/inventory-system-tauri-scaffold.exe
+          L3_SMOKE_NATIVE_DRIVER: ${{ steps.driver.outputs.path }}
+          L3_SMOKE_RESULT: ${{ runner.temp }}/l3-smoke-result
+        run: |
+          if [ -e "$L3_SMOKE_RESULT" ]; then echo "L3 smoke: FAIL: the result file existed before the run"; exit 1; fi
+          rc=0; node scripts/ci/l3-smoke-home.mjs || rc=$?
+          echo "L3 smoke: node exit code $rc"
+          if [ "$(cat "$L3_SMOKE_RESULT" 2>/dev/null)" != "PASS" ]; then echo "L3 smoke: FAIL: no PASS in the result file (node exit code $rc)"; exit 1; fi
