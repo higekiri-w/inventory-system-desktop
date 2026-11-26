@@ -538,7 +538,7 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 ## 23. MNT-03 追加: 入出庫の記録の取消の列と、手動販売の売上の行の結びの migration（D-163）
 
-**MNT-03-D24 / D-163**: 入出庫の記録の取消の lane（Plan Packet `docs/plans/2026-11-20-record-cancel.md`、導入の前の関門 18）の migration（以下 vC）。列の意味の正本は [transaction](../db-design/transaction-tables.md) の §4-5 の「取消の列」と [POS](../db-design/pos-tables.md) §13 の `manual_sale_id`。版の番号は v15（PR #294 の v14・§22・MNT-03-D23 の次。同期の時点の main の最大は v14）。版の番号の規則は §21 と同じ（先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す。`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。欠けは §21 の連番の test が CI で止める。導入の前の関門 16 の lane は次の版と節を取り直す）。description は `入出庫の記録の取消の列と手動販売の売上の結び（D-163）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v15.rs`。
+**MNT-03-D24 / D-163**: 入出庫の記録の取消の lane（Plan Packet `docs/plans/2026-11-20-record-cancel.md`、導入の前の関門 18）の migration（以下 vC）。列の意味の正本は [transaction](../db-design/transaction-tables.md) の §4-5 の「取消の列」と [POS](../db-design/pos-tables.md) §13 の `manual_sale_id`。版の番号は v15（PR #294 の v14・§22・MNT-03-D23 の次。同期の時点の main の最大は v14）。版の番号の規則は §21 と同じ（先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す。`docs/DEV_WORKFLOW.md` Review Rules の連番の registry の項。欠けは §21 の連番の test が CI で止める）。description は `入出庫の記録の取消の列と手動販売の売上の結び（D-163）`、kind は `MigrationKind::Sql`、file は `src-tauri/src/db/schema_v15.rs`。
 
 **手順**（1 つの transaction。表を作り直さないので `foreign_keys` は変えない。止まる検査は置かない: 足す列は全て NULL を許し、既存の行は全て新しい CHECK を通る）:
 

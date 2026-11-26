@@ -330,7 +330,7 @@ spike branch: `spike/invoke-specta`。
 
 **FE テスト ID 規約（2026-06-11 追加、WF-TRACE-04）**: 各 `*.test.{ts,tsx}` は describe/it 文字列に `REQ-NNN` または `UI-NN`（`UI-01a` 形式、設計決定 ID `UI-NNx-Dn` 含む）を最低 1 箇所含める。機械 gate（`cd src-tauri && cargo run --bin generate_traceability -- --check` の T4）は**ファイル内 presence 検査**にとどまり、describe/it への配置は規約側の要請という強度差がある（comment のみの参照でも T4 は通過する。既知例: `src/features/csv-import/reducer.test.ts` は comment のみの `UI-07` 参照で、describe/it への移動は backfill follow-up 対象）。既存の未参照 17 ファイルは baseline として固定済みで、増減どちらも CI / pre-push の ERROR になる（意図的に減らした場合は bin の `FE_UNREFERENCED_BASELINE` を更新して再生成）。backfill は per-feature の仕様読みを伴うため、1 ファイルずつ follow-up PR で baseline を下げる。
 
-**Playwright + @tauri-apps/plugin-testing（E2E）**: Phase 2 tag gate には採用しない（§7.2）。Vitest + React Testing Library と Windows native H-6 利用者確認で Phase 2 完了判断を行う。Phase 3 / Phase 4 で画面横断 regressions が増えた場合、または global text-size / display-scale option のような横断 UI 変更を入れる場合に smoke E2E として再検討する。
+**`tauri-driver`（E2E）**: hosted の `windows-latest` の上で release の build を `tauri-driver` で起動し、ホームの見出しを確かめる smoke を D-164（L3 の自動化の E-1）で始めた（[ci.md](ci.md#l3-smoke)）。関門にはしない（D-015、E-3 まで）。画面の操作まで通す E-2 に進むかは owner が決める。
 
 **@axe-core/react（A11y）**: 各画面のルート Component で自動監査。WCAG 2.1 AA 違反は ERROR、AAは WARN。CI で ERROR をブロック。**7-7b で導入予定** (Phase 1 7-7a では未統合)。
 
@@ -808,7 +808,7 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 **決定（2026-06-07 / Phase 2 8-9）**: Phase 2 tag gate では **選択肢C** を採用する。日常利用 5 画面は code-complete / route active 済みで、各 PR の Vitest + React Testing Library による role / text / state / structure 検証と、H-6 Windows native 5 画面通し利用者確認で完了判断に必要な証跡を満たした。現時点で Playwright / Tauri E2E を追加すると、依存・環境・CI 運用のコストが Phase 2 completion gate としては過剰になる。
 
 **評価タイミング**:
-1. global text-size / display-scale option の実装プラン作成時: 全画面横断の表示崩れを検知する smoke E2E / screenshot diff の要否を確認する（2026-06-07 follow-up では targeted RTL + Windows native L3 を採用し、smoke E2E は Phase 3 の最初の画面横断 workflow で再評価する）
+1. global text-size / display-scale option の実装プラン作成時: 全画面横断の表示崩れを検知する smoke E2E / screenshot diff の要否を確認する（2026-06-07 follow-up では targeted RTL + Windows native L3 を採用し、smoke E2E は D-164 で E-1 として始めた）
 2. Phase 3 の最初の画面横断 workflow 実装プラン作成時: CSV 取込みから商品・在庫・売上へまたがる smoke E2E の要否を確認する
 3. Phase 4 完了後、`v1.0.0` 候補を切る前: 全画面 E2E（選択肢B）まで広げる必要があるか再判断する
 
@@ -825,7 +825,7 @@ Vite の読み込み順序は `.env` → `.env.{mode}` → `.env.{mode}.local` �
 **評価タイミング**:
 1. global text-size / display-scale option の実装プラン作成時: typography / density / status 表示の横断変更に対して lightweight screenshot diff が必要か確認する（2026-06-07 follow-up では新規 screenshot-diff gate は追加せず、targeted RTL + Windows native L3 で確認する）
 2. ~~Storybook 採用判断時: Chromatic の費用対効果を確認する~~（Storybook 不採用確定 = D-068 により評価不要）
-3. smoke E2E 採用判断時: Playwright screenshot を同時に入れるか確認する
+3. E-1（D-164）では screenshot を入れない。視覚回帰は下の臨時再検討トリガで再評価する
 
 **臨時再検討トリガ**: 視認性・表示崩れ・状態色の regressions が複数 PR で続いた場合は、上記タイミングを待たずに visual regression を再評価する。
 

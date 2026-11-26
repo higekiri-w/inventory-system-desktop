@@ -75,7 +75,7 @@ IO-02 は [23](../function-design/23-io-z004-parser.md) の精算の識別メタ
 5. 3行目以降を5フィールドCSVパース
    - フィールド数不正 → parse_errorsに追加、次の行へ
    - quantity/amountを整数パース（3桁区切りのカンマを受理）。失敗 → parse_errorsに追加
-   - JAN正規化（末尾アルファベット除去→13桁化）。コードが全桁ゼロか13桁JANにならない行は、個数・金額とも0なら除外、売上があれば parse_errors に追加（[23 §13.4.2](../function-design/23-io-z004-parser.md)、D-103）
+   - JAN正規化（13桁か JAN-8 の8桁にする。形は [23 §13.5](../function-design/23-io-z004-parser.md)）。コードが全桁ゼロかJANにならない行は、個数・金額とも0なら除外、売上があれば parse_errors に追加（[23 §13.4.2](../function-design/23-io-z004-parser.md)、D-103）
 6. ParseResultを返す
 
 **【制御構造】**
