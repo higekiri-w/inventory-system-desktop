@@ -339,10 +339,9 @@
   plu_slots {
     INTEGER memory_no PK "217..5000"
     TEXT scanning_code "NULL allowed; logical JAN join; no FK"
-    TEXT status "NOT NULL; free / external / reserved / active / release_pending"
+    TEXT status "NOT NULL; free / external / reserved / active"
     TEXT reserved_at "NULL allowed"
     TEXT activated_at "NULL allowed; app active; not register proof"
-    TEXT released_at "NULL allowed"
     TEXT updated_at "NOT NULL"
   }
 

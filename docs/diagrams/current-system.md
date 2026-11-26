@@ -227,25 +227,26 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  SNAP[レジの全スロットsnapshotを取込む] --> SLOTS[(plu_slots / JAN単位の永続割当)]
+  SNAP[売上データ取込みのSDの読取りでレジの全スロットを照合] --> SLOTS[(plu_slots / JAN単位の永続割当)]
   PRODUCTS[(products / JAN・価格・対象・dirty)] --> PREPARE[prepare / 対象検証・枠の予約・ファイル生成]
   SLOTS <--> PREPARE
   PREPARE --> SAVE{ファイル保存}
   SAVE -->|失敗・キャンセル| RETRY[dirtyは残る / 予約は再利用して再書出し]
   RETRY --> PREPARE
   SAVE -->|成功| PENDING[保存済み・アプリ側の確認待ち]
-  PENDING -->|利用者が未反映から外す| CONFIRM[対象集合を確認 / dirty解除・slot更新]
+  PENDING -->|利用者が未反映から外す| CONFIRM[対象集合を確認 / 出力の行が今も同じ分だけdirty解除・slot更新]
   CONFIRM --> PRODUCTS
   CONFIRM --> SLOTS
   PENDING -->|別の手作業| PC[CV17への取込み]
   PC --> SD[PCツールからSDへ書込み]
   SD --> REGISTER[レジで設定読込み・動作確認]
-  REGISTER -.->|後日のsnapshotによる観測| SNAP
+  REGISTER -.->|次の締めのSDの読取りによる観測| SNAP
 ```
 
 - 保存・アプリ側確認・レジ反映は別の出来事。`plu_exported_at`、slotの `active` / `activated_at` だけで実レジへの反映完了を証明しない。
-- `products.jan_code` と `plu_slots.scanning_code` の結合はFKではない。共有JANの商品は同じslotを使う。外部登録や解放待ちのslotは対応する商品を持たない場合もある。
-- 基本経路は `free → reserved → active → release_pending → free`。snapshotによるexternal採用・衝突・missing、再対象化、clear無効時の例外は [slot状態遷移表](../db-design/plu-tables.md) を正本とする。
+- `products.jan_code` と `plu_slots.scanning_code` の結合はFKではない。共有JANの商品は同じslotを使う。外部登録のslotと、売るのをやめた商品・JANを変えた商品の前のJANのslotは、対応する対象の商品を持たない。
+- 基本経路は `free → reserved → active`。アプリは枠を消さず、別のJANに使い回さない（D-117）。照合によるexternal採用・衝突・missing、再対象化は [slot状態遷移表](../db-design/plu-tables.md) を正本とする。
+- 保存の後に出力の行が変わった商品は、未反映から外す操作でも未反映のまま残る（[33 §16.5](../function-design/33-biz-plu-export-service.md)）。
 - slotとsnapshot設定は売上・在庫の集計対象ではない。
 
 根拠: [plu_export_service](../../src-tauri/src/biz/plu_export_service.rs)、[PLU画面設計](../function-design/67-ui-plu-export.md)、[slot定義](../db-design/plu-tables.md)。
