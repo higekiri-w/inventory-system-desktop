@@ -13,10 +13,18 @@ export interface EjDateNavigatorProps {
   date: string;
   prevDate: string | null;
   nextDate: string | null;
+  /** 手で選ぶ EJ の取込みの待ちの間は route の移動が止まるので、欄と前後のボタンを押せなくする（80 §80.7） */
+  disabled: boolean;
   onChange: (newDate: string) => void;
 }
 
-export function EjDateNavigator({ date, prevDate, nextDate, onChange }: EjDateNavigatorProps) {
+export function EjDateNavigator({
+  date,
+  prevDate,
+  nextDate,
+  disabled,
+  onChange,
+}: EjDateNavigatorProps) {
   const [draft, setDraft] = useState(date);
   // 最後に移った日。Enter の後の blur のように、同じ値で 2 回移らない
   const [sent, setSent] = useState(date);
@@ -40,15 +48,28 @@ export function EjDateNavigator({ date, prevDate, nextDate, onChange }: EjDateNa
     onChange(draft);
   };
 
+  // 前後のボタンは表示中の日から 1 回だけ移り、打ちかけの下書きは捨てる。mousedown で欄の focus を外さず、
+  // blur で打ちかけの日へ移ってから隣へ移る 2 回の移動（履歴に見ていない日が入る）を起こさない。
+  // ponytail: WebView2 で mousedown の preventDefault が欄の blur を止めるかは L3 で見る。効かなければ
+  // blur の側で、押されたのが前後のボタンか（relatedTarget）を見て確定を飛ばす形にする。
+  const step = (to: string | null) => {
+    if (to === null) return;
+    setDraft(date);
+    onChange(to);
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button
         type="button"
         variant="outline"
         size="sm"
-        disabled={prevDate === null}
+        disabled={disabled || prevDate === null}
+        onMouseDown={(e) => {
+          e.preventDefault();
+        }}
         onClick={() => {
-          if (prevDate !== null) onChange(prevDate);
+          step(prevDate);
         }}
       >
         前の日
@@ -58,6 +79,7 @@ export function EjDateNavigator({ date, prevDate, nextDate, onChange }: EjDateNa
       </span>
       <input
         type="date"
+        disabled={disabled}
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
@@ -73,9 +95,12 @@ export function EjDateNavigator({ date, prevDate, nextDate, onChange }: EjDateNa
         type="button"
         variant="outline"
         size="sm"
-        disabled={nextDate === null}
+        disabled={disabled || nextDate === null}
+        onMouseDown={(e) => {
+          e.preventDefault();
+        }}
         onClick={() => {
-          if (nextDate !== null) onChange(nextDate);
+          step(nextDate);
         }}
       >
         次の日

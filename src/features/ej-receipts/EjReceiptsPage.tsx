@@ -256,6 +256,7 @@ export function EjReceiptsPage({ search, onSearchChange }: EjReceiptsPageProps) 
             date={day.date}
             prevDate={day.prev_date}
             nextDate={day.next_date}
+            disabled={ejImport.pending}
             onChange={(date) => {
               setSubmittedNo(null);
               moveTo(date);

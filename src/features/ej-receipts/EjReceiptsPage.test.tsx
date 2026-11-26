@@ -258,6 +258,59 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(input).toHaveValue("2026-11-19");
   });
 
+  it("U4: 日付を打ったまま mouse で前の日を押すと、打った日へは移らず表示中の日から 1 回だけ移る", async () => {
+    serveDays({
+      latest: day(),
+      "2026-11-19": day({ date: "2026-11-19", records: [summary(9, "000101")] }),
+    });
+    const user = userEvent.setup();
+    const { onSearchChange } = renderPage();
+    await screen.findByRole("grid");
+    const input = screen.getByLabelText("日付を選択");
+    await user.click(input);
+    fireEvent.change(input, { target: { value: "2026-11-10" } });
+
+    await user.click(screen.getByRole("button", { name: "前の日" }));
+    expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
+    expect(onSearchChange).toHaveBeenCalledTimes(1);
+    expect(onSearchChange).toHaveBeenLastCalledWith(
+      { date: "2026-11-19", no: undefined },
+      undefined,
+    );
+    expect(input).toHaveValue("2026-11-19");
+  });
+
+  it("U4: 欄で移った後に前後のボタンで移ると、前に打った日をもう一度打って Enter で移れる", async () => {
+    serveDays({
+      latest: day(),
+      "2026-11-10": day({
+        date: "2026-11-10",
+        prev_date: null,
+        next_date: "2026-11-19",
+        records: [],
+      }),
+      "2026-11-19": day({ date: "2026-11-19", records: [summary(9, "000101")] }),
+    });
+    const user = userEvent.setup();
+    const { onSearchChange } = renderPage();
+    await screen.findByRole("grid");
+    const input = screen.getByLabelText("日付を選択");
+
+    fireEvent.change(input, { target: { value: "2026-11-10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText("この日の控えはありません")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "次の日" }));
+    expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "2026-11-10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSearchChange).toHaveBeenCalledTimes(3);
+    expect(onSearchChange).toHaveBeenLastCalledWith(
+      { date: "2026-11-10", no: undefined },
+      undefined,
+    );
+  });
+
   it("U6: 番号で 1 件ならその日に移って行を選び、本文は一覧の外の ID でも get_ej_record で読む", async () => {
     serveDays({ latest: day(), "2026-11-19": day({ date: "2026-11-19", records: [] }) });
     mockFind.mockResolvedValueOnce(ok<EjRecordRef[]>([{ id: 5000, date: "2026-11-19" }]));
@@ -729,6 +782,45 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
       );
     });
     expect(await screen.findByRole("region", { name: "控えの文" })).toBeInTheDocument();
+  });
+
+  it("U10: 手で選ぶ EJ の待ちの間は日付の欄と前の日・次の日を押せず、待ちの後に打って Enter で移る", async () => {
+    serveDays({
+      latest: day({ next_date: "2026-11-21" }),
+      "2026-11-10": day({ date: "2026-11-10", records: [] }),
+    });
+    let resolveImport!: (value: Awaited<ReturnType<typeof commands.importEjFiles>>) => void;
+    mockImport.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveImport = resolve;
+      }),
+    );
+    vi.mocked(open).mockResolvedValue(["C:\\tmp\\EJ261119.TXT"]);
+    const user = userEvent.setup();
+    const { onSearchChange } = renderPage();
+    await screen.findByRole("grid");
+    const input = screen.getByLabelText("日付を選択");
+
+    await user.click(screen.getByRole("button", { name: "EJ のファイルを選んで取り込む" }));
+    await waitFor(() => {
+      expect(mockImport).toHaveBeenCalled();
+    });
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "前の日" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "次の日" })).toBeDisabled();
+
+    act(() => {
+      resolveImport(ok(ejResult()));
+    });
+    await waitFor(() => {
+      expect(input).toBeEnabled();
+    });
+    expect(screen.getByRole("button", { name: "前の日" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "次の日" })).toBeEnabled();
+    fireEvent.change(input, { target: { value: "2026-11-10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSearchChange).toHaveBeenCalledWith({ date: "2026-11-10", no: undefined }, undefined);
+    expect(await screen.findByText("この日の控えはありません")).toBeInTheDocument();
   });
 
   it("U11: 記録が 1 件も無ければ SCREEN_DESIGN の文と取込みへの link と、下の補助のリンクを出す", async () => {

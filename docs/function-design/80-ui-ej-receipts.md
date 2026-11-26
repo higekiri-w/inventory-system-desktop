@@ -23,7 +23,7 @@
 | `src/routes/reports/receipts.tsx` | route `/reports/receipts`。`validateSearch` に feature の schema を渡し、`onSearchChange(next, { replace })` を `navigate` にする（`src/routes/reports/daily.tsx` と同じ形） |
 | `src/features/ej-receipts/types.ts` | search の schema `ejReceiptsSearchSchema`（§80.2） |
 | `src/features/ej-receipts/EjReceiptsPage.tsx` | 画面（`PageShell`）。表・控えの文・番号の欄・欠けの Alert・補助のリンク |
-| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（カレンダーの窓からの選択も同じ。無効・空なら今の日へ戻す）。UI-09a の部品は変えない |
+| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（カレンダーの窓からの選択も同じ。無効・空なら今の日へ戻す）。前の日・次の日は欄の focus を外さず、表示中の日から 1 回だけ移る（打ちかけの下書きは捨てる。打ちかけの日へは移らない）。UI-09a の部品は変えない |
 | `src/features/ej-receipts/hooks/useEjRecords.ts` | query の hook 3 つ（§80.5） |
 | `src/features/ej-receipts/lib/receipt-format.ts` | 種類の label・金額・時刻の純関数と、控えの文の字形の指定（§80.4） |
 | `src/features/daily-report-import/hooks/useImportEjFiles.ts` | 手で選ぶ EJ の取込み（55 UI-07-D17 と共有。§80.7） |
@@ -89,7 +89,7 @@
 ## 80.7 欠けと手で選ぶ EJ（UI-09c-D5）
 
 - 欠け（`gaps`、全期間）があれば、一覧の上に warning の Alert（icon + 見出し「控えが足りない所があります」+ 区間ごとに「記録 n〜m の控えがありません。」、1 つの番号は「記録 n の控えがありません。」）。無ければ出さない。
-- 画面の下に補助のリンク「EJ のファイルを選んで取り込む」を常に置く（記録が 1 件も無い日・欠けの無い日も。最大の番号の後ろの控えは欠けに出ないため）。押すと共有の hook `useImportEjFiles` が native の file dialog で複数を選び、20MB の検査をして `importEjFiles` を呼ぶ。待つ間（選択の確定から応答まで）は hook が route の移動・リロード・native の window の close（`ej-import`）を止め（55 §55.7、UI_TECH_STACK UI-USW-D5）、リンクを押せない。待つ間に番号で 1 件見つかったら、待ちが終わってからその日へ移る（§80.6。検索を消さない）。
+- 画面の下に補助のリンク「EJ のファイルを選んで取り込む」を常に置く（記録が 1 件も無い日・欠けの無い日も。最大の番号の後ろの控えは欠けに出ないため）。押すと共有の hook `useImportEjFiles` が native の file dialog で複数を選び、20MB の検査をして `importEjFiles` を呼ぶ。待つ間（選択の確定から応答まで）は hook が route の移動・リロード・native の window の close（`ej-import`）を止め（55 §55.7、UI_TECH_STACK UI-USW-D5）、リンクと日付の欄・前の日・次の日を押せない（待ちが終わってから打ち直して移る）。待つ間に番号で 1 件見つかったら、待ちが終わってからその日へ移る（§80.6。検索を消さない）。
 - 成功で D-052 の C27 を当て、日の一覧を取り直す（埋まれば Alert が消える）。toast は `inserted(result, "選んだファイルから")`（追加ありは「選んだファイルから控え N 件を取り込みました」、0 件は「選んだファイルから新しい控えはありませんでした」）。Alert の下に、`SdBulkImport.tsx` の `EjNotes`（読めないファイルの名・食い違いの番号・保留。55 UI-07-D17 と同じ文、repo 外の回答台帳 TD-310）を出す。日報取込みの画面には成功の toast を出さない（その画面の結果の行が名指す）。
 - 読込みと command の失敗は Alert の下に文で出し、もう一度押せる。最後に成功した結果は再試行が失敗しても残る。
 
@@ -109,3 +109,4 @@
 | 2026-11-25 | ej-receipts-a2（Final の closure round 2 の是正、PR #305） | §80.3 の選んだ行の持ち方を、ID と日の組を表示中の日と同じときだけ使う形に置き換えた。§80.6 に同じ番号の Enter での取り直し、§80.7 に取込みの待ちの間に見つけた 1 件へ待ちの後に移ることを書いた。 |
 | 2026-11-26 | ej-receipts-a2（L3 の観察の是正、PR #305） | §80.1 の `EjDateNavigator` に、日付の欄は打っている間は日を移さず Enter か欄から出たときに移すことを書いた（WebView2 で日の 2 桁目の打ちかけが捨てられた）。 |
 | 2026-11-26 | ej-receipts-a2（Ready の前の docs、PR #305） | §80.4 に L3-1 の結果（BIZ UDGothic が当たった、TD-918）を書いた。 |
+| 2026-11-26 | ej-receipts-a2（Final の closure round 6 の是正、PR #305） | §80.1 に前の日・次の日は表示中の日から 1 回だけ移り打ちかけの下書きを捨てること、§80.7 に取込みの待ちの間は日付の欄と前の日・次の日も押せないことを書いた。 |
