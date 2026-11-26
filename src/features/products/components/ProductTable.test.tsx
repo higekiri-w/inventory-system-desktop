@@ -53,15 +53,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 describe("ProductTable (UI-01a-D6 / UI-01a-D8)", () => {
-  it("REQ-907 B-V1: shows the independent PLU column with three text and icon states", () => {
+  it("REQ-907 / UI-01a-D10〜D12（撤去）: 「PLU」列と PLU の状態の表示を持たない", () => {
     render(
       <ProductTable
         items={[
-          makeMockProductWithRelations({
-            product_code: "PLU-0",
-            plu_target: false,
-            plu_dirty: false,
-          }),
+          makeMockProductWithRelations({ product_code: "PLU-0", plu_target: false }),
           makeMockProductWithRelations({
             product_code: "PLU-1",
             plu_target: true,
@@ -75,17 +71,10 @@ describe("ProductTable (UI-01a-D6 / UI-01a-D8)", () => {
         ]}
       />,
     );
-    expect(screen.getByRole("columnheader", { name: "PLU" })).toBeInTheDocument();
-    for (const [code, label] of [
-      ["PLU-0", "対象外"],
-      ["PLU-1", "未反映"],
-      ["PLU-2", "反映済み"],
-    ] as const) {
-      const row = screen.getByText(code).closest("tr");
-      if (row === null) throw new Error("row not found");
-      expect(within(row).getByText(label)).toBeInTheDocument();
-      expect(row.querySelector("svg[aria-hidden='true']")).not.toBeNull();
-      expect(row.className).not.toContain("text-muted-foreground");
+    expect(screen.getByText("PLU-1")).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "PLU" })).not.toBeInTheDocument();
+    for (const label of ["対象外", "未反映", "反映済み"]) {
+      expect(screen.queryByText(label)).not.toBeInTheDocument();
     }
   });
 
@@ -182,16 +171,7 @@ describe("ProductTable (UI-01a-D6 / UI-01a-D8)", () => {
       />,
     );
     const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
-    expect(headers).toEqual([
-      "商品コード",
-      "商品名",
-      "部門",
-      "売価",
-      "原価",
-      "在庫数",
-      "PLU",
-      "操作",
-    ]);
+    expect(headers).toEqual(["商品コード", "商品名", "部門", "売価", "原価", "在庫数", "操作"]);
     const row = screen.getByText("PRICE-001").closest("tr");
     if (row === null) throw new Error("row not found");
     expect(within(row).getByText("¥567")).toBeInTheDocument();
@@ -214,26 +194,6 @@ describe("ProductTable (UI-01a-D6 / UI-01a-D8)", () => {
     expect(within(row).getByText("18 個")).toBeInTheDocument();
     expect(within(row).queryByText(/pcs/)).not.toBeInTheDocument();
   });
-});
-
-// SC4 / DSR-22: PLU状態は色・文言・iconを対にして検証する。
-it.each([
-  [true, "未反映", "warning", ["border-warning-border", "bg-warning-soft", "text-warning-strong"]],
-  [
-    false,
-    "反映済み",
-    "success",
-    ["border-success-border", "bg-success-soft", "text-success-strong"],
-  ],
-] as const)("SC4: PLU dirty=%s shows %s", (dirty, label, tone, classes) => {
-  render(
-    <ProductTable items={[makeMockProductWithRelations({ plu_target: true, plu_dirty: dirty })]} />,
-  );
-  const badge = screen.getByText(label).closest('[data-slot="badge"]');
-  expect(badge).toHaveAttribute("data-variant", "outline");
-  expect(badge).toHaveAttribute("data-tone", tone);
-  expect(badge).toHaveClass(...classes);
-  expect(badge?.querySelector('svg[aria-hidden="true"]')).toBeInTheDocument();
 });
 
 describe("ProductTable の在庫の欄（D-118 b2、50）", () => {

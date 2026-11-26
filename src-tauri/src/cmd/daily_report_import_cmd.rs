@@ -8,6 +8,7 @@ use crate::biz::daily_report_import_service::{
     DailyReportSdScanSnapshot, DailyReportSdSelection, EjImportResult, EjSourceFile,
     ListDailyReportImportsQuery, RegisterSdBulkOutcome, RegisterSdBulkSource,
 };
+use crate::biz::plu_export_service::{self, PluRegisterSnapshotRefresh};
 use crate::biz::PaginatedResult;
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
 use crate::constants;
@@ -29,6 +30,8 @@ pub struct DailyReportSourceFileRequest {
 pub struct RegisterSdScanResponse {
     pub scan: DailyReportSdScan,
     pub scan_token: String,
+    /// §45.6a 手順 2a: この SD の Z004 の精算回数が前回の照合より小さくて、PLU の占有を照合しなかった
+    pub plu_snapshot_skipped_older: bool,
 }
 
 const SCAN_EXPIRED_MESSAGE: &str =
@@ -137,19 +140,34 @@ fn scan_register_sd_with_state(
         }
         Some(path) => DailyReportSdSelection::Selected(PathBuf::from(path)),
     };
-    let result = {
-        let conn = state
+    let (mut result, plu_snapshot_skipped_older) = {
+        let mut conn = state
             .db
             .lock()
             .map_err(|error| CmdError::internal("DB接続エラー", error))?;
-        daily_report_import_service::scan_register_sd_daily_reports(
+        let result = daily_report_import_service::scan_register_sd_daily_reports(
             &conn,
             selection,
             today,
             app_data_dir,
         )
-        .map_err(CmdError::from)?
+        .map_err(CmdError::from)?;
+        // 手順 2a: 同じ DB 接続のまま PLU の占有を照合する。失敗は scan の失敗にしない（前回の照合を保つ）
+        let refresh = plu_export_service::refresh_plu_register_snapshot_from_sd(
+            &mut conn,
+            &result.snapshot.plu_register_z004s,
+        );
+        let skipped_older = match refresh {
+            Ok(refresh) => matches!(refresh, PluRegisterSnapshotRefresh::SkippedOlder),
+            Err(error) => {
+                tracing::warn!(error = %error, "レジの占有を照合できませんでした（前回の照合を保ちます）");
+                false
+            }
+        };
+        (result, skipped_older)
     };
+    // Z004 の bytes を cache に残さない
+    result.snapshot.plu_register_z004s = Vec::new();
     let scan_token = uuid::Uuid::new_v4().to_string();
     let mut cache = state
         .register_sd_scan_cache
@@ -161,6 +179,7 @@ fn scan_register_sd_with_state(
     Ok(RegisterSdScanResponse {
         scan: result.scan,
         scan_token,
+        plu_snapshot_skipped_older,
     })
 }
 
@@ -922,6 +941,7 @@ mod tests {
             files_by_candidate,
             ej_files: Vec::new(),
             ej_unreadable_files: Vec::new(),
+            plu_register_z004s: Vec::new(),
         }
     }
 
@@ -1121,5 +1141,82 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.kind, CmdErrorKind::Validation);
+    }
+
+    // -----------------------------------------------------------------------
+    // CMD-12 §45.6a 手順 2a: scan の成功の後に PLU の占有を照合する（D-117 (3)、D-160 (4)）
+    // -----------------------------------------------------------------------
+
+    /// 合成の全枠の Z004（layout A、CP932・CRLF）。`rows` 行のうち 300 番だけに `code` を置く
+    fn z004_dump(settlement: &str, code: &str, rows: i64) -> Vec<u8> {
+        let mut text = format!(
+            "\"マシンNo.   \",\"0001\"\r\n\"ファイル    \",\"Z004_SYNTH\"\r\n\"精算回数    \",\"{settlement}\"\r\n\"日付        \",\"2026-03-21\"\r\n\r\n\"メモリNo.\",\"ｽｷｬﾆﾝｸﾞｺｰﾄﾞ\",\"名称\",\"個数\",\"金額\"\r\n"
+        );
+        for memory_no in 1..=rows {
+            let code = if memory_no == 300 {
+                code
+            } else {
+                "00000000000000"
+            };
+            text.push_str(&format!("{memory_no},{code},,0,0\r\n"));
+        }
+        encoding_rs::SHIFT_JIS.encode(&text).0.to_vec()
+    }
+
+    #[test]
+    fn test_scan_register_sd_req907_refreshes_snapshot_and_reports_skipped_older() {
+        // REQ-907 / CMD-12 §45.6a 手順 2a: 照合の結果に関わらず scan は成功し、SkippedOlder のときだけ flag が true。
+        // Z004 の bytes を cache に残さない
+        let (dir, state) = app_state();
+        let root = sd_tree(&dir.path().join("sd"), "2026-03-21", "0005");
+        let z004_path = root.join("XZ").join("2026").join("03").join("Z004_21 .CSV");
+        let selected = Some(root.display().to_string());
+        let setting = |key: &str| {
+            crate::db::system_repo::get_setting(&state.db.lock().unwrap(), key).unwrap()
+        };
+        let slot_code = || -> Option<String> {
+            state
+                .db
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT scanning_code FROM plu_slots WHERE memory_no = 300",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        let scan = |bytes: Vec<u8>| {
+            std::fs::write(&z004_path, bytes).unwrap();
+            let response =
+                scan_register_sd_with_state(&state, selected.clone(), today(), None).unwrap();
+            assert_eq!(
+                response.scan.candidates.len(),
+                1,
+                "日報の候補は照合に関わらず返る"
+            );
+            let cache = state.register_sd_scan_cache.lock().unwrap();
+            assert!(cache[&response.scan_token].plu_register_z004s.is_empty());
+            response.plu_snapshot_skipped_older
+        };
+
+        // 照合する（Refreshed）
+        assert!(!scan(z004_dump("0010", "CODE-10", 5_000)));
+        assert!(setting("plu_register_snapshot_at").is_some());
+        assert_eq!(
+            setting("plu_register_snapshot_settlement_no").as_deref(),
+            Some("10")
+        );
+        assert_eq!(slot_code().as_deref(), Some("CODE-10"));
+        // 精算回数が小さい SD（SkippedOlder）: flag だけが true で、前回の照合を保つ
+        assert!(scan(z004_dump("0009", "CODE-09", 5_000)));
+        // 等しい（Unchanged）と、照合の Err（行数が足りない全枠の Z004）は false
+        assert!(!scan(z004_dump("0010", "CODE-XX", 5_000)));
+        assert!(!scan(z004_dump("0011", "CODE-11", 4_999)));
+        assert_eq!(slot_code().as_deref(), Some("CODE-10"));
+        assert_eq!(
+            setting("plu_register_snapshot_settlement_no").as_deref(),
+            Some("10")
+        );
     }
 }

@@ -307,19 +307,6 @@ export function ProductFormPage({
           <AlertDescription>部門は必須項目のため、この状態では保存できません。</AlertDescription>
         </Alert>
       ) : null}
-      {mode === "edit" ? (
-        <div className="max-w-sm space-y-2">
-          <label htmlFor="plu-memory-no" className="text-sm font-medium">
-            レジメモリNo.
-          </label>
-          <input
-            id="plu-memory-no"
-            className="h-10 w-full rounded-md border bg-muted px-3 text-sm"
-            value={currentProduct?.plu_memory_no ?? "未割当"}
-            readOnly
-          />
-        </div>
-      ) : null}
       <ProductForm
         mode={mode}
         values={values}

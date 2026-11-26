@@ -5,7 +5,7 @@ import { d052InvalidationOracle } from "@/test/invalidation-oracle";
 import { invalidationContract } from "./invalidation-contract";
 
 describe("UI-07 D-052 invalidation SSOT shape", () => {
-  it("REQ-907 B-I1: defines all 25 mutation entries exactly once against the independent oracle", () => {
+  it("REQ-907 B-I1: defines all 24 mutation entries exactly once against the independent oracle", () => {
     expect(Object.keys(invalidationContract).sort()).toEqual(
       [
         "productCreate",
@@ -25,9 +25,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
         "integrityFix",
         "thresholdSave",
         "pluExportConfirm",
-        "pluRegisterSnapshot",
+        "registerSdScan",
         "pluExportPrepare",
-        "pluBulkTarget",
         "productPriceRevise",
         "supplierRename",
         "supplierMerge",
@@ -54,9 +53,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       invalidationContract.integrityFix(),
       invalidationContract.thresholdSave(),
       invalidationContract.pluExportConfirm(),
-      invalidationContract.pluRegisterSnapshot(),
+      invalidationContract.registerSdScan(),
       invalidationContract.pluExportPrepare(),
-      invalidationContract.pluBulkTarget(),
       invalidationContract.productPriceRevise("P-001"),
       invalidationContract.supplierRename(),
       invalidationContract.supplierMerge(),
@@ -82,9 +80,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       d052InvalidationOracle.integrityFix(),
       d052InvalidationOracle.thresholdSave(),
       d052InvalidationOracle.pluExportConfirm(),
-      d052InvalidationOracle.pluRegisterSnapshot(),
+      d052InvalidationOracle.registerSdScan(),
       d052InvalidationOracle.pluExportPrepare(),
-      d052InvalidationOracle.pluBulkTarget(),
       d052InvalidationOracle.productPriceRevise("P-001"),
       d052InvalidationOracle.supplierRename(),
       d052InvalidationOracle.supplierMerge(),
@@ -93,7 +90,7 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
     ];
 
     // returnExchange は stockApplied の true と false の両方を比べる（引数の取り違えを捕まえる。D-148 (4)）
-    expect(actualEntries).toHaveLength(26);
+    expect(actualEntries).toHaveLength(25);
     expect(actualEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort())).toEqual(
       expectedEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort()),
     );

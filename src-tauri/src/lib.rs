@@ -282,7 +282,6 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         cmd::product_cmd::revise_product_price,
         cmd::product_cmd::toggle_discontinue,
         cmd::product_cmd::search_products,
-        cmd::product_cmd::bulk_set_plu_target,
         cmd::product_cmd::list_departments,
         cmd::product_cmd::list_suppliers,
         cmd::product_cmd::create_supplier,
@@ -336,7 +335,6 @@ fn export_bindings_to(bindings_path: &std::path::Path) -> Result<(), String> {
         // CMD-08: PLU書出し
         cmd::plu_export_cmd::prepare_plu_export,
         cmd::plu_export_cmd::confirm_plu_export_saved,
-        cmd::plu_export_cmd::import_plu_register_snapshot,
         cmd::plu_export_cmd::get_plu_slot_summary,
         cmd::plu_export_cmd::list_plu_dirty,
         // CMD-09: 売上集計
@@ -1526,7 +1524,6 @@ pub fn run() {
             cmd::product_cmd::revise_product_price,
             cmd::product_cmd::toggle_discontinue,
             cmd::product_cmd::search_products,
-            cmd::product_cmd::bulk_set_plu_target,
             cmd::product_cmd::list_departments,
             cmd::product_cmd::list_suppliers,
             cmd::product_cmd::create_supplier,
@@ -1580,7 +1577,6 @@ pub fn run() {
             // CMD-08: PLU書出し
             cmd::plu_export_cmd::prepare_plu_export,
             cmd::plu_export_cmd::confirm_plu_export_saved,
-            cmd::plu_export_cmd::import_plu_register_snapshot,
             cmd::plu_export_cmd::get_plu_slot_summary,
             cmd::plu_export_cmd::list_plu_dirty,
             // CMD-09: 売上集計

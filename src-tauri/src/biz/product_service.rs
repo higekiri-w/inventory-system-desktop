@@ -14,7 +14,7 @@ use super::{jan_code, BizError};
 use crate::constants::{MAX_COST_PRICE_CENTI, MAX_SELLING_PRICE, MAX_STOCK_QUANTITY};
 use crate::db::inventory_repo::{MovementType, NewMovement};
 use crate::db::product_repo::{
-    ProductBulkFilter, ProductSearchQuery, ProductStockUnit, ProductTaxRate, ProductWithRelations,
+    ProductSearchQuery, ProductStockUnit, ProductTaxRate, ProductWithRelations,
 };
 use crate::db::stocktake_repo::NewStocktakeItem;
 
@@ -135,7 +135,6 @@ pub(crate) mod failpoint {
         pub static CREATE_PRODUCT_AFTER_INSERT: Cell<bool> = const { Cell::new(false) };
         pub static CREATE_PRODUCT_AFTER_MOVEMENT: Cell<bool> = const { Cell::new(false) };
         pub static UPDATE_PRODUCT_AFTER_PRICE_HISTORY: Cell<bool> = const { Cell::new(false) };
-        pub static BULK_SET_PLU_TARGET_AFTER_SECOND_UPDATE: Cell<bool> = const { Cell::new(false) };
     }
 
     // test が明示 spawn した thread から BIZ を呼ぶ場合は武装が届かない（意図的に武装するなら spawn 先で arm する）。
@@ -427,7 +426,7 @@ fn unlink_shared_jan_product(
 
 /// 商品情報を更新する（FUNC-4.4）
 ///
-/// 売価/原価が変わった場合は price_history に記録し、売価変更時は plu_dirty=true。
+/// 売価/原価が変わった場合は price_history に記録し、売価・名称・部門・税率の変更時は plu_dirty=true。
 pub fn update_product(
     conn: &mut DbConnection,
     product_code: &str,
@@ -496,8 +495,18 @@ pub fn update_product(
         )));
     }
 
-    // 5. products UPDATE（plu_dirty は売価変更時、またはPLU対象化時のみ true）
+    // 5. products UPDATE（plu_dirty は売価の変更・PLU対象化・PLU の file の欄〈名称・部門・税率〉の変更で true。§4.4 手順 4〜4c）
     let plu_target_enabled = req.plu_target == Some(true) && !existing.product.plu_target;
+    let plu_field_changed = req
+        .name
+        .as_ref()
+        .is_some_and(|name| *name != existing.product.name)
+        || req
+            .department_id
+            .is_some_and(|id| id != existing.product.department_id)
+        || req
+            .tax_rate
+            .is_some_and(|rate| rate != existing.product.tax_rate);
     let mut updates = ProductUpdates {
         name: req.name.clone(),
         department_id: req.department_id,
@@ -514,7 +523,7 @@ pub fn update_product(
             .filter(|unit| *unit != existing.product.stock_unit),
         ..Default::default()
     };
-    if selling_changed || plu_target_enabled {
+    if selling_changed || plu_target_enabled || plu_field_changed {
         updates.plu_dirty = Some(true);
     }
 
@@ -525,11 +534,6 @@ pub fn update_product(
         .is_some_and(|linked| linked != existing.product.pos_stock_sync)
     {
         recompute_stock(&tx, product_code)?;
-    }
-    if existing.product.plu_target && req.plu_target == Some(false) {
-        if let Some(jan_code) = existing.product.jan_code.as_deref() {
-            super::plu_export_service::release_plu_slot_for_jan(&tx, jan_code)?;
-        }
     }
 
     // 6. 操作ログ
@@ -721,11 +725,6 @@ pub fn toggle_discontinue(conn: &mut DbConnection, product_code: &str) -> Result
         ..Default::default()
     };
     product_repo::update_product(&tx, product_code, &updates)?;
-    if new_status {
-        if let Some(jan_code) = existing.product.jan_code.as_deref() {
-            super::plu_export_service::release_plu_slot_for_jan(&tx, jan_code)?;
-        }
-    }
 
     let action = if new_status { "廃番" } else { "復帰" };
     let log = NewOperationLog {
@@ -760,124 +759,6 @@ pub fn search_products(
     query: ProductSearchQuery,
 ) -> Result<PaginatedResult<ProductWithRelations>, BizError> {
     product_repo::search_products(conn, &query).map_err(BizError::from)
-}
-
-/// filter 一致全件の PLU 対象状態を 1 transaction で更新する。
-#[derive(Debug, serde::Serialize, specta::Type)]
-pub struct BulkPluTargetResult {
-    pub matched_count: u32,
-    pub updated_count: u32,
-    pub invalid_jan_skipped_count: u32,
-    pub discontinued_skipped_count: u32,
-}
-
-pub fn bulk_set_plu_target(
-    conn: &mut DbConnection,
-    mut filter: ProductBulkFilter,
-    plu_target: bool,
-) -> Result<BulkPluTargetResult, BizError> {
-    filter.keyword = filter
-        .keyword
-        .take()
-        .map(|keyword| keyword.trim().to_string())
-        .filter(|keyword| !keyword.is_empty());
-
-    let tx = conn
-        .transaction()
-        .map_err(|error| BizError::DatabaseError(DbError::from(error)))?;
-    let products = product_repo::find_products_for_bulk_plu_target(&tx, &filter)?;
-    let matched_count = u32::try_from(products.len()).unwrap_or(u32::MAX);
-    let mut updated_count = 0_u32;
-    let mut invalid_jan_skipped_count = 0_u32;
-    let mut discontinued_skipped_count = 0_u32;
-
-    for product in &products {
-        if plu_target {
-            if product.plu_target {
-                continue;
-            }
-            if product.is_discontinued {
-                discontinued_skipped_count += 1;
-                continue;
-            }
-            if !is_plu_target_eligible_jan(product.jan_code.as_deref()) {
-                invalid_jan_skipped_count += 1;
-                continue;
-            }
-            product_repo::update_product(
-                &tx,
-                &product.product_code,
-                &ProductUpdates {
-                    plu_target: Some(true),
-                    plu_dirty: Some(true),
-                    ..Default::default()
-                },
-            )?;
-        } else {
-            if !product.plu_target {
-                continue;
-            }
-            product_repo::update_product(
-                &tx,
-                &product.product_code,
-                &ProductUpdates {
-                    plu_target: Some(false),
-                    ..Default::default()
-                },
-            )?;
-            if let Some(jan_code) = product.jan_code.as_deref() {
-                super::plu_export_service::release_plu_slot_for_jan(&tx, jan_code)?;
-            }
-        }
-        updated_count += 1;
-
-        #[cfg(test)]
-        if updated_count == 2
-            && failpoint::BULK_SET_PLU_TARGET_AFTER_SECOND_UPDATE.with(|f| f.get())
-        {
-            return Err(BizError::DatabaseError(DbError::QueryFailed(
-                "failpoint: bulk_set_plu_target_after_second_update".into(),
-            )));
-        }
-    }
-
-    let detail = serde_json::json!({
-        "filter": {
-            "keyword": filter.keyword,
-            "department_id": filter.department_id,
-            "is_discontinued": filter.is_discontinued,
-            "plu": filter.plu,
-        },
-        "plu_target": plu_target,
-        "matched_count": matched_count,
-        "updated_count": updated_count,
-        "invalid_jan_skipped_count": invalid_jan_skipped_count,
-        "discontinued_skipped_count": discontinued_skipped_count,
-    });
-    system_repo::insert_operation_log(
-        &tx,
-        &NewOperationLog {
-            operation_type: "product_bulk_plu_target".to_string(),
-            summary: format!(
-                "PLU対象一括更新: 要求={}, 一致{}件、更新{}件、JAN不備{}件、廃番{}件",
-                plu_target,
-                matched_count,
-                updated_count,
-                invalid_jan_skipped_count,
-                discontinued_skipped_count
-            ),
-            detail_json: Some(detail.to_string()),
-        },
-    )?;
-    tx.commit()
-        .map_err(|error| BizError::DatabaseError(DbError::from(error)))?;
-
-    Ok(BulkPluTargetResult {
-        matched_count,
-        updated_count,
-        invalid_jan_skipped_count,
-        discontinued_skipped_count,
-    })
 }
 
 /// 部門選択候補を全件取得する（FUNC-4.7 / UI-01a-D7）
@@ -1961,12 +1842,6 @@ pub fn commit_import(
                 row.pos_stock_sync
                     .is_some_and(|linked| linked != existing.product.pos_stock_sync)
             });
-            let old_jan = existing
-                .as_ref()
-                .and_then(|existing| existing.product.jan_code.clone());
-            let was_plu_target = existing
-                .as_ref()
-                .is_some_and(|existing| existing.product.plu_target);
             // 単位の変更（前, 後）。再検証を通った行なので個数の単位どうし（BIZ-01-D8）
             let unit_change = existing.as_ref().and_then(|existing| {
                 let unit = row
@@ -2006,12 +1881,6 @@ pub fn commit_import(
                 recompute_stock(&tx, &row.product_code)?;
             }
             if updated {
-                let target_turned_off = was_plu_target && row.plu_target == Some(false);
-                if target_turned_off || old_jan != row.jan_code {
-                    if let Some(old_jan) = old_jan.as_deref() {
-                        super::plu_export_service::release_plu_slot_for_jan(&tx, old_jan)?;
-                    }
-                }
                 // 単位を変えた商品ごとに TX の中でログを書く。失敗すれば TX 全体を戻す（BIZ-01-D8）
                 if let Some((old, new)) = unit_change {
                     let detail = serde_json::json!({
@@ -2229,15 +2098,6 @@ mod tests {
             },
         )
         .unwrap();
-    }
-
-    fn bulk_filter_req907(keyword: &str) -> ProductBulkFilter {
-        ProductBulkFilter {
-            keyword: Some(keyword.to_string()),
-            department_id: Some(2),
-            is_discontinued: None,
-            plu: Some(crate::db::product_repo::PluMigrationFilter::All),
-        }
     }
 
     fn default_create_request() -> ProductCreateRequest {
@@ -3921,7 +3781,6 @@ mod tests {
             supplier_id: None,
             include_unassigned: false,
             is_discontinued: None,
-            plu: None,
             sort_key: product_repo::SortKey::ProductCode,
             sort_order: product_repo::SortOrder::Asc,
             page: 1,
@@ -5736,7 +5595,8 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_commit_import_req907_applies_explicit_plu_target_and_releases_old_slot() {
+    fn test_commit_import_req907_applies_explicit_plu_target_and_keeps_old_slot() {
+        // REQ-907 / 30 §4.9 手順 2 d.・33 §16.6: 上書きの 1→0 は PLU の枠を変えない（D-117 (1)）
         let (_dir, mut conn) = setup_test_db();
         let old_jan = "2000000000015";
         let new_jan = "2000000000039";
@@ -5790,7 +5650,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(slot, ("free".to_string(), None));
+        assert_eq!(slot, ("reserved".to_string(), Some(old_jan.to_string())));
     }
 
     #[test]
@@ -6028,333 +5888,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 0, "TX全体がロールバックされるべき");
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_updates_all_filtered_rows_without_paging() {
-        let (_dir, mut conn) = setup_test_db();
-        for index in 0..250 {
-            let matched = index < 230;
-            let code = format!("BL1-{index:03}");
-            let name = if matched {
-                "BULK907 対象"
-            } else {
-                "対象外"
-            };
-            let jan = synthetic_ean13_req907(200_000_000_000 + index);
-            insert_bulk_product_req907(&conn, &code, name, Some(&jan), 2, (false, false, false));
-        }
-
-        let result = bulk_set_plu_target(&mut conn, bulk_filter_req907("BULK907"), true).unwrap();
-        let updated: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM products WHERE name LIKE '%BULK907%' AND plu_target=1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(result.matched_count, 230);
-        assert_eq!(result.updated_count, 230);
-        assert_eq!(updated, 230);
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_skips_invalid_jan_and_discontinued() {
-        let (_dir, mut conn) = setup_test_db();
-        let valid_a = synthetic_ean13_req907(210_000_000_001);
-        let valid_b = synthetic_ean13_req907(210_000_000_002);
-        let valid_c = synthetic_ean13_req907(210_000_000_003);
-        let rows = [
-            ("BL2-A", Some(valid_a.as_str()), false),
-            ("BL2-B", Some(valid_b.as_str()), false),
-            ("BL2-NONE", None, false),
-            ("BL2-EIGHT", Some("49123456"), false),
-            ("BL2-BAD", Some("2000000000047"), false),
-            ("BL2-DISC", Some(valid_c.as_str()), true),
-        ];
-        for (code, jan, discontinued) in rows {
-            insert_bulk_product_req907(
-                &conn,
-                code,
-                "BL2 FILTER",
-                jan,
-                2,
-                (discontinued, false, false),
-            );
-        }
-
-        let result =
-            bulk_set_plu_target(&mut conn, bulk_filter_req907("BL2 FILTER"), true).unwrap();
-        assert_eq!(result.matched_count, 6);
-        assert_eq!(result.updated_count, 2);
-        assert_eq!(result.invalid_jan_skipped_count, 3);
-        assert_eq!(result.discontinued_skipped_count, 1);
-        let targets: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM products WHERE name='BL2 FILTER' AND plu_target=1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(targets, 2);
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_preserves_existing_targets() {
-        let (_dir, mut conn) = setup_test_db();
-        for (index, target, dirty) in [(0, true, false), (1, true, true), (2, false, false)] {
-            let code = format!("BL3-{index}");
-            let jan = synthetic_ean13_req907(220_000_000_000 + index);
-            insert_bulk_product_req907(
-                &conn,
-                &code,
-                "BL3 FILTER",
-                Some(&jan),
-                2,
-                (false, target, dirty),
-            );
-            conn.execute(
-                "UPDATE products SET updated_at='2000-01-01T00:00:00' WHERE product_code=?1",
-                [&code],
-            )
-            .unwrap();
-        }
-        let result =
-            bulk_set_plu_target(&mut conn, bulk_filter_req907("BL3 FILTER"), true).unwrap();
-        let rows: Vec<(String, bool, bool, String)> = {
-            let mut stmt = conn
-                .prepare("SELECT product_code, plu_target, plu_dirty, updated_at FROM products WHERE name='BL3 FILTER' ORDER BY product_code")
-                .unwrap();
-            stmt.query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap()
-        };
-        assert_eq!(result.updated_count, 1);
-        assert_eq!(
-            (rows[0].1, rows[0].2, rows[0].3.as_str()),
-            (true, false, "2000-01-01T00:00:00")
-        );
-        assert_eq!(
-            (rows[1].1, rows[1].2, rows[1].3.as_str()),
-            (true, true, "2000-01-01T00:00:00")
-        );
-        assert_eq!((rows[2].1, rows[2].2), (true, true));
-        assert_ne!(rows[2].3, "2000-01-01T00:00:00");
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_turns_off_and_releases_slots() {
-        let (_dir, mut conn) = setup_test_db();
-        let shared = synthetic_ean13_req907(230_000_000_001);
-        let active = synthetic_ean13_req907(230_000_000_002);
-        insert_bulk_product_req907(
-            &conn,
-            "BL4-A",
-            "BL4 FILTER",
-            Some(&shared),
-            2,
-            (false, true, true),
-        );
-        insert_bulk_product_req907(
-            &conn,
-            "BL4-B",
-            "BL4 FILTER",
-            Some(&active),
-            2,
-            (false, true, false),
-        );
-        insert_bulk_product_req907(
-            &conn,
-            "BL4-C",
-            "BL4 FILTER",
-            Some(&shared),
-            2,
-            (false, true, true),
-        );
-        insert_bulk_product_req907(&conn, "BL4-D", "BL4 FILTER", None, 2, (false, false, false));
-        conn.execute("UPDATE plu_slots SET scanning_code=?1,status='reserved',reserved_at='2026-08-19T00:00:00' WHERE memory_no=300", [&shared]).unwrap();
-        conn.execute("UPDATE plu_slots SET scanning_code=?1,status='active',activated_at='2026-08-19T00:00:00' WHERE memory_no=301", [&active]).unwrap();
-
-        let result =
-            bulk_set_plu_target(&mut conn, bulk_filter_req907("BL4 FILTER"), false).unwrap();
-        let remaining: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM products WHERE name='BL4 FILTER' AND plu_target=1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let reserved: (Option<String>, String) = conn
-            .query_row(
-                "SELECT scanning_code,status FROM plu_slots WHERE memory_no=300",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let active_status: String = conn
-            .query_row(
-                "SELECT status FROM plu_slots WHERE memory_no=301",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(result.updated_count, 3);
-        assert_eq!(remaining, 0);
-        assert_eq!(reserved, (None, "free".to_string()));
-        assert_eq!(active_status, "release_pending");
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_rolls_back_products_slots_and_log() {
-        let (_dir, mut conn) = setup_test_db();
-        let jan_a = synthetic_ean13_req907(240_000_000_001);
-        let jan_b = synthetic_ean13_req907(240_000_000_002);
-        for (code, jan) in [("BL5-A", &jan_a), ("BL5-B", &jan_b)] {
-            insert_bulk_product_req907(
-                &conn,
-                code,
-                "BL5 FILTER",
-                Some(jan),
-                2,
-                (false, true, true),
-            );
-        }
-        conn.execute(
-            "UPDATE plu_slots SET scanning_code=?1,status='reserved' WHERE memory_no=310",
-            [&jan_a],
-        )
-        .unwrap();
-        let before_logs: i64 = conn
-            .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
-            .unwrap();
-        let _guard = failpoint::arm(&failpoint::BULK_SET_PLU_TARGET_AFTER_SECOND_UPDATE);
-        assert!(bulk_set_plu_target(&mut conn, bulk_filter_req907("BL5 FILTER"), false).is_err());
-        let targets: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM products WHERE name='BL5 FILTER' AND plu_target=1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let slot: (Option<String>, String) = conn
-            .query_row(
-                "SELECT scanning_code,status FROM plu_slots WHERE memory_no=310",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        let after_logs: i64 = conn
-            .query_row("SELECT COUNT(*) FROM operation_logs", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(targets, 2);
-        assert_eq!(slot, (Some(jan_a), "reserved".to_string()));
-        assert_eq!(after_logs, before_logs);
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_logs_normalized_filter_without_jans() {
-        let (_dir, mut conn) = setup_test_db();
-        let jan = synthetic_ean13_req907(250_000_000_001);
-        insert_bulk_product_req907(
-            &conn,
-            "BL6-A",
-            "BL6 FILTER",
-            Some(&jan),
-            2,
-            (false, false, false),
-        );
-        let result =
-            bulk_set_plu_target(&mut conn, bulk_filter_req907("  BL6 FILTER  "), true).unwrap();
-        let (operation_type, summary, detail): (String, String, String) = conn.query_row(
-            "SELECT operation_type,summary,detail_json FROM operation_logs ORDER BY id DESC LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
-        assert_eq!(operation_type, "product_bulk_plu_target");
-        assert!(summary.contains("一致1件、更新1件、JAN不備0件、廃番0件"));
-        assert!(detail.contains("\"keyword\":\"BL6 FILTER\""));
-        assert!(detail.contains("\"plu_target\":true"));
-        assert_eq!(result.matched_count, 1);
-        assert!(!summary.contains(&jan));
-        assert!(!detail.contains(&jan));
-    }
-
-    #[test]
-    #[serial]
-    fn test_bulk_set_plu_target_req907_matches_search_plu_filter() {
-        use crate::db::product_repo::{PluMigrationFilter, SortKey, SortOrder};
-        let (_dir, mut conn) = setup_test_db();
-        for (index, target, dirty) in [
-            (0, true, true),
-            (1, true, true),
-            (2, true, false),
-            (3, false, false),
-        ] {
-            let jan = synthetic_ean13_req907(260_000_000_000 + index);
-            insert_bulk_product_req907(
-                &conn,
-                &format!("BL7-{index}"),
-                "BL7 FILTER",
-                Some(&jan),
-                2,
-                (false, target, dirty),
-            );
-        }
-        for (code, department_id, is_discontinued) in [
-            ("BL7-DEPT-DECOY", 3_i64, false),
-            ("BL7-DISC-DECOY", 2_i64, true),
-        ] {
-            let jan = synthetic_ean13_req907(260_000_000_100 + department_id as u64);
-            insert_bulk_product_req907(
-                &conn,
-                code,
-                "BL7 FILTER",
-                Some(&jan),
-                department_id,
-                (is_discontinued, true, true),
-            );
-        }
-        let query = ProductSearchQuery {
-            keyword: Some("BL7 FILTER".into()),
-            department_id: Some(2),
-            supplier_id: None,
-            include_unassigned: false,
-            is_discontinued: Some(false),
-            plu: Some(PluMigrationFilter::Pending),
-            sort_key: SortKey::Name,
-            sort_order: SortOrder::Asc,
-            page: 1,
-            per_page: 200,
-        };
-        let search_count = search_products(&conn, query).unwrap().total_count;
-        let pending = ProductBulkFilter {
-            is_discontinued: Some(false),
-            plu: Some(PluMigrationFilter::Pending),
-            ..bulk_filter_req907("BL7 FILTER")
-        };
-        let pending_result = bulk_set_plu_target(&mut conn, pending, false).unwrap();
-        let all_result = bulk_set_plu_target(
-            &mut conn,
-            ProductBulkFilter {
-                is_discontinued: Some(false),
-                ..bulk_filter_req907("BL7 FILTER")
-            },
-            false,
-        )
-        .unwrap();
-        assert!(search_count > 0);
-        assert_eq!(pending_result.matched_count, search_count);
-        assert_eq!(all_result.matched_count, 4);
-        assert_ne!(all_result.matched_count, pending_result.matched_count);
     }
 
     fn create_price_revision_product(conn: &mut DbConnection) -> String {

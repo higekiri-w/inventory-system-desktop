@@ -18,8 +18,6 @@ export const commands = {
 	toggleDiscontinue: (productCode: string) => typedError<boolean, CmdError>(__TAURI_INVOKE("toggle_discontinue", { productCode })),
 	// 商品を検索する（ページング対応）
 	searchProducts: (query: ProductSearchQuery) => typedError<PaginatedResult<ProductWithRelations>, CmdError>(__TAURI_INVOKE("search_products", { query })),
-	// 現在の filter 一致全件の PLU 対象状態を更新する。
-	bulkSetPluTarget: (filter: ProductBulkFilter, pluTarget: boolean) => typedError<BulkPluTargetResult, CmdError>(__TAURI_INVOKE("bulk_set_plu_target", { filter, pluTarget })),
 	// 部門選択候補を全件取得する
 	listDepartments: () => typedError<Department[], CmdError>(__TAURI_INVOKE("list_departments")),
 	// 取引先選択候補を全件取得する
@@ -220,7 +218,6 @@ export const commands = {
 	 *  docs/function-design/41-cmd-pos.md §17.6 confirm_plu_export_saved
 	 */
 	confirmPluExportSaved: (productCodes: string[], preparedRows: PluPreparedRow[]) => typedError<PluExportConfirmResponse, CmdError>(__TAURI_INVOKE("confirm_plu_export_saved", { productCodes, preparedRows })),
-	importPluRegisterSnapshot: (fileBytes: number[]) => typedError<PluRegisterSnapshotSummary, CmdError>(__TAURI_INVOKE("import_plu_register_snapshot", { fileBytes })),
 	getPluSlotSummary: () => typedError<PluRegisterSnapshotSummary, CmdError>(__TAURI_INVOKE("get_plu_slot_summary")),
 	/**
 	 *  PLU書出しが必要な商品一覧を返す
@@ -480,14 +477,6 @@ export type BackupResult = {
 	file_path: string,
 	file_name: string,
 	size_bytes: number,
-};
-
-// filter 一致全件の PLU 対象状態を 1 transaction で更新する。
-export type BulkPluTargetResult = {
-	matched_count: number,
-	updated_count: number,
-	invalid_jan_skipped_count: number,
-	discontinued_skipped_count: number,
 };
 
 /**
@@ -1390,6 +1379,8 @@ export type PluExcludedProductResponse = {
 export type PluExportConfirmResponse = {
 	updated_count: number,
 	confirmed_at: string,
+	// 保存の後に出力の行が変わっていて、未反映のまま残した商品（33 §16.5）
+	remaining_products: PluRemainingProduct[],
 };
 
 /**
@@ -1414,27 +1405,26 @@ export type PluExportPrepareResponse = {
 	prepared_rows: PluPreparedRow[],
 	// PLUファイルに含めなかった商品一覧
 	excluded: PluExcludedProductResponse[],
-	// PLU上限超過警告（互換維持フィールド）
-	over_limit_warning: boolean,
 };
-
-export type PluMigrationFilter = "all" | "target" | "pending" | "synced" | "excluded";
 
 export type PluPreparedRow = {
 	memory_no: number,
-	row_kind: PluPreparedRowKind,
 	target_product_codes: string[],
+	/**
+	 *  照合の値: IO-04 が file に書いたこの行の全 11 列の CP932 の byte 列の SHA-256（hex）。
+	 *  confirm が今の商品から同じ値を求め直して比べる（33 §16.5）
+	 */
+	content_hash: string,
 };
-
-export type PluPreparedRowKind = "product" | "clear";
 
 export type PluRegisterSnapshotSummary = {
 	snapshot_at: string | null,
-	free_count: number,
-	external_count: number,
-	app_managed_count: number,
-	conflict_count: number,
-	release_pending_count: number,
+};
+
+// 保存の後に出力の行が変わっていて、未反映のまま残した商品
+export type PluRemainingProduct = {
+	product_code: string,
+	name: string,
 };
 
 // §43.8.2
@@ -1506,14 +1496,6 @@ export type Product = {
 	updated_at: string,
 };
 
-// PLU 対象一括更新用の商品検索条件（ページングなし）
-export type ProductBulkFilter = {
-	keyword: string | null,
-	department_id: number | null,
-	is_discontinued: boolean | null,
-	plu: PluMigrationFilter | null,
-};
-
 // 商品登録リクエスト（FUNC-4.2）
 export type ProductCreateRequest = {
 	jan_code: string | null,
@@ -1577,7 +1559,6 @@ export type ProductSearchQuery = {
 	include_unassigned?: boolean,
 	// None=全件、Some(false)=現行品のみ、Some(true)=廃番のみ
 	is_discontinued: boolean | null,
-	plu?: PluMigrationFilter | null,
 	sort_key: SortKey,
 	sort_order: SortOrder,
 	// 1始まり。0以下は DbError::QueryFailed
@@ -1636,7 +1617,6 @@ export type ProductUpdateResult = {
 export type ProductWithRelations = {
 	department_name: string,
 	supplier_name: string | null,
-	plu_memory_no: number | null,
 	// 写しの要再確認と範囲（ADR SPEC-STK-CNT-D2・D9。範囲は要再確認のときだけ両端が値。40）
 	stock_recheck: boolean,
 	stock_range_low: number | null,
@@ -1756,6 +1736,8 @@ export type RegisterSdEjSummary = {
 export type RegisterSdScanResponse = {
 	scan: DailyReportSdScan,
 	scan_token: string,
+	// §45.6a 手順 2a: この SD の Z004 の精算回数が前回の照合より小さくて、PLU の占有を照合しなかった
+	plu_snapshot_skipped_older: boolean,
 };
 
 // 37 §37.12: 片付けの失敗の種類。画面の固定の文を選ぶだけ（55 UI-07-D15 (7)）。数と path は診断ログ

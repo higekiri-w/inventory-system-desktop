@@ -305,6 +305,7 @@ describe("CsvImportPage daily report tabs_req401", () => {
           ej: { new_count: 0, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
         },
         scan_token: "scan-token",
+        plu_snapshot_skipped_older: false,
       },
     });
     vi.mocked(commands.commitRegisterSdBulkImport).mockResolvedValueOnce({

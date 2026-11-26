@@ -1,6 +1,6 @@
-//! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜9。手順 10 は PLU の runtime の lane）。
+//! BIZ-08-D3: レジの SD から読む日報の候補（37 §37.9 手順 1〜10）。
 //! 手順 2a で、自動で見つけた SD の取り込んだ精算の Z を `XZ_BKUP` へ移す（BIZ-08-D11、§37.12）。
-//! 手順 9 の後に EJ を読んで数える（37 §37.10 の「§37.9 に足すもの」(A)。手順 10 が未実装なので 9 の後）
+//! 手順 9 の後に EJ を読んで数え（37 §37.10 の「§37.9 に足すもの」(A)）、手順 10 で窓の中の Z004 を読む
 
 use crate::biz::daily_report_import_service::parse::{
     build_bundle_hash, log_parse_diagnostics, number_column_message,
@@ -18,6 +18,7 @@ use crate::db::DbConnection;
 use crate::io::daily_report_parser::{self, DailyReportSourceFile};
 use crate::io::register_sd::{
     self, RegisterSdArea, RegisterSdEntry, RegisterSdEntryKind, RegisterSdError, RegisterSdRoot,
+    RegisterSdShape,
 };
 use chrono::NaiveDate;
 use std::cmp::Reverse;
@@ -142,6 +143,14 @@ pub(super) fn scan_with_roots(
         .map(|entry| entry.relative_path.clone())
         .collect();
 
+    // 手順 10 で読む Z004（窓の中の `XZ` と `XZ_BKUP`。IO-09 の列挙のまま）
+    let z004_paths: Vec<String> = listing
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.kind, RegisterSdEntryKind::Z { series: 4, .. }))
+        .map(|entry| entry.relative_path.clone())
+        .collect();
+
     // 手順 4: (area、folder、日、接尾字、連番) が同じ Z001 / Z002 / Z005 を組にする
     let mut groups: BTreeMap<(String, u8, char, Option<u16>), Group> = BTreeMap::new();
     for entry in listing.entries {
@@ -255,6 +264,27 @@ pub(super) fn scan_with_roots(
         })
     };
 
+    // 手順 10: 窓の中の Z004 を PLU の占有の照合のために読む。読めない・形の外れた file は除いて続け、
+    // 同じ bytes は 1 つにまとめる。中身の解釈と選択は BIZ-04（33 §16.3）
+    let mut plu_register_z004s: Vec<Vec<u8>> = Vec::new();
+    for relative_path in z004_paths {
+        match register_sd::read_register_sd_file(
+            &root,
+            &relative_path,
+            constants::CSV_IMPORT_FILE_SIZE_LIMIT as u64,
+        ) {
+            Ok(read) if shape_ok(read.shape) => {
+                if !plu_register_z004s.contains(&read.bytes) {
+                    plu_register_z004s.push(read.bytes);
+                }
+            }
+            Ok(_) | Err(RegisterSdError::TooLarge { .. } | RegisterSdError::Io { .. }) => {
+                tracing::warn!(relative_path, "Z004 を PLU の占有の照合に使いませんでした");
+            }
+            Err(error) => return Err(sd_error(error)),
+        }
+    }
+
     Ok(DailyReportSdScanResult {
         scan: DailyReportSdScan {
             volume_label: root.volume_label,
@@ -269,6 +299,7 @@ pub(super) fn scan_with_roots(
             files_by_candidate,
             ej_files,
             ej_unreadable_files,
+            plu_register_z004s,
         },
     })
 }
@@ -327,9 +358,8 @@ fn read_group(
             }
             Err(error) => return Err(sd_error(error)),
         };
-        let shape = read.shape;
         // IO-09-D4: 形が外れた file は推測で読まない
-        if !(shape.cp932_strict && !shape.has_bom && shape.crlf_only && shape.ends_with_crlf) {
+        if !shape_ok(read.shape) {
             return Ok(fallback(DailyReportSdCandidateStatus::Unreadable));
         }
         files.push(DailyReportInputFile {
@@ -403,6 +433,11 @@ fn read_group(
         },
         files,
     })
+}
+
+/// IO-09-D4 の形の検査（CP932 strict・BOM 無し・CRLF だけ・最終改行あり）。手順 5 と手順 10 が使う
+fn shape_ok(shape: RegisterSdShape) -> bool {
+    shape.cp932_strict && !shape.has_bom && shape.crlf_only && shape.ends_with_crlf
 }
 
 fn file_name(entry: &RegisterSdEntry) -> String {

@@ -4,9 +4,6 @@
 
 import { PackagePlus, PackageSearch } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -26,21 +23,15 @@ import { ListShell } from "@/components/patterns/ListShell";
 import { PageShell } from "@/components/patterns/PageShell";
 import { LIST_PER_PAGE_OPTIONS } from "@/components/patterns/list-per-page";
 import { ProductTable } from "./components/ProductTable";
-import { PluBulkTargetConfirmDialog } from "./components/PluBulkTargetConfirmDialog";
 import { useProductList } from "./hooks/useProductList";
 import { buildProductListReturnTo } from "./lib/return-to";
 import {
   PRODUCT_DISCONTINUED_OPTIONS,
-  PRODUCT_PLU_OPTIONS,
   PRODUCT_SORT_DIRECTION_OPTIONS,
   PRODUCT_SORT_OPTIONS,
   updateProductListSearch,
-  buildProductBulkFilter,
   type ProductListSearch,
 } from "./search";
-import { commands } from "@/lib/bindings";
-import { unwrapResult } from "@/lib/invoke";
-import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
 import { scrollPageToTop } from "@/lib/page-scroll";
 
 export interface ProductListPageProps {
@@ -52,32 +43,6 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
   const { productsQuery, departmentsQuery, departmentOptions, normalizedSearch } = useProductList({
     search,
   });
-  const queryClient = useQueryClient();
-  // Gated Amendment 2 S12（owner L3 FAIL-4）: open/closed と「最後に選んだ target」を別 state に
-  // 分離する。旧実装は bulkTarget: boolean | null の 1 state で兼用し、close 時に null へ戻すと
-  // pluTarget={bulkTarget ?? true} の fallback で退出アニメーション中に反対文言へ反転していた
-  // （b2389b19 起源の latent bug）。close は setBulkDialogOpen(false) のみで target を触らない。
-  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
-  const [bulkTarget, setBulkTarget] = useState<boolean>(true);
-  const [bulkError, setBulkError] = useState<string | null>(null);
-  const bulkMutation = useMutation({
-    mutationFn: (pluTarget: boolean) =>
-      unwrapResult(commands.bulkSetPluTarget(buildProductBulkFilter(normalizedSearch), pluTarget), {
-        source: "commands",
-        cmd: "bulk_set_plu_target",
-      }),
-    onSuccess: async (result) => {
-      toast.success(
-        `${result.updated_count.toLocaleString("ja-JP")} 件を更新しました（JAN 不備 ${result.invalid_jan_skipped_count.toLocaleString("ja-JP")} 件 / 廃番 ${result.discontinued_skipped_count.toLocaleString("ja-JP")} 件は対象外）`,
-      );
-      setBulkError(null);
-      setBulkDialogOpen(false);
-      await invalidateByContract(queryClient, invalidationContract.pluBulkTarget());
-    },
-    onError: () => {
-      setBulkError("PLU対象の一括更新に失敗しました。内容を確認して、もう一度お試しください。");
-    },
-  });
 
   const updateSearch = (patch: Parameters<typeof updateProductListSearch>[1]) => {
     onSearchChange((prev) => updateProductListSearch(prev, patch));
@@ -88,19 +53,8 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
   const isFilterDefault =
     normalizedSearch.q === undefined &&
     normalizedSearch.dept === undefined &&
-    normalizedSearch.discontinued === "active" &&
-    normalizedSearch.plu === "all";
+    normalizedSearch.discontinued === "active";
   const totalCount = productsQuery.data?.total_count ?? 0;
-  // Gated Amendment 3 S14（owner L3 run 2 懸念付き PASS、AC-L3-6 前段）: PLU 一括操作の
-  // 説明文を実件数入りの 3 分岐にする。totalCount だけでは (b) 0 件と (c) 読込中を区別できない
-  // ため productsQuery.data の有無で分岐する。
-  const pluBulkCaptionDescription =
-    productsQuery.data === undefined
-      ? "件数を読み込んでいます。読み込みが終わると操作できます。"
-      : totalCount > 0
-        ? `絞り込みに一致する ${totalCount.toLocaleString("ja-JP")} 件すべてが対象です。他のページの商品も含みます。押すと確認画面が開きます。`
-        : "絞り込みに一致する商品がないため実行できません。";
-
   // items-end で上置き Label の検索欄と隣接 control の下辺を揃える。
   const toolbar = (
     <div className="flex flex-wrap items-end gap-3">
@@ -138,15 +92,6 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
         options={PRODUCT_DISCONTINUED_OPTIONS}
         onValueChange={(value) => {
           updateSearch({ discontinued: value });
-        }}
-      />
-      <SegmentedControl
-        showLabel
-        ariaLabel="PLU表示"
-        value={normalizedSearch.plu}
-        options={PRODUCT_PLU_OPTIONS}
-        onValueChange={(value) => {
-          updateSearch({ plu: value });
         }}
       />
     </div>
@@ -212,49 +157,6 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
           </SelectContent>
         </Select>
       </div>
-      <div className="flex basis-full flex-col items-start gap-1">
-        <p id="plu-bulk-caption" className="text-sm font-medium text-foreground">
-          PLU 一括操作
-        </p>
-        <p id="plu-bulk-description" className="text-sm text-muted-foreground">
-          {pluBulkCaptionDescription}
-        </p>
-        <div
-          role="group"
-          aria-labelledby="plu-bulk-caption"
-          aria-describedby="plu-bulk-description"
-          className="flex flex-wrap items-center gap-2"
-        >
-          <Button
-            type="button"
-            variant="outline"
-            disabled={totalCount === 0 || bulkMutation.isPending}
-            onClick={() => {
-              setBulkTarget(true);
-              setBulkDialogOpen(true);
-            }}
-          >
-            PLU 対象にする
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={totalCount === 0 || bulkMutation.isPending}
-            onClick={() => {
-              setBulkTarget(false);
-              setBulkDialogOpen(true);
-            }}
-          >
-            PLU 対象から外す
-          </Button>
-        </div>
-      </div>
-      {bulkError !== null ? (
-        <Alert variant="destructive">
-          <AlertTitle>PLU対象の一括更新に失敗しました</AlertTitle>
-          <AlertDescription>{bulkError}</AlertDescription>
-        </Alert>
-      ) : null}
     </div>
   );
 
@@ -328,7 +230,6 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
                         q: undefined,
                         dept: undefined,
                         discontinued: undefined,
-                        plu: undefined,
                         page: undefined,
                       });
                     }}
@@ -343,18 +244,6 @@ export function ProductListPage({ search, onSearchChange }: ProductListPageProps
           <ProductTable items={productsQuery.data.items} returnTo={returnTo} />
         ) : null}
       </ListShell>
-      <PluBulkTargetConfirmDialog
-        open={bulkDialogOpen}
-        pluTarget={bulkTarget}
-        count={totalCount}
-        isPending={bulkMutation.isPending}
-        onOpenChange={(open) => {
-          if (!open && !bulkMutation.isPending) setBulkDialogOpen(false);
-        }}
-        onConfirm={() => {
-          if (totalCount > 0) bulkMutation.mutate(bulkTarget);
-        }}
-      />
     </PageShell>
   );
 }

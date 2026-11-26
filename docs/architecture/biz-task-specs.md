@@ -65,7 +65,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 1. product_codeで既存商品を取得（存在しなければエラー）
 2. 入力バリデーション（登録時と同じルール）
 3. 売価または原価が変わる場合 → price_historyにINSERT（old/new両方記録）
-4. 売価・名称・部門・税率が変わる場合 → plu_dirty=1にセット（名称・部門・税率は D-160 (5)、未実装。30 §4.4 手順 4c）
+4. 売価・名称・部門・税率が変わる場合 → plu_dirty=1にセット（名称・部門・税率は D-160 (5)。30 §4.4 手順 4c）
 5. productsをUPDATE（updated_at更新）
 6. operation_logsに記録（operation_type='product_update', detail_jsonに変更前後）
 
@@ -79,7 +79,7 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 **廃番切替:**
 1. product_codeで既存商品を取得
 2. is_discontinuedを反転
-3. 廃番化は `plu_target=0` にする。復帰は `plu_target` を自動で戻さない。枠は D-117 の後は解放しない（下の `PLU対象` の節。今の build は解放する、BIZ-04 の「runtime の状態」）
+3. 廃番化は `plu_target=0` にする。復帰は `plu_target` を自動で戻さない。枠は解放しない（下の `PLU対象` の節。D-117）
 4. operation_logsに記録（operation_type='product_discontinue'）
 
 **独自コード発番:**
@@ -100,9 +100,9 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 7. 各商品について初期在庫ありならinventory_movementsにINSERT
 8. operation_logsに記録
 
-**CSV 任意列 `PLU対象`（SPEC-PLS-D6。filter 一致全件の一括更新〈BIZ-01-D4〉は D-117 で外す。今の build には `bulk_set_plu_target` が残る）:**
+**CSV 任意列 `PLU対象`（SPEC-PLS-D6。filter 一致全件の一括更新〈BIZ-01-D4〉は D-117 で外した）:**
 - `PLU対象` は `1` / `0` / 空欄。新規行の列なし / 空欄は既存導出、更新行は明示値がある場合だけ適用する。JAN が空か正しい 8 桁（13 桁の数字でない）のときの `1` は warning + `0`。形の誤った JAN（8 桁・13 桁の数字でないか、チェックディジットが合わない）は [30](../function-design/30-biz-product-service.md) BIZ-01-D10 の行の error で、warning に届かない
-- 1→0 / JAN 変更 / 廃番化で PLU の枠を変えない（解放しない。D-117。今の build は解放する、BIZ-04 の「runtime の状態」）
+- 1→0 / JAN 変更 / 廃番化で PLU の枠を変えない（解放しない。D-117）
 
 **前の JAN の別名（D-122、proposed・未実装）:**
 - 上書きで JAN を直す行のうち、前の JAN をその商品だけが持ち、新規の行がその JAN を持たない行に「前の番号のバーコードが付いた現物は店にありますか」を出す（既定「ない」。上書きの選択に依らない条件で広めに出す）。「ある」の行は、commit が実際の上書きの選択で 30 BIZ-01-D9 の判定表を満たすとき（取込みの後にその JAN を誰も持たない等）だけ前の JAN を別名として残し、満たさなければ判定表の error で全体を戻す。商品が JAN を持つと、その JAN の別名は DB の trigger が消す
@@ -355,15 +355,13 @@ SPEC-STK-CNT-D1〜D12（[棚卸しの数の置き場と在庫の求め直しの 
 
 **タスク要求**: 毎日の SD の読取りで Z004 全スロットダンプからレジ占有を照合し、JAN 単位の memory No. を永続予約し、CV17 用 product 行を生成・確認する（D-072 / D-117 / REQ-907）。
 
-> **runtime の状態**: 本節は D-117 の後の形（採用済み）。今の build は、占有を利用者が選ぶ Z004 で照合し（`biz/plu_export_service.rs` の `import_plu_register_snapshot`）、`plu_target` 1→0・廃番化・JAN の変更で枠を解放し（`release_plu_slot_for_jan`、`release_pending`）、Clear 行を書く（`PLU_CLEAR_ROW_ENABLED = true`）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
-
-**データ構造**: `plu_slots`、products、snapshot 用 app_settings、operation_logs。prepare / confirm は exact product_code set と `memory_no` を受け渡す。要修正理由に `no_free_slot` を含む。
+**データ構造**: `plu_slots`、products、snapshot 用 app_settings、operation_logs。prepare / confirm は exact product_code set と `memory_no`、行ごとの照合の値（`content_hash`）を受け渡す。要修正理由に `no_free_slot` を含む。
 
 **処理構造**:
 1. `refresh_plu_register_snapshot_from_sd` は SD の読取りの窓の中の Z004 から精算回数が最大の 1 本を選び、IO-02 の `(memory_no, raw_code)` を 1 TX で 4 status と照合し、日時を保存する（件数は operation_logs だけ）。一度も照合していなければ prepare を `register_snapshot_required` で拒否する
 2. prepare は sticky slot を再利用し、同一コードの `external` slot があればそれを `active` として採用し、それ以外の未割当 JAN に最小 `free` を `reserved` として 1 TX で予約する。空きなしは該当 JAN だけ要修正へ送る
 3. Diff は dirty 対象、Full は対象の JAN の app 管理 reserved / active。external / free、対象の商品を持たない JAN の slot と要修正中の既存 slot は出力しない
-4. confirm は exact memory No. を再検証し、reserved→active、対象商品を反映済みにする
+4. confirm は exact memory No. を再検証し、prepare が返した行の照合の値を今の商品から求め直して、一致する行だけ reserved→active にして対象商品を反映済みにする。保存の後に出力の行が変わった商品は未反映のまま残して結果に返す（33 §16.5、D-168）
 5. `plu_target` 1→0、廃番化、JAN 変更では枠を変えない（解放しない、clear 行を書かない。D-117）
 
 **制御構造**:

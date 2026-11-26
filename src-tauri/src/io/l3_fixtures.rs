@@ -622,3 +622,163 @@ mod sd_bulk {
         );
     }
 }
+
+/// PLU の書出しの見直しの runtime の L3 の入力物（packet `2026-11-24-plu-redesign-runtime` の S10、`## L3`）。
+/// 全枠の Z004（5,000 行、CP932・CRLF）だけを持つ合成の SD の folder を 2 つ作る:
+/// `sd-a` は読取りの窓の日数ぶんの bytes の違う Z004、`sd-b` はどの Z004 も精算回数が `sd-a` の最大より小さい。
+/// 読み戻しに BIZ-08 の scan と BIZ-04 の照合を使うので cfg(test) の module に置く（`sd_bulk` と同じ理由）
+#[cfg(test)]
+mod plu_snapshot {
+    use super::{cp932, jan, settlement_date};
+    use crate::biz::daily_report_import_service::{
+        scan_register_sd_daily_reports, DailyReportSdSelection,
+    };
+    use crate::biz::plu_export_service::{
+        refresh_plu_register_snapshot_from_sd, PluRegisterSnapshotRefresh,
+    };
+    use crate::db::test_support::setup_test_db;
+    use crate::db::DbConnection;
+    use crate::io::REGISTER_SD_FOLDER;
+    use chrono::NaiveDate;
+    use std::path::Path;
+
+    /// 読取りの窓の日数（37 §37.9 手順 2 の 30 日）
+    const WINDOW_DAYS: i64 = 30;
+    /// `sd-a` の精算回数は 101〜130、`sd-b` は 1〜3（どれも `sd-a` の最大より小さい）
+    const SD_A_FIRST_SETTLEMENT: i64 = 101;
+    const SD_B_DAYS: i64 = 3;
+    const OUTPUTS: [&str; 2] = ["sd-a", "sd-b"];
+
+    /// 全枠の Z004。217〜219 番だけがレジの既存の登録（合成の JAN）で、ほかは空
+    fn full_slot_z004(settlement_no: i64, date: NaiveDate) -> Vec<u8> {
+        let mut lines = vec![
+            "\"マシンNo.   \",\"0001\"".to_string(),
+            "\"ファイル    \",\"Z004\"".to_string(),
+            format!("\"精算回数    \",\"{settlement_no:04}\""),
+            format!("\"日付        \",\"{}\"", date.format("%Y-%m-%d")),
+            "\"時刻        \",\"20:00\"".to_string(),
+            String::new(),
+            "\"レコード    \",\"ｽｷｬﾆﾝｸﾞｺｰﾄﾞ \",\"キャラクター\",\"個数        \",\"金額        \""
+                .to_string(),
+        ];
+        for memory_no in 1..=5_000_usize {
+            let (code, name) = match memory_no {
+                217..=219 => (format!("{}E", jan(memory_no - 216)), "合成の既存登録"),
+                _ => ("00000000000000".to_string(), ""),
+            };
+            lines.push(format!(
+                "\"{memory_no:04}\",\"{code}\",\"{name}\",\"0\",\"0\""
+            ));
+        }
+        cp932(&lines)
+    }
+
+    /// `out/{folder}` の SD の `XZ` に、`day` から `days` 日ぶん遡った各日の Z004 を置く（精算回数は古い日から `first`〜）
+    fn write_sd(out: &Path, folder: &str, day: NaiveDate, days: i64, first: i64) {
+        let root = REGISTER_SD_FOLDER
+            .iter()
+            .fold(out.join(folder), |path, part| path.join(part));
+        for index in 0..days {
+            let date = settlement_date(day, index + 1 - days);
+            let dir = root
+                .join("XZ")
+                .join(date.format("%Y").to_string())
+                .join(date.format("%m").to_string());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join(format!("Z004_{} .CSV", date.format("%d"))),
+                full_slot_z004(first + index, date),
+            )
+            .unwrap();
+        }
+    }
+
+    /// 出力先が既にあれば何も書かずに止める（違う T の古い file が残るため）
+    fn write_plu_snapshot_files(out: &Path, day: NaiveDate) {
+        let existing: Vec<&str> = OUTPUTS
+            .into_iter()
+            .filter(|name| out.join(name).exists())
+            .collect();
+        assert!(
+            existing.is_empty(),
+            "{} に前の入力物 {} があるので作りませんでした。空の folder を INVENTORY_L3_OUT に指定してください",
+            out.display(),
+            existing.join("・")
+        );
+        write_sd(out, "sd-a", day, WINDOW_DAYS, SD_A_FIRST_SETTLEMENT);
+        write_sd(out, "sd-b", day, SD_B_DAYS, 1);
+    }
+
+    fn refresh(
+        conn: &mut DbConnection,
+        out: &Path,
+        folder: &str,
+        today: NaiveDate,
+    ) -> (usize, PluRegisterSnapshotRefresh) {
+        let scanned = scan_register_sd_daily_reports(
+            conn,
+            DailyReportSdSelection::Selected(out.join(folder)),
+            today,
+            None,
+        )
+        .unwrap();
+        let z004s = scanned.snapshot.plu_register_z004s;
+        let refresh = refresh_plu_register_snapshot_from_sd(conn, &z004s).unwrap();
+        (z004s.len(), refresh)
+    }
+
+    /// `## L3` の L3-1 → L3-2 の順に読み戻す
+    fn assert_l3_flow(out: &Path, day: NaiveDate) {
+        let (_dir, mut conn) = setup_test_db();
+        let (count, first) = refresh(&mut conn, out, "sd-a", day);
+        assert_eq!(
+            count as i64, WINDOW_DAYS,
+            "bytes の違う Z004 が窓の日数ぶん"
+        );
+        assert!(matches!(first, PluRegisterSnapshotRefresh::Refreshed(_)));
+        let setting = |key: &str| crate::db::system_repo::get_setting(&conn, key).unwrap();
+        assert_eq!(
+            setting("plu_register_snapshot_settlement_no"),
+            Some((SD_A_FIRST_SETTLEMENT + WINDOW_DAYS - 1).to_string())
+        );
+        let external: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM plu_slots WHERE status = 'external'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(external, 3);
+        let (count, second) = refresh(&mut conn, out, "sd-b", day);
+        assert_eq!(count as i64, SD_B_DAYS);
+        assert!(matches!(second, PluRegisterSnapshotRefresh::SkippedOlder));
+    }
+
+    #[test]
+    fn test_l3_fixtures_req907_plu_snapshot_inputs_read_back() {
+        // REQ-907 / packet S10: 固定の T で作り、scan と照合で読み戻すと sd-a は照合し、sd-b は古い SD として照合しない
+        let day = NaiveDate::from_ymd_opt(2026, 3, 15).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_plu_snapshot_files(dir.path(), day);
+        assert_l3_flow(dir.path(), day);
+    }
+
+    #[test]
+    #[ignore = "INVENTORY_L3_DAY（YYYY-MM-DD）と INVENTORY_L3_OUT（出力の folder）を与えて手元で実行する"]
+    fn write_plu_snapshot_l3_fixtures() {
+        // L3 の前に Coordinator が走らせる。T は L3 の日（Z004 の日付を未来にしない）
+        let day = std::env::var("INVENTORY_L3_DAY").expect("INVENTORY_L3_DAY が未設定です");
+        let day = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+            .ok()
+            .filter(|parsed| parsed.format("%Y-%m-%d").to_string() == day)
+            .expect("INVENTORY_L3_DAY は YYYY-MM-DD で与えてください");
+        let out = std::env::var_os("INVENTORY_L3_OUT").expect("INVENTORY_L3_OUT が未設定です");
+        let out = Path::new(&out);
+        write_plu_snapshot_files(out, day);
+        assert_l3_flow(out, day);
+        println!(
+            "PLU の runtime の L3 の入力物を {} に書きました（T = {day}。sd-a・sd-b）",
+            out.display()
+        );
+    }
+}

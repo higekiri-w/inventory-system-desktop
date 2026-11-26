@@ -2,19 +2,23 @@
 //!
 //! 商品マスタからカシオレジスターツール用PLUファイルを生成し、
 //! 保存後に利用者が確認した対象だけ plu_dirty/plu_exported_at を更新する。
+//! レジの占有は毎日の SD の読取りで照合する（D-117 (3)）。アプリは枠を消さない（D-117 (1)）。
 //!
 //! docs/function-design/33-biz-plu-export-service.md に基づく実装。
 
-use crate::constants::PLU_CLEAR_ROW_ENABLED;
-use crate::db::plu_slot_repo::{self, PluSlotStatus, PluSlotUpdate};
-use crate::db::product_repo::{self, Product, ProductUpdates};
+use crate::db::plu_slot_repo::{self, PluSlot, PluSlotStatus, PluSlotUpdate};
+use crate::db::product_repo::{self, Product, ProductForPlu, ProductUpdates};
 use crate::db::system_repo::{self, NewOperationLog};
 use crate::db::DbConnection;
-use crate::io::plu_formatter::{self, PluExportRow, PluExportRowKind, PluFileOutput};
+use crate::io::plu_formatter::{self, PluExportRow, PluFileOutput};
 use crate::io::z004_parser;
+use sha2::{Digest, Sha256};
 
 use super::BizError;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+const SNAPSHOT_AT_KEY: &str = "plu_register_snapshot_at";
+const SNAPSHOT_SETTLEMENT_NO_KEY: &str = "plu_register_snapshot_settlement_no";
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -48,8 +52,6 @@ pub struct PluExportPreparedResult {
     pub prepared_rows: Vec<PluPreparedRow>,
     /// PLUファイルに含めなかった商品一覧
     pub excluded: Vec<PluExcludedProduct>,
-    /// PLU上限超過警告（互換維持フィールド）
-    pub over_limit_warning: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,28 +72,28 @@ pub enum PluExcludedReason {
     NoFreeSlot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum PluPreparedRowKind {
-    Product,
-    Clear,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct PluPreparedRow {
     pub memory_no: i64,
-    pub row_kind: PluPreparedRowKind,
     pub target_product_codes: Vec<String>,
+    /// 照合の値: IO-04 が file に書いたこの行の全 11 列の CP932 の byte 列の SHA-256（hex）。
+    /// confirm が今の商品から同じ値を求め直して比べる（33 §16.5）
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 pub struct PluRegisterSnapshotSummary {
     pub snapshot_at: Option<String>,
-    pub free_count: usize,
-    pub external_count: usize,
-    pub app_managed_count: usize,
-    pub conflict_count: usize,
-    pub release_pending_count: usize,
+}
+
+/// SD の読取りの後の照合の結果（33 §16.3）
+#[derive(Debug, Clone)]
+pub enum PluRegisterSnapshotRefresh {
+    Refreshed(PluRegisterSnapshotSummary),
+    /// 選んだ Z004 の精算回数が前回の照合より小さくて照合しなかった
+    SkippedOlder,
+    /// ほかの照合しないとき・使える Z004 が無いとき
+    Unchanged,
 }
 
 /// PLU保存済み確認リクエスト
@@ -101,255 +103,246 @@ pub struct PluExportConfirmRequest {
     pub prepared_rows: Vec<PluPreparedRow>,
 }
 
+/// 保存の後に出力の行が変わっていて、未反映のまま残した商品
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
+pub struct PluRemainingProduct {
+    pub product_code: String,
+    pub name: String,
+}
+
 /// PLU保存済み確認結果
 #[derive(Debug)]
 pub struct PluExportConfirmResult {
     pub updated_count: usize,
     pub confirmed_at: String,
-}
-
-fn clear_row_enabled() -> bool {
-    PLU_CLEAR_ROW_ENABLED
+    pub remaining_products: Vec<PluRemainingProduct>,
 }
 
 // ---------------------------------------------------------------------------
 // 公開関数
 // ---------------------------------------------------------------------------
 
-pub fn import_plu_register_snapshot(
+/// SD の読取りで得た Z004 から、精算回数が最大の 1 本でレジの占有を照合する（33 §16.3 手順 1〜3）
+pub fn refresh_plu_register_snapshot_from_sd(
+    conn: &mut DbConnection,
+    z004_files: &[Vec<u8>],
+) -> Result<PluRegisterSnapshotRefresh, BizError> {
+    // 手順 1〜2: 精算回数を読めた中の最大の 1 本。同じ値で bytes が違えば照合しない
+    let mut best: Option<(i64, &[u8])> = None;
+    let mut ambiguous = false;
+    for bytes in z004_files {
+        let Some(settlement_no) = read_settlement_no(bytes) else {
+            continue;
+        };
+        match best {
+            Some((max, _)) if settlement_no < max => {}
+            Some((max, kept)) if settlement_no == max => ambiguous |= kept != bytes.as_slice(),
+            _ => {
+                best = Some((settlement_no, bytes.as_slice()));
+                ambiguous = false;
+            }
+        }
+    }
+    let Some((settlement_no, bytes)) = best else {
+        return Ok(PluRegisterSnapshotRefresh::Unchanged);
+    };
+    if ambiguous {
+        tracing::warn!(
+            settlement_no,
+            "同じ精算回数で中身の違う Z004 があるので、レジの占有を照合しませんでした"
+        );
+        return Ok(PluRegisterSnapshotRefresh::Unchanged);
+    }
+    if let Some(value) = system_repo::get_setting(conn, SNAPSHOT_SETTLEMENT_NO_KEY)? {
+        match parse_settlement_no(&value) {
+            None => {
+                tracing::warn!(
+                    "前回の照合の精算回数を読めないので、レジの占有を照合しませんでした"
+                );
+                return Ok(PluRegisterSnapshotRefresh::Unchanged);
+            }
+            Some(previous) if settlement_no < previous => {
+                tracing::warn!(
+                    settlement_no,
+                    previous,
+                    "SD の Z004 の精算回数が前回の照合より小さいので、レジの占有を照合しませんでした"
+                );
+                return Ok(PluRegisterSnapshotRefresh::SkippedOlder);
+            }
+            // 既に写した観測。confirm したばかりの枠を、書込みの前の Z004 で未反映へ戻さない
+            Some(previous) if settlement_no == previous => {
+                return Ok(PluRegisterSnapshotRefresh::Unchanged)
+            }
+            Some(_) => {}
+        }
+    }
+    import_plu_register_snapshot(conn, bytes, settlement_no)
+        .map(PluRegisterSnapshotRefresh::Refreshed)
+}
+
+/// 照合の本体（33 §16.3 の表）。1 つの TX で枠・app_settings・操作ログを書く
+fn import_plu_register_snapshot(
     conn: &mut DbConnection,
     raw_bytes: &[u8],
+    settlement_no: i64,
 ) -> Result<PluRegisterSnapshotSummary, BizError> {
     let observed = z004_parser::parse_plu_register_snapshot(raw_bytes)
         .map_err(|error| BizError::ImportError(error.to_string()))?;
     let snapshot_at = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     let tx = conn.transaction().map_err(db_tx_error)?;
-    let mut conflict_count = 0usize;
+
+    // 判定は照合の前の状態で行う（同じ照合の中で先に変えた枠の結果を、後の枠の判定に使わない）
+    let before: HashMap<i64, PluSlot> = plu_slot_repo::list_slots(&tx)?
+        .into_iter()
+        .map(|slot| (slot.memory_no, slot))
+        .collect();
+    let managed_jans: HashSet<&str> = before
+        .values()
+        .filter(|slot| matches!(slot.status, PluSlotStatus::Reserved | PluSlotStatus::Active))
+        .filter_map(|slot| slot.scanning_code.as_deref())
+        .collect();
+    // 同じ Z004 の中で同じ JAN を複数の空き枠で観測したら、最小の memory No. だけを採用する（観測は memory No. の昇順）
+    let mut adopted: HashSet<String> = HashSet::new();
+    let (mut conflict, mut missing, mut dropped, mut duplicate, mut released) = (0, 0, 0, 0, 0);
+    let set_slot = |memory_no: i64, code: Option<&str>, status: PluSlotStatus, kept: &PluSlot| {
+        let active = status == PluSlotStatus::Active;
+        plu_slot_repo::update_slot(
+            &tx,
+            PluSlotUpdate {
+                memory_no,
+                scanning_code: code,
+                status,
+                reserved_at: active.then_some(kept.reserved_at.as_deref()).flatten(),
+                activated_at: active.then_some(snapshot_at.as_str()),
+                updated_at: &snapshot_at,
+            },
+        )
+    };
 
     for observed_slot in observed.into_iter().filter(|slot| slot.memory_no >= 217) {
-        let current = plu_slot_repo::find_slot_by_memory_no(&tx, observed_slot.memory_no)?
-            .ok_or_else(|| {
-                BizError::ImportError(format!(
-                    "PLU slot {} が存在しません",
-                    observed_slot.memory_no
-                ))
-            })?;
-        let observed_code = observed_slot.raw_code.as_deref();
-        match (observed_code, current.status) {
-            (None, PluSlotStatus::Free | PluSlotStatus::External) => plu_slot_repo::update_slot(
-                &tx,
-                PluSlotUpdate {
-                    memory_no: current.memory_no,
-                    scanning_code: None,
-                    status: PluSlotStatus::Free,
-                    reserved_at: None,
-                    activated_at: None,
-                    released_at: current.released_at.as_deref(),
-                    updated_at: &snapshot_at,
-                },
-            )?,
-            (None, PluSlotStatus::Reserved) => {}
+        let current = before.get(&observed_slot.memory_no).ok_or_else(|| {
+            BizError::ImportError(format!(
+                "PLU slot {} が存在しません",
+                observed_slot.memory_no
+            ))
+        })?;
+        let no = current.memory_no;
+        let current_code = current.scanning_code.as_deref();
+        match (observed_slot.raw_code.as_deref(), current.status) {
+            (None, PluSlotStatus::Free | PluSlotStatus::Reserved) => {}
+            (None, PluSlotStatus::External) => set_slot(no, None, PluSlotStatus::Free, current)?,
             (None, PluSlotStatus::Active) => {
-                conflict_count += 1;
-                mark_products_dirty_for_jan(&tx, current.scanning_code.as_deref())?;
+                missing += 1;
+                mark_target_products_dirty(&tx, current_code)?;
             }
-            (None, PluSlotStatus::ReleasePending) => plu_slot_repo::update_slot(
-                &tx,
-                PluSlotUpdate {
-                    memory_no: current.memory_no,
-                    scanning_code: None,
-                    status: PluSlotStatus::Free,
-                    reserved_at: None,
-                    activated_at: None,
-                    released_at: Some(&snapshot_at),
-                    updated_at: &snapshot_at,
-                },
-            )?,
             (Some(code), PluSlotStatus::Free) => {
-                if is_eligible_jan(&tx, code)? {
-                    let has_managed = plu_slot_repo::find_slots_by_scanning_code(&tx, code)?
-                        .iter()
-                        .any(|slot| {
-                            matches!(slot.status, PluSlotStatus::Reserved | PluSlotStatus::Active)
-                        });
-                    let status = if has_managed {
-                        PluSlotStatus::ReleasePending
-                    } else {
-                        PluSlotStatus::Active
-                    };
-                    plu_slot_repo::update_slot(
-                        &tx,
-                        PluSlotUpdate {
-                            memory_no: current.memory_no,
-                            scanning_code: Some(code),
-                            status,
-                            reserved_at: None,
-                            activated_at: (status == PluSlotStatus::Active)
-                                .then_some(snapshot_at.as_str()),
-                            released_at: None,
-                            updated_at: &snapshot_at,
-                        },
-                    )?;
+                let eligible =
+                    validate_plu_jan(Some(code)).is_ok() && has_target_product(&tx, code)?;
+                if !eligible {
+                    set_slot(no, Some(code), PluSlotStatus::External, current)?;
+                } else if managed_jans.contains(code) || !adopted.insert(code.to_string()) {
+                    duplicate += 1;
+                    set_slot(no, Some(code), PluSlotStatus::External, current)?;
                 } else {
-                    plu_slot_repo::update_slot(
-                        &tx,
-                        PluSlotUpdate {
-                            memory_no: current.memory_no,
-                            scanning_code: Some(code),
-                            status: PluSlotStatus::External,
-                            reserved_at: None,
-                            activated_at: None,
-                            released_at: None,
-                            updated_at: &snapshot_at,
-                        },
-                    )?;
+                    set_slot(no, Some(code), PluSlotStatus::Active, current)?;
                 }
             }
-            (Some(code), PluSlotStatus::Reserved)
-                if current.scanning_code.as_deref() == Some(code) =>
-            {
-                plu_slot_repo::update_slot(
-                    &tx,
-                    PluSlotUpdate {
-                        memory_no: current.memory_no,
-                        scanning_code: Some(code),
-                        status: PluSlotStatus::Active,
-                        reserved_at: current.reserved_at.as_deref(),
-                        activated_at: Some(&snapshot_at),
-                        released_at: None,
-                        updated_at: &snapshot_at,
-                    },
-                )?;
+            (Some(code), PluSlotStatus::Reserved) if current_code == Some(code) => {
+                set_slot(no, Some(code), PluSlotStatus::Active, current)?;
             }
             (Some(code), PluSlotStatus::Reserved) => {
-                conflict_count += 1;
-                plu_slot_repo::update_slot(
-                    &tx,
-                    PluSlotUpdate {
-                        memory_no: current.memory_no,
-                        scanning_code: Some(code),
-                        status: PluSlotStatus::External,
-                        reserved_at: None,
-                        activated_at: None,
-                        released_at: None,
-                        updated_at: &snapshot_at,
-                    },
-                )?;
+                dropped += 1;
+                set_slot(no, Some(code), PluSlotStatus::External, current)?;
             }
-            (Some(code), PluSlotStatus::Active)
-                if current.scanning_code.as_deref() != Some(code) =>
-            {
-                conflict_count += 1;
-                mark_products_dirty_for_jan(&tx, current.scanning_code.as_deref())?;
+            (Some(code), PluSlotStatus::Active | PluSlotStatus::External)
+                if current_code == Some(code) => {}
+            (Some(code), PluSlotStatus::Active) => {
+                // アプリが書く商品が無い JAN の枠は、レジ側の登録を書き直さない
+                if current_code.map_or(Ok(false), |jan| has_target_product(&tx, jan))? {
+                    conflict += 1;
+                    mark_target_products_dirty(&tx, current_code)?;
+                } else {
+                    released += 1;
+                    set_slot(no, Some(code), PluSlotStatus::External, current)?;
+                }
             }
-            (Some(_), PluSlotStatus::Active) => {}
-            (Some(code), PluSlotStatus::ReleasePending)
-                if current.scanning_code.as_deref() == Some(code) => {}
-            (Some(code), PluSlotStatus::External)
-                if current.scanning_code.as_deref() == Some(code) => {}
-            (Some(code), PluSlotStatus::External | PluSlotStatus::ReleasePending) => {
-                plu_slot_repo::update_slot(
-                    &tx,
-                    PluSlotUpdate {
-                        memory_no: current.memory_no,
-                        scanning_code: Some(code),
-                        status: PluSlotStatus::External,
-                        reserved_at: None,
-                        activated_at: None,
-                        released_at: None,
-                        updated_at: &snapshot_at,
-                    },
-                )?;
+            (Some(code), PluSlotStatus::External) => {
+                set_slot(no, Some(code), PluSlotStatus::External, current)?;
             }
         }
     }
 
-    let summary = summarize_slots(&tx, Some(snapshot_at.clone()), conflict_count)?;
-    let summary_json = serde_json::json!({
-        "free_count": summary.free_count,
-        "external_count": summary.external_count,
-        "app_managed_count": summary.app_managed_count,
-        "conflict_count": summary.conflict_count,
-    })
-    .to_string();
-    system_repo::upsert_setting(&tx, "plu_register_snapshot_at", &snapshot_at)?;
-    system_repo::upsert_setting(&tx, "plu_register_snapshot_summary", &summary_json)?;
+    let (free_count, external_count, app_managed_count): (i64, i64, i64) = tx
+        .query_row(
+            "SELECT SUM(status='free'), SUM(status='external'), SUM(status IN ('reserved','active'))
+             FROM plu_slots",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(crate::db::DbError::from)?;
+    system_repo::upsert_setting(&tx, SNAPSHOT_AT_KEY, &snapshot_at)?;
+    system_repo::upsert_setting(&tx, SNAPSHOT_SETTLEMENT_NO_KEY, &settlement_no.to_string())?;
+    // 件数だけを残す（実コード・名称・単価は入れない）
     system_repo::insert_operation_log(
         &tx,
         &NewOperationLog {
             operation_type: "plu_register_snapshot_import".to_string(),
-            summary: format!(
-                "レジ登録状況を読み込みました（conflict {}件）",
-                conflict_count
+            summary: format!("レジ登録状況を読み込みました（conflict {conflict}件）"),
+            detail_json: Some(
+                serde_json::json!({
+                    "free_count": free_count,
+                    "external_count": external_count,
+                    "app_managed_count": app_managed_count,
+                    "conflict_count": conflict,
+                    "missing_count": missing,
+                    "dropped_count": dropped,
+                    "duplicate_count": duplicate,
+                    "released_count": released,
+                })
+                .to_string(),
             ),
-            detail_json: Some(summary_json),
         },
     )?;
     tx.commit().map_err(db_tx_error)?;
-    Ok(summary)
+    Ok(PluRegisterSnapshotSummary {
+        snapshot_at: Some(snapshot_at),
+    })
 }
 
 pub fn get_plu_slot_summary(conn: &DbConnection) -> Result<PluRegisterSnapshotSummary, BizError> {
-    let snapshot_at = system_repo::get_setting(conn, "plu_register_snapshot_at")?;
-    if snapshot_at.is_none() {
-        return Ok(PluRegisterSnapshotSummary {
-            snapshot_at: None,
-            free_count: 0,
-            external_count: 0,
-            app_managed_count: 0,
-            conflict_count: 0,
-            release_pending_count: 0,
-        });
-    }
-    let conflict_count = system_repo::get_setting(conn, "plu_register_snapshot_summary")?
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-        .and_then(|value| value.get("conflict_count").and_then(|count| count.as_u64()))
-        .unwrap_or(0) as usize;
-    summarize_slots(conn, snapshot_at, conflict_count)
+    Ok(PluRegisterSnapshotSummary {
+        snapshot_at: system_repo::get_setting(conn, SNAPSHOT_AT_KEY)?,
+    })
 }
 
 /// 指定モードでPLUファイルを生成し、slot予約を永続化する。
 ///
-/// 33-biz-plu-export-service.md セクション16.3
+/// 33-biz-plu-export-service.md セクション16.4
 pub fn prepare_plu_export(
     conn: &mut DbConnection,
     req: PluExportPrepareRequest,
 ) -> Result<PluExportPreparedResult, BizError> {
-    if system_repo::get_setting(conn, "plu_register_snapshot_at")?.is_none() {
+    if system_repo::get_setting(conn, SNAPSHOT_AT_KEY)?.is_none() {
         return Err(BizError::ValidationFailed(
-            "register_snapshot_required: レジ設定の読込みが必要です".to_string(),
+            "register_snapshot_required: レジの登録状況がまだ読まれていません。売上データ取込みでレジの SD を一度読んでください".to_string(),
         ));
     }
     let tx = conn.transaction().map_err(db_tx_error)?;
-    let products = match req.mode {
-        ExportMode::Full => product_repo::find_active_products_for_plu(&tx)?,
-        ExportMode::Diff => product_repo::find_plu_dirty_products_for_plu(&tx)?,
-    };
+    // 群は、その JAN の対象の商品の全員で作る（Diff も。未反映の商品だけで比べると、共有 JAN の片方の変更を見逃す）
+    let targets = product_repo::find_active_products_for_plu(&tx)?;
+    let selected =
+        |product: &ProductForPlu| req.mode == ExportMode::Full || product.product.plu_dirty;
 
     let mut excluded = Vec::new();
-    let mut blocked_slot_codes = HashSet::new();
-    let mut valid_groups: BTreeMap<String, Vec<_>> = BTreeMap::new();
-
-    for product in &products {
+    let mut valid_groups: BTreeMap<String, Vec<&ProductForPlu>> = BTreeMap::new();
+    for product in &targets {
         match validate_plu_jan(product.product.jan_code.as_deref()) {
-            Ok(jan) => {
-                valid_groups
-                    .entry(jan.to_string())
-                    .or_default()
-                    .push(product);
-            }
-            Err(reason) => {
-                if let Some(jan_code) = product.product.jan_code.as_ref() {
-                    blocked_slot_codes.insert(jan_code.clone());
-                }
-                excluded.push(PluExcludedProduct {
-                    product_code: product.product.product_code.clone(),
-                    jan_code: product.product.jan_code.clone(),
-                    name: product.product.name.clone(),
-                    memory_no: None,
-                    reason,
-                });
-            }
+            Ok(jan) => valid_groups
+                .entry(jan.to_string())
+                .or_default()
+                .push(product),
+            Err(reason) if selected(product) => excluded.push(excluded_product(product, reason)),
+            Err(_) => {}
         }
     }
 
@@ -357,128 +350,70 @@ pub fn prepare_plu_export(
     let mut prepared_rows = Vec::new();
     let mut target_product_codes = Vec::new();
     let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    for (jan, mut group) in valid_groups {
-        group.sort_by(|a, b| a.product.product_code.cmp(&b.product.product_code));
-        let first = group[0];
-        let group_matches = group.iter().all(|p| {
-            p.product.selling_price == first.product.selling_price
-                && p.product.tax_rate == first.product.tax_rate
-        });
-        if !group_matches {
-            blocked_slot_codes.insert(jan.clone());
-            for p in group {
-                excluded.push(PluExcludedProduct {
-                    product_code: p.product.product_code.clone(),
-                    jan_code: p.product.jan_code.clone(),
-                    name: p.product.name.clone(),
-                    memory_no: None,
-                    reason: PluExcludedReason::GroupPriceMismatch,
-                });
-            }
+    for (jan, group) in valid_groups {
+        if !group.iter().any(|product| selected(product)) {
             continue;
         }
+        let Some(first) = group_representative(&group) else {
+            excluded.extend(
+                group
+                    .iter()
+                    .map(|p| excluded_product(p, PluExcludedReason::GroupPriceMismatch)),
+            );
+            continue;
+        };
 
-        let group_codes: Vec<String> = group
-            .iter()
-            .map(|p| p.product.product_code.clone())
-            .collect();
         let slots = plu_slot_repo::find_slots_by_scanning_code(&tx, &jan)?;
-        let slot = if let Some(slot) = slots
+        let reserve = |memory_no: i64, status: PluSlotStatus| {
+            plu_slot_repo::update_slot(
+                &tx,
+                PluSlotUpdate {
+                    memory_no,
+                    scanning_code: Some(&jan),
+                    status,
+                    reserved_at: (status == PluSlotStatus::Reserved).then_some(now.as_str()),
+                    activated_at: (status == PluSlotStatus::Active).then_some(now.as_str()),
+                    updated_at: &now,
+                },
+            )
+        };
+        // sticky → 同じコードの external の採用（最小の memory No.）→ 最小の空き
+        let memory_no = if let Some(slot) = slots
             .iter()
             .find(|slot| matches!(slot.status, PluSlotStatus::Reserved | PluSlotStatus::Active))
         {
-            slot.clone()
+            slot.memory_no
         } else if let Some(slot) = slots
             .iter()
             .find(|slot| slot.status == PluSlotStatus::External)
         {
-            plu_slot_repo::update_slot(
-                &tx,
-                PluSlotUpdate {
-                    memory_no: slot.memory_no,
-                    scanning_code: Some(&jan),
-                    status: PluSlotStatus::Active,
-                    reserved_at: None,
-                    activated_at: Some(&now),
-                    released_at: None,
-                    updated_at: &now,
-                },
-            )?;
-            plu_slot_repo::find_slot_by_memory_no(&tx, slot.memory_no)?.expect("updated slot")
-        } else if let Some(slot) = slots
-            .iter()
-            .filter(|slot| slot.status == PluSlotStatus::ReleasePending)
-            .min_by_key(|slot| slot.memory_no)
-        {
-            let restored = if slot.activated_at.is_some() {
-                PluSlotStatus::Active
-            } else {
-                PluSlotStatus::Reserved
-            };
-            plu_slot_repo::update_slot(
-                &tx,
-                PluSlotUpdate {
-                    memory_no: slot.memory_no,
-                    scanning_code: Some(&jan),
-                    status: restored,
-                    reserved_at: (restored == PluSlotStatus::Reserved).then_some(now.as_str()),
-                    activated_at: (restored == PluSlotStatus::Active).then_some(now.as_str()),
-                    released_at: None,
-                    updated_at: &now,
-                },
-            )?;
-            plu_slot_repo::find_slot_by_memory_no(&tx, slot.memory_no)?.expect("updated slot")
+            reserve(slot.memory_no, PluSlotStatus::Active)?;
+            slot.memory_no
         } else if let Some(slot) = plu_slot_repo::find_min_free_slot(&tx)? {
-            plu_slot_repo::update_slot(
-                &tx,
-                PluSlotUpdate {
-                    memory_no: slot.memory_no,
-                    scanning_code: Some(&jan),
-                    status: PluSlotStatus::Reserved,
-                    reserved_at: Some(&now),
-                    activated_at: None,
-                    released_at: None,
-                    updated_at: &now,
-                },
-            )?;
-            plu_slot_repo::find_slot_by_memory_no(&tx, slot.memory_no)?.expect("updated slot")
+            reserve(slot.memory_no, PluSlotStatus::Reserved)?;
+            slot.memory_no
         } else {
-            for product in group {
-                excluded.push(PluExcludedProduct {
-                    product_code: product.product.product_code.clone(),
-                    jan_code: product.product.jan_code.clone(),
-                    name: product.product.name.clone(),
-                    memory_no: None,
-                    reason: PluExcludedReason::NoFreeSlot,
-                });
-            }
+            excluded.extend(
+                group
+                    .iter()
+                    .map(|p| excluded_product(p, PluExcludedReason::NoFreeSlot)),
+            );
             continue;
         };
 
+        let row = export_row(memory_no, first);
+        let group_codes: Vec<String> = group
+            .iter()
+            .map(|p| p.product.product_code.clone())
+            .collect();
         target_product_codes.extend(group_codes.iter().cloned());
         prepared_rows.push(PluPreparedRow {
-            memory_no: slot.memory_no,
-            row_kind: PluPreparedRowKind::Product,
+            memory_no,
             target_product_codes: group_codes,
+            content_hash: row_content_hash(&row)?,
         });
-        rows.push(PluExportRow {
-            memory_no: slot.memory_no,
-            row_kind: PluExportRowKind::Product,
-            product_code: first.product.product_code.clone(),
-            jan_code: first.product.jan_code.clone(),
-            name: first.product.name.clone(),
-            selling_price: first.product.selling_price,
-            tax_rate: first.product.tax_rate.as_str().to_string(),
-            department_name: first.department_name.clone(),
-        });
+        rows.push(row);
     }
-    append_clear_rows(
-        &tx,
-        &mut rows,
-        &mut prepared_rows,
-        &blocked_slot_codes,
-        clear_row_enabled(),
-    )?;
     excluded.sort_by(|a, b| a.product_code.cmp(&b.product_code));
 
     rows.sort_by_key(|row| row.memory_no);
@@ -490,10 +425,8 @@ pub fn prepare_plu_export(
             &excluded,
         )));
     }
-    let over_limit_warning = false;
 
-    let plu_output = plu_formatter::generate_plu_tsv(&rows)
-        .map_err(|e| BizError::ExportError(format!("PLUファイルの生成に失敗しました: {}", e)))?;
+    let plu_output = plu_formatter::generate_plu_tsv(&rows).map_err(format_error)?;
 
     tx.commit().map_err(db_tx_error)?;
 
@@ -503,31 +436,17 @@ pub fn prepare_plu_export(
         target_product_codes,
         prepared_rows,
         excluded,
-        over_limit_warning,
     })
 }
 
-/// 保存済み確認された商品だけPLU未反映状態を解除する。
+/// 保存済み確認された商品のうち、出力の行が今も同じ分だけPLU未反映状態を解除する。
 ///
-/// 33-biz-plu-export-service.md セクション16.3
+/// 33-biz-plu-export-service.md セクション16.5
 pub fn confirm_plu_export_saved(
     conn: &mut DbConnection,
     req: PluExportConfirmRequest,
 ) -> Result<PluExportConfirmResult, BizError> {
-    confirm_plu_export_saved_with_clear_enabled(conn, req, clear_row_enabled())
-}
-
-fn confirm_plu_export_saved_with_clear_enabled(
-    conn: &mut DbConnection,
-    req: PluExportConfirmRequest,
-    clear_row_enabled: bool,
-) -> Result<PluExportConfirmResult, BizError> {
-    if req.product_codes.is_empty()
-        && req
-            .prepared_rows
-            .iter()
-            .all(|row| row.row_kind != PluPreparedRowKind::Clear)
-    {
+    if req.product_codes.is_empty() {
         return Err(BizError::ValidationFailed(
             "書出し済みにする商品がありません".to_string(),
         ));
@@ -551,10 +470,10 @@ fn confirm_plu_export_saved_with_clear_enabled(
     }
 
     let confirmed_at = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let mut updated_count = 0;
+    let mut remaining_products = Vec::new();
     {
-        let tx = conn
-            .transaction()
-            .map_err(|e| BizError::DatabaseError(crate::db::DbError::QueryFailed(e.to_string())))?;
+        let tx = conn.transaction().map_err(db_tx_error)?;
 
         let prepared_codes: BTreeSet<_> = req
             .prepared_rows
@@ -567,6 +486,8 @@ fn confirm_plu_export_saved_with_clear_enabled(
                 "prepare と confirm の商品集合が一致しません".to_string(),
             ));
         }
+        // 今の商品から行を求め直すための、JAN ごとの対象の商品の全員（prepare と同じ出どころ）
+        let targets = product_repo::find_active_products_for_plu(&tx)?;
         let mut memory_numbers = HashSet::new();
         for row in &req.prepared_rows {
             if !memory_numbers.insert(row.memory_no) {
@@ -578,163 +499,107 @@ fn confirm_plu_export_saved_with_clear_enabled(
                 plu_slot_repo::find_slot_by_memory_no(&tx, row.memory_no)?.ok_or_else(|| {
                     BizError::ValidationFailed(format!("PLU slot {} が存在しません", row.memory_no))
                 })?;
-            match row.row_kind {
-                PluPreparedRowKind::Product => {
-                    if row.target_product_codes.is_empty() {
-                        return Err(BizError::ValidationFailed(
-                            "product行の商品集合が空です".to_string(),
-                        ));
-                    }
-                    if !matches!(slot.status, PluSlotStatus::Reserved | PluSlotStatus::Active) {
-                        return Err(BizError::ValidationFailed(
-                            "PLU slot状態がprepare時と一致しません".to_string(),
-                        ));
-                    }
-                    if slot.status == PluSlotStatus::Reserved {
-                        plu_slot_repo::update_slot(
-                            &tx,
-                            PluSlotUpdate {
-                                memory_no: slot.memory_no,
-                                scanning_code: slot.scanning_code.as_deref(),
-                                status: PluSlotStatus::Active,
-                                reserved_at: slot.reserved_at.as_deref(),
-                                activated_at: Some(&confirmed_at),
-                                released_at: None,
-                                updated_at: &confirmed_at,
-                            },
-                        )?;
-                    }
-                    for product_code in &row.target_product_codes {
-                        let product = product_repo::find_by_product_code(&tx, product_code)?
-                            .ok_or_else(|| {
-                                BizError::NotFound(format!(
-                                    "商品 {} が見つかりません",
-                                    product_code
-                                ))
-                            })?;
-                        if product.product.jan_code.as_deref() != slot.scanning_code.as_deref() {
-                            return Err(BizError::ValidationFailed(
-                                "prepare と confirm のJAN/slot対応が一致しません".to_string(),
-                            ));
-                        }
-                    }
-                }
-                PluPreparedRowKind::Clear => {
-                    if !row.target_product_codes.is_empty() {
-                        return Err(BizError::ValidationFailed(
-                            "clear行に商品が含まれています".to_string(),
-                        ));
-                    }
-                    if slot.status == PluSlotStatus::ReleasePending && clear_row_enabled {
-                        plu_slot_repo::update_slot(
-                            &tx,
-                            PluSlotUpdate {
-                                memory_no: slot.memory_no,
-                                scanning_code: None,
-                                status: PluSlotStatus::Free,
-                                reserved_at: None,
-                                activated_at: None,
-                                released_at: Some(&confirmed_at),
-                                updated_at: &confirmed_at,
-                            },
-                        )?;
-                    } else if !(slot.status == PluSlotStatus::Free && slot.scanning_code.is_none())
-                    {
-                        return Err(BizError::ValidationFailed(
-                            "PLU clear slot状態がprepare時と一致しません".to_string(),
-                        ));
-                    }
-                }
+            if row.target_product_codes.is_empty() {
+                return Err(BizError::ValidationFailed(
+                    "product行の商品集合が空です".to_string(),
+                ));
             }
-        }
-
-        for product_code in &req.product_codes {
-            if product_repo::find_by_product_code(&tx, product_code)?.is_none() {
-                return Err(BizError::NotFound(format!(
-                    "商品 {} が見つかりません",
-                    product_code
-                )));
+            if !matches!(slot.status, PluSlotStatus::Reserved | PluSlotStatus::Active) {
+                return Err(BizError::ValidationFailed(
+                    "PLU slot状態がprepare時と一致しません".to_string(),
+                ));
+            }
+            let mut row_products = Vec::with_capacity(row.target_product_codes.len());
+            for product_code in &row.target_product_codes {
+                let product =
+                    product_repo::find_by_product_code(&tx, product_code)?.ok_or_else(|| {
+                        BizError::NotFound(format!("商品 {} が見つかりません", product_code))
+                    })?;
+                if product.product.jan_code.as_deref() != slot.scanning_code.as_deref() {
+                    return Err(BizError::ValidationFailed(
+                        "prepare と confirm のJAN/slot対応が一致しません".to_string(),
+                    ));
+                }
+                row_products.push(product.product);
             }
 
+            // 保存の後に出力の行が変わった商品は、未反映のまま残す（書き出した file は古い内容）
+            let group: Vec<&ProductForPlu> = targets
+                .iter()
+                .filter(|p| p.product.jan_code.as_deref() == slot.scanning_code.as_deref())
+                .collect();
+            let current_hash = match group_representative(&group) {
+                Some(first) => Some(row_content_hash(&export_row(slot.memory_no, first))?),
+                None => None,
+            };
+            if current_hash.as_deref() != Some(row.content_hash.as_str()) {
+                remaining_products.extend(row_products.into_iter().map(|product| {
+                    PluRemainingProduct {
+                        product_code: product.product_code,
+                        name: product.name,
+                    }
+                }));
+                continue;
+            }
+
+            if slot.status == PluSlotStatus::Reserved {
+                plu_slot_repo::update_slot(
+                    &tx,
+                    PluSlotUpdate {
+                        memory_no: slot.memory_no,
+                        scanning_code: slot.scanning_code.as_deref(),
+                        status: PluSlotStatus::Active,
+                        reserved_at: slot.reserved_at.as_deref(),
+                        activated_at: Some(&confirmed_at),
+                        updated_at: &confirmed_at,
+                    },
+                )?;
+            }
             let updates = ProductUpdates {
                 plu_dirty: Some(false),
                 plu_exported_at: Some(Some(confirmed_at.clone())),
                 ..Default::default()
             };
-            let updated = product_repo::update_product(&tx, product_code, &updates)?;
-            if !updated {
-                return Err(BizError::NotFound(format!(
-                    "商品 {} が見つかりません",
-                    product_code
-                )));
+            for product_code in &row.target_product_codes {
+                if !product_repo::update_product(&tx, product_code, &updates)? {
+                    return Err(BizError::NotFound(format!(
+                        "商品 {} が見つかりません",
+                        product_code
+                    )));
+                }
+                updated_count += 1;
             }
         }
 
-        system_repo::insert_operation_log(&tx, &NewOperationLog {
-            operation_type: "plu_export".to_string(),
-            summary: format!("PLU書出し済み確認を記録しました（{}件）", req.product_codes.len()),
-            detail_json: Some(serde_json::json!({
-                "count": req.product_codes.len(),
-                "product_count": req.product_codes.len(),
-                "clear_count": req.prepared_rows.iter().filter(|row| row.row_kind == PluPreparedRowKind::Clear).count(),
-                "confirmed_at": confirmed_at,
-            }).to_string()),
-        })?;
-        tx.commit()
-            .map_err(|e| BizError::DatabaseError(crate::db::DbError::QueryFailed(e.to_string())))?;
+        system_repo::insert_operation_log(
+            &tx,
+            &NewOperationLog {
+                operation_type: "plu_export".to_string(),
+                summary: format!("PLU書出し済み確認を記録しました（{updated_count}件）"),
+                detail_json: Some(
+                    serde_json::json!({
+                        "count": updated_count,
+                        "product_count": updated_count,
+                        "remaining_count": remaining_products.len(),
+                        "confirmed_at": confirmed_at,
+                    })
+                    .to_string(),
+                ),
+            },
+        )?;
+        tx.commit().map_err(db_tx_error)?;
     }
 
     Ok(PluExportConfirmResult {
-        updated_count: req.product_codes.len(),
+        updated_count,
         confirmed_at,
+        remaining_products,
     })
-}
-
-pub fn release_plu_slot_for_jan(conn: &DbConnection, jan_code: &str) -> Result<(), BizError> {
-    let remaining: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM products WHERE jan_code=?1 AND plu_target=1 AND is_discontinued=0)",
-        rusqlite::params![jan_code],
-        |row| row.get(0),
-    ).map_err(crate::db::DbError::from)?;
-    if remaining {
-        return Ok(());
-    }
-    let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    for slot in plu_slot_repo::find_slots_by_scanning_code(conn, jan_code)? {
-        match slot.status {
-            PluSlotStatus::Reserved => plu_slot_repo::update_slot(
-                conn,
-                PluSlotUpdate {
-                    memory_no: slot.memory_no,
-                    scanning_code: None,
-                    status: PluSlotStatus::Free,
-                    reserved_at: None,
-                    activated_at: None,
-                    released_at: slot.released_at.as_deref(),
-                    updated_at: &now,
-                },
-            )?,
-            PluSlotStatus::Active => plu_slot_repo::update_slot(
-                conn,
-                PluSlotUpdate {
-                    memory_no: slot.memory_no,
-                    scanning_code: Some(jan_code),
-                    status: PluSlotStatus::ReleasePending,
-                    reserved_at: slot.reserved_at.as_deref(),
-                    activated_at: slot.activated_at.as_deref(),
-                    released_at: None,
-                    updated_at: &now,
-                },
-            )?,
-            _ => {}
-        }
-    }
-    Ok(())
 }
 
 /// plu_dirty=1の商品一覧を返す（UI-08の差分対象プレビュー用）
 ///
-/// 33-biz-plu-export-service.md セクション16.4
+/// 33-biz-plu-export-service.md セクション16.6.1
 pub fn list_plu_dirty(conn: &DbConnection) -> Result<Vec<Product>, BizError> {
     Ok(product_repo::find_plu_dirty_products(conn)?)
 }
@@ -750,6 +615,65 @@ fn validate_plu_jan(jan_code: Option<&str>) -> Result<&str, PluExcludedReason> {
         return Err(PluExcludedReason::InvalidCheckDigit);
     }
     Ok(jan)
+}
+
+fn excluded_product(product: &ProductForPlu, reason: PluExcludedReason) -> PluExcludedProduct {
+    PluExcludedProduct {
+        product_code: product.product.product_code.clone(),
+        jan_code: product.product.jan_code.clone(),
+        name: product.product.name.clone(),
+        memory_no: None,
+        reason,
+    }
+}
+
+/// 同じ JAN の対象の商品の群の代表（商品コードの最小。D-028）。売価か税率がそろわなければ None
+fn group_representative<'a>(group: &[&'a ProductForPlu]) -> Option<&'a ProductForPlu> {
+    let first = *group
+        .iter()
+        .min_by(|a, b| a.product.product_code.cmp(&b.product.product_code))?;
+    group
+        .iter()
+        .all(|p| {
+            p.product.selling_price == first.product.selling_price
+                && p.product.tax_rate == first.product.tax_rate
+        })
+        .then_some(first)
+}
+
+fn export_row(memory_no: i64, product: &ProductForPlu) -> PluExportRow {
+    PluExportRow {
+        memory_no,
+        product_code: product.product.product_code.clone(),
+        jan_code: product.product.jan_code.clone(),
+        name: product.product.name.clone(),
+        selling_price: product.product.selling_price,
+        tax_rate: product.product.tax_rate.as_str().to_string(),
+        department_name: product.department_name.clone(),
+    }
+}
+
+/// 照合の値。入力は IO-04 が file に書く 1 行の byte 列だけ（切り詰めで落ちる名称の末尾は入らない）
+fn row_content_hash(row: &PluExportRow) -> Result<String, BizError> {
+    let bytes = plu_formatter::format_plu_row(row).map_err(format_error)?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+fn format_error(error: plu_formatter::PluFormatError) -> BizError {
+    BizError::ExportError(format!("PLUファイルの生成に失敗しました: {}", error))
+}
+
+/// 精算回数（IO-02 の精算の識別メタ）。読めない bytes・読めない値は None
+fn read_settlement_no(bytes: &[u8]) -> Option<i64> {
+    let metadata = z004_parser::parse_z004(bytes).ok()?.settlement_metadata?;
+    parse_settlement_no(&metadata.settlement_no?)
+}
+
+/// 10 進の整数（ASCII の数字だけ。前の 0 は許す）
+fn parse_settlement_no(value: &str) -> Option<i64> {
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
 }
 
 fn build_all_excluded_message(excluded: &[PluExcludedProduct]) -> String {
@@ -778,96 +702,22 @@ fn db_tx_error(error: rusqlite::Error) -> BizError {
     BizError::DatabaseError(crate::db::DbError::QueryFailed(error.to_string()))
 }
 
-fn is_eligible_jan(conn: &DbConnection, code: &str) -> Result<bool, BizError> {
-    if validate_plu_jan(Some(code)).is_err() {
-        return Ok(false);
-    }
+/// その JAN に対象の商品（`plu_target=1`・未廃番）があるか
+fn has_target_product(conn: &DbConnection, jan_code: &str) -> Result<bool, BizError> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM products WHERE jan_code=?1 AND plu_target=1 AND is_discontinued=0)",
-        rusqlite::params![code],
+        rusqlite::params![jan_code],
         |row| row.get(0),
     ).map_err(crate::db::DbError::from)?)
 }
 
-fn mark_products_dirty_for_jan(
-    conn: &DbConnection,
-    jan_code: Option<&str>,
-) -> Result<(), BizError> {
+fn mark_target_products_dirty(conn: &DbConnection, jan_code: Option<&str>) -> Result<(), BizError> {
     if let Some(jan_code) = jan_code {
         conn.execute(
-            "UPDATE products SET plu_dirty=1 WHERE jan_code=?1",
+            "UPDATE products SET plu_dirty=1 WHERE jan_code=?1 AND plu_target=1",
             rusqlite::params![jan_code],
         )
         .map_err(crate::db::DbError::from)?;
-    }
-    Ok(())
-}
-
-fn summarize_slots(
-    conn: &DbConnection,
-    snapshot_at: Option<String>,
-    conflict_count: usize,
-) -> Result<PluRegisterSnapshotSummary, BizError> {
-    let (free_count, external_count, app_managed_count, release_pending_count): (
-        i64,
-        i64,
-        i64,
-        i64,
-    ) = conn
-        .query_row(
-            "SELECT
-            SUM(status='free'),
-            SUM(status='external'),
-            SUM(status IN ('reserved','active','release_pending')),
-            SUM(status='release_pending')
-         FROM plu_slots",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .map_err(crate::db::DbError::from)?;
-    Ok(PluRegisterSnapshotSummary {
-        snapshot_at,
-        free_count: free_count as usize,
-        external_count: external_count as usize,
-        app_managed_count: app_managed_count as usize,
-        conflict_count,
-        release_pending_count: release_pending_count as usize,
-    })
-}
-
-fn append_clear_rows(
-    conn: &DbConnection,
-    rows: &mut Vec<PluExportRow>,
-    prepared_rows: &mut Vec<PluPreparedRow>,
-    blocked_slot_codes: &HashSet<String>,
-    clear_row_enabled: bool,
-) -> Result<(), BizError> {
-    if !clear_row_enabled {
-        return Ok(());
-    }
-    for slot in plu_slot_repo::find_slots_by_status(conn, PluSlotStatus::ReleasePending)? {
-        if slot
-            .scanning_code
-            .as_ref()
-            .is_some_and(|code| blocked_slot_codes.contains(code))
-        {
-            continue;
-        }
-        rows.push(PluExportRow {
-            memory_no: slot.memory_no,
-            row_kind: PluExportRowKind::Clear,
-            product_code: String::new(),
-            jan_code: None,
-            name: String::new(),
-            selling_price: 0,
-            tax_rate: "10".to_string(),
-            department_name: String::new(),
-        });
-        prepared_rows.push(PluPreparedRow {
-            memory_no: slot.memory_no,
-            row_kind: PluPreparedRowKind::Clear,
-            target_product_codes: Vec::new(),
-        });
     }
     Ok(())
 }
@@ -960,6 +810,16 @@ mod tests {
             .unwrap();
     }
 
+    /// 今の商品から求めた行の照合の値（test の fixture 用。無い商品は一致しない値）
+    fn current_hash(conn: &DbConnection, memory_no: i64, product_code: &str) -> String {
+        product_repo::find_active_products_for_plu(conn)
+            .unwrap()
+            .iter()
+            .find(|product| product.product.product_code == product_code)
+            .map(|product| row_content_hash(&export_row(memory_no, product)).unwrap())
+            .unwrap_or_else(|| "no-such-product".to_string())
+    }
+
     fn prepared_rows_for_codes(conn: &DbConnection, codes: &[String]) -> Vec<PluPreparedRow> {
         let now = "2026-08-18T00:00:00";
         let mut rows = Vec::new();
@@ -982,27 +842,27 @@ mod tests {
                     status: PluSlotStatus::Reserved,
                     reserved_at: Some(now),
                     activated_at: None,
-                    released_at: None,
                     updated_at: now,
                 },
             )
             .unwrap();
             rows.push(PluPreparedRow {
                 memory_no,
-                row_kind: PluPreparedRowKind::Product,
                 target_product_codes: vec![(*code).clone()],
+                content_hash: current_hash(conn, memory_no, code),
             });
         }
         rows
     }
 
-    fn snapshot_bytes(codes: &[(i64, String)]) -> Vec<u8> {
+    /// 合成の全枠の Z004（layout A、CP932・CRLF、5,000 行）。`codes` に無い枠は空
+    fn snapshot_bytes(settlement_no: &str, codes: &[(i64, String)]) -> Vec<u8> {
         let by_memory: std::collections::HashMap<i64, &str> = codes
             .iter()
             .map(|(memory_no, code)| (*memory_no, code.as_str()))
             .collect();
-        let mut text = String::from(
-            "\"meta\",\"synthetic\"\r\n\"メモリNo.\",\"ｽｷｬﾆﾝｸﾞｺｰﾄﾞ\",\"名称\",\"個数\",\"金額\"\r\n",
+        let mut text = format!(
+            "\"マシンNo.   \",\"0001\"\r\n\"ファイル    \",\"Z004_SYNTH\"\r\n\"精算回数    \",\"{settlement_no}\"\r\n\"日付        \",\"2026-08-15\"\r\n\"時刻        \",\"18:30\"\r\n\r\n\"メモリNo.\",\"ｽｷｬﾆﾝｸﾞｺｰﾄﾞ\",\"名称\",\"個数\",\"金額\"\r\n"
         );
         for memory_no in 1..=5_000 {
             let code = by_memory
@@ -1016,11 +876,7 @@ mod tests {
     }
 
     fn put_slot(conn: &DbConnection, memory_no: i64, code: Option<&str>, status: PluSlotStatus) {
-        let activated = matches!(
-            status,
-            PluSlotStatus::Active | PluSlotStatus::ReleasePending
-        )
-        .then_some("2026-08-17T00:00:00");
+        let activated = (status == PluSlotStatus::Active).then_some("2026-08-17T00:00:00");
         let reserved = (status == PluSlotStatus::Reserved).then_some("2026-08-17T00:00:00");
         plu_slot_repo::update_slot(
             conn,
@@ -1030,35 +886,66 @@ mod tests {
                 status,
                 reserved_at: reserved,
                 activated_at: activated,
-                released_at: None,
                 updated_at: "2026-08-17T00:00:00",
             },
         )
         .unwrap();
     }
 
+    fn slot(conn: &DbConnection, memory_no: i64) -> PluSlot {
+        plu_slot_repo::find_slot_by_memory_no(conn, memory_no)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn prepare(conn: &mut DbConnection, mode: ExportMode) -> PluExportPreparedResult {
+        prepare_plu_export(conn, PluExportPrepareRequest { mode }).unwrap()
+    }
+
+    fn memory_numbers(result: &PluExportPreparedResult) -> Vec<i64> {
+        result
+            .prepared_rows
+            .iter()
+            .map(|row| row.memory_no)
+            .collect()
+    }
+
+    fn set_plu_state(conn: &DbConnection, product_code: &str, plu_target: bool, plu_dirty: bool) {
+        conn.execute(
+            "UPDATE products SET plu_target=?2, plu_dirty=?3 WHERE product_code=?1",
+            rusqlite::params![product_code, plu_target, plu_dirty],
+        )
+        .unwrap();
+    }
+
+    fn plu_dirty(conn: &DbConnection, product_code: &str) -> bool {
+        product_repo::find_by_product_code(conn, product_code)
+            .unwrap()
+            .unwrap()
+            .product
+            .plu_dirty
+    }
+
+    /// 枠・app_settings・操作ログの全行（照合しないときに何も変わらないことの比較用）
+    fn reconcile_state(conn: &DbConnection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+        use crate::db::test_support::dump;
+        vec![
+            dump(conn, "SELECT * FROM plu_slots ORDER BY memory_no"),
+            dump(conn, "SELECT * FROM app_settings ORDER BY key"),
+            dump(conn, "SELECT * FROM operation_logs ORDER BY id"),
+            dump(
+                conn,
+                "SELECT product_code, plu_dirty FROM products ORDER BY 1",
+            ),
+        ]
+    }
+
     #[test]
     fn test_prepare_plu_export_req907_requires_snapshot_without_writes() {
-        // REQ-907: A-N1 paired empty-write oracle.
+        // REQ-907 / 33 §16.3 の gate: 一度も照合していなければ、空きを仮定せずに拒む
         let (_dir, mut conn) = setup_test_db();
-        let summary = get_plu_slot_summary(&conn).unwrap();
-        assert_eq!(summary.snapshot_at, None);
-        assert_eq!(
-            (
-                summary.free_count,
-                summary.external_count,
-                summary.app_managed_count,
-                summary.conflict_count,
-            ),
-            (0, 0, 0, 0)
-        );
-        let before: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM plu_slots WHERE status <> 'free'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
+        assert_eq!(get_plu_slot_summary(&conn).unwrap().snapshot_at, None);
+        let before = reconcile_state(&conn);
         let result = prepare_plu_export(
             &mut conn,
             PluExportPrepareRequest {
@@ -1066,244 +953,310 @@ mod tests {
             },
         );
         assert!(
-            matches!(result, Err(BizError::ValidationFailed(message)) if message.contains("register_snapshot_required"))
+            matches!(result, Err(BizError::ValidationFailed(ref message)) if message == "register_snapshot_required: レジの登録状況がまだ読まれていません。売上データ取込みでレジの SD を一度読んでください"),
+            "{result:?}"
         );
-        let after: i64 = conn
+        assert_eq!(reconcile_state(&conn), before);
+    }
+
+    #[test]
+    fn test_import_plu_register_snapshot_req907_reconciliation_table() {
+        // REQ-907 / BIZ-04-D3: 33 §16.3 の表の行ごと。判定は照合の前の状態で行う
+        let (_dir, mut conn) = setup_test_db();
+        let jan = |seed| valid_jan_from_seed(seed);
+        let seed = |code: &str, jan: &str, plu_target: bool| {
+            seed_product_for_plu_with_jan(&conn, code, Some(jan), code, 1, false, false);
+            set_plu_state(&conn, code, plu_target, false);
+        };
+        let (eligible, managed_active, managed_reserved) = (jan(81), jan(86), jan(87));
+        let (missing, conflict, reserved_same, dropped) = (jan(82), jan(83), jan(84), jan(85));
+        let (untargeted, no_product, off_target, dropped_then_seen) =
+            (jan(88), jan(89), jan(90), jan(91));
+        seed("SNAP-ELIG", &eligible, true);
+        seed("SNAP-MANAGED-A", &managed_active, true);
+        seed("SNAP-MANAGED-R", &managed_reserved, true);
+        seed("SNAP-MISS", &missing, true);
+        seed("SNAP-MISS-OFF", &missing, false);
+        seed("SNAP-CONFLICT", &conflict, true);
+        seed("SNAP-UNTARGETED", &untargeted, false);
+        seed("SNAP-OFF", &off_target, false);
+        seed("SNAP-PRE", &dropped_then_seen, true);
+        system_repo::delete_setting(&conn, SNAPSHOT_AT_KEY).unwrap();
+
+        put_slot(&conn, 219, Some("RES-EMPTY"), PluSlotStatus::Reserved);
+        put_slot(&conn, 220, Some(&reserved_same), PluSlotStatus::Reserved);
+        put_slot(&conn, 221, Some(&missing), PluSlotStatus::Active);
+        put_slot(&conn, 222, Some(&conflict), PluSlotStatus::Active);
+        put_slot(&conn, 223, Some("EXT-EMPTY"), PluSlotStatus::External);
+        put_slot(&conn, 224, Some("EXT-SAME"), PluSlotStatus::External);
+        put_slot(&conn, 225, Some("EXT-OLD"), PluSlotStatus::External);
+        put_slot(&conn, 229, Some(&dropped), PluSlotStatus::Reserved);
+        put_slot(&conn, 231, Some(&managed_active), PluSlotStatus::Active);
+        put_slot(&conn, 233, Some(&managed_reserved), PluSlotStatus::Reserved);
+        put_slot(&conn, 235, Some(&untargeted), PluSlotStatus::Active);
+        put_slot(&conn, 236, Some(&no_product), PluSlotStatus::Active);
+        put_slot(
+            &conn,
+            239,
+            Some(&dropped_then_seen),
+            PluSlotStatus::Reserved,
+        );
+        let untouched_free = slot(&conn, 238);
+
+        let summary = import_plu_register_snapshot(
+            &mut conn,
+            &snapshot_bytes(
+                "0042",
+                &[
+                    (217, eligible.clone()),
+                    (218, eligible.clone()),
+                    (220, reserved_same.clone()),
+                    (222, "DIFFERENT-A".to_string()),
+                    (224, "EXT-SAME".to_string()),
+                    (225, "EXT-NEW".to_string()),
+                    (229, "DIFFERENT-R".to_string()),
+                    (230, "12345678EEEEEE".to_string()),
+                    (231, managed_active.clone()),
+                    (232, managed_active.clone()),
+                    (234, managed_reserved.clone()),
+                    (235, "DIFFERENT-U".to_string()),
+                    (236, "DIFFERENT-N".to_string()),
+                    (237, off_target.clone()),
+                    (239, "DIFFERENT-P".to_string()),
+                    (240, dropped_then_seen.clone()),
+                ],
+            ),
+            42,
+        )
+        .unwrap();
+
+        let state = |memory_no| {
+            let slot = slot(&conn, memory_no);
+            (slot.status, slot.scanning_code)
+        };
+        let code = |value: &str| Some(value.to_string());
+        use PluSlotStatus::{Active, External, Free, Reserved};
+        // occupied × free: 対象の JAN は最小の番号だけ採用し、残りは external（観測コードを保持）
+        assert_eq!(state(217), (Active, code(&eligible)));
+        assert!(slot(&conn, 217).activated_at.is_some());
+        assert_eq!(state(218), (External, code(&eligible)));
+        // 空 × reserved は維持、同一コード × reserved は active（reserved_at は保つ）
+        assert_eq!(state(219), (Reserved, code("RES-EMPTY")));
+        assert_eq!(state(220), (Active, code(&reserved_same)));
+        assert_eq!(
+            slot(&conn, 220).reserved_at.as_deref(),
+            Some("2026-08-17T00:00:00")
+        );
+        // 空 × active は維持して missing、別コード × active（対象の商品あり）は維持して conflict
+        assert_eq!(state(221), (Active, code(&missing)));
+        assert_eq!(state(222), (Active, code(&conflict)));
+        // 空 × external は free、同一コードは維持、別コードは観測値で更新
+        assert_eq!(state(223), (Free, None));
+        assert_eq!(state(224), (External, code("EXT-SAME")));
+        assert_eq!(state(225), (External, code("EXT-NEW")));
+        // 別コード × reserved は external（reservation_dropped）
+        assert_eq!(state(229), (External, code("DIFFERENT-R")));
+        // occupied × free: 対象の JAN でないコードは external
+        assert_eq!(state(230), (External, code("12345678EEEEEE")));
+        assert_eq!(state(237), (External, code(&off_target)));
+        // アプリの枠を持つ JAN の重複の観測は external。アプリの枠は変えない
+        assert_eq!(state(231), (Active, code(&managed_active)));
+        assert_eq!(state(232), (External, code(&managed_active)));
+        assert_eq!(state(233), (Reserved, code(&managed_reserved)));
+        assert_eq!(state(234), (External, code(&managed_reserved)));
+        // 別コード × active（対象の商品が無い JAN）は external
+        assert_eq!(state(235), (External, code("DIFFERENT-U")));
+        assert_eq!(state(236), (External, code("DIFFERENT-N")));
+        // 照合の前の状態で判定: 239 の予約が同じ照合で落ちても、240 の観測は「アプリの枠を持つ JAN」の重複
+        assert_eq!(state(239), (External, code("DIFFERENT-P")));
+        assert_eq!(state(240), (External, code(&dropped_then_seen)));
+        // 空 × free は何も書かない
+        assert_eq!(slot(&conn, 238), untouched_free);
+
+        // dirty にするのは plu_target=1 の商品だけ
+        for (product_code, expected) in [
+            ("SNAP-MISS", true),
+            ("SNAP-MISS-OFF", false),
+            ("SNAP-CONFLICT", true),
+            ("SNAP-UNTARGETED", false),
+            ("SNAP-ELIG", false),
+        ] {
+            assert_eq!(plu_dirty(&conn, product_code), expected, "{product_code}");
+        }
+
+        assert_eq!(
+            summary.snapshot_at,
+            system_repo::get_setting(&conn, SNAPSHOT_AT_KEY).unwrap()
+        );
+        assert!(summary.snapshot_at.is_some());
+        assert_eq!(
+            get_plu_slot_summary(&conn).unwrap().snapshot_at,
+            summary.snapshot_at
+        );
+        assert_eq!(
+            system_repo::get_setting(&conn, SNAPSHOT_SETTLEMENT_NO_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("42")
+        );
+        let detail: String = conn
             .query_row(
-                "SELECT COUNT(*) FROM plu_slots WHERE status <> 'free'",
+                "SELECT detail_json FROM operation_logs WHERE operation_type='plu_register_snapshot_import'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!((before, after), (0, 0));
-    }
-
-    #[test]
-    fn test_get_plu_slot_summary_req907_reports_release_pending_count() {
-        // REQ-907 / UI-08-D11: release_pending-only でも Diff 導線を有効化できる summary oracle.
-        let (_dir, conn) = setup_test_db();
-        system_repo::upsert_setting(&conn, "plu_register_snapshot_at", "2026-08-20T17:34:00")
-            .unwrap();
-        put_slot(
-            &conn,
-            217,
-            Some("4901234567894"),
-            PluSlotStatus::ReleasePending,
-        );
-        put_slot(&conn, 218, Some("4901234567887"), PluSlotStatus::Active);
-
-        let summary = get_plu_slot_summary(&conn).unwrap();
-
-        assert_eq!(summary.release_pending_count, 1);
-        assert_eq!(summary.app_managed_count, 2);
-    }
-
-    #[test]
-    fn test_import_plu_register_snapshot_req907_reconciles_all_statuses_and_logs_summary() {
-        // REQ-907: A-N3/N3b/N4/N4b/N5/N5b/N6/N6b/N7/N8/N8b/N8c/N9/N9b/N9c.
-        let (_dir, mut conn) = setup_test_db();
-        let eligible = valid_jan_from_seed(81);
-        seed_product_for_plu_with_jan(
-            &conn,
-            "SNAP-ELIG",
-            Some(&eligible),
-            "eligible",
-            1,
-            false,
-            false,
-        );
-        let active_missing = valid_jan_from_seed(82);
-        seed_product_for_plu_with_jan(
-            &conn,
-            "SNAP-MISS",
-            Some(&active_missing),
-            "missing",
-            1,
-            false,
-            false,
-        );
-        let active_conflict = valid_jan_from_seed(83);
-        seed_product_for_plu_with_jan(
-            &conn,
-            "SNAP-CONFLICT",
-            Some(&active_conflict),
-            "conflict",
-            1,
-            false,
-            false,
-        );
-        let reserved_same = valid_jan_from_seed(84);
-        let reserved_dropped = valid_jan_from_seed(85);
-
-        put_slot(&conn, 219, Some("RES-EMPTY"), PluSlotStatus::Reserved);
-        put_slot(&conn, 220, Some(&reserved_same), PluSlotStatus::Reserved);
-        put_slot(&conn, 221, Some(&active_missing), PluSlotStatus::Active);
-        put_slot(&conn, 222, Some(&active_conflict), PluSlotStatus::Active);
-        put_slot(&conn, 223, Some("EXT-EMPTY"), PluSlotStatus::External);
-        put_slot(&conn, 224, Some("EXT-SAME"), PluSlotStatus::External);
-        put_slot(&conn, 225, Some("EXT-OLD"), PluSlotStatus::External);
-        put_slot(&conn, 226, Some("REL-EMPTY"), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 227, Some("REL-SAME"), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 228, Some("REL-OLD"), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 229, Some(&reserved_dropped), PluSlotStatus::Reserved);
-
-        let summary = import_plu_register_snapshot(
-            &mut conn,
-            &snapshot_bytes(&[
-                (217, eligible.clone()),
-                (218, eligible.clone()),
-                (220, reserved_same),
-                (222, "DIFFERENT-A".to_string()),
-                (224, "EXT-SAME".to_string()),
-                (225, "EXT-NEW".to_string()),
-                (227, "REL-SAME".to_string()),
-                (228, "REL-NEW".to_string()),
-                (229, "DIFFERENT-R".to_string()),
-                (230, "12345678EEEEEE".to_string()),
-            ]),
-        )
-        .unwrap();
-
-        let status = |memory_no| {
-            plu_slot_repo::find_slot_by_memory_no(&conn, memory_no)
-                .unwrap()
-                .unwrap()
-        };
-        assert_eq!(status(217).status, PluSlotStatus::Active);
-        assert_eq!(status(218).status, PluSlotStatus::ReleasePending);
+        let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
         assert_eq!(
-            status(218).scanning_code.as_deref(),
-            Some(eligible.as_str())
+            detail,
+            serde_json::json!({
+                "free_count": 4_784 - 19,
+                "external_count": 12,
+                "app_managed_count": 7,
+                "conflict_count": 1,
+                "missing_count": 1,
+                "dropped_count": 2,
+                "duplicate_count": 4,
+                "released_count": 2,
+            })
         );
-        assert_eq!(status(219).status, PluSlotStatus::Reserved);
-        assert_eq!(status(220).status, PluSlotStatus::Active);
-        assert_eq!(status(221).status, PluSlotStatus::Active);
-        assert_eq!(
-            status(222).scanning_code.as_deref(),
-            Some(active_conflict.as_str())
-        );
-        assert_eq!(status(223).status, PluSlotStatus::Free);
-        assert_eq!(status(224).status, PluSlotStatus::External);
-        assert_eq!(status(225).scanning_code.as_deref(), Some("EXT-NEW"));
-        assert_eq!(status(226).status, PluSlotStatus::Free);
-        assert_eq!(status(227).status, PluSlotStatus::ReleasePending);
-        assert_eq!(status(228).status, PluSlotStatus::External);
-        assert_eq!(status(229).status, PluSlotStatus::External);
-        assert_eq!(status(230).status, PluSlotStatus::External);
-        assert!(
-            product_repo::find_by_product_code(&conn, "SNAP-MISS")
-                .unwrap()
-                .unwrap()
-                .product
-                .plu_dirty
-        );
-        assert!(
-            product_repo::find_by_product_code(&conn, "SNAP-CONFLICT")
-                .unwrap()
-                .unwrap()
-                .product
-                .plu_dirty
-        );
-        assert!(summary.snapshot_at.is_some());
-        assert!(summary.conflict_count >= 3);
-        let summary_json = system_repo::get_setting(&conn, "plu_register_snapshot_summary")
-            .unwrap()
-            .unwrap();
-        let value: serde_json::Value = serde_json::from_str(&summary_json).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 4);
-        let logs: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM operation_logs WHERE operation_type='plu_register_snapshot_import'",
-            [], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(logs, 1);
-    }
-
-    #[test]
-    fn test_import_plu_register_snapshot_req907_preserves_managed_slot_on_duplicate_observation() {
-        // REQ-907: A-N3c amendment 2.
-        for managed_status in [PluSlotStatus::Reserved, PluSlotStatus::Active] {
-            let (_dir, mut conn) = setup_test_db();
-            let jan = valid_jan_from_seed(if managed_status == PluSlotStatus::Reserved {
-                91
-            } else {
-                92
-            });
-            seed_product_for_plu_with_jan(&conn, "DUP-MANAGED", Some(&jan), "dup", 1, false, true);
-            put_slot(&conn, 217, Some(&jan), managed_status);
-            import_plu_register_snapshot(&mut conn, &snapshot_bytes(&[(218, jan.clone())]))
-                .unwrap();
-            assert_eq!(
-                plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                    .unwrap()
-                    .unwrap()
-                    .status,
-                managed_status
-            );
-            let stale = plu_slot_repo::find_slot_by_memory_no(&conn, 218)
-                .unwrap()
-                .unwrap();
-            assert_eq!(stale.status, PluSlotStatus::ReleasePending);
-            assert_eq!(stale.scanning_code.as_deref(), Some(jan.as_str()));
-        }
     }
 
     #[test]
     fn test_import_plu_register_snapshot_req907_rolls_back_settings_log_and_slots() {
-        // REQ-907: A-N9c snapshot reconciliation and evidence are one transaction.
+        // REQ-907: 照合の枠・key・操作ログは 1 つの TX。途中の失敗で何も残らない
         let (_dir, mut conn) = setup_test_db();
-        system_repo::upsert_setting(&conn, "plu_register_snapshot_at", "before-at").unwrap();
-        system_repo::upsert_setting(&conn, "plu_register_snapshot_summary", "before-summary")
-            .unwrap();
-        let duplicate_external = "12345678EEEEEE";
+        system_repo::upsert_setting(&conn, SNAPSHOT_AT_KEY, "before-at").unwrap();
+        system_repo::upsert_setting(&conn, SNAPSHOT_SETTLEMENT_NO_KEY, "7").unwrap();
+        put_slot(&conn, 218, Some("EXT-EMPTY"), PluSlotStatus::External);
+        // 操作ログの INSERT（TX の最後の書込み）を失敗させる
+        conn.execute_batch(
+            "CREATE TRIGGER fail_snapshot_log BEFORE INSERT ON operation_logs
+             WHEN NEW.operation_type = 'plu_register_snapshot_import'
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        )
+        .unwrap();
+        let before = reconcile_state(&conn);
 
         let result = import_plu_register_snapshot(
             &mut conn,
-            &snapshot_bytes(&[
-                (217, duplicate_external.to_string()),
-                (218, duplicate_external.to_string()),
-            ]),
+            &snapshot_bytes("0008", &[(217, "12345678EEEEEE".to_string())]),
+            8,
         );
 
         assert!(matches!(result, Err(BizError::DatabaseError(_))));
+        assert_eq!(reconcile_state(&conn), before);
+    }
+
+    #[test]
+    fn test_refresh_plu_register_snapshot_from_sd_req907_picks_max_settlement_no() {
+        // REQ-907 / 33 §16.3 手順 1〜2: 精算回数が最大の 1 本だけを照合する
+        let (_dir, mut conn) = setup_test_db();
+        let at = |memory_no: i64, code: &str| vec![(memory_no, code.to_string())];
+        let files = vec![
+            snapshot_bytes("0003", &at(300, "OLD-3")),
+            b"not a z004".to_vec(),
+            snapshot_bytes("0010", &at(301, "NEW-10")),
+            snapshot_bytes("x1", &at(302, "BAD-NO")),
+            snapshot_bytes("0007", &at(303, "OLD-7")),
+        ];
+
+        let refresh = refresh_plu_register_snapshot_from_sd(&mut conn, &files).unwrap();
+
+        assert!(matches!(refresh, PluRegisterSnapshotRefresh::Refreshed(_)));
+        assert_eq!(slot(&conn, 301).scanning_code.as_deref(), Some("NEW-10"));
+        for memory_no in [300, 302, 303] {
+            assert_eq!(slot(&conn, memory_no).status, PluSlotStatus::Free);
+        }
         assert_eq!(
-            system_repo::get_setting(&conn, "plu_register_snapshot_at")
+            system_repo::get_setting(&conn, SNAPSHOT_SETTLEMENT_NO_KEY)
                 .unwrap()
                 .as_deref(),
-            Some("before-at")
+            Some("10")
         );
+
+        // 同じ精算回数で bytes の違う 2 本は照合しない。bytes が同じなら照合する
+        let before = reconcile_state(&conn);
+        let ambiguous = vec![
+            snapshot_bytes("0011", &at(304, "A")),
+            snapshot_bytes("0011", &at(305, "B")),
+        ];
+        assert!(matches!(
+            refresh_plu_register_snapshot_from_sd(&mut conn, &ambiguous).unwrap(),
+            PluRegisterSnapshotRefresh::Unchanged
+        ));
+        assert_eq!(reconcile_state(&conn), before);
+        let same = vec![ambiguous[0].clone(), ambiguous[0].clone()];
+        assert!(matches!(
+            refresh_plu_register_snapshot_from_sd(&mut conn, &same).unwrap(),
+            PluRegisterSnapshotRefresh::Refreshed(_)
+        ));
+        assert_eq!(slot(&conn, 304).scanning_code.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_refresh_plu_register_snapshot_from_sd_req907_key_comparison() {
+        // REQ-907 / 33 §16.3 手順 2〜3: key が無い・より大きいときだけ照合する。ほかは何も変えない
+        let (_dir, mut conn) = setup_test_db();
+        let file = |settlement_no: &str| {
+            vec![snapshot_bytes(
+                settlement_no,
+                &[(300, format!("CODE-{settlement_no}"))],
+            )]
+        };
+        // key が無い → 照合する
+        assert!(matches!(
+            refresh_plu_register_snapshot_from_sd(&mut conn, &file("0010")).unwrap(),
+            PluRegisterSnapshotRefresh::Refreshed(_)
+        ));
+
+        type Case = (
+            &'static str,
+            Vec<Vec<u8>>,
+            fn(&PluRegisterSnapshotRefresh) -> bool,
+        );
+        let unchanged: fn(&PluRegisterSnapshotRefresh) -> bool =
+            |refresh| matches!(refresh, PluRegisterSnapshotRefresh::Unchanged);
+        let cases: [Case; 4] = [
+            ("等しい", file("0010"), unchanged),
+            ("小さい", file("0009"), |refresh| {
+                matches!(refresh, PluRegisterSnapshotRefresh::SkippedOlder)
+            }),
+            ("使える Z004 が無い", vec![b"garbage".to_vec()], unchanged),
+            ("Z004 が 0 本", Vec::new(), unchanged),
+        ];
+        for (label, files, expected) in cases {
+            let before = reconcile_state(&conn);
+            let refresh = refresh_plu_register_snapshot_from_sd(&mut conn, &files).unwrap();
+            assert!(expected(&refresh), "{label}: {refresh:?}");
+            assert_eq!(reconcile_state(&conn), before, "{label}");
+        }
+
+        // より大きい → 照合する
+        assert!(matches!(
+            refresh_plu_register_snapshot_from_sd(&mut conn, &file("0011")).unwrap(),
+            PluRegisterSnapshotRefresh::Refreshed(_)
+        ));
+        assert_eq!(slot(&conn, 300).scanning_code.as_deref(), Some("CODE-0011"));
         assert_eq!(
-            system_repo::get_setting(&conn, "plu_register_snapshot_summary")
+            system_repo::get_setting(&conn, SNAPSHOT_SETTLEMENT_NO_KEY)
                 .unwrap()
                 .as_deref(),
-            Some("before-summary")
+            Some("11")
         );
-        let logs: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM operation_logs WHERE operation_type='plu_register_snapshot_import'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(logs, 0);
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Free
-        );
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 218)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Free
-        );
+
+        // key が整数として読めない → 大きい精算回数でも照合しない
+        system_repo::upsert_setting(&conn, SNAPSHOT_SETTLEMENT_NO_KEY, "1x").unwrap();
+        let before = reconcile_state(&conn);
+        assert!(unchanged(
+            &refresh_plu_register_snapshot_from_sd(&mut conn, &file("0099")).unwrap()
+        ));
+        assert_eq!(reconcile_state(&conn), before);
     }
 
     #[test]
     fn test_prepare_plu_export_req907_uses_min_free_and_sticky_allocation() {
-        // REQ-907: A-P1/A-P2 hole fixture uses independent memory numbers.
+        // REQ-907 / PLU-25: 最小の空きを取り、confirm の前の書き出し直し（Diff の後の Full）は同じ memory No.
         let (_dir, mut conn) = setup_test_db();
         let jan_a = valid_jan_from_seed(101);
         let jan_b = valid_jan_from_seed(102);
@@ -1318,38 +1271,11 @@ mod tests {
             put_slot(&conn, memory_no, None, PluSlotStatus::Free);
         }
 
-        let first = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            first
-                .prepared_rows
-                .iter()
-                .filter(|row| row.row_kind == PluPreparedRowKind::Product)
-                .map(|row| row.memory_no)
-                .collect::<Vec<_>>(),
-            vec![217, 300]
-        );
-        let second = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Full,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            second
-                .prepared_rows
-                .iter()
-                .filter(|row| row.row_kind == PluPreparedRowKind::Product)
-                .map(|row| row.memory_no)
-                .collect::<Vec<_>>(),
-            vec![217, 300]
-        );
+        let first = prepare(&mut conn, ExportMode::Diff);
+        assert_eq!(memory_numbers(&first), vec![217, 300]);
+        let second = prepare(&mut conn, ExportMode::Full);
+        assert_eq!(memory_numbers(&second), vec![217, 300]);
+        assert_eq!(second.prepared_rows, first.prepared_rows);
         let reserved: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM plu_slots WHERE status='reserved'",
@@ -1361,14 +1287,13 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_plu_export_req907_adopts_external_before_free_or_release_pending() {
-        // REQ-907: A-P3b / A-R6 amendment 2.
+    fn test_prepare_plu_export_req907_adopts_min_external_before_free() {
+        // REQ-907 / 33 §16.4 手順 5: 同じコードの external があれば、最小の番号を採用して新しく予約しない
         let (_dir, mut conn) = setup_test_db();
         let jan = valid_jan_from_seed(111);
         seed_product_for_plu_with_jan(&conn, "ADOPT", Some(&jan), "adopt", 1, false, true);
-        put_slot(&conn, 217, Some(&jan), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 218, Some(&jan), PluSlotStatus::ReleasePending);
         put_slot(&conn, 300, Some(&jan), PluSlotStatus::External);
+        put_slot(&conn, 218, Some(&jan), PluSlotStatus::External);
         let free_before: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM plu_slots WHERE status='free'",
@@ -1377,48 +1302,12 @@ mod tests {
             )
             .unwrap();
 
-        let result = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-        let product_row = result
-            .prepared_rows
-            .iter()
-            .find(|row| row.row_kind == PluPreparedRowKind::Product)
-            .unwrap();
-        assert_eq!(product_row.memory_no, 300);
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 300)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Active
-        );
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 218)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
-        assert_eq!(
-            result
-                .prepared_rows
-                .iter()
-                .filter(|row| row.row_kind == PluPreparedRowKind::Clear)
-                .count(),
-            2
-        );
+        let result = prepare(&mut conn, ExportMode::Diff);
+
+        assert_eq!(memory_numbers(&result), vec![218]);
+        assert_eq!(slot(&conn, 218).status, PluSlotStatus::Active);
+        assert!(slot(&conn, 218).activated_at.is_some());
+        assert_eq!(slot(&conn, 300).status, PluSlotStatus::External);
         let free_after: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM plu_slots WHERE status='free'",
@@ -1446,183 +1335,57 @@ mod tests {
         put_slot(&conn, 300, Some(&jan), PluSlotStatus::Reserved);
         import_plu_register_snapshot(
             &mut conn,
-            &snapshot_bytes(&[(300, "DIFFERENT-SYNTH".to_string())]),
+            &snapshot_bytes("0001", &[(300, "DIFFERENT-SYNTH".to_string())]),
+            1,
         )
         .unwrap();
-        let dropped = plu_slot_repo::find_slot_by_memory_no(&conn, 300)
-            .unwrap()
-            .unwrap();
-        assert_eq!(dropped.status, PluSlotStatus::External);
+        assert_eq!(slot(&conn, 300).status, PluSlotStatus::External);
 
-        let prepared = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-        let row = prepared
-            .prepared_rows
-            .iter()
-            .find(|row| row.row_kind == PluPreparedRowKind::Product)
-            .unwrap();
-        assert_ne!(row.memory_no, 300);
-        assert_eq!(row.memory_no, 217, "再予約は最小の free slot を使う");
-        let replacement = plu_slot_repo::find_slot_by_memory_no(&conn, row.memory_no)
-            .unwrap()
-            .unwrap();
+        let prepared = prepare(&mut conn, ExportMode::Diff);
+
+        assert_eq!(
+            memory_numbers(&prepared),
+            vec![217],
+            "再予約は最小の free slot を使う"
+        );
+        let replacement = slot(&conn, 217);
         assert_eq!(replacement.status, PluSlotStatus::Reserved);
         assert_eq!(replacement.scanning_code.as_deref(), Some(jan.as_str()));
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 300)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::External
-        );
+        assert_eq!(slot(&conn, 300).status, PluSlotStatus::External);
     }
 
     #[test]
-    fn test_prepare_plu_export_req907_restores_only_min_release_pending_slot() {
-        // REQ-907: A-R6 without an external candidate restores only the minimum stale slot.
-        let (_dir, mut conn) = setup_test_db();
-        let jan = valid_jan_from_seed(112);
-        seed_product_for_plu_with_jan(&conn, "RESTORE", Some(&jan), "restore", 1, false, true);
-        put_slot(&conn, 300, Some(&jan), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 217, Some(&jan), PluSlotStatus::ReleasePending);
-
-        let result = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-
-        let product_row = result
-            .prepared_rows
-            .iter()
-            .find(|row| row.row_kind == PluPreparedRowKind::Product)
-            .unwrap();
-        assert_eq!(product_row.memory_no, 217);
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Active
-        );
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 300)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
-        assert!(result
-            .prepared_rows
-            .iter()
-            .any(|row| { row.memory_no == 300 && row.row_kind == PluPreparedRowKind::Clear }));
-    }
-
-    #[test]
-    fn test_confirm_plu_export_req907_activates_product_and_frees_clear_exact_set() {
-        // REQ-907: A-P3/A-R5 with retry idempotence.
+    fn test_confirm_plu_export_req907_activates_reserved_slot_and_is_idempotent() {
+        // REQ-907 / 33 §16.5: reserved → active。同じ結果への再 confirm は成功し、別の枠は拒む
         let (_dir, mut conn) = setup_test_db();
         let jan = valid_jan_from_seed(121);
         seed_product_for_plu_with_jan(&conn, "CONFIRM-A", Some(&jan), "confirm", 1, false, true);
         put_slot(&conn, 217, Some(&jan), PluSlotStatus::Reserved);
-        put_slot(&conn, 218, Some("STALE"), PluSlotStatus::ReleasePending);
+        let row = |memory_no| PluPreparedRow {
+            memory_no,
+            target_product_codes: vec!["CONFIRM-A".to_string()],
+            content_hash: current_hash(&conn, memory_no, "CONFIRM-A"),
+        };
         let req = PluExportConfirmRequest {
             product_codes: vec!["CONFIRM-A".to_string()],
-            prepared_rows: vec![
-                PluPreparedRow {
-                    memory_no: 217,
-                    row_kind: PluPreparedRowKind::Product,
-                    target_product_codes: vec!["CONFIRM-A".to_string()],
-                },
-                PluPreparedRow {
-                    memory_no: 218,
-                    row_kind: PluPreparedRowKind::Clear,
-                    target_product_codes: vec![],
-                },
-            ],
+            prepared_rows: vec![row(217)],
         };
-        confirm_plu_export_saved(&mut conn, req.clone()).unwrap();
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Active
-        );
-        let cleared = plu_slot_repo::find_slot_by_memory_no(&conn, 218)
-            .unwrap()
-            .unwrap();
-        assert_eq!(cleared.status, PluSlotStatus::Free);
-        assert!(cleared.scanning_code.is_none());
-        assert!(cleared.released_at.is_some());
-        assert!(
-            !product_repo::find_by_product_code(&conn, "CONFIRM-A")
-                .unwrap()
-                .unwrap()
-                .product
-                .plu_dirty
-        );
+        let other_slot = PluExportConfirmRequest {
+            product_codes: vec!["CONFIRM-A".to_string()],
+            prepared_rows: vec![row(219)],
+        };
+
+        let result = confirm_plu_export_saved(&mut conn, req.clone()).unwrap();
+
+        assert_eq!(result.updated_count, 1);
+        assert!(result.remaining_products.is_empty());
+        assert_eq!(slot(&conn, 217).status, PluSlotStatus::Active);
+        assert!(!plu_dirty(&conn, "CONFIRM-A"));
         confirm_plu_export_saved(&mut conn, req).unwrap();
-
-        let mismatched = confirm_plu_export_saved(
-            &mut conn,
-            PluExportConfirmRequest {
-                product_codes: vec!["CONFIRM-A".to_string()],
-                prepared_rows: vec![PluPreparedRow {
-                    memory_no: 219,
-                    row_kind: PluPreparedRowKind::Product,
-                    target_product_codes: vec!["CONFIRM-A".to_string()],
-                }],
-            },
-        );
-        assert!(matches!(mismatched, Err(BizError::ValidationFailed(_))));
-    }
-
-    #[test]
-    fn test_clear_row_fallback_req907_emits_nothing_and_keeps_release_pending() {
-        // REQ-907: A-R7 explicit false injection.
-        let (_dir, mut conn) = setup_test_db();
-        put_slot(&conn, 217, Some("STALE"), PluSlotStatus::ReleasePending);
-        let mut rows = Vec::new();
-        let mut prepared = Vec::new();
-        append_clear_rows(&conn, &mut rows, &mut prepared, &HashSet::new(), false).unwrap();
-        assert!(rows.is_empty());
-        assert!(prepared.is_empty());
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
-
-        let result = confirm_plu_export_saved_with_clear_enabled(
-            &mut conn,
-            PluExportConfirmRequest {
-                product_codes: vec![],
-                prepared_rows: vec![PluPreparedRow {
-                    memory_no: 217,
-                    row_kind: PluPreparedRowKind::Clear,
-                    target_product_codes: vec![],
-                }],
-            },
-            false,
-        );
-        assert!(result.is_err());
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
+        assert!(matches!(
+            confirm_plu_export_saved(&mut conn, other_slot),
+            Err(BizError::ValidationFailed(_))
+        ));
     }
 
     #[test]
@@ -1648,21 +1411,8 @@ mod tests {
         .unwrap();
         put_slot(&conn, 217, Some(&active_jan), PluSlotStatus::Active);
 
-        let result = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Full,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            result
-                .prepared_rows
-                .iter()
-                .filter(|row| row.row_kind == PluPreparedRowKind::Product)
-                .count(),
-            1
-        );
+        let result = prepare(&mut conn, ExportMode::Full);
+        assert_eq!(memory_numbers(&result), vec![217]);
         let no_free: Vec<_> = result
             .excluded
             .iter()
@@ -1672,68 +1422,55 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_plu_export_req907_full_and_diff_include_clear_but_not_external() {
-        // REQ-907: A-E1/A-E4 ordering and row composition.
+    fn test_prepare_plu_export_req907_never_emits_rows_for_untargeted_slots() {
+        // REQ-907 / 33 §16.4 手順 6・D-117 (1): 対象の商品を持たない JAN の枠・external・free の行も、clear 行も出さない
         let (_dir, mut conn) = setup_test_db();
-        let dirty_jan = valid_jan_from_seed(141);
-        let clean_jan = valid_jan_from_seed(142);
+        let jan = |seed| valid_jan_from_seed(seed);
+        let (dirty_jan, clean_jan, off_jan, discontinued_jan, orphan_jan) =
+            (jan(141), jan(142), jan(145), jan(146), jan(147));
+        seed_product_for_plu_with_jan(&conn, "ROW-DIRTY", Some(&dirty_jan), "d", 1, false, true);
+        seed_product_for_plu_with_jan(&conn, "ROW-CLEAN", Some(&clean_jan), "c", 1, false, false);
+        seed_product_for_plu_with_jan(&conn, "ROW-OFF", Some(&off_jan), "o", 1, false, true);
+        set_plu_state(&conn, "ROW-OFF", false, true);
         seed_product_for_plu_with_jan(
             &conn,
-            "ROW-DIRTY",
-            Some(&dirty_jan),
-            "dirty",
+            "ROW-DISC",
+            Some(&discontinued_jan),
+            "x",
             1,
-            false,
             true,
-        );
-        seed_product_for_plu_with_jan(
-            &conn,
-            "ROW-CLEAN",
-            Some(&clean_jan),
-            "clean",
-            1,
-            false,
-            false,
+            true,
         );
         put_slot(&conn, 300, Some(&dirty_jan), PluSlotStatus::Reserved);
         put_slot(&conn, 217, Some(&clean_jan), PluSlotStatus::Active);
-        put_slot(&conn, 401, Some("STALE"), PluSlotStatus::ReleasePending);
+        put_slot(&conn, 401, Some(&off_jan), PluSlotStatus::Active);
         put_slot(&conn, 402, Some("EXTERNAL"), PluSlotStatus::External);
+        put_slot(&conn, 403, Some(&discontinued_jan), PluSlotStatus::Active);
+        put_slot(&conn, 404, Some(&orphan_jan), PluSlotStatus::Reserved);
+        let slots_before = crate::db::test_support::dump(&conn, "SELECT * FROM plu_slots");
 
-        let full = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Full,
-            },
-        )
-        .unwrap();
+        let full = prepare(&mut conn, ExportMode::Full);
+        let diff = prepare(&mut conn, ExportMode::Diff);
+
+        assert_eq!(memory_numbers(&full), vec![217, 300]);
+        assert_eq!(memory_numbers(&diff), vec![300]);
+        for (result, expected_lines) in [(&full, 3), (&diff, 2)] {
+            let (text, _, _) = encoding_rs::SHIFT_JIS.decode(&result.plu_output.bytes);
+            assert_eq!(text.lines().count(), expected_lines);
+            assert!(!text.contains("00000000000000"), "clear 行が無い");
+            for code in [&off_jan, &discontinued_jan, &orphan_jan] {
+                assert!(!text.contains(code.as_str()));
+            }
+        }
         assert_eq!(
-            full.prepared_rows
-                .iter()
-                .map(|row| row.memory_no)
-                .collect::<Vec<_>>(),
-            vec![217, 300, 401]
+            crate::db::test_support::dump(&conn, "SELECT * FROM plu_slots"),
+            slots_before
         );
-        let diff = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            diff.prepared_rows
-                .iter()
-                .map(|row| row.memory_no)
-                .collect::<Vec<_>>(),
-            vec![300, 401]
-        );
-        assert!(!full.prepared_rows.iter().any(|row| row.memory_no == 402));
     }
 
     #[test]
     fn test_prepare_plu_export_req907_keeps_invalid_jan_slot_without_output() {
-        // REQ-907: A-E6 invalid JAN is excluded without product or clear output for its slot.
+        // REQ-907: A-E6 invalid JAN is excluded without output for its slot.
         let (_dir, mut conn) = setup_test_db();
         let invalid_jan = "4901234567890";
         let valid_jan = valid_jan_from_seed(143);
@@ -1759,216 +1496,237 @@ mod tests {
         put_slot(&conn, 218, Some(&valid_jan), PluSlotStatus::Active);
 
         for mode in [ExportMode::Full, ExportMode::Diff] {
-            let result = prepare_plu_export(&mut conn, PluExportPrepareRequest { mode }).unwrap();
-            assert!(!result.prepared_rows.iter().any(|row| row.memory_no == 217));
-            assert_eq!(
-                result
-                    .prepared_rows
-                    .iter()
-                    .filter(|row| row.row_kind == PluPreparedRowKind::Clear)
-                    .count(),
-                0
-            );
-            assert_eq!(
-                result
-                    .prepared_rows
-                    .iter()
-                    .filter(|row| row.row_kind == PluPreparedRowKind::Product)
-                    .map(|row| row.memory_no)
-                    .collect::<Vec<_>>(),
-                vec![218]
-            );
+            let result = prepare(&mut conn, mode);
+            assert_eq!(memory_numbers(&result), vec![218]);
             assert!(result.excluded.iter().any(|item| {
                 item.product_code == "INVALID-SLOT"
                     && item.reason == PluExcludedReason::InvalidCheckDigit
             }));
-            let slot = plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap();
+            let slot = slot(&conn, 217);
             assert_eq!(slot.status, PluSlotStatus::Active);
             assert_eq!(slot.scanning_code.as_deref(), Some(invalid_jan));
         }
     }
 
-    #[test]
-    fn test_product_join_req907_prefers_managed_then_min_release_pending_slot() {
-        // REQ-907: ProductWithRelations exposes exactly one deterministic plu_memory_no.
-        let (_dir, conn) = setup_test_db();
-        let jan = valid_jan_from_seed(144);
-        seed_product_for_plu_with_jan(&conn, "JOIN-SLOT", Some(&jan), "join", 1, false, true);
-        put_slot(&conn, 300, Some(&jan), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 217, Some(&jan), PluSlotStatus::ReleasePending);
-        put_slot(&conn, 401, Some(&jan), PluSlotStatus::Active);
-
-        let product = product_repo::find_by_product_code(&conn, "JOIN-SLOT")
-            .unwrap()
-            .unwrap();
-        assert_eq!(product.plu_memory_no, Some(401));
-
-        put_slot(&conn, 401, Some("OTHER"), PluSlotStatus::Active);
-        let product = product_repo::find_by_product_code(&conn, "JOIN-SLOT")
-            .unwrap()
-            .unwrap();
-        assert_eq!(product.plu_memory_no, Some(217));
+    fn import_row(product_code: &str, jan: &str) -> crate::biz::product_service::ImportRow {
+        crate::biz::product_service::ImportRow {
+            line_no: 2,
+            product_code: product_code.to_string(),
+            name: "new".to_string(),
+            department_id: 1,
+            selling_price: 500,
+            cost_price_centi: 300,
+            tax_rate: "10".to_string(),
+            stock_unit: Some("pcs".to_string()),
+            initial_stock: None,
+            jan_code: Some(jan.to_string()),
+            maker_code: None,
+            supplier_id: None,
+            pos_stock_sync: Some(true),
+            plu_target: None,
+            warnings: Vec::new(),
+        }
     }
 
     #[test]
-    fn test_product_service_req907_releases_only_after_last_eligible_shared_jan() {
-        // REQ-907: A-R1 shared JAN and reserved/active transitions.
+    fn test_product_service_req907_keeps_slot_on_untarget_discontinue_and_jan_change() {
+        // REQ-907 / BIZ-04-D6（33 §16.6、D-117 (1)）: 対象外化・廃番化・JAN の変更で枠の状態を変えない
+        use crate::biz::product_service::{self, ProductUpdateRequest};
         let (_dir, mut conn) = setup_test_db();
-        let jan = valid_jan_from_seed(151);
-        seed_product_for_plu_with_jan(&conn, "SHARED-A", Some(&jan), "A", 1, false, true);
-        seed_product_for_plu_with_jan(&conn, "SHARED-B", Some(&jan), "B", 1, false, true);
-        put_slot(&conn, 217, Some(&jan), PluSlotStatus::Active);
+        let jan = |seed| valid_jan_from_seed(seed);
+        let (off_active, off_reserved, discontinued, old_jan, new_jan) =
+            (jan(151), jan(152), jan(161), jan(171), jan(172));
+        for (code, jan_code) in [
+            ("OFF-ACTIVE", &off_active),
+            ("OFF-RESERVED", &off_reserved),
+            ("DISC-SLOT", &discontinued),
+            ("JAN-CHANGE", &old_jan),
+        ] {
+            seed_product_for_plu_with_jan(&conn, code, Some(jan_code), code, 1, false, false);
+        }
+        put_slot(&conn, 217, Some(&off_active), PluSlotStatus::Active);
+        put_slot(&conn, 218, Some(&off_reserved), PluSlotStatus::Reserved);
+        put_slot(&conn, 219, Some(&discontinued), PluSlotStatus::Active);
+        put_slot(&conn, 220, Some(&old_jan), PluSlotStatus::Active);
+        let slots_before = crate::db::test_support::dump(&conn, "SELECT * FROM plu_slots");
 
-        crate::biz::product_service::update_product(
+        for code in ["OFF-ACTIVE", "OFF-RESERVED"] {
+            product_service::update_product(
+                &mut conn,
+                code,
+                &ProductUpdateRequest {
+                    plu_target: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        assert!(product_service::toggle_discontinue(&mut conn, "DISC-SLOT").unwrap());
+        assert!(!product_service::toggle_discontinue(&mut conn, "DISC-SLOT").unwrap());
+        product_service::commit_import(
             &mut conn,
-            "SHARED-A",
-            &crate::biz::product_service::ProductUpdateRequest {
-                plu_target: Some(false),
-                ..Default::default()
-            },
+            vec![import_row("JAN-CHANGE", &new_jan)],
+            vec!["JAN-CHANGE".to_string()],
         )
         .unwrap();
+
         assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::Active
+            crate::db::test_support::dump(&conn, "SELECT * FROM plu_slots"),
+            slots_before
         );
-        crate::biz::product_service::update_product(
+        // 廃番解除は plu_target を戻さない。JAN の変更（商品 CSV の上書き）は未反映にする
+        let product = |code| {
+            product_repo::find_by_product_code(&conn, code)
+                .unwrap()
+                .unwrap()
+                .product
+        };
+        assert!(!product("DISC-SLOT").plu_target);
+        assert!(product("JAN-CHANGE").plu_target && product("JAN-CHANGE").plu_dirty);
+
+        // 新しい JAN は次の prepare で別の枠を取り、前の JAN の枠は書き出さない
+        let prepared = prepare(&mut conn, ExportMode::Diff);
+        assert_eq!(memory_numbers(&prepared), vec![221]);
+        assert_eq!(
+            slot(&conn, 221).scanning_code.as_deref(),
+            Some(new_jan.as_str())
+        );
+        assert_eq!(slot(&conn, 220).status, PluSlotStatus::Active);
+    }
+
+    #[test]
+    fn test_prepare_plu_export_req907_retarget_reuses_same_memory_no() {
+        // REQ-907 / 33 §16.4 手順 4: 対象外にした後に対象へ戻した商品は、前と同じ枠を使う
+        use crate::biz::product_service::{self, ProductUpdateRequest};
+        let (_dir, mut conn) = setup_test_db();
+        let jan = valid_jan_from_seed(181);
+        seed_product_for_plu_with_jan(&conn, "RETARGET", Some(&jan), "r", 1, false, false);
+        put_slot(&conn, 300, Some(&jan), PluSlotStatus::Active);
+        for plu_target in [false, true] {
+            product_service::update_product(
+                &mut conn,
+                "RETARGET",
+                &ProductUpdateRequest {
+                    plu_target: Some(plu_target),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        for mode in [ExportMode::Diff, ExportMode::Full] {
+            assert_eq!(memory_numbers(&prepare(&mut conn, mode)), vec![300]);
+        }
+        assert_eq!(slot(&conn, 217).status, PluSlotStatus::Free);
+    }
+
+    #[test]
+    fn test_prepare_plu_export_req907_shared_jan_partial_change_excluded_in_diff_and_full() {
+        // REQ-907 / 33 §16.4 手順 2・3: 群はその JAN の対象の商品の全員で作る。
+        // 共有 JAN の片方だけ税率を変えると、Diff も Full も group_price_mismatch で除外する
+        use crate::biz::product_service::{self, ProductUpdateRequest};
+        use crate::db::product_repo::ProductTaxRate;
+        let (_dir, mut conn) = setup_test_db();
+        let shared = valid_jan_from_seed(191);
+        let other = valid_jan_from_seed(192);
+        seed_product_for_plu_with_jan(&conn, "SHARED-A", Some(&shared), "A", 1, false, false);
+        seed_product_for_plu_with_jan(&conn, "SHARED-B", Some(&shared), "B", 1, false, false);
+        seed_product_for_plu_with_jan(&conn, "OTHER", Some(&other), "O", 1, false, true);
+        put_slot(&conn, 300, Some(&shared), PluSlotStatus::Active);
+        product_service::update_product(
             &mut conn,
             "SHARED-B",
-            &crate::biz::product_service::ProductUpdateRequest {
-                plu_target: Some(false),
+            &ProductUpdateRequest {
+                tax_rate: Some(ProductTaxRate::Rate8),
                 ..Default::default()
             },
         )
         .unwrap();
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
+        assert!(plu_dirty(&conn, "SHARED-B") && !plu_dirty(&conn, "SHARED-A"));
 
-        let reserved_jan = valid_jan_from_seed(152);
+        for mode in [ExportMode::Diff, ExportMode::Full] {
+            let result = prepare(&mut conn, mode);
+            assert_eq!(memory_numbers(&result), vec![217], "{mode:?}");
+            assert_eq!(result.target_product_codes, vec!["OTHER".to_string()]);
+            let mismatched: Vec<&str> = result
+                .excluded
+                .iter()
+                .filter(|item| item.reason == PluExcludedReason::GroupPriceMismatch)
+                .map(|item| item.product_code.as_str())
+                .collect();
+            assert_eq!(mismatched, vec!["SHARED-A", "SHARED-B"], "{mode:?}");
+        }
+        assert_eq!(slot(&conn, 300).status, PluSlotStatus::Active);
+    }
+
+    #[test]
+    fn test_confirm_plu_export_saved_req907_clears_only_rows_with_unchanged_content() {
+        // REQ-907 / 33 §16.5（D-160 (5)）: 保存の後に出力の行が変わった商品は未反映のまま残す。
+        // 合否は IO-04 が書く行の byte 列だけで決める（CP932 の 16 バイトで落ちる末尾だけの変更は同じ行）
+        use crate::biz::product_service::{self, ProductUpdateRequest};
+        use sha2::{Digest, Sha256};
+        let (_dir, mut conn) = setup_test_db();
+        let jan = |seed| valid_jan_from_seed(seed);
+        let (head_jan, tail_jan, same_jan) = (jan(201), jan(202), jan(203));
+        seed_product_for_plu_with_jan(&conn, "ROW-HEAD", Some(&head_jan), "A-HEAD", 1, false, true);
         seed_product_for_plu_with_jan(
             &conn,
-            "RESERVED-OFF",
-            Some(&reserved_jan),
-            "R",
+            "ROW-TAIL",
+            Some(&tail_jan),
+            "ABCDEFGHIJKLMNOPQRS",
             1,
             false,
             true,
         );
-        put_slot(&conn, 218, Some(&reserved_jan), PluSlotStatus::Reserved);
-        crate::biz::product_service::update_product(
+        seed_product_for_plu_with_jan(&conn, "ROW-SAME", Some(&same_jan), "SAME", 1, false, true);
+
+        let prepared = prepare(&mut conn, ExportMode::Diff);
+        assert_eq!(memory_numbers(&prepared), vec![217, 218, 219]);
+        // 照合の値の独立の期待値: file の 1 行（11 列、CRLF なし）の CP932 の byte 列の SHA-256
+        let line = format!(
+            "000219\t{same_jan}\tSAME            \t500\t税1(内税)\tいいえ\tいいえ\tいいえ\tいいえ\t無し\tその他小物"
+        );
+        let (line_bytes, _, _) = encoding_rs::SHIFT_JIS.encode(&line);
+        assert_eq!(
+            prepared.prepared_rows[2].content_hash,
+            format!("{:x}", Sha256::digest(&line_bytes))
+        );
+
+        // 保存の後: 名称の先頭の 1 文字を変える／切り詰めで落ちる末尾（17 バイト目より後）だけを変える
+        for (code, name) in [("ROW-HEAD", "B-HEAD"), ("ROW-TAIL", "ABCDEFGHIJKLMNOPQRX")] {
+            product_service::update_product(
+                &mut conn,
+                code,
+                &ProductUpdateRequest {
+                    name: Some(name.to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+
+        let result = confirm_plu_export_saved(
             &mut conn,
-            "RESERVED-OFF",
-            &crate::biz::product_service::ProductUpdateRequest {
-                plu_target: Some(false),
-                ..Default::default()
+            PluExportConfirmRequest {
+                product_codes: prepared.target_product_codes,
+                prepared_rows: prepared.prepared_rows,
             },
         )
         .unwrap();
-        let freed = plu_slot_repo::find_slot_by_memory_no(&conn, 218)
-            .unwrap()
-            .unwrap();
-        assert_eq!(freed.status, PluSlotStatus::Free);
-        assert!(freed.scanning_code.is_none());
-    }
 
-    #[test]
-    fn test_product_service_req907_discontinue_does_not_restore_plu_target() {
-        // REQ-907: A-R2.
-        let (_dir, mut conn) = setup_test_db();
-        let jan = valid_jan_from_seed(161);
-        seed_product_for_plu_with_jan(&conn, "DISC-SLOT", Some(&jan), "D", 1, false, true);
-        put_slot(&conn, 217, Some(&jan), PluSlotStatus::Active);
-        assert!(crate::biz::product_service::toggle_discontinue(&mut conn, "DISC-SLOT").unwrap());
-        let discontinued = product_repo::find_by_product_code(&conn, "DISC-SLOT")
-            .unwrap()
-            .unwrap();
-        assert!(!discontinued.product.plu_target);
         assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
+            result.remaining_products,
+            vec![PluRemainingProduct {
+                product_code: "ROW-HEAD".to_string(),
+                name: "B-HEAD".to_string(),
+            }]
         );
-        assert!(!crate::biz::product_service::toggle_discontinue(&mut conn, "DISC-SLOT").unwrap());
-        assert!(
-            !product_repo::find_by_product_code(&conn, "DISC-SLOT")
-                .unwrap()
-                .unwrap()
-                .product
-                .plu_target
-        );
-    }
-
-    #[test]
-    fn test_product_import_req907_releases_old_jan_and_reserves_new_jan() {
-        // REQ-907: A-R3 CSV overwrite is the permitted JAN-change path.
-        let (_dir, mut conn) = setup_test_db();
-        let old_jan = valid_jan_from_seed(171);
-        let new_jan = valid_jan_from_seed(172);
-        seed_product_for_plu_with_jan(&conn, "JAN-CHANGE", Some(&old_jan), "old", 1, false, true);
-        put_slot(&conn, 217, Some(&old_jan), PluSlotStatus::Active);
-
-        crate::biz::product_service::commit_import(
-            &mut conn,
-            vec![crate::biz::product_service::ImportRow {
-                line_no: 2,
-                product_code: "JAN-CHANGE".to_string(),
-                name: "new".to_string(),
-                department_id: 1,
-                selling_price: 500,
-                cost_price_centi: 300,
-                tax_rate: "10".to_string(),
-                stock_unit: Some("pcs".to_string()),
-                initial_stock: None,
-                jan_code: Some(new_jan.clone()),
-                maker_code: None,
-                supplier_id: None,
-                pos_stock_sync: Some(true),
-                plu_target: None,
-                warnings: Vec::new(),
-            }],
-            vec!["JAN-CHANGE".to_string()],
-        )
-        .unwrap();
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, 217)
-                .unwrap()
-                .unwrap()
-                .status,
-            PluSlotStatus::ReleasePending
-        );
-        let prepared = prepare_plu_export(
-            &mut conn,
-            PluExportPrepareRequest {
-                mode: ExportMode::Diff,
-            },
-        )
-        .unwrap();
-        let new_row = prepared
-            .prepared_rows
-            .iter()
-            .find(|row| row.row_kind == PluPreparedRowKind::Product)
-            .unwrap();
-        assert_ne!(new_row.memory_no, 217);
-        assert_eq!(
-            plu_slot_repo::find_slot_by_memory_no(&conn, new_row.memory_no)
-                .unwrap()
-                .unwrap()
-                .scanning_code
-                .as_deref(),
-            Some(new_jan.as_str())
-        );
+        assert_eq!(result.updated_count, 2);
+        assert!(plu_dirty(&conn, "ROW-HEAD"));
+        assert!(!plu_dirty(&conn, "ROW-TAIL") && !plu_dirty(&conn, "ROW-SAME"));
+        assert_eq!(slot(&conn, 217).status, PluSlotStatus::Reserved);
+        assert_eq!(slot(&conn, 218).status, PluSlotStatus::Active);
+        assert_eq!(slot(&conn, 219).status, PluSlotStatus::Active);
     }
 
     #[test]
@@ -2074,15 +1832,14 @@ mod tests {
                 status: PluSlotStatus::Reserved,
                 reserved_at: Some("2026-08-18T00:00:00"),
                 activated_at: None,
-                released_at: None,
                 updated_at: "2026-08-18T00:00:00",
             },
         )
         .unwrap();
         let prepared_rows = vec![PluPreparedRow {
             memory_no: 217,
-            row_kind: PluPreparedRowKind::Product,
             target_product_codes: product_codes.clone(),
+            content_hash: current_hash(&conn, 217, &product_codes[0]),
         }];
         let result = confirm_plu_export_saved(
             &mut conn,
@@ -2180,7 +1937,6 @@ mod tests {
             result.target_product_codes,
             vec!["PLU-001".to_string(), "PLU-002".to_string()]
         );
-        assert!(!result.over_limit_warning);
         assert!(!result.plu_output.bytes.is_empty());
 
         let p1 = product_repo::find_by_product_code(&conn, "PLU-001")

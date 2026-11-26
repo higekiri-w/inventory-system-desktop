@@ -32,7 +32,6 @@ export function buildProductListReturnTo(search: ProductListSearch): string {
   if (search.q !== undefined && search.q !== "") params.set("q", search.q);
   if (search.dept !== undefined) params.set("dept", String(search.dept));
   if (search.discontinued !== undefined) params.set("discontinued", search.discontinued);
-  if (search.plu !== undefined) params.set("plu", search.plu);
   if (search.sort !== undefined) params.set("sort", search.sort);
   if (search.dir !== undefined) params.set("dir", search.dir);
   if (search.page !== undefined) params.set("page", String(search.page));
@@ -56,7 +55,6 @@ export function parseProductListSearchFromReturnTo(value: string): ProductListSe
     dept: numberParam("dept"),
     discontinued: (url.searchParams.get("discontinued") ??
       undefined) as ProductListSearch["discontinued"],
-    plu: (url.searchParams.get("plu") ?? undefined) as ProductListSearch["plu"],
     sort: (url.searchParams.get("sort") ?? undefined) as ProductListSearch["sort"],
     dir: (url.searchParams.get("dir") ?? undefined) as ProductListSearch["dir"],
     page: numberParam("page"),

@@ -59,7 +59,6 @@ describe("useProductList (UI-01a)", () => {
       keyword: null,
       department_id: null,
       is_discontinued: false,
-      plu: "all",
       sort_key: "ProductCode",
       sort_order: "Asc",
       page: 1,

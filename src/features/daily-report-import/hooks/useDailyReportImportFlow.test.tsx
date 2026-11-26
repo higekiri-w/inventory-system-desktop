@@ -484,6 +484,61 @@ describe("useDailyReportImportFlow_req401", () => {
     expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.dailyReportImport());
   });
 
+  it("REQ-907 / D-052-C17: SD の読取りの成功で slot summary と未反映一覧を stale にし、失敗では何も stale にしない", async () => {
+    // 67 §67.10: 読取りの中の PLU の占有の照合で、最終照合日時と missing・conflict の商品の未反映が変わりうる
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+
+    vi.mocked(commands.scanRegisterSd).mockResolvedValueOnce({
+      status: "error",
+      error: {
+        kind: "import_error",
+        message: "SD が見つかりません。",
+        field: null,
+        error_id: null,
+        stocktake_recovery: null,
+      },
+    });
+    act(() => {
+      result.current.scanSd();
+    });
+    await waitFor(() => {
+      expect(result.current.scanError).not.toBeNull();
+    });
+    expect(invalidateSpy).not.toHaveBeenCalled();
+
+    vi.mocked(commands.scanRegisterSd).mockResolvedValueOnce({
+      status: "ok",
+      data: {
+        scan: {
+          volume_label: "E:",
+          scanned_from: "2026-02-20",
+          candidates: [],
+          skipped_unknown_count: 0,
+          tidy_failure: null,
+          ej: null,
+        },
+        scan_token: "scan-token",
+        plu_snapshot_skipped_older: true,
+      },
+    });
+    act(() => {
+      result.current.scanSd();
+    });
+    await waitFor(() => {
+      expect(result.current.state.status).toBe("sd_list");
+    });
+    expect(result.current.state).toMatchObject({ scan: { plu_snapshot_skipped_older: true } });
+    await waitFor(() => {
+      expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.registerSdScan());
+    });
+  });
+
   it("test_daily_report_command_req401_additional_confirmation_reaches_biz", async () => {
     // REQ-401 / I-W4 / I-U6 / SPEC-SDI-D3,D5: 日報UI trueをgenerated commandへ一回だけ渡す。
     const additional = makePreview();
@@ -808,6 +863,7 @@ describe("useDailyReportImportFlow_req401", () => {
           ej: { new_count: 1, held_count: 0, conflict_count: 0, unreadable_file_count: 0 },
         },
         scan_token: "scan-token",
+        plu_snapshot_skipped_older: false,
       },
     });
     let resolveBulk!: (
@@ -948,6 +1004,7 @@ describe("useDailyReportImportFlow_req401", () => {
           ej: { new_count: 0, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
         },
         scan_token: "scan-token",
+        plu_snapshot_skipped_older: false,
       },
     });
     act(() => {

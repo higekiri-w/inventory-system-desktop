@@ -6,7 +6,7 @@
 
 | repo 操作 | 処理・返却の契約 |
 |---|---|
-| product_repo の更新型 | `ProductUpdates` から `stock_quantity` を除く（(a)、実装済み。数量の更新は [21](21-io-inventory-repo.md) の `update_stock_quantity` だけ）。商品の読取りの 4 つ（`find_by_product_code`・`search_products`・`get_stock_detail`・`list_low_stock_products`。`ProductWithRelations` を返す関数）は `stock_recheck`・`stock_range_low`・`stock_range_high` を返す（b2。SELECT の `plu_memory_no` の後の 3 列で、`get_stock_detail` の最終入庫日・最終販売日はその後ろ）。`Product` を返す読取り（PLU の書出し・JAN の照合）は写しの 3 列を返さない |
+| product_repo の更新型 | `ProductUpdates` から `stock_quantity` を除く（(a)、実装済み。数量の更新は [21](21-io-inventory-repo.md) の `update_stock_quantity` だけ）。商品の読取りの 4 つ（`find_by_product_code`・`search_products`・`get_stock_detail`・`list_low_stock_products`。`ProductWithRelations` を返す関数）は `stock_recheck`・`stock_range_low`・`stock_range_high` を返す（b2。SELECT の取引先名の後の 3 列で、`get_stock_detail` の最終入庫日・最終販売日はその後ろ）。`Product` を返す読取り（PLU の書出し・JAN の照合）は写しの 3 列を返さない |
 | stocktake_repo の明細の読取り | `get_stocktake_items`・`find_stocktake_item` は、明細を参照する計数（`stock_counts.stocktake_item_id`）の効く値と置き場の日付、写しの在庫・範囲を返す。差異と要再確認の理由は BIZ が求める |
 | 計数の読取り・保存 | [21](21-io-inventory-repo.md) の新契約（`insert_stock_count` と、商品の計数の鍵の順の一覧） |
 | 共有 JAN の読取り（b1） | `list_shared_jan_conflicts(conn) -> Result<Vec<(String, Vec<String>)>, DbError>`（`pub(crate)`）: 在庫連動の商品と同じ JAN を別の商品が持つ組を JAN の昇順、商品コードの昇順で返す（[36](36-biz-integrity-check.md) の共有 JAN の違反の一覧）。変更の後の状態の検査（BIZ-01）は今の `find_by_jan_code` で行う |
@@ -105,16 +105,7 @@ fn search_products(conn: &DbConnection, query: &ProductSearchQuery) -> Result<Pa
 4. LIMIT clamped_per_page OFFSET (page - 1) * clamped_per_page で取得
 5. PaginatedResult { items, total_count, page, per_page: clamped_per_page } を返す
 
-PLU の移行 filter（`plu: Option<PluMigrationFilter>` と WHERE の PLU 条件）と、`ProductWithRelations` の `plu_slots` を JAN で LEFT JOIN した読取り専用 `plu_memory_no`（IO-01-D4 / SPEC-PLS-D7）は D-117 (2)・(5) で撤去した。runtime の lane が code・bindings・UI・test と一緒に外す。
-
-一括 PLU 対象更新の抽出（SPEC-PLS-D6）も撤去の対象（D-117 (2)）。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
-
-```rust
-pub fn find_products_for_bulk_plu_target(
-    conn: &DbConnection,
-    filter: &ProductBulkFilter,
-) -> Result<Vec<Product>, DbError>
-```
+PLU の移行 filter（検索条件の `plu` と WHERE の PLU 条件）、`ProductWithRelations` の memory No. の列（IO-01-D4 / SPEC-PLS-D7）、一括 PLU 対象更新の抽出（SPEC-PLS-D6）は D-117 (2)・(5) で撤去した。古い payload に残った `plu` は無視する。
 
 #### db::plu_slot_repo（IO-01-D4 / SPEC-PLS-D1）
 
@@ -244,25 +235,6 @@ fn find_plu_dirty_products(conn: &DbConnection) -> Result<Vec<Product>, DbError>
 **エラーハンドリング**:
 - SQL実行失敗 → DbError::QueryFailed(詳細)
 
-#### find_plu_dirty_products_for_plu
-
-**関数要求**: plu_target=1 かつ plu_dirty=1 の商品一覧を部門名付きで返す（PLU書出しの差分モード、IO-04入力用。D-028 により plu_target 条件を追加）
-
-**シグネチャ**:
-```
-fn find_plu_dirty_products_for_plu(conn: &DbConnection) -> Result<Vec<ProductForPlu>, DbError>
-```
-
-**処理ステップ**:
-1. SQL実行: SELECT p.*, d.name as department_name FROM products p INNER JOIN departments d ON p.department_id = d.id WHERE p.plu_dirty = 1 AND p.plu_target = 1 ORDER BY p.product_code ASC
-2. 結果をVec<ProductForPlu>にマッピング（ProductForPlu = Product + department_name: String）
-3. 0件でもOk(空Vec)を返す
-
-**設計判断**: INNER JOIN を使用（FK制約で departments は必ず存在）。department_name は現在値（履歴ではない。PLU書出しはレジ登録用のため時点固定不要）。既存の find_plu_dirty_products も D-028 で `plu_target = 1` 条件を持つ（UI-00 通知の scope 限定のため）。`_for_plu` との差は department_name 付きかどうかだけ。
-
-**エラーハンドリング**:
-- SQL実行失敗 → DbError::QueryFailed(詳細)
-
 #### find_active_products
 
 **関数要求**: 有効な（廃番でない）商品一覧を返す（PLU書出しの全件モード用）
@@ -279,7 +251,7 @@ fn find_active_products(conn: &DbConnection) -> Result<Vec<Product>, DbError>
 
 #### find_active_products_for_plu
 
-**関数要求**: PLU対象の有効な商品一覧を部門名付きで返す（PLU書出しの全件モード、IO-04入力用。D-028 により plu_target 条件を追加）
+**関数要求**: PLU対象の有効な商品一覧を部門名付きで返す（PLU書出しの差分モードと全件モード、confirm の照合、IO-04入力用。D-028 により plu_target 条件を追加）
 
 **シグネチャ**:
 ```
@@ -291,7 +263,7 @@ fn find_active_products_for_plu(conn: &DbConnection) -> Result<Vec<ProductForPlu
 2. 結果をVec<ProductForPlu>にマッピング
 3. 0件でもOk(空Vec)を返す
 
-**設計判断**: find_plu_dirty_products_for_plu と同じ方針。INNER JOIN、department_name は現在値。既存の find_active_products（商品一覧用）は変更しない。
+**設計判断**: INNER JOIN を使用（FK制約で departments は必ず存在）。department_name は現在値（履歴ではない。PLU書出しはレジ登録用のため時点固定不要）。既存の find_active_products（商品一覧用）は変更しない。PLU書出しの差分モードも全件モードもこの関数の結果から群を作る（[33 §16.4](33-biz-plu-export-service.md) 手順 2・3。差分は未反映の商品を持つ JAN だけを出力の候補にし、不一致・代表の行・`target_product_codes` はその JAN の対象の商品の全員で決める。未反映の商品だけを読む `find_plu_dirty_products_for_plu` は、共有 JAN の片方だけの変更を見逃すので D-168 で外した）。
 
 **定義**: PLU書出しの "対象" = `is_discontinued = 0 AND plu_target = 1`（D-028 三分バケットの「対象外」= plu_target=0 はここで除外される）。
 
@@ -586,6 +558,18 @@ fn upsert_setting(conn: &DbConnection, key: &str, value: &str) -> Result<(), DbE
 **処理ステップ**:
 1. `INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3`
 2. updated_atは現在日時（ISO 8601）
+
+#### delete_setting（D-168）
+
+**関数要求**: app_settings の 1 行を key で消す。key が無くても成功する（restore の後に `plu_register_snapshot_at` を消す。[71 §71.7](71-mnt-backup.md) ステップ 6a）
+
+**シグネチャ**:
+```
+fn delete_setting(conn: &DbConnection, key: &str) -> Result<(), DbError>
+```
+
+**処理ステップ**:
+1. `DELETE FROM app_settings WHERE key = ?1`
 
 #### list_operation_logs（第6段階追加、UI-11c-D2/D3 で期間 predicate 拡張）
 

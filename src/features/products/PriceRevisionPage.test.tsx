@@ -834,7 +834,6 @@ describe("PriceRevisionPage UI-14 / REQ-105", () => {
         supplier_id: null,
         include_unassigned: false,
         is_discontinued: false,
-        plu: "all",
         sort_key: "ProductCode",
         sort_order: "Asc",
         page: 1,

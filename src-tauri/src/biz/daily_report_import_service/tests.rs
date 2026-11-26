@@ -4187,6 +4187,7 @@ fn snapshot_of(
             .collect(),
         ej_files,
         ej_unreadable_files: Vec::new(),
+        plu_register_z004s: Vec::new(),
     }
 }
 
@@ -4587,4 +4588,38 @@ fn test_req401_scan_without_ej_has_no_ej_item() {
         bulk_outline(&bulk),
         [("2026-03-21".to_string(), "imported")]
     );
+}
+
+// -----------------------------------------------------------------------
+// BIZ-08 §37.9 手順 10: 窓の中の Z004 を PLU の占有の照合のために読む（D-117 (3)）
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_scan_register_sd_req907_collects_window_z004_bytes() {
+    // REQ-907 / 37 §37.9 手順 10: 窓の中の XZ と XZ_BKUP の Z004 だけを、形の検査（IO-09-D4）を通った分だけ、
+    // 同じ bytes を 1 つにまとめて snapshot に入れる。DB へは書かない
+    let (dir, conn) = setup_test_db();
+    let root = sd_root_at(&dir.path().join("sd"));
+    let z004 = |body: &str| format!("\"SYNTH Z004\",\"{body}\"\r\n").into_bytes();
+    put_sd(&root, "XZ\\2026\\03\\Z004_21 .CSV", &z004("A"));
+    put_sd(&root, "XZ_BKUP\\2026\\03\\Z004_21 _0001.CSV", &z004("A"));
+    put_sd(&root, "XZ_BKUP\\2026\\03\\Z004_20 _0001.CSV", &z004("B"));
+    // 形が外れる（LF だけ）・窓の外（today − 30 日より前）・別の系列
+    put_sd(&root, "XZ\\2026\\03\\Z004_22 .CSV", b"\"LF\",\"C\"\n");
+    put_sd(&root, "XZ\\2026\\01\\Z004_05 .CSV", &z004("D"));
+    put_sd(&root, "XZ_BKUP\\2026\\01\\Z004_06 _0001.CSV", &z004("E"));
+    put_sd(&root, "XZ\\2026\\03\\Z006_21 .CSV", &z004("F"));
+    let db_state = |conn: &crate::db::DbConnection| {
+        ["plu_slots", "app_settings", "operation_logs", "csv_imports"].map(|table| {
+            crate::db::test_support::dump(conn, &format!("SELECT * FROM {table} ORDER BY 1"))
+        })
+    };
+    let before = db_state(&conn);
+
+    let result = scan_selected(&conn, &root, day("2026-03-25")).unwrap();
+
+    let mut collected = result.snapshot.plu_register_z004s;
+    collected.sort();
+    assert_eq!(collected, vec![z004("A"), z004("B")]);
+    assert_eq!(db_state(&conn), before);
 }

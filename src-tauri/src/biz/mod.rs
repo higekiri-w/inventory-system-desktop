@@ -20,9 +20,7 @@ pub mod unit_amount;
 #[allow(unused_imports)]
 pub use crate::db::product_repo::{Department, Supplier};
 #[allow(unused_imports)]
-pub use crate::db::product_repo::{
-    ProductBulkFilter, ProductSearchQuery, ProductStockUnit, ProductWithRelations,
-};
+pub use crate::db::product_repo::{ProductSearchQuery, ProductStockUnit, ProductWithRelations};
 #[allow(unused_imports)]
 pub use crate::db::sales_repo::CsvImport;
 // EJ の記録の repo の型（24 §14.25。BIZ-08 §37.11 が使う）

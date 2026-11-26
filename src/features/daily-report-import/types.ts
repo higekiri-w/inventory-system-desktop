@@ -17,9 +17,15 @@ export type DailyReportImportRecordsSearch = z.output<typeof dailyReportImportRe
 
 export type DailyReportErrorRecoverTo = "idle" | "preview" | "sd_list";
 
+/**
+ * 画面が持つ scan。scan の応答の `plu_snapshot_skipped_older`（45 §45.6a 手順 2a）を同じ名前で畳む。
+ * 一覧へ戻っても同じ scan の知らせは残り、読み直すと新しい応答の値になる（UI-07-D15 (8)）
+ */
+export type DailyReportSdScanView = DailyReportSdScan & { plu_snapshot_skipped_older: boolean };
+
 /** SD から来たこと（UI-07-D15 (5)）。手で選んだ経路の状態は持たない */
 export interface DailyReportSdOrigin {
-  scan: DailyReportSdScan;
+  scan: DailyReportSdScanView;
   scanToken: string;
   /** 「確認する」を押した行の candidate_key */
   candidateKey: string;
@@ -28,13 +34,13 @@ export interface DailyReportSdOrigin {
 export type DailyReportImportState =
   | { status: "idle" }
   | { status: "scanning" }
-  | { status: "sd_list"; scan: DailyReportSdScan; scanToken: string }
+  | { status: "sd_list"; scan: DailyReportSdScanView; scanToken: string }
   /** 55 UI-07-D17: 「まとめて取り込む」の応答を待つ間 */
-  | { status: "bulk_importing"; scan: DailyReportSdScan; scanToken: string }
+  | { status: "bulk_importing"; scan: DailyReportSdScanView; scanToken: string }
   /** 55 UI-07-D17: 一括の結果。scan は応答を畳んだ表示で、残りがあれば同じ scan_token でもう一度押せる（BIZ-08-D7 のやり直し） */
   | {
       status: "bulk_result";
-      scan: DailyReportSdScan;
+      scan: DailyReportSdScanView;
       scanToken: string;
       response: RegisterSdBulkResponse;
     }
@@ -70,7 +76,7 @@ export type DailyReportImportState =
 
 export type DailyReportImportAction =
   | { type: "scan_started" }
-  | { type: "scan_succeeded"; scan: DailyReportSdScan; scanToken: string }
+  | { type: "scan_succeeded"; scan: DailyReportSdScanView; scanToken: string }
   | { type: "scan_failed" }
   | { type: "sd_candidate_selected"; candidateKey: string; filenames: string[] }
   | { type: "bulk_started" }

@@ -155,7 +155,7 @@ COMMIT
 
 **backfill の判定範囲**: JAN/EAN-13 チェックディジット検証は SQL で行わない。チェックディジット不正は BIZ-04 prepare の「要修正」バケット（PluExcludedReason::InvalidCheckDigit）がアプリ側で捕捉する。
 
-**廃番商品の扱い**: backfill は廃番商品を plu_target=0 にする（レジ登録対象に戻さない）。廃番切替時に plu_target を自動で 0 にするかは、スロット解放と不可分のため PLUスロット永続割当の設計で決めるとした。今の正本は [30 §4.5](30-biz-product-service.md) の手順 4（廃番化は `plu_target=0` も同時に更新する）と、枠の扱いの [33 §16.6](33-biz-plu-export-service.md)（BIZ-04-D6、D-117 (1)。枠を解放しない形の runtime は backlog の「PLU の書出しの見直しの runtime」）。
+**廃番商品の扱い**: backfill は廃番商品を plu_target=0 にする（レジ登録対象に戻さない）。廃番切替時に plu_target を自動で 0 にするかは、スロット解放と不可分のため PLUスロット永続割当の設計で決めるとした。今の正本は [30 §4.5](30-biz-product-service.md) の手順 4（廃番化は `plu_target=0` も同時に更新する）と、枠の扱いの [33 §16.6](33-biz-plu-export-service.md)（BIZ-04-D6、D-117 (1)。枠を解放しない形の runtime は §24 の migration と同じ lane で入れた）。
 
 ## 11. MNT-03 追加: migration v4（日報取込みテーブル）
 
@@ -306,7 +306,7 @@ fixture / 注入の必須条件は 71 §71.10「fixture / 注入の必須条件�
 4. row count、範囲端、既定 status を同一 transaction 内で検証し、失敗時は §3.2 / MNT-03-D1 に従って rollback する。
 5. schema_versions に v5 を記録して commit する。v3 の `plu_target` backfill と v4 の日報 table は変更しない。
 
-v5 は適用済みの履歴として残す。D-117（2026-10-16）の後の表（status の 4 値、`released_at` を外す、partial UNIQUE を `reserved` / `active` だけ、既存の `release_pending` を `external`）は、D-117 の runtime の lane が足す migration で作る（手順は [db-design/plu-tables.md](../db-design/plu-tables.md) の「migration（D-117、runtime の lane）」。番号と本節への追記はその lane が行う）。
+v5 は適用済みの履歴として残す。D-117（2026-10-16）の後の表（status の 4 値、`released_at` を外す、partial UNIQUE を `reserved` / `active` だけ、既存の `release_pending` を `external`）は、§24 の migration（vP、MNT-03-D25）が作る。
 
 ## 14. MNT-03 追加: migration v6（suppliers.updated_at）
 
@@ -552,3 +552,27 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 **回復**: §16 の「回復」と同じ（vC が COMMIT した DB は vC を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vC の後に入れた記録と取消は戻らない）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
 
 **テスト**（`schema_v15::tests::migration_v15_adds_cancel_columns_and_manual_sale_link`。packet の Test Plan の T9）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・半角空白だけの理由（SQLite の `trim` は半角空白だけを除くので、全角空白・tab だけの理由は DB を通り、BIZ が拒む。31 §12.6c の手順 1）・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。
+
+## 24. MNT-03 追加: PLU の枠の表の作り直しの migration（D-117、D-168）
+
+**MNT-03-D25 / D-117 (1) / D-168**: PLU の書出しの見直しの runtime の lane（Plan Packet `docs/plans/2026-11-24-plu-redesign-runtime.md`、導入の前の関門 14 の前提）の migration（以下 vP）。列と状態の意味の正本は [plu-tables](../db-design/plu-tables.md) の §25 と「migration（D-117）」。版の番号は v16（起票の時点の main の最大は v15）。版の番号の規則は §21 と同じ（先に merge する側が小さい番号を取り、後から merge する側が file 名・`mod` の行・`migrations()` の登録・節と ID を取り直す。欠けは §21 の連番の test が CI で止める）。description は `PLU の枠の作り直し（status を 4 値に、解放日時の列を外す。D-117）`、kind は `MigrationKind::Custom`、file は `src-tauri/src/db/schema_v16.rs`。
+
+**手順**（1 つの transaction。`plu_slots` を作り直すが、どの表も `plu_slots` を外部キーで参照せず、`plu_slots` も外部キーを持たないので `foreign_keys` は変えない。§21 の vT と同じ形）:
+
+1. BEGIN。止まる検査は置かない
+2. 作り直しの前の全行（memory No.・`scanning_code`・status・`reserved_at`・`activated_at`・`updated_at`）を読み、期待する行を作る（status の `release_pending` を `external` にし、ほかは同じ）
+3. `plu_slots_new` を 6 列（`released_at` を持たない）と status の 4 値の CHECK で作り、全行を `INSERT … SELECT` で写す。status の対応づけは写しの `CASE` で行う（旧い表を `UPDATE` しない。v5 の partial UNIQUE は `external` を含むので、v5 で保存できる同じ JAN の `release_pending` と `external`、`release_pending` と `active` の組が、旧い index の下の `UPDATE` で UNIQUE 違反になる）
+4. `DROP TABLE plu_slots`（旧い index も消える）、`ALTER TABLE plu_slots_new RENAME TO plu_slots`、partial UNIQUE index `idx_plu_slots_live_scanning_code` を `status IN ('reserved','active')` で作り直す
+5. 同じ TX の中で確かめる: 作り直しの後の全行が、手順 2 の期待する行と memory No. ごとに全部の列で NULL を含めて同じ。違えば ROLLBACK し、vP の変更を何も残さず版も記録せず `DbError::MigrationFailed`（vP だけの文: `レジの PLU の枠の記録を新しい形へ写せなかったので、この更新を取りやめ、この更新の変更は戻しました（同じ起動で先に済んだ別の更新は残ります）。起動し直しても同じ所で止まるときは、管理者に知らせてください。前の版のアプリで開けないときは、管理者が更新の前の backup に戻します（migration-recovery-runbook）: plu_slots（行数: {前} -> {後}、値の違う枠: {数}）`。実コードは文に入れない）
+6. `app_settings` の key `plu_register_snapshot_summary`（もう書かない・読まない）と `plu_register_snapshot_at`（前の版の DB の照合日時で PLU の書出しの gate を通さない。[33 §16.8](33-biz-plu-export-service.md)、owner の決定 TD-912）を消す。`plu_register_snapshot_settlement_no` は前の版の DB に無い
+7. schema_versions に記録して COMMIT する（MNT-03-D1 の共有の helper〈`commit_transaction`・`rollback_after_error`〉だけを使う）
+
+- 値は変えない: 枠（memory No. と JAN の組）・`reserved_at`・`activated_at`・`updated_at` は写しで変わらず、`reserved` / `active` の枠は同じ状態のまま。数量・在庫・売上・商品は変えない。捨てるのは `released_at` の値、`release_pending` と `external` の区別（この後の code はどちらも読まない）、最終照合日時（次に SD を読んで照合すれば入る）。
+- 手順 5 を置く理由: 写しで枠の JAN が入れ替わると、次の書出しがレジの別の枠を上書きし、レジに書いたものは DB を戻しても戻らない。
+- DB の作り直しとの関係: 作り直しの起点でない。値のある開発・試験 DB（owner の PC の L3 用の DB を含む）にもそのまま当たる。版を上げた DB は、PLU の書出しの前に売上データ取込みで SD を 1 回読む（手順 6。既にある `register_snapshot_required` の案内のとおり）。
+
+**止まった後の進め方**: §21 の同名の段と同じ（vP の変更は残らない。同じ起動で vP より前の migration が COMMIT していれば、その版と変更は残る。直した build で同じ DB を開けば vP が当たり直す）。
+
+**回復**: §16 の「回復」と同じ（vP が COMMIT した DB は vP を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
+
+**テスト**（`schema_v16::tests`。packet の Test Plan の T1〜T4）: 5 つの status の行（同じ JAN の `release_pending` と `external`、同じ JAN の `release_pending` と `active` の 2 組を含む）を持つ直前の版の DB で vP が成功し、4,784 行の全部が、migration の前の行から test が独立に作った期待値と memory No. ごとに同じで、`released_at` 列が無い（`test_migration_req907_plu_slots_rebuild_maps_release_pending_to_external`）。同じコードの `external` の複数行と、`external` と `active` の同じコードを保存でき、`reserved` / `active` の同じコードの 2 行目と一覧に無い status が拒まれる（`…_unique_only_reserved_active`）。写しの後・確かめの前に 2 枠の JAN を入れ替える（test だけの hook）と vP は失敗し、schema・全表の行・版が元のまま（`…_verify_failure_rolls_back`）。2 つの key だけが消える（`…_drops_summary_key`）。

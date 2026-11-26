@@ -4,12 +4,10 @@
 
 use crate::biz::plu_export_service::{
     self, ExportMode, PluExcludedReason, PluExportConfirmRequest, PluExportPrepareRequest,
-    PluPreparedRow, PluRegisterSnapshotSummary,
+    PluPreparedRow, PluRegisterSnapshotSummary, PluRemainingProduct,
 };
 use crate::biz::ProductStockUnit;
-use crate::cmd::CmdErrorKind;
 use crate::cmd::{AppState, CmdError};
-use crate::constants::CSV_IMPORT_FILE_SIZE_LIMIT;
 use base64::{engine::general_purpose, Engine as _};
 use tauri::State;
 
@@ -38,8 +36,6 @@ pub struct PluExportPrepareResponse {
     pub prepared_rows: Vec<PluPreparedRow>,
     /// PLUファイルに含めなかった商品一覧
     pub excluded: Vec<PluExcludedProductResponse>,
-    /// PLU上限超過警告（互換維持フィールド）
-    pub over_limit_warning: bool,
 }
 
 #[derive(Debug, serde::Serialize, specta::Type)]
@@ -56,6 +52,8 @@ pub struct PluExcludedProductResponse {
 pub struct PluExportConfirmResponse {
     pub updated_count: usize,
     pub confirmed_at: String,
+    /// 保存の後に出力の行が変わっていて、未反映のまま残した商品（33 §16.5）
+    pub remaining_products: Vec<PluRemainingProduct>,
 }
 
 /// PLU dirty 商品レスポンス（フロントエンド返却用）
@@ -113,7 +111,6 @@ pub fn prepare_plu_export(
                 reason: excluded_reason_to_snake_case(&excluded.reason).to_string(),
             })
             .collect(),
-        over_limit_warning: result.over_limit_warning,
     })
 }
 
@@ -141,30 +138,8 @@ pub fn confirm_plu_export_saved(
     Ok(PluExportConfirmResponse {
         updated_count: result.updated_count,
         confirmed_at: result.confirmed_at,
+        remaining_products: result.remaining_products,
     })
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn import_plu_register_snapshot(
-    state: State<AppState>,
-    file_bytes: Vec<u8>,
-) -> Result<PluRegisterSnapshotSummary, CmdError> {
-    if file_bytes.len() > CSV_IMPORT_FILE_SIZE_LIMIT {
-        return Err(CmdError {
-            kind: CmdErrorKind::Validation,
-            message: "ファイルサイズが上限(20MB)を超えています".to_string(),
-            field: None,
-            error_id: None,
-            stocktake_recovery: None,
-            related_csv_import_id: None,
-        });
-    }
-    let mut conn = state
-        .db
-        .lock()
-        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
-    plu_export_service::import_plu_register_snapshot(&mut conn, &file_bytes).map_err(CmdError::from)
 }
 
 #[tauri::command]
@@ -218,36 +193,5 @@ fn excluded_reason_to_snake_case(reason: &PluExcludedReason) -> &'static str {
         PluExcludedReason::InvalidCheckDigit => "invalid_check_digit",
         PluExcludedReason::GroupPriceMismatch => "group_price_mismatch",
         PluExcludedReason::NoFreeSlot => "no_free_slot",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::test_support::setup_test_db;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-    use tauri::Manager;
-
-    #[test]
-    fn test_import_plu_register_snapshot_req907_rejects_oversize_bytes() {
-        // REQ-907: A-N1b CMD boundary uses the shared 20MB guard.
-        let (_dir, conn) = setup_test_db();
-        let app = tauri::test::mock_builder()
-            .manage(AppState {
-                db: Mutex::new(conn),
-                preview_cache: Mutex::new(HashMap::new()),
-                daily_report_preview_cache: Mutex::new(HashMap::new()),
-                register_sd_scan_cache: Mutex::new(HashMap::new()),
-            })
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap();
-        let error = import_plu_register_snapshot(
-            app.state::<AppState>(),
-            vec![0; crate::constants::CSV_IMPORT_FILE_SIZE_LIMIT + 1],
-        )
-        .unwrap_err();
-        assert_eq!(error.kind, CmdErrorKind::Validation);
-        assert_eq!(error.message, "ファイルサイズが上限(20MB)を超えています");
     }
 }

@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Download, RotateCcw, Save, Upload } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { AlertTriangle, CheckCircle2, Download, RotateCcw, Save } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/patterns/PageHeader";
 import { PageShell } from "@/components/patterns/PageShell";
-import { FilePicker, type PickedFile } from "@/components/FilePicker";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
   commands,
   type ExportMode,
   type PluExportPrepareResponse,
+  type PluExportConfirmResponse,
   type PluPreparedRow,
 } from "@/lib/bindings";
 import { formatLengthOrPlain } from "@/features/stock-inquiry/lib/format-stock-display";
@@ -46,7 +47,6 @@ interface PendingPluExport {
   encoding: string;
   targetProductCodes: string[];
   preparedRows: PluPreparedRow[];
-  overLimitWarning: boolean;
 }
 
 export const PLU_EXPORT_PENDING_STORAGE_KEY = "inventory:plu-export:pending:v1";
@@ -61,8 +61,11 @@ const PENDING_PLU_EXPORT_KEYS = [
   "encoding",
   "targetProductCodes",
   "preparedRows",
-  "overLimitWarning",
 ] as const;
+
+/** UI-08-D4・D10（67 §67.9 の failure note before confirm）: 保存の後と復帰の Alert の両方に出す 1 つの文 */
+const IMPORT_FAILURE_RECOVERY_NOTE =
+  "PCツールに取り込めなかった場合は、差分または全件を書き出し直してください。前に保存したファイルは取り込まないでください（保存の後にレジの登録状況が変わっていると、レジの登録を上書きします）。";
 
 const MODE_OPTIONS = [
   { value: "diff", label: "差分", description: "未反映の商品だけ" },
@@ -81,6 +84,20 @@ function isExportMode(value: unknown): value is ExportMode {
 function hasOnlyPendingPluExportKeys(value: Record<string, unknown>): boolean {
   const allowed = new Set<string>(PENDING_PLU_EXPORT_KEYS);
   return Object.keys(value).every((key) => allowed.has(key));
+}
+
+/** 復帰状態の 1 行。照合の値を持たない形・`row_kind` を持つ形（D-117 の前）は schema 不一致 */
+function isPendingPreparedRow(value: unknown): value is PluPreparedRow {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    Object.keys(row).length === 3 &&
+    Number.isInteger(row.memory_no) &&
+    Array.isArray(row.target_product_codes) &&
+    row.target_product_codes.every((code) => typeof code === "string" && code.length > 0) &&
+    typeof row.content_hash === "string" &&
+    row.content_hash.length > 0
+  );
 }
 
 function isPendingPluExport(value: unknown): value is PendingPluExport {
@@ -105,7 +122,7 @@ function isPendingPluExport(value: unknown): value is PendingPluExport {
     uniqueTargetCodes.size === pending.targetProductCodes.length &&
     pending.count === pending.preparedRows.length &&
     pending.targetProductCodes.every((code) => typeof code === "string" && code.length > 0) &&
-    typeof pending.overLimitWarning === "boolean"
+    pending.preparedRows.every(isPendingPreparedRow)
   );
 }
 
@@ -154,7 +171,6 @@ function buildPendingPluExport(
     encoding: nextPrepared.encoding,
     targetProductCodes: nextPrepared.target_product_codes,
     preparedRows: nextPrepared.prepared_rows,
-    overLimitWarning: nextPrepared.over_limit_warning,
   };
 }
 
@@ -183,7 +199,7 @@ function formatExcludedReason(reason: string): string {
   }
 }
 
-// eslint-disable-next-line complexity -- 衛生 batch 3 起票時実測（10a §3 item #1）: 保存・未確認復帰・確認・snapshot 読込みの state/表示条件混在。flow hook / 状態 panel への分割は本 lane の scope 外、Backlog 参照
+// eslint-disable-next-line complexity -- 衛生 batch 3 起票時実測（10a §3 item #1）: 保存・未確認復帰・確認の state/表示条件混在。flow hook / 状態 panel への分割は本 lane の scope 外、Backlog 参照
 export function PluExportPage() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ExportMode>("diff");
@@ -194,7 +210,7 @@ export function PluExportPage() {
   );
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [snapshotImporting, setSnapshotImporting] = useState(false);
+  const [confirmResult, setConfirmResult] = useState<PluExportConfirmResponse | null>(null);
 
   const dirtyQuery = useQuery({
     queryKey: queryKeys.pluDirty(),
@@ -213,27 +229,7 @@ export function PluExportPage() {
 
   const isBusy = status === "preparing";
   const dirtyCount = dirtyQuery.data?.length ?? 0;
-  const releasePendingCount = slotSummaryQuery.data?.release_pending_count ?? 0;
-  const diffCount = dirtyCount + releasePendingCount;
-  const snapshotLoaded = slotSummaryQuery.data?.snapshot_at != null;
-
-  async function handleSnapshotSelect(file: PickedFile) {
-    setSnapshotImporting(true);
-    setErrorMessage(null);
-    try {
-      await unwrapResult(commands.importPluRegisterSnapshot(Array.from(file.bytes)), {
-        source: "commands",
-        cmd: "import_plu_register_snapshot",
-      });
-      await invalidateByContract(queryClient, invalidationContract.pluRegisterSnapshot());
-      toast.success("レジ登録状況を読み込みました");
-    } catch (error) {
-      setErrorMessage(describeError(error));
-      toast.error("レジ登録状況を読み込めませんでした");
-    } finally {
-      setSnapshotImporting(false);
-    }
-  }
+  const snapshotAt = slotSummaryQuery.data?.snapshot_at ?? null;
 
   async function savePreparedFile(nextPrepared: PluExportPrepareResponse) {
     const targetPath = await save({
@@ -302,16 +298,17 @@ export function PluExportPage() {
     setStatus("preparing");
     setErrorMessage(null);
     try {
-      await unwrapResult(commands.confirmPluExportSaved(targetProductCodes, preparedRows), {
-        source: "commands",
-        cmd: "confirm_plu_export_saved",
-      });
+      const result = await unwrapResult(
+        commands.confirmPluExportSaved(targetProductCodes, preparedRows),
+        { source: "commands", cmd: "confirm_plu_export_saved" },
+      );
       await invalidateByContract(queryClient, invalidationContract.pluExportConfirm());
       clearPendingPluExport();
       setPendingExport(null);
+      setConfirmResult(result);
       setStatus("confirmed");
       scrollPageToTop();
-      toast.success("PLU未反映を更新しました");
+      if (result.updated_count > 0) toast.success("PLU未反映を更新しました");
     } catch (error) {
       setStatus("confirm_failed");
       setErrorMessage(describeError(error));
@@ -332,9 +329,9 @@ export function PluExportPage() {
 
   const displayCount = pendingExport?.count ?? prepared?.count;
   const displayEncoding = pendingExport?.encoding ?? prepared?.encoding;
-  const displayOverLimitWarning =
-    pendingExport?.overLimitWarning ?? prepared?.over_limit_warning ?? false;
   const displaySavedPath = pendingExport?.savedPath ?? savedPath;
+  // 33 §16.5: 保存の後に出力の行が変わっていて、未反映のまま残した商品
+  const remainingProducts = confirmResult?.remaining_products ?? [];
   const excludedProducts = prepared?.excluded ?? [];
   const showPendingRecovery =
     pendingExport !== null &&
@@ -343,7 +340,6 @@ export function PluExportPage() {
     status !== "confirmed" &&
     status !== "preparing";
   const hasTopStatus =
-    displayOverLimitWarning ||
     showPendingRecovery ||
     status === "cancelled" ||
     status === "prepare_failed" ||
@@ -358,7 +354,7 @@ export function PluExportPage() {
     <PageShell>
       <PageHeader
         title="PLU書出し"
-        description="レジのPLU登録状況を書き出すページです。『レジ登録状況を読み込む』でレジのCSV（Z004）を読み込み、空き・外部登録・アプリ管理・競合の件数を確認します。『差分を書き出す』（未反映の商品だけ）か『全件を書き出す』を選んで保存し、『この書出しを未反映から外す』を押して確定します。"
+        description="レジに登録する商品のファイルを作るページです。レジの登録状況は、毎日の売上データ取込みでレジの SD を読むと自動で読み込まれます。『差分を書き出す』（未反映の商品だけ）か『全件を書き出す』を選んで保存し、レジスターツールで取り込んでレジへ反映した後、『この書出しを未反映から外す』を押して確定します。"
       />
 
       <Alert>
@@ -368,80 +364,30 @@ export function PluExportPage() {
         </AlertDescription>
       </Alert>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>レジ登録状況</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {snapshotLoaded && slotSummaryQuery.data ? (
-            <>
-              <p className="text-sm">
-                最終読込み日時: {formatDateTime(slotSummaryQuery.data.snapshot_at ?? "")}
-              </p>
-              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                <div>
-                  <dt className="text-muted-foreground">空き</dt>
-                  <dd className="font-semibold">
-                    {slotSummaryQuery.data.free_count.toLocaleString()} 件
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">外部登録</dt>
-                  <dd className="font-semibold">
-                    {slotSummaryQuery.data.external_count.toLocaleString()} 件
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">アプリ管理</dt>
-                  <dd className="font-semibold">
-                    {slotSummaryQuery.data.app_managed_count.toLocaleString()} 件
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">競合</dt>
-                  <dd className="font-semibold">
-                    {slotSummaryQuery.data.conflict_count.toLocaleString()} 件
-                  </dd>
-                </div>
-              </dl>
-            </>
-          ) : (
-            <Alert variant="warning">
-              <AlertTriangle />
-              <AlertTitle>レジ設定の読込みが必要です</AlertTitle>
-              <AlertDescription>
-                書出しの前に、レジから取得したZ004を選んでください。
-              </AlertDescription>
-            </Alert>
-          )}
-          <FilePicker
-            accept=".csv,.txt"
-            ariaLabel="レジ登録状況のZ004を選ぶ"
-            buttonLabel="レジ登録状況を読み込む"
-            buttonIcon={<Upload aria-hidden="true" />}
-            dialogFilterName="Z004 / CSV / TXT"
-            dropEnabled={false}
-            disabled={snapshotImporting}
-            onSelect={(file) => void handleSnapshotSelect(file)}
-          />
-          {errorMessage && !snapshotLoaded ? (
-            <p className="text-sm text-destructive">{errorMessage}</p>
-          ) : null}
-        </CardContent>
-      </Card>
+      {/* UI-08-D11: 占有は売上データ取込みの SD の読取りで自動で照合する。ここは最終照合日時の 1 行だけ */}
+      {slotSummaryQuery.isError ? (
+        <p className="text-sm text-destructive">レジの登録状況を取得できませんでした。</p>
+      ) : null}
+      {slotSummaryQuery.isSuccess && snapshotAt !== null ? (
+        <p className="text-sm">
+          レジの登録状況: {formatDateTime(snapshotAt)}（売上データ取込みで SD を読んだとき）
+        </p>
+      ) : null}
+      {slotSummaryQuery.isSuccess && snapshotAt === null ? (
+        <Alert variant="warning">
+          <AlertTriangle />
+          <AlertTitle>レジの登録状況がまだ読まれていません</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>売上データ取込みでレジの SD を一度読んでください。</p>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/csv-import">売上データ取込みへ</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {hasTopStatus ? (
         <section aria-label="PLU書出し状態" className="space-y-3">
-          {displayOverLimitWarning ? (
-            <Alert variant="warning">
-              <AlertTriangle />
-              <AlertTitle>スキャニングPLU上限の4,784件を超えています</AlertTitle>
-              <AlertDescription>
-                SR-S4000のPLU総枠5,000件から通常PLU使用枠を除いた、現在のスキャニングPLU上限を超えています。
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
           {showPendingRecovery ? (
             <Alert variant="warning">
               <AlertTriangle />
@@ -451,9 +397,7 @@ export function PluExportPage() {
                   PCツールでこのPLUファイルを扱う場合だけ、未反映から外してください。
                   違うPLUファイルでやり直す場合は破棄して再書出しします。
                 </p>
-                <p className="font-medium">
-                  PCツールに取り込めなかった場合は、保存済みファイルを再投入するか、差分または全件を書き出し直してください。
-                </p>
+                <p className="font-medium">{IMPORT_FAILURE_RECOVERY_NOTE}</p>
                 <div className="grid gap-1">
                   <p>保存先: {pendingExport.savedPath}</p>
                   <p>件数: {pendingExport.count.toLocaleString()} 件</p>
@@ -502,8 +446,7 @@ export function PluExportPage() {
             <Alert variant="destructive">
               <AlertTitle>PLU書出しを準備できませんでした</AlertTitle>
               <AlertDescription className="space-y-3">
-                <p>商品マスタのJANコードや書出し対象件数を確認してください。</p>
-                <p>件数上限はSR-S4000のPLU総枠5,000件から通常PLU使用枠を 除いた値です。</p>
+                <p>商品マスタのJANコードを確認してください。</p>
                 {errorMessage ? <p>{errorMessage}</p> : null}
                 <Button
                   type="button"
@@ -536,9 +479,7 @@ export function PluExportPage() {
               <Alert variant="warning">
                 <AlertTriangle />
                 <AlertTitle>PCツールに取り込めなかった場合の回復手順</AlertTitle>
-                <AlertDescription>
-                  PCツールに取り込めなかった場合は、保存済みファイルを再投入するか、差分または全件を書き出し直してください。
-                </AlertDescription>
+                <AlertDescription>{IMPORT_FAILURE_RECOVERY_NOTE}</AlertDescription>
               </Alert>
             </>
           ) : null}
@@ -565,7 +506,26 @@ export function PluExportPage() {
             </Alert>
           ) : null}
 
-          {status === "confirmed" ? (
+          {status === "confirmed" && remainingProducts.length > 0 ? (
+            <Alert variant="warning">
+              <AlertTriangle />
+              <AlertTitle>未反映のまま残した商品があります</AlertTitle>
+              <AlertDescription className="space-y-3">
+                <p>
+                  保存の後に商品の内容（名称・売価・税率・部門）が変わったため、次の商品は未反映から外していません。差分をもう一度書き出して、レジスターツールで取り込んでください。前に保存したファイルは取り込まないでください。
+                </p>
+                <ul className="list-disc pl-5">
+                  {remainingProducts.map((product) => (
+                    <li key={product.product_code}>
+                      {product.name}（{product.product_code}）
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {status === "confirmed" && (confirmResult?.updated_count ?? 0) > 0 ? (
             <Alert className="border-success bg-success-soft text-success-strong">
               <CheckCircle2 />
               <AlertTitle>未反映から外しました</AlertTitle>
@@ -637,14 +597,8 @@ export function PluExportPage() {
             {dirtyQuery.isError ? (
               <p className="text-sm text-destructive">未反映商品を取得できませんでした。</p>
             ) : null}
-            {dirtyQuery.isSuccess && dirtyCount === 0 && releasePendingCount === 0 ? (
+            {dirtyQuery.isSuccess && dirtyCount === 0 ? (
               <p className="text-sm text-muted-foreground">PLU書出しが必要な商品はありません。</p>
-            ) : null}
-            {releasePendingCount > 0 ? (
-              <p className="text-sm">
-                レジ登録解除待ちが{releasePendingCount.toLocaleString()}
-                件あります。差分を書き出すと、レジから登録を外す行を作成します。
-              </p>
             ) : null}
             {dirtyQuery.isSuccess && dirtyCount > 0 ? (
               <div className="overflow-x-auto">
@@ -712,7 +666,7 @@ export function PluExportPage() {
             <div className="grid gap-2 text-sm">
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">差分対象</span>
-                <strong>{diffCount.toLocaleString()} 件</strong>
+                <strong>{dirtyCount.toLocaleString()} 件</strong>
               </div>
               {displayCount !== undefined && displayEncoding ? (
                 <>
@@ -734,8 +688,8 @@ export function PluExportPage() {
               className="w-full"
               disabled={
                 isBusy ||
-                !snapshotLoaded ||
-                (mode === "diff" && dirtyQuery.isSuccess && diffCount === 0)
+                snapshotAt === null ||
+                (mode === "diff" && dirtyQuery.isSuccess && dirtyCount === 0)
               }
               onClick={() => void handlePrepareAndSave()}
             >

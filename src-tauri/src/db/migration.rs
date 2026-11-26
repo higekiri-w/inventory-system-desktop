@@ -16,6 +16,7 @@ use super::schema_v12;
 use super::schema_v13;
 use super::schema_v14;
 use super::schema_v15;
+use super::schema_v16;
 use super::schema_v2;
 use super::schema_v3;
 use super::schema_v4;
@@ -119,6 +120,11 @@ fn migrations() -> Vec<Migration> {
             version: 15,
             description: "入出庫の記録の取消の列と手動販売の売上の結び（D-163）",
             kind: MigrationKind::Sql(schema_v15::get_v15_record_cancel_schema()),
+        },
+        Migration {
+            version: 16,
+            description: "PLU の枠の作り直し（status を 4 値に、解放日時の列を外す。D-117）",
+            kind: MigrationKind::Custom(schema_v16::apply_plu_slots_rebuild),
         },
     ]
 }
@@ -1011,9 +1017,10 @@ mod tests {
             )?;
             Ok(())
         }
+        // v5 の表の test なので、v5 までだけを当てる（後の版は release_pending を持たない。D-117）
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        let conn = init_database(path.to_str().unwrap()).unwrap();
+        let conn = Connection::open(dir.path().join("test.db")).unwrap();
+        super::migrate_up_to(&conn, 5).unwrap();
 
         set(&conn, 217, Some("A"), "active").unwrap();
         assert!(set(&conn, 218, Some("A"), "active").is_err());

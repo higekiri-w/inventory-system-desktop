@@ -513,8 +513,13 @@ fn restore_backup_with_ops(
             .map_err(|error| io_message("復元DB sync に失敗", error))?;
         ops.sync_parent(&paths.main)
             .map_err(|error| io_message("復元DB directory sync に失敗", error))?;
-        db::open_existing_database(paths.main.to_str().unwrap_or(""))
-            .map_err(|error| io_message("復元DB open に失敗", error))
+        let conn = db::open_existing_database(paths.main.to_str().unwrap_or(""))
+            .map_err(|error| io_message("復元DB open に失敗", error))?;
+        // 71 §71.7 ステップ 6a（D-160 (7)）: backup の時点の照合日時で PLU の書出しの gate を通さない。
+        // `committed` の後には元の DB へ戻す経路が無いので、その前に消す。失敗は接続を閉じて巻き戻す
+        db::system_repo::delete_setting(&conn, "plu_register_snapshot_at")
+            .map_err(|error| io_message("復元DB の PLU の照合日時の削除に失敗", error))?;
+        Ok(conn)
     })();
 
     let new_conn = match install_result {
@@ -1233,6 +1238,79 @@ mod tests {
         ] {
             assert!(!path.exists(), "unexpected artifact: {}", path.display());
         }
+    }
+
+    #[test]
+    fn test_restore_backup_req907_clears_snapshot_at_keeps_settlement_no() {
+        // REQ-907 / 71 §71.7 ステップ 6a（D-160 (7)）: 復元した DB の接続を公開する前に照合日時だけを消す。
+        // 消せなければ元の DB へ戻し、接続を公開しない
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("inventory.db");
+        // backup は今の版の DB（前の版だと、復元の open の migration が先に key を消す）
+        let backup_with_keys = |name: &str| {
+            let path = dir.path().join(name);
+            let backup = database_with_supplier(&path, "new");
+            for (key, value) in [
+                ("plu_register_snapshot_at", "2026-11-01T10:00:00"),
+                ("plu_register_snapshot_settlement_no", "42"),
+            ] {
+                db::system_repo::upsert_setting(&backup, key, value).unwrap();
+            }
+            (path, backup)
+        };
+        let setting =
+            |conn: &DbConnection, key: &str| db::system_repo::get_setting(conn, key).unwrap();
+
+        // 成功: 照合日時だけが消え、精算回数は backup の値のまま。書出しは次の照合まで拒まれる
+        let (backup_path, backup) = backup_with_keys("backup-ok.db");
+        drop(backup);
+        let conn = database_with_supplier(&db_path, "old");
+        let mut restored = restore_backup(conn, &backup_path, &db_path).unwrap();
+        assert_eq!(supplier_names(&restored), vec!["new"]);
+        assert_eq!(setting(&restored, "plu_register_snapshot_at"), None);
+        assert_eq!(
+            setting(&restored, "plu_register_snapshot_settlement_no").as_deref(),
+            Some("42")
+        );
+        let refused = crate::biz::plu_export_service::prepare_plu_export(
+            &mut restored,
+            crate::biz::plu_export_service::PluExportPrepareRequest {
+                mode: crate::biz::plu_export_service::ExportMode::Full,
+            },
+        );
+        assert!(
+            matches!(refused, Err(crate::biz::BizError::ValidationFailed(ref message)) if message.starts_with("register_snapshot_required")),
+            "{refused:?}"
+        );
+
+        // 失敗: backup の中の trigger が照合日時の DELETE を拒む（production に hook を足さない）
+        let (blocked_path, blocked) = backup_with_keys("backup-blocked.db");
+        blocked
+            .execute_batch(
+                "CREATE TRIGGER block_snapshot_at_delete BEFORE DELETE ON app_settings
+                 WHEN OLD.key = 'plu_register_snapshot_at'
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+            )
+            .unwrap();
+        drop(blocked);
+        match restore_backup(restored, &blocked_path, &db_path) {
+            Err(RestoreError::Recovered(message)) => {
+                assert!(message.contains("照合日時の削除に失敗"), "{message}")
+            }
+            other => panic!("Recovered が期待されるが {other:?}"),
+        }
+        assert_no_restore_artifacts(&RestorePaths::new(&db_path));
+        // 元の DB（1 回目に復元した DB）に戻っている: trigger が無く、照合日時は消えたまま
+        let reopened = db::open_existing_database(db_path.to_str().unwrap()).unwrap();
+        let triggers: i64 = reopened
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'block_snapshot_at_delete'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(triggers, 0);
+        assert_eq!(setting(&reopened, "plu_register_snapshot_at"), None);
     }
 
     #[test]
