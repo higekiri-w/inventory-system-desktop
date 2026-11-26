@@ -64,6 +64,8 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
   // 控えた欄。開いてから onCloseAutoFocus が走るまで（閉じる動きの間も）null でない
   const [target, setTarget] = useState<Target | null>(null);
   const actionRef = useRef<Action | null>(null);
+  // 閉じる動きの間（onOpenChange(false) の後）は項目の onSelect を受けない
+  const openRef = useRef(false);
   const composingRef = useRef(false);
 
   useEffect(() => {
@@ -85,7 +87,7 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
   };
 
   return (
-    <ContextMenu.Root>
+    <ContextMenu.Root onOpenChange={(open) => (openRef.current = open)}>
       <ContextMenu.Trigger
         asChild
         onContextMenu={(event) => {
@@ -130,8 +132,10 @@ export function TextFieldContextMenu({ children }: { children: ReactNode }) {
               <ContextMenu.Item
                 key={action}
                 disabled={disabled[action]}
-                // 開いている間は focus が menuitem に引き戻されるので、ここでは控えるだけ
-                onSelect={() => (actionRef.current = action)}
+                // 開いている間は focus が menuitem に引き戻されるので、ここでは控えるだけ。閉じかけの Enter は捨てる
+                onSelect={() => {
+                  if (openRef.current) actionRef.current = action;
+                }}
                 className="relative flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground focus:ring-[3px] focus:ring-ring focus:ring-inset data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
               >
                 {label}

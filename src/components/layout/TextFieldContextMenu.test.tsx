@@ -189,6 +189,47 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     expect(execCalls).toHaveLength(1);
   });
 
+  it("UI-CTX-D3: Esc で閉じる動きの間に Enter を押しても何も打たない", async () => {
+    withCloseAnimation();
+    renderWith(<input aria-label="商品名" defaultValue="abcdef" />);
+    const field = screen.getByRole<HTMLInputElement>("textbox");
+    const keys = user();
+    openOn(field, 1, 3);
+    await keys.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(item("切り取り"));
+    await keys.keyboard("{Escape}");
+    expect(screen.getByRole("menu", { hidden: true })).toHaveAttribute("data-state", "closed");
+    await keys.keyboard("{Enter}");
+    endCloseAnimation();
+    await waitClosed();
+    await waitFor(() => {
+      expect(document.activeElement).toBe(field);
+    });
+    expect(execCalls).toEqual([]);
+  });
+
+  it("UI-CTX-D3: コピーを選んで閉じる動きの間に ↑・Enter を押しても、コピーを 1 回だけ打つ", async () => {
+    withCloseAnimation();
+    renderWith(<input aria-label="商品名" defaultValue="abcdef" />);
+    const field = screen.getByRole<HTMLInputElement>("textbox");
+    const keys = user();
+    openOn(field, 1, 3);
+    await keys.keyboard("{ArrowDown}{ArrowDown}");
+    expect(document.activeElement).toBe(item("コピー"));
+    await keys.keyboard("{Enter}");
+    expect(screen.getByRole("menu", { hidden: true })).toHaveAttribute("data-state", "closed");
+    await keys.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(item("切り取り"));
+    await keys.keyboard("{Enter}");
+    endCloseAnimation();
+    await waitClosed();
+    await waitFor(() => {
+      expect(execCalls).toHaveLength(1);
+    });
+    expect(execCalls[0].active).toBe(field);
+    expect(execCalls[0].args).toEqual(["copy"]);
+  });
+
   it("UI-CTX-D1: touch・pen の長押しではメニューを出さない", () => {
     vi.useFakeTimers();
     renderWith(
