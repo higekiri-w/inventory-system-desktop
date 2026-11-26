@@ -69,7 +69,7 @@
 
 - 時刻は `printed_at` の `HH:MM`、番号は 6 桁のまま、合計は `1,234円`（`total_amount` が null なら「—」、0 は「0円」）。
 - 控えの文は `<pre>` に `body_text` をそのまま入れ、`white-space: pre`（折り返さず横に scroll、行末の空白を保つ）。trim・tab の展開・折り返しをしない。
-- 字形は `EJ_RECEIPT_FONT_FAMILY`（`"BIZ UDGothic", "MS Gothic", monospace`）を `src/features/ej-receipts/lib/receipt-format.ts` の 1 か所に置く。1 行 24 バイト（半角 1・全角 2）の並びを崩さない Windows の和文の等幅を先頭にする（Tailwind の `font-mono` は和文の等幅を持たない）。L3-1 の結果: 未確認（Windows native の L3 で、候補の先頭が当たったか、無い PC で代わりの字形が当たったか、並びが崩れないかを確かめてここに書く）。
+- 字形は `EJ_RECEIPT_FONT_FAMILY`（`"BIZ UDGothic", "MS Gothic", monospace`）を `src/features/ej-receipts/lib/receipt-format.ts` の 1 か所に置く。1 行 24 バイト（半角 1・全角 2）の並びを崩さない Windows の和文の等幅を先頭にする（Tailwind の `font-mono` は和文の等幅を持たない）。L3-1 の結果（2026-11-26、開発の Windows の native build、PR #305 の head `ac452463`、repo 外の回答台帳 TD-918）: 先頭の BIZ UDGothic がローカル ファイルから当たり、右端の桁がそろって折り返さず、字の大きさも読めた（PASS）。BIZ UDGothic の無い PC で代わりの字形が当たる場合は未観測。
 
 ## 80.5 Command / query の key / D-052
 
@@ -108,3 +108,4 @@
 | 2026-11-25 | ej-receipts-a2（実装、PR #305） | 新設。UI-09c の画面の状態、search と選んだ行の持ち方、種類の label の表、番号で探す 3 つの結果、欠けと手で選ぶ EJ、query の key と D-052 の C26・C27、字形の指定（L3-1 の結果は未確認）を書いた（[Plan Packet](../plans/2026-11-24-ej-receipts-a2.md)）。 |
 | 2026-11-25 | ej-receipts-a2（Final の closure round 2 の是正、PR #305） | §80.3 の選んだ行の持ち方を、ID と日の組を表示中の日と同じときだけ使う形に置き換えた。§80.6 に同じ番号の Enter での取り直し、§80.7 に取込みの待ちの間に見つけた 1 件へ待ちの後に移ることを書いた。 |
 | 2026-11-26 | ej-receipts-a2（L3 の観察の是正、PR #305） | §80.1 の `EjDateNavigator` に、日付の欄は打っている間は日を移さず Enter か欄から出たときに移すことを書いた（WebView2 で日の 2 桁目の打ちかけが捨てられた）。 |
+| 2026-11-26 | ej-receipts-a2（Ready の前の docs、PR #305） | §80.4 に L3-1 の結果（BIZ UDGothic が当たった、TD-918）を書いた。 |
