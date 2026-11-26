@@ -3117,6 +3117,91 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_update_product_req907_name_department_tax_change_sets_plu_dirty() {
+        // REQ-907 / 30 §4.4 手順 4c（D-160 (5)）: PLU の file の欄（名称・部門・税率）の変更だけが未反映にする
+        let (_dir, mut conn) = setup_test_db();
+        let code = "2000000000077";
+        let mut req = default_create_request();
+        req.jan_code = Some(code.to_string());
+        req.plu_target = true;
+        create_product(&mut conn, req).unwrap();
+
+        let dirty_after = |conn: &mut DbConnection, update: ProductUpdateRequest| {
+            product_repo::update_product(
+                conn,
+                code,
+                &ProductUpdates {
+                    plu_dirty: Some(false),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            update_product(conn, code, &update).unwrap();
+            product_repo::find_by_product_code(conn, code)
+                .unwrap()
+                .unwrap()
+                .product
+                .plu_dirty
+        };
+        let cases = [
+            (
+                "名称",
+                ProductUpdateRequest {
+                    name: Some("名前を変えた商品".to_string()),
+                    ..Default::default()
+                },
+                true,
+            ),
+            (
+                "部門",
+                ProductUpdateRequest {
+                    department_id: Some(3),
+                    ..Default::default()
+                },
+                true,
+            ),
+            (
+                "税率",
+                ProductUpdateRequest {
+                    tax_rate: Some(ProductTaxRate::Rate8),
+                    ..Default::default()
+                },
+                true,
+            ),
+            (
+                "原価だけ",
+                ProductUpdateRequest {
+                    cost_price_centi: Some(999),
+                    ..Default::default()
+                },
+                false,
+            ),
+            (
+                "単位だけ",
+                ProductUpdateRequest {
+                    stock_unit: Some(ProductStockUnit::Hon),
+                    ..Default::default()
+                },
+                false,
+            ),
+            (
+                "同じ値",
+                ProductUpdateRequest {
+                    name: Some("名前を変えた商品".to_string()),
+                    department_id: Some(3),
+                    tax_rate: Some(ProductTaxRate::Rate8),
+                    ..Default::default()
+                },
+                false,
+            ),
+        ];
+        for (label, update, expected) in cases {
+            assert_eq!(dirty_after(&mut conn, update), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial]
     fn test_update_product_req102_not_found() {
         // REQ-102: 商品更新 — 存在しない商品コードはNotFound
         let (_dir, mut conn) = setup_test_db();
