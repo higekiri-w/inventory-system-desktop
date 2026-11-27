@@ -410,7 +410,7 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 
 **回復**（R4）: vU は 1 つの transaction で、TX の中の失敗（COMMIT の失敗で transaction を戻せた場合を含む）は、失敗した migration の変更と版だけが戻る。COMMIT が成功した後の `foreign_keys` の復元・再読取の失敗（§3.2 MNT-03-D1）は `MigrationFailed`（接続破棄必須）を返すが、版は記録済みで DB は新しい版として完全であり、接続を破棄して再起動すれば開ける（旧版のアプリでは開けない）。`migrate` は migration ごとに COMMIT する（§3 の処理ステップ 5、`migration.rs` の `migrate`）ので、同じ起動で先に成功した migration の版は残る。例: v7 の DB に vU と後の migration を含む版を入れて vU（8）が COMMIT し、後の migration が失敗すると、DB は版 8 になり、v7 までのアプリ（app_max 7）は `SchemaNewerThanApp` で開けない。旧版でそのまま開けるのは、残った版が旧版のアプリの最大以下のとき（その起動の最初の migration で止まったとき）だけで、それ以外は下の手順で更新の前の backup に戻す。成功した後に旧版へ戻す経路も、アプリの中の復元（[71](71-mnt-backup.md) §71.7）では作れない: 旧版のアプリは vU を適用した DB で起動を中止し（MNT-03-D11、§12.4 の文言）、復元の画面に届かない。新しい版のアプリで更新の前の backup を復元すると、open の migrate が vU を適用し直す（71 §71.7 のとおり。これは新しい版のまま古い時点のデータへ戻す経路で、旧版へ戻す経路ではない）。旧版へ戻すのは、管理者がアプリの外で行う次の手順だけにする（店の利用者の操作にしない。管理者の手順書は [migration-recovery-runbook](../migration-recovery-runbook.md) で、本節が正本）。71 の restore の契約（退避・manifest・reconcile）は変えず、この手順はアプリが止まっている間の file の置き換えで、71 の遺物を作らない。
 
-1. 更新の前に、旧版のアプリで backup を作っておく（71 §71.4）。起動時の自動の backup は migrate の後に作られるので（71 §71.9）、新しい版で作った backup は旧版で使えない
+1. 更新の前に、旧版のアプリで backup を作っておく（71 §71.4）。起動時の自動の backup は migrate の後に作られるので（71 §71.9）、新しい版で作った backup は旧版で使えない（proposed・未実装、§24 の MNT-03-D25: 実装の後は、新しい版の起動が最初の migration の前に旧版の版のままの控えを作る。実装の commit でこの手順を事実に合わせる）
 2. アプリを止める（窓を全部閉じ、プロセスが残っていないことを確かめる）
 3. 何も動かす前に、復元の中断の遺物が無いことを確かめる: `{db_path}.restore_manifest`・`{db_path}.restore_manifest.tmp`・`*.restore_backup` のどれかがあれば手順を止める（起動の reconcile〈71 MNT-01-D5〉が扱う状態。手で消さず、file も動かさない）
 4. 何も動かす前に、戻す backup を確かめる: backup の写しを別の場所に作り、写しを読み取りだけで開いて、`SELECT MAX(version) FROM schema_versions` が旧版のアプリの最大の版以下（vU の前の版）で、`PRAGMA integrity_check` が `ok`。違えば別の backup で確かめ直し、合う backup が無ければ手順を止める（ここまでは `{db_path}` と `-wal`・`-shm` を動かさない）
@@ -552,3 +552,17 @@ SQLite の `ALTER TABLE ADD COLUMN` 制約により、NOT NULL + 非定数 defau
 **回復**: §16 の「回復」と同じ（vC が COMMIT した DB は vC を知らない旧版のアプリでは開けない。旧版へ戻すのは更新の前の backup。vC の後に入れた記録と取消は戻らない）。版の番号の取り直しと開発・試験 DB は §21 の同名の段と同じ。
 
 **テスト**（`schema_v15::tests::migration_v15_adds_cancel_columns_and_manual_sale_link`。packet の Test Plan の T9）: 空の DB と、5 つの記録（振替を含む）・手動販売の売上の行・Z004 の売上の行を持つ直前の版の DB の両方で vC が成功し、既存の行の新しい列が NULL、行数と値が変わらない。`canceled_at` だけ・`cancel_reason` だけ・半角空白だけの理由（SQLite の `trim` は半角空白だけを除くので、全角空白・tab だけの理由は DB を通り、BIZ が拒む。31 §12.6c の手順 1）・Z004 の行（`source='auto'`）への `manual_sale_id`・無い手動販売の ID が拒まれる。
+
+## 24. MNT-03 追加: migration の前の控え（proposed・未実装、D-162 (4)）
+
+**MNT-03-D25 / D-162 (4) / D-114**（Plan Packet `docs/plans/2026-11-27-migration-backup.md`、導入の前の関門 3 の (3)）: 起動の DB の準備（`src-tauri/src/lib.rs` の `prepare_database_with_init` の `init`）は、DB を open して PRAGMA を当てた後に `read_current_version_without_ddl` で版を読み、`0 < 版 < app_max_version()` のときだけ、最初の migration の前にその版のままの控えを `create_backup`（[71](71-mnt-backup.md) §71.4）で作ってから `migrate` する。
+
+- 保存先（owner の決定、repo 外の回答台帳 TD-930）: `resolve_backup_dir`（71 §71.9）の保存先。そこで作れなければ、その保存先が既定の `{app_data}/backups` と違うときだけ既定で作る。両方作れなければ migration を 1 つも当てずに起動を止め、窓の前の dialog（§12.4 の MNT-03-D4・D5）に下の文を出す。`resolve_backup_dir` の DB の error は既定へ移らずに止める（MNT-01-D2 の「読めない設定で既定へ fallback しない」）。
+- 保ち方（TD-931）: 控えは普通の backup と同じ名前（71 §71.3）と folder で、保持日数（MNT-01-D3）で消え、PC の外の控え（71 §71.11）にも写る。`backup_enabled` を見ない（設定で外せない）。`cleanup_old_backups` を呼ばない。
+- 作らない場合: 版が `app_max_version()` と同じ DB、DB の無い初回の起動（版 0）、新しすぎる DB（MNT-03-D11。版の比べが控えより前で、何も書かない）。
+- 順: reconcile（71 MNT-01-D5）と legacy の取込み（§12）の後の `init` の中。復元（71 §71.7）の中の migrate は変えない（`open_existing_database` は控えを作らない）。
+- 文言の固定部（§12.4 の表に足す行。末尾に `\n{details}`）: 「更新の前の控え（バックアップ）を作れなかったため、データの形を新しい版に切り替えずに起動を中止しました（データは変更していません）。試した保存先: {試した path を ・ でつなぐ}。PC の空きが少なければ空けてから、もう一度起動してください。直らなければ、前の版のアプリを入れ直すとそのまま使えます。わからない場合は管理者へ連絡してください。」
+- 例外と抜け道: 控えは「その起動の最初の migration の前」の版で、同じ起動で後の migration が止まった DB の次の起動の控えは途中の版になる（最初の起動の控えは残る）。止まる起動を繰り返すと起動のたびに控えが増え、PC の外の媒体の 30 本の保持（71 MNT-01-D12 (4)）で古い控えが押し出されうる（同じ日・同じ版で作らない形は足さない。見直しは再起動の繰返しが運用で起きたとき）。既定へ移った控え（設定の保存先が別のとき）は、復元の画面の一覧・保持日数の掃除・PC の外の控え・§71.8 の今日の backup の判定のどれにも入らず、旧版へ戻す管理者の手順（§16「回復」）で拾う。控えの後に `create_backup` が旧版の DB へ操作ログ `backup_create` を 1 行書く（控えには入らない）。PRAGMA（`journal_mode = WAL`）は今どおり控えの前に当たる（MNT-03-D11 の物理的な書込みと同じ）。
+- Why: migration は版ごとに COMMIT し、旧版のアプリは新しい版の DB を開けない（§16「回復」）。旧版へ戻す材料を更新の前の手作業に頼らず、アプリが戻せない変更の前に作る（D-162 (4)、TD-674・TD-679）。
+- Rejected alternatives: 設定の保存先だけ（抜いた USB メモリなどだと差すまで起動できず、設定の画面にも届かない）/ いつも既定の folder（設定の保存先と PC の外の控えに写らない）/ 別の名前・folder にして保持日数の掃除から外す（足す code と画面の扱いが増える）/ 作れなくても warn で続ける（D-162 (4) の「作れなければ止める」に反する）。
+- 見直し契機: 自動更新（backlog の保留「アプリの自動更新（updater）」）を入れるとき、店の人の更新の手順の lane がこの控えに別の保ち方を要るとしたとき、店の大きさの DB で窓が出るまでの待ちが長すぎたとき（packet の Contract Probe P1）。

@@ -421,6 +421,8 @@ entry error / filename filter の production-only / test-only 分岐が存在し
 
 **追加箇所**: `src-tauri/src/lib.rs` の `run` の setup で、DB の初期化（`prepare_database`）と操作ログの自動削除（`mnt::log_manager::cleanup_old_logs`）の後、State 管理（`app.manage`）の前に `run_startup_auto_backup` を呼ぶ
 
+**migration の前の控え**（proposed・未実装、[22](22-mnt-migration.md) §24 の MNT-03-D25）: `prepare_database` の中で、版が 1 以上でアプリの最大より小さい DB は、最初の migration の前に `create_backup` で控えを作る（保存先は下の `resolve_backup_dir`。作れなければ既定の `{app_data}/backups`、両方だめなら起動を止める）。`backup_enabled` を見ず、`cleanup_old_backups` を呼ばない。下の起動時の自動 backup はその後で、今のまま。
+
 ```
 // 自動バックアップチェック（起動時。lib.rs の run_startup_auto_backup の本体）
 // backup_dir は設定値を優先、未設定/空ならデフォルト（app_data/backups）
