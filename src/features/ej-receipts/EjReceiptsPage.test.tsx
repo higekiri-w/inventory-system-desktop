@@ -258,27 +258,39 @@ describe("EjReceiptsPage UI-09c REQ-908", () => {
     expect(input).toHaveValue("2026-11-19");
   });
 
-  it("U4: 日付を打ったまま mouse で前の日を押すと、打った日へは移らず表示中の日から 1 回だけ移る", async () => {
-    serveDays({
-      latest: day(),
-      "2026-11-19": day({ date: "2026-11-19", records: [summary(9, "000101")] }),
-    });
-    const user = userEvent.setup();
-    const { onSearchChange } = renderPage();
-    await screen.findByRole("grid");
-    const input = screen.getByLabelText("日付を選択");
-    await user.click(input);
-    fireEvent.change(input, { target: { value: "2026-11-10" } });
+  it.each([
+    ["前の日", "2026-11-19"],
+    ["次の日", "2026-11-21"],
+  ])(
+    "U4: 日付を打ったまま mouse で%sを押すと、打った日へは移らず表示中の日から 1 回だけ移る",
+    async (button, to) => {
+      let resolveTo!: (value: DayResponse) => void;
+      mockList.mockImplementation((date) =>
+        date === to
+          ? new Promise((resolve) => {
+              resolveTo = resolve;
+            })
+          : Promise.resolve(ok(day({ next_date: "2026-11-21" }))),
+      );
+      const user = userEvent.setup();
+      const { onSearchChange } = renderPage();
+      await screen.findByRole("grid");
+      const input = screen.getByLabelText("日付を選択");
+      await user.click(input);
+      fireEvent.change(input, { target: { value: "2026-11-10" } });
 
-    await user.click(screen.getByRole("button", { name: "前の日" }));
-    expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
-    expect(onSearchChange).toHaveBeenCalledTimes(1);
-    expect(onSearchChange).toHaveBeenLastCalledWith(
-      { date: "2026-11-19", no: undefined },
-      undefined,
-    );
-    expect(input).toHaveValue("2026-11-19");
-  });
+      await user.click(screen.getByRole("button", { name: button }));
+      // 隣の日の応答を待つ間も、欄は打った日でなく表示中の日に戻っている
+      expect(input).toHaveValue("2026-11-20");
+      act(() => {
+        resolveTo(ok(day({ date: to, records: [summary(9, "000101")] })));
+      });
+      expect(await screen.findByRole("row", { name: /000101/ })).toBeInTheDocument();
+      expect(onSearchChange).toHaveBeenCalledTimes(1);
+      expect(onSearchChange).toHaveBeenLastCalledWith({ date: to, no: undefined }, undefined);
+      expect(input).toHaveValue(to);
+    },
+  );
 
   it("U4: 欄で移った後に前後のボタンで移ると、前に打った日をもう一度打って Enter で移れる", async () => {
     serveDays({

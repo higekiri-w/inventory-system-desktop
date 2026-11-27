@@ -23,7 +23,7 @@
 | `src/routes/reports/receipts.tsx` | route `/reports/receipts`。`validateSearch` に feature の schema を渡し、`onSearchChange(next, { replace })` を `navigate` にする（`src/routes/reports/daily.tsx` と同じ形） |
 | `src/features/ej-receipts/types.ts` | search の schema `ejReceiptsSearchSchema`（§80.2） |
 | `src/features/ej-receipts/EjReceiptsPage.tsx` | 画面（`PageShell`）。表・控えの文・番号の欄・欠けの Alert・補助のリンク |
-| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（カレンダーの窓からの選択も同じ。無効・空なら今の日へ戻す）。前の日・次の日は欄の focus を外さず、表示中の日から 1 回だけ移る（打ちかけの下書きは捨てる。打ちかけの日へは移らない）。UI-09a の部品は変えない |
+| `src/features/ej-receipts/components/EjDateNavigator.tsx` | 前の日・次の日と日付の入力。UI-09a の `DateNavigator`（56 §56.7）の形を写し、±1 日でなく応答の `prev_date`・`next_date` へ飛ぶ（無ければ disabled）。日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（カレンダーの窓からの選択も同じ。無効・空なら今の日へ戻す）。前の日・次の日は、欄に focus があるときだけ欄の focus を外さず（欄の外から押すとボタンに focus が移る）、表示中の日から 1 回だけ移る（打ちかけの下書きは捨てる。打ちかけの日へは移らない）。UI-09a の部品は変えない |
 | `src/features/ej-receipts/hooks/useEjRecords.ts` | query の hook 3 つ（§80.5） |
 | `src/features/ej-receipts/lib/receipt-format.ts` | 種類の label・金額・時刻の純関数と、控えの文の字形の指定（§80.4） |
 | `src/features/daily-report-import/hooks/useImportEjFiles.ts` | 手で選ぶ EJ の取込み（55 UI-07-D17 と共有。§80.7） |
@@ -110,3 +110,4 @@
 | 2026-11-26 | ej-receipts-a2（L3 の観察の是正、PR #305） | §80.1 の `EjDateNavigator` に、日付の欄は打っている間は日を移さず Enter か欄から出たときに移すことを書いた（WebView2 で日の 2 桁目の打ちかけが捨てられた）。 |
 | 2026-11-26 | ej-receipts-a2（Ready の前の docs、PR #305） | §80.4 に L3-1 の結果（BIZ UDGothic が当たった、TD-918）を書いた。 |
 | 2026-11-26 | ej-receipts-a2（Final の closure round 6 の是正、PR #305） | §80.1 に前の日・次の日は表示中の日から 1 回だけ移り打ちかけの下書きを捨てること、§80.7 に取込みの待ちの間は日付の欄と前の日・次の日も押せないことを書いた。 |
+| 2026-11-27 | ej-receipts-a2（Final の closure round 7 の是正、PR #305） | §80.1 の前の日・次の日が欄の focus を外さないのを、欄に focus があるときだけにした（番号の欄から押した後の Enter が番号を探していた）。 |

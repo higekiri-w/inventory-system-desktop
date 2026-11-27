@@ -179,3 +179,45 @@ describe("UI-09c-D3 番号で探す × 55 UI-07-D17 の一括（C26） REQ-908",
     },
   );
 });
+
+describe("UI-09c-D2 前の日・次の日 × 番号で探す REQ-908", () => {
+  it("U4: 番号を打って未送信のまま mouse で前の日を押すと focus はボタンに移り、次の Enter は番号を探さずもう 1 日前へ移る（実の Router）", async () => {
+    vi.mocked(commands.listEjRecords).mockImplementation((date) =>
+      Promise.resolve(
+        ok({
+          ...theDay,
+          date: date ?? "2026-11-19",
+          prev_date: date === "2026-11-18" ? "2026-11-17" : "2026-11-18",
+          next_date: "2026-11-20",
+        }),
+      ),
+    );
+    vi.mocked(commands.findEjRecordsByNo).mockResolvedValue(
+      ok<EjRecordRef[]>([{ id: 1, date: "2026-11-20" }]),
+    );
+    const router = createRouter({
+      routeTree,
+      history: createMemoryHistory({ initialEntries: ["/reports/receipts?date=2026-11-19"] }),
+    });
+    render(
+      <QueryClientProvider client={createAppQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await screen.findByRole("grid");
+    await user.type(screen.getByLabelText("番号で探す"), "000102");
+
+    const prev = screen.getByRole("button", { name: "前の日" });
+    await user.click(prev);
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ date: "2026-11-18" });
+    });
+    expect(prev).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual({ date: "2026-11-17" });
+    });
+    expect(commands.findEjRecordsByNo).not.toHaveBeenCalled();
+  });
+});
