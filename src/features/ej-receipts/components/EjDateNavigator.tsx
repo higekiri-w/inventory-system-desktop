@@ -5,8 +5,7 @@
 // 日付の欄は打っている間は日を移さず、Enter か欄から出たときに移す（80 §80.1。WebView2 は日の 2 桁目を
 // 待つ間も change を出し、そこで移って描き直すと打ちかけが捨てられる）。
 
-import { useRef, useState } from "react";
-import type { MouseEvent } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatJpDate } from "@/features/daily-sales/lib/date-nav";
 
@@ -26,7 +25,6 @@ export function EjDateNavigator({
   disabled,
   onChange,
 }: EjDateNavigatorProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(date);
   // 最後に移った日。Enter の後の blur のように、同じ値で 2 回移らない
   const [sent, setSent] = useState(date);
@@ -50,14 +48,11 @@ export function EjDateNavigator({
     onChange(draft);
   };
 
-  // 前後のボタンは表示中の日から 1 回だけ移り、打ちかけの下書きは捨てる。欄に focus があるときだけ mousedown で
-  // 欄の focus を外さず、blur で打ちかけの日へ移ってから隣へ移る 2 回の移動（履歴に見ていない日が入る）を起こさない。
-  // 欄の外（番号の欄など）からは既定どおりボタンに focus を移し、次の Enter が元の欄で働かないようにする。
+  // 前後のボタンは表示中の日から 1 回だけ移り、打ちかけの下書きは捨てる。mousedown で欄の focus を外さず、
+  // blur で打ちかけの日へ移ってから隣へ移る 2 回の移動（履歴に見ていない日が入る）を起こさない。番号の欄から
+  // 押しても focus は番号の欄に残り、Enter は打った番号を探す（owner の原則 TD-936）。
   // ponytail: WebView2 で mousedown の preventDefault が欄の blur を止めるかは L3 で見る。効かなければ
   // blur の側で、押されたのが前後のボタンか（relatedTarget）を見て確定を飛ばす形にする。
-  const keepInputFocus = (e: MouseEvent) => {
-    if (document.activeElement === inputRef.current) e.preventDefault();
-  };
   const step = (to: string | null) => {
     if (to === null) return;
     setDraft(date);
@@ -71,7 +66,9 @@ export function EjDateNavigator({
         variant="outline"
         size="sm"
         disabled={disabled || prevDate === null}
-        onMouseDown={keepInputFocus}
+        onMouseDown={(e) => {
+          e.preventDefault();
+        }}
         onClick={() => {
           step(prevDate);
         }}
@@ -82,7 +79,6 @@ export function EjDateNavigator({
         {formatJpDate(date)}
       </span>
       <input
-        ref={inputRef}
         type="date"
         disabled={disabled}
         value={draft}
@@ -101,7 +97,9 @@ export function EjDateNavigator({
         variant="outline"
         size="sm"
         disabled={disabled || nextDate === null}
-        onMouseDown={keepInputFocus}
+        onMouseDown={(e) => {
+          e.preventDefault();
+        }}
         onClick={() => {
           step(nextDate);
         }}

@@ -181,43 +181,68 @@ describe("UI-09c-D3 番号で探す × 55 UI-07-D17 の一括（C26） REQ-908",
 });
 
 describe("UI-09c-D2 前の日・次の日 × 番号で探す REQ-908", () => {
-  it("U4: 番号を打って未送信のまま mouse で前の日を押すと focus はボタンに移り、次の Enter は番号を探さずもう 1 日前へ移る（実の Router）", async () => {
-    vi.mocked(commands.listEjRecords).mockImplementation((date) =>
-      Promise.resolve(
-        ok({
-          ...theDay,
-          date: date ?? "2026-11-19",
-          prev_date: date === "2026-11-18" ? "2026-11-17" : "2026-11-18",
-          next_date: "2026-11-20",
-        }),
-      ),
-    );
-    vi.mocked(commands.findEjRecordsByNo).mockResolvedValue(
-      ok<EjRecordRef[]>([{ id: 1, date: "2026-11-20" }]),
-    );
-    const router = createRouter({
-      routeTree,
-      history: createMemoryHistory({ initialEntries: ["/reports/receipts?date=2026-11-19"] }),
-    });
-    render(
-      <QueryClientProvider client={createAppQueryClient()}>
-        <RouterProvider router={router} />
-      </QueryClientProvider>,
-    );
-    const user = userEvent.setup();
-    await screen.findByRole("grid");
-    await user.type(screen.getByLabelText("番号で探す"), "000102");
-
-    const prev = screen.getByRole("button", { name: "前の日" });
-    await user.click(prev);
-    await waitFor(() => {
-      expect(router.state.location.search).toEqual({ date: "2026-11-18" });
-    });
-    expect(prev).toHaveFocus();
-    await user.keyboard("{Enter}");
-    await waitFor(() => {
-      expect(router.state.location.search).toEqual({ date: "2026-11-17" });
-    });
-    expect(commands.findEjRecordsByNo).not.toHaveBeenCalled();
+  // 記録のある日は 17〜21 日の 5 日（d 日の控えは id d・番号 0001d）。19 日から隣へ移っても、その先のボタンがまだ押せる
+  const dateOf = (d: number) => `2026-11-${String(d)}`;
+  const noOf = (d: number) => `0001${String(d)}`;
+  const rowOn = (d: number): EjRecordSummary => ({
+    ...row,
+    id: d,
+    record_no: noOf(d),
+    printed_at: `${dateOf(d)} 10:00`,
   });
+
+  it.each([
+    ["前の日", 18, 20],
+    ["次の日", 20, 18],
+  ])(
+    "U4: 番号の欄に別の日の番号を打って未送信のまま mouse で%sを押しても、隣の日が出た後の Enter は打った番号を探してその控えの日へ移る（実の Router、TD-936）",
+    async (button, neighbor, target) => {
+      vi.mocked(commands.listEjRecords).mockImplementation((date) => {
+        const d = Number((date ?? dateOf(19)).slice(8));
+        return Promise.resolve(
+          ok({
+            ...theDay,
+            date: dateOf(d),
+            prev_date: d > 17 ? dateOf(d - 1) : null,
+            next_date: d < 21 ? dateOf(d + 1) : null,
+            records: [rowOn(d)],
+          }),
+        );
+      });
+      vi.mocked(commands.findEjRecordsByNo).mockResolvedValue(
+        ok<EjRecordRef[]>([{ id: target, date: dateOf(target) }]),
+      );
+      vi.mocked(commands.getEjRecord).mockResolvedValue(
+        ok({ summary: rowOn(target), body_text: `body id${String(target)}` }),
+      );
+      const router = createRouter({
+        routeTree,
+        history: createMemoryHistory({ initialEntries: [`/reports/receipts?date=${dateOf(19)}`] }),
+      });
+      render(
+        <QueryClientProvider client={createAppQueryClient()}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      );
+      const user = userEvent.setup();
+      await screen.findByRole("row", { name: /000119/ });
+      await user.type(screen.getByLabelText("番号で探す"), noOf(target));
+
+      await user.click(screen.getByRole("button", { name: button }));
+      expect(
+        await screen.findByRole("row", { name: new RegExp(noOf(neighbor)) }),
+      ).toBeInTheDocument();
+      expect(router.state.location.search).toEqual({ date: dateOf(neighbor) });
+      await user.keyboard("{Enter}");
+      await waitFor(() => {
+        expect(router.state.location.search).toEqual({ date: dateOf(target) });
+      });
+      expect(await screen.findByRole("row", { name: new RegExp(noOf(target)) })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(await screen.findByText(`body id${String(target)}`)).toBeInTheDocument();
+      expect(commands.findEjRecordsByNo).toHaveBeenCalledTimes(1);
+    },
+  );
 });
