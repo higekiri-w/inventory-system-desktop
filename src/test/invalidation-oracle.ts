@@ -5,7 +5,7 @@ import { queryKeys } from "@/lib/query-keys";
 export type InvalidationKey = readonly unknown[];
 
 /**
- * D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）を test 側へ独立転記した oracle。
+ * D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）、C26・C27（UI_TECH_STACK §2.5）を test 側へ独立転記した oracle。
  * production の invalidation-contract.ts を参照してはならない。
  */
 export const d052InvalidationOracle = {
@@ -132,6 +132,15 @@ export const d052InvalidationOracle = {
     queryKeys.dailySalesRoot(),
     queryKeys.monthlySalesRoot(),
   ],
+  // C26: UI_TECH_STACK §2.5 の「C26 は SD の一括取込みの成功で、C10 の 3 key と控えの prefix」から写す
+  sdBulkImport: () => [
+    ["daily-report-imports", "list"],
+    ["daily-sales"],
+    ["monthly-sales"],
+    ["ej-records"],
+  ],
+  // C27: 同「C27 は手で選ぶ EJ の取込みの成功で、控えの prefix だけ」から写す
+  ejImport: () => [["ej-records"]],
   stocktakeStart: () => [
     queryKeys.stocktake.status(),
     queryKeys.stocktake.itemsRoot(),

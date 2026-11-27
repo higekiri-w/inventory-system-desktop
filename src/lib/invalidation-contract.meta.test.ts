@@ -5,7 +5,7 @@ import { d052InvalidationOracle } from "@/test/invalidation-oracle";
 import { invalidationContract } from "./invalidation-contract";
 
 describe("UI-07 D-052 invalidation SSOT shape", () => {
-  it("REQ-907 B-I1: defines all 24 mutation entries exactly once against the independent oracle", () => {
+  it("REQ-907 B-I1 / REQ-908 I1: defines all 26 mutation entries exactly once against the independent oracle", () => {
     expect(Object.keys(invalidationContract).sort()).toEqual(
       [
         "productCreate",
@@ -19,6 +19,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
         "csvImportCommit",
         "csvImportRollback",
         "dailyReportImport",
+        "sdBulkImport",
+        "ejImport",
         "stocktakeStart",
         "stocktakeCountUpdate",
         "stocktakeComplete",
@@ -47,6 +49,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       invalidationContract.csvImportCommit(),
       invalidationContract.csvImportRollback(),
       invalidationContract.dailyReportImport(),
+      invalidationContract.sdBulkImport(),
+      invalidationContract.ejImport(),
       invalidationContract.stocktakeStart(),
       invalidationContract.stocktakeCountUpdate(),
       invalidationContract.stocktakeComplete(),
@@ -74,6 +78,8 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
       d052InvalidationOracle.csvImportCommit(),
       d052InvalidationOracle.csvImportRollback(),
       d052InvalidationOracle.dailyReportImport(),
+      d052InvalidationOracle.sdBulkImport(),
+      d052InvalidationOracle.ejImport(),
       d052InvalidationOracle.stocktakeStart(),
       d052InvalidationOracle.stocktakeCountUpdate(),
       d052InvalidationOracle.stocktakeComplete(),
@@ -90,7 +96,7 @@ describe("UI-07 D-052 invalidation SSOT shape", () => {
     ];
 
     // returnExchange は stockApplied の true と false の両方を比べる（引数の取り違えを捕まえる。D-148 (4)）
-    expect(actualEntries).toHaveLength(25);
+    expect(actualEntries).toHaveLength(27);
     expect(actualEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort())).toEqual(
       expectedEntries.map((entry) => entry.map((key) => JSON.stringify(key)).sort()),
     );

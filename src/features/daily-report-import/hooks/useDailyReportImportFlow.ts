@@ -1,22 +1,19 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useReducer, useState } from "react";
 import { toast } from "sonner";
 import { commands, CSV_IMPORT_FILE_SIZE_LIMIT } from "@/lib/bindings";
-import type {
-  DailyReportPreviewResponse,
-  DailyReportSourceFileRequest,
-  EjFileRequest,
-  EjImportResult,
-} from "@/lib/bindings";
+import type { DailyReportPreviewResponse, DailyReportSourceFileRequest } from "@/lib/bindings";
 import { describeError } from "@/lib/describe-error";
 import { extractFilename } from "@/lib/extractFilename";
 import { invalidateByContract, invalidationContract } from "@/lib/invalidation-contract";
+import { queryKeys } from "@/lib/query-keys";
 import { CMD_ERROR_KIND, InvokeError, isInvokeError, unwrapResult } from "@/lib/invoke";
 import { useWindowCloseGuard } from "@/lib/window-close-guard";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { dailyReportImportReducer } from "../reducer";
+import { useImportEjFiles } from "./useImportEjFiles";
 import { useRollbackDailyReportImport } from "./useRollbackDailyReportImport";
 import type { DailyReportErrorRecoverTo, DailyReportImportState } from "../types";
 
@@ -45,7 +42,6 @@ const DUPLICATE_SERIES_MESSAGE =
   "Z001・Z002・Z005 は 1 つずつ選んでください（同じ種類のファイルが 2 つ以上あります）。";
 const READ_FAILED_MESSAGE = "日報ファイルの選択または読み取りに失敗しました";
 const TOO_LARGE_MESSAGE = "ファイルサイズが上限(20MB)を超えています";
-const EJ_READ_FAILED_MESSAGE = "EJ のファイルの選択または読み取りに失敗しました";
 
 function ensureInvokeError(error: unknown, cmd: string): InvokeError {
   if (isInvokeError(error)) return error;
@@ -206,7 +202,10 @@ export function useDailyReportImportFlow() {
     retry: 0,
     onSuccess: async (response) => {
       dispatch({ type: "bulk_succeeded", response });
-      await invalidateByContract(queryClient, invalidationContract.dailyReportImport());
+      // C26: 一括は日報に加えて控えも入れる（UI_TECH_STACK §2.5）
+      // 控えの画面を離れても走っている読取り（取込みの前に読んだもの）に無効化が相乗りしないよう、先に止める
+      await queryClient.cancelQueries({ queryKey: queryKeys.ejRecords.root() });
+      await invalidateByContract(queryClient, invalidationContract.sdBulkImport());
     },
     onError: (error: unknown) => {
       dispatch({
@@ -216,28 +215,11 @@ export function useDailyReportImportFlow() {
     },
   });
 
-  // 55 UI-07-D17: 結果の「EJ のファイルを選んで取り込む」（CMD-12 importEjFiles）。結果はその場に出し、
-  // 最後に成功した結果は再試行が失敗しても次の成功・新しい scan・一括のやり直しまで保つ（error は別に出す）
-  const [ejResult, setEjResult] = useState<EjImportResult | null>(null);
-  const ejImportMutation = useMutation({
-    mutationFn: (files: EjFileRequest[]) =>
-      unwrapResult(commands.importEjFiles(files), {
-        source: "commands",
-        cmd: "import_ej_files",
-      }),
-    retry: 0,
-    onSuccess: setEjResult,
-  });
-  const [ejSelectionError, setEjSelectionError] = useState<string | null>(null);
-  // 選択の確定（readFile の待ち）から command の終わりまでの 1 つの待ち（UI-USW-D5 の止め。解くのは chooseEjFiles の finally だけ）
-  const [ejPending, setEjPending] = useState(false);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
+  // 55 UI-07-D17: 結果の「EJ のファイルを選んで取り込む」（共有の hook。UI-09c-D5 の控えの画面も使う）。結果はその場に出し、
+  // 最後に成功した結果は再試行が失敗しても次の成功・新しい scan・一括のやり直しまで保つ（error は別に出す）。
+  // 応答を待つ間の useBlocker と close の `ej-import` は hook が持つ
+  const ejImport = useImportEjFiles();
+  const resetEjImport = ejImport.reset;
 
   // 取消の mutation・Toast・C10 の再取得・取消の応答を待つ間の止めは共有の hook（55 §55.12 UI-07-D19）
   const rollbackMutation = useRollbackDailyReportImport({
@@ -250,80 +232,34 @@ export function useDailyReportImportFlow() {
   // （UI-USW-D5、55 UI-07-D17。取消の応答を待つ間の止めは useRollbackDailyReportImport）
   const importing = state.status === "importing";
   const bulkImporting = state.status === "bulk_importing";
-  const busy = importing || bulkImporting || ejPending;
+  const busy = importing || bulkImporting || ejImport.pending;
   useBlocker({
     shouldBlockFn: () => busy,
     enableBeforeUnload: () => busy,
   });
   useWindowCloseGuard("daily-report-import", importing);
   useWindowCloseGuard("sd-bulk-import", bulkImporting);
-  useWindowCloseGuard("ej-import", ejPending);
 
   const scanSd = useCallback(
     (selectedPath: string | null = null) => {
       setScanError(null);
-      setEjSelectionError(null);
-      setEjResult(null);
-      ejImportMutation.reset();
+      resetEjImport();
       // UI-07-D16 (a): 選択の一覧は idle の間だけ持つ
       setManualFiles([]);
       setPendingReplacements([]);
       dispatch({ type: "scan_started" });
       scanMutation.mutate(selectedPath);
     },
-    [scanMutation, ejImportMutation],
+    [scanMutation, resetEjImport],
   );
 
   /** 55 UI-07-D17: 一覧の scan の snapshot で日報 → EJ をまとめて取り込む */
   const bulkImport = useCallback(() => {
     if (state.status !== "sd_list" && state.status !== "bulk_result") return;
-    setEjSelectionError(null);
-    setEjResult(null);
-    ejImportMutation.reset();
+    resetEjImport();
     dispatch({ type: "bulk_started" });
     bulkMutation.mutate(state.scanToken);
-  }, [state, bulkMutation, ejImportMutation]);
-
-  /** 55 UI-07-D17: 欠け・読めない file を埋める EJ を native の file dialog で選ぶ（手で選んだ file は写さない） */
-  const chooseEjFiles = useCallback(async () => {
-    setEjSelectionError(null);
-    let paths: string[];
-    try {
-      const selected = await open({
-        multiple: true,
-        filters: [{ name: "EJ", extensions: ["txt", "TXT"] }],
-      });
-      if (selected === null) return;
-      paths = Array.isArray(selected) ? selected : [selected];
-    } catch {
-      setEjSelectionError(EJ_READ_FAILED_MESSAGE);
-      toast.error(EJ_READ_FAILED_MESSAGE);
-      return;
-    }
-    if (paths.length === 0) return;
-    setEjPending(true);
-    try {
-      const files: EjFileRequest[] = [];
-      for (const path of paths) {
-        const bytes = await readFile(path);
-        if (bytes.byteLength > CSV_IMPORT_FILE_SIZE_LIMIT) {
-          setEjSelectionError(TOO_LARGE_MESSAGE);
-          toast.error(TOO_LARGE_MESSAGE);
-          return;
-        }
-        files.push({ filename: extractFilename(path), file_bytes: Array.from(bytes) });
-      }
-      // 読む間に画面を離れていたら取り込まない（結果を見る画面が無い）
-      if (!mountedRef.current) return;
-      // command の失敗は mutation の error が持つ（読込みの失敗の文にしない）
-      await ejImportMutation.mutateAsync(files).catch(() => undefined);
-    } catch {
-      setEjSelectionError(EJ_READ_FAILED_MESSAGE);
-      toast.error(EJ_READ_FAILED_MESSAGE);
-    } finally {
-      setEjPending(false);
-    }
-  }, [ejImportMutation]);
+  }, [state, bulkMutation, resetEjImport]);
 
   /** UI-07-D15 (1): 自動で見つからないときに folder を選んで読む */
   const chooseSdLocation = useCallback(async () => {
@@ -496,16 +432,9 @@ export function useDailyReportImportFlow() {
     confirmSdCandidate,
     backToSdList,
     bulkImport,
-    chooseEjFiles,
-    ejImport: {
-      result: ejResult,
-      error:
-        ejSelectionError ??
-        (ejImportMutation.error
-          ? describeError(ensureInvokeError(ejImportMutation.error, "import_ej_files"))
-          : null),
-      pending: ejPending,
-    },
+    /** 55 UI-07-D17: 欠け・読めない file を埋める EJ を native の file dialog で選ぶ（手で選んだ file は写さない） */
+    chooseEjFiles: ejImport.choose,
+    ejImport: { result: ejImport.result, error: ejImport.error, pending: ejImport.pending },
     chooseFiles,
     removeManualFile,
     confirmReplacement,

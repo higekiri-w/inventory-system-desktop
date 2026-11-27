@@ -39,7 +39,7 @@
 | 11 | 商品修正 | REQ-102 | — | 実装済み（PR #95） |
 | 12 | 廃棄・破損 | REQ-204 | — | 実装済み（PR #110 `0794342`） |
 | 12a | 入出庫履歴 | REQ-206/207/208 | — | 実装済み（入出庫記録・在庫変動追跡・記録の取消〈訂正は取り消してから入れ直す〉） |
-| 12b | レシートの控え（UI-09c） | 未採番（runtime の lane） | — | 未実装（proposed、D-121。§3 の「レシートの控え画面」） |
+| 12b | レシートの控え（UI-09c） | REQ-908 | — | 実装済み（D-121。§3 の「レシートの控え画面」、[80](function-design/80-ui-ej-receipts.md)） |
 
 ### 年に数回 / 初回のみ
 | # | 画面名 | 対応REQ | モックアップ | 状態 |
@@ -242,15 +242,15 @@
   - 印刷ボタンは「日報を印刷」で、その日のレジの日報を 1 日 1 枚の紙（その日の精算を全部合算、PLU は売れた行だけ）に印刷する。今の Excel の横長の並びを写さず、文字は 9 pt 以上（[UI-09a-D17〜D19](function-design/56-ui-daily-sales.md)、D-120）。押せない日（未取込み・読込みの失敗）はボタンの下に理由とその場で直せるリンク・再試行が出る
   - 商品別明細が空でも日報サマリがあれば「売上なし」とは表示しない。「商品別明細は未取込み」と分かる空状態にする
 
-### レシートの控え画面（UI-09c、proposed・未実装、D-121）
-- **対応仕様**: BIZ-08-D9（[37 §37.11](function-design/37-biz-daily-report-import-service.md)）、CMD-12-D2（[45 §45.6c](function-design/45-cmd-daily-report-import.md)）。REQ の番号は runtime の lane が採番する（backlog の「SD の一括取込みと EJ の控えの runtime（A）」）。本画面の function-design の文書は runtime の lane が新しく作り、`design_compliance_test.rs` に登録する（docs だけの design lane では登録できないため、決定は本節に置く）
+### レシートの控え画面（UI-09c、D-121）
+- **対応仕様**: BIZ-08-D9（[37 §37.11](function-design/37-biz-daily-report-import-service.md)）、CMD-12-D2（[45 §45.6c](function-design/45-cmd-daily-report-import.md)）。REQ-908。画面の状態・選んだ行と search の持ち方・query の key・字形の指定は [80](function-design/80-ui-ej-receipts.md)（`design_compliance_test.rs` の `SKIP_DOCS`。実装は (A-2) の runtime、Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`）
 - **目的**: レジが SD に書く電子ジャーナル（EJ）の記録を、レシートの控えとして PC で見る（ECR+ の終了の後も控えを見たい: repo 外の回答台帳 TD-162・TD-264）。読むだけで、在庫・売上の集計を変えない
 - **レイアウト判断**:
-  - `UI-09c-D1`: route は `/reports/receipts`、search は `date`（`YYYY-MM-DD`）と `no`（6 桁までの数字）。不正な値は捨てて既定へ（UI-09a と同じ zod の `.optional().catch(undefined)`）。navigation の「売上」の群に「レシートの控え」を `/reports/monthly` の後に置く（`src/config/navigation.ts`、id `ui-09c`、到達の test）
+  - `UI-09c-D1`: route は `/reports/receipts`、search は `date`（`YYYY-MM-DD`）と `no`（6 桁までの数字）。不正な値は捨てて既定へ（UI-09a と同じ zod の `.optional().catch(undefined)`）。navigation の「毎日の業務」の末尾、`ui-09b`（月次売上）の後に「レシートの控え」を置く（`src/config/navigation.ts`、id `ui-09c`、到達の test）
   - `UI-09c-D2`: 日付で探す。前の日・次の日のボタン（記録のある隣の日へ飛ぶ。無ければ disabled）と `<input type="date">`。既定は記録のある最も新しい日。その日の記録を番号の順の表で出す: 時刻（`HH:MM`）・番号（6 桁）・種類（取引 / 返品 / 取引中止 / 入金・出金 / 領収書 / 精算 / 点検 / 設定 / 練習 / その他。kind と mode から作る日本語の label。返品はモードが戻の取引）・合計（`1,234円`、復元できなかった記録は「—」、0 円は「0円」）。行を選ぶと右（狭い幅では下）に控えの文を出す。1000 件を超えた日は「この日の控えが多いため、先頭 1000 件だけを出しています」
-  - `UI-09c-D3`: 番号で探す。番号の入力（6 桁までの数字、Enter で探す。IME の変換中の Enter は送らない）→ 見つかればその日に移って行を選ぶ。2 件以上（`find_ej_records_by_no` は全ての 4 桁の欄〈レジ〉から返す。今のレジ 1 台の店では起きない）なら移らず、入力の下に「同じ番号の控えが N 件あります」と、各件の日付のリンク（`EjRecordRef` の `date`・`id` の昇順。押すとその日に移ってその `id` の行を選ぶ）を出す。無ければ入力の下に「その番号の控えはありません」。形の誤りは BIZ の文を入力の下に出す
-  - `UI-09c-D4`: 控えの文は等幅で、1 行 24 バイト（半角 1・全角 2 の幅）の並びが崩れない字形（Windows の `MS Gothic` 等の和文の等幅。字形の選び方と大きさは runtime の lane が Windows L3 で確かめる）で、行末の空白を保ち、折り返さない。文は読むだけで編集・複写の操作を足さない（OS の選択と複写は妨げない）
-  - `UI-09c-D5`: 欠けがあれば一覧の上に warning の Alert（icon + 見出し「控えが足りない所があります」+ 本文「記録 n〜m の控えがありません。」を区間ごと）と、補助のリンク「EJ のファイルを選んで取り込む」（native file dialog で複数選び、CMD-12 `importEjFiles`。結果は toast と Alert の更新に加え、読めない file 名と conflict の番号をこの画面で名指しする〈UI-07-D17 と同じ文。repo 外の回答台帳 TD-310〉。成功の後は 45 §45.6c 手順 4 の控えの key `queryKeys.ejRecords.root()` を無効にする）。欠けが無ければ Alert もリンクも出さない（リンクは画面の下の小さな補助として常に置く）
+  - `UI-09c-D3`: 番号で探す。番号の入力（6 桁までの数字、Enter で探す。IME の変換中の Enter は送らない）→ 見つかればその日に移って行を選ぶ。2 件以上（`find_ej_records_by_no` は全ての 4 桁の欄〈レジ〉から返す。今のレジ 1 台の店では起きない）なら移らず、入力の下に「同じ番号の控えが N 件あります」と、各件の日付のリンク（`EjRecordRef` の `date`・`id` の昇順。押すとその日に移ってその `id` の行を選ぶ）を出す。無ければ入力の下に「その番号の控えはありません」。形の誤りは BIZ の文を入力の下に出す。選んだ控えの本文は ID で `get_ej_record` から読み、一覧の 1,000 件の外でも出る
+  - `UI-09c-D4`: 控えの文は等幅で、1 行 24 バイト（半角 1・全角 2 の幅）の並びが崩れない字形（Windows の `MS Gothic` 等の和文の等幅。字形の指定と Windows L3 で確かめた結果は [80](function-design/80-ui-ej-receipts.md) §80.4）で、行末の空白を保ち、折り返さない。文は読むだけで編集・複写の操作を足さない（OS の選択と複写は妨げない）
+  - `UI-09c-D5`: 欠けがあれば一覧の上に warning の Alert（icon + 見出し「控えが足りない所があります」+ 本文「記録 n〜m の控えがありません。」を区間ごと）と、補助のリンク「EJ のファイルを選んで取り込む」（native file dialog で複数選び、CMD-12 `importEjFiles`。結果は toast と Alert の更新に加え、読めない file 名と conflict の番号をこの画面で名指しする〈UI-07-D17 と同じ文。repo 外の回答台帳 TD-310〉。成功の後は D-052 の C27〈控えの key `queryKeys.ejRecords.root()`、[UI_TECH_STACK](UI_TECH_STACK.md) §2.5〉を無効にする）。欠けが無ければ Alert を出さない（リンクは画面の下の小さな補助として常に置く）
   - 空の状態: 記録が 1 件も無ければ「レシートの控えはまだありません。売上データ取込みで SD を読むと、ここに出ます。」と「売上データ取込みへ」のリンク
 - **利用者配慮**: 種類は文字の label で示し色だけに頼らない。控えの文は店主が紙のレシートと見比べられる並びにする。表の操作はキーボード（上下・Enter）でも行える
 

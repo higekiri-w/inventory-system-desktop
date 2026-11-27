@@ -234,7 +234,7 @@ Z005由来の部門別売上を保存する。日次・月次レポートの部�
 
 ## SD の一括取込みと EJ の控えの契約（D-121）
 
-EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 §37.11](../function-design/37-biz-daily-report-import-service.md)）。migration は v14（[22 §22](../function-design/22-mnt-migration.md)、MNT-03-D23。`src-tauri/src/db/schema_v14.rs`）。保存は (A-1) の runtime で実装し、控えの閲覧（UI-09c）は backlog の (A-2) で未実装。`sale_records`・`inventory_movements`・日報の表と結ばない（EJ は在庫と売上の集計に使わない。ADR SPEC-STK-CNT-D11）。原価の列を持たないので、原価の lane の vB の起点の検査（[22 §16](../function-design/22-mnt-migration.md)）の対象の表にならない。DB の 1 file に入るので backup・restore の対象になる。
+EJ の記録の文をレシートの控えとして持つ表（BIZ-08-D9、[37 §37.11](../function-design/37-biz-daily-report-import-service.md)）。migration は v14（[22 §22](../function-design/22-mnt-migration.md)、MNT-03-D23。`src-tauri/src/db/schema_v14.rs`）。保存は (A-1) の runtime で、控えの閲覧（UI-09c、[80](../function-design/80-ui-ej-receipts.md)）は (A-2) の runtime で実装した。`sale_records`・`inventory_movements`・日報の表と結ばない（EJ は在庫と売上の集計に使わない。ADR SPEC-STK-CNT-D11）。原価の列を持たないので、原価の lane の vB の起点の検査（[22 §16](../function-design/22-mnt-migration.md)）の対象の表にならない。DB の 1 file に入るので backup・restore の対象になる。
 
 ### ej_records カラム定義
 
@@ -465,3 +465,4 @@ CSV取込み: 2026/03/21の精算データ
 | 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §12 のケース2・Stage 2 の共有 JAN と在庫連動の判定・Stage 3 の表示・Stage 4 の停止中の旧本体を、D-118 の b1 の今の契約（32 への参照）に置き換えた。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | §12b と B-1 の前の SD-23 を確かめた事実に置き換え、B-1 の行構造・ヘッダ日付抽出（従来shape）を 23 への参照と BIZ-03 が拒むことに置き換えた |
 | 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | 「SD の一括取込みと EJ の控えの契約」の proposed の注記を外し、migration v14（22 §22）と index の名前を書いた（閲覧は (A-2)、未実装）。「冪等性・同日追加方針」の 2 行目と B-2 の Stage 2 手順 4・Stage 3 の同日別bundleの追加確認を BIZ-08-D8 の判定への参照にした。 |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | `ej_records` の段の「控えの閲覧は (A-2) で未実装」を実装済みの形にした（列・CHECK・index は変えていない）。 |

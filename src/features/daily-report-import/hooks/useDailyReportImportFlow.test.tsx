@@ -1103,4 +1103,31 @@ describe("useDailyReportImportFlow_req401", () => {
     });
     expect(vi.mocked(commands.importEjFiles)).not.toHaveBeenCalled();
   });
+
+  it("I2・G1 REQ-908 / D-052 C27: 手で選ぶ EJ の成功は控えの prefix だけを無効にし、日報の画面に成功の toast を出さない", async () => {
+    const ejResult = {
+      inserted_count: 1,
+      already_count: 0,
+      conflict_count: 0,
+      conflicts: [],
+      held_count: 0,
+      unreadable_files: [],
+      gaps: [],
+    };
+    vi.mocked(commands.importEjFiles).mockResolvedValueOnce({ status: "ok", data: ejResult });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDailyReportImportFlow(), {
+      wrapper: makeWrapper(queryClient),
+    });
+    mockOpen.mockResolvedValueOnce(["C:\\tmp\\EJ260321_0001.TXT"]);
+    await act(async () => {
+      await result.current.chooseEjFiles();
+    });
+    expect(result.current.ejImport.result).toEqual(ejResult);
+    expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.ejImport());
+    expect(mockToast.success).not.toHaveBeenCalled();
+  });
 });

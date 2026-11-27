@@ -92,7 +92,7 @@ fn commit_daily_report_import(
 
 `app` は Tauri が注入する。手順 3a の `app_data_dir` は command が test 用の `commit_daily_report_import_with_state`（`src-tauri/src/cmd/daily_report_import_cmd.rs`）を呼ぶ前に取り、解決済みの `app_data_dir: &Path` を引数で渡す（取れなければ cache に触れずに `internal`。test は一時 directory を渡す）。このため手順 3a は番号に反して手順 1 より前に行い、観測できる差は token が不正（手順 1〜3 の失敗）かつ `app_data_dir` を取れないときに、手順 1〜3 の error でなく手順 3a の `internal` が返る（期限切れの token も cache から消えない）ことだけである（`src-tauri/src/cmd/daily_report_import_cmd.rs` の `commit_daily_report_import`）。
 
-**実行の thread**: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。§45.6c の `commit_register_sd_bulk_import`・`import_ej_files` も同じ理由で `(async)` にする（写しと TX を伴う）。CMD-12 のほかの command の実行の thread は変えない。
+**実行の thread**: `commit_daily_report_import` と §45.5 の `rollback_daily_report_import` は `#[tauri::command(async)]` で定義し、取込みと取消の transaction と写しの書込み（手順 5 の先の BIZ-08-D5）を main thread で動かさない。main thread で動く間は window の event が処理されず、native の window の close（×・Alt+F4）に確認の窓を出せないため（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5 の 8）。形は [43](43-cmd-settings-log.md) §43.8.2 の「実行の thread」と同じで、関数は sync のまま `(async)` を付け、`#[specta::specta]` と登録（§45.8）は変えない（wire と生成 bindings は変わらない）。処理ステップと Mutex の取り方は変えない。source の検査を 1 本置く（[41](41-cmd-pos.md) §17.2 の「実行の thread」と同じ判定）。§45.6c の `commit_register_sd_bulk_import`・`import_ej_files` も同じ理由で `(async)` にする（写しと TX を伴う）。§45.6c の控えの閲覧の 3 command（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record`）も `(async)` にする: 読むだけだが、同じ控えの画面から手で選ぶ EJ の `import_ej_files` が DB の Mutex を持つ間に閲覧が main thread で Mutex を待つと、× と Alt+F4 の確認の窓が止まるため（UI-USW-D5 の 8）。閲覧が重なって async runtime の worker が尽きると、「閉じる」は取込みが終わるまで遅れる（UI-USW-D5 の 8 の末尾と同じ）。CMD-12 のそのほかの command の実行の thread は変えない。
 
 **処理ステップ**:
 1. preview_tokenのUUID形式を検証する。
@@ -188,7 +188,7 @@ fn parse_and_validate_daily_report_from_sd(
 
 ### 45.6c 一括取込みと EJ の控えのコマンド（CMD-12-D2、D-121）
 
-`commit_register_sd_bulk_import` と `import_ej_files` は (A-1) の runtime（Plan Packet `docs/plans/2026-11-20-sd-bulk-ej-runtime-a1.md`、`src-tauri/src/cmd/daily_report_import_cmd.rs`）で実装した。閲覧の 3 command（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record`）は backlog の (A-2) で、未実装。Z004 の分（下の (B)）は「Z004 を SD の一括取込みに入れる runtime（B）」で、未実装。§45.6a・§45.6b（D-111、実装済み）は変えず、scan に次を足す: (A、実装済み) BIZ-08 の scan が EJ も読み、`DailyReportSdScan` の `ej`（`RegisterSdEjSummary`）と snapshot の `ej_files`・`ej_unreadable_files` を返す（37 §37.10 の「§37.9 に足すもの」）。CMD は今どおり scan の結果を返し snapshot を cache に置くだけで、EJ を読まない。(B) §45.6a 手順 2a の後に Z004 の bytes を空にせず、相対 path つきで snapshot の `z004_files` に残す（PLU の照合は今どおり。BIZ-08 の scan は読めなかった Z004 の相対 path を `z004_unreadable_files` に返す。37 §37.10 の「§37.9 に足すもの」）。`DailyReportSdScan` の `z004_new_count`（hash が active な取込みに無い Z004 の数）と `z004_unreadable_count`（読めなかった Z004 の数）を UI のボタンの有効化に使う（どちらも 37 §37.10。同じ bytes の Z004 は BIZ が 1 つにまとめた後に数える）。32 の新契約の検査は scan では回さない（数が多めに出て、押しても何も入らない側に倒れるだけで害が無い）。
+`commit_register_sd_bulk_import` と `import_ej_files` は (A-1) の runtime（Plan Packet `docs/plans/2026-11-20-sd-bulk-ej-runtime-a1.md`、`src-tauri/src/cmd/daily_report_import_cmd.rs`）で、閲覧の 3 command（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record`）は (A-2) の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`、同じ file）で実装した。Z004 の分（下の (B)）は「Z004 を SD の一括取込みに入れる runtime（B）」で、未実装。§45.6a・§45.6b（D-111、実装済み）は変えず、scan に次を足す: (A、実装済み) BIZ-08 の scan が EJ も読み、`DailyReportSdScan` の `ej`（`RegisterSdEjSummary`）と snapshot の `ej_files`・`ej_unreadable_files` を返す（37 §37.10 の「§37.9 に足すもの」）。CMD は今どおり scan の結果を返し snapshot を cache に置くだけで、EJ を読まない。(B) §45.6a 手順 2a の後に Z004 の bytes を空にせず、相対 path つきで snapshot の `z004_files` に残す（PLU の照合は今どおり。BIZ-08 の scan は読めなかった Z004 の相対 path を `z004_unreadable_files` に返す。37 §37.10 の「§37.9 に足すもの」）。`DailyReportSdScan` の `z004_new_count`（hash が active な取込みに無い Z004 の数）と `z004_unreadable_count`（読めなかった Z004 の数）を UI のボタンの有効化に使う（どちらも 37 §37.10。同じ bytes の Z004 は BIZ が 1 つにまとめた後に数える）。32 の新契約の検査は scan では回さない（数が多めに出て、押しても何も入らない側に倒れるだけで害が無い）。
 
 ```rust
 #[tauri::command(async)] // §45.4 の「実行の thread」
@@ -219,14 +219,14 @@ fn import_ej_files(
     files: Vec<EjFileRequest>, // { filename: String, file_bytes: Vec<u8> }。手で選んだ EJ。1 file 20MB まで
 ) -> Result<EjImportResult, CmdError>
 
-// 以下の 3 つは (A-2)、未実装
-#[tauri::command]
+// 以下の 3 つは控えの閲覧（UI-09c）。読むだけ
+#[tauri::command(async)] // §45.4 の「実行の thread」（import_ej_files が持つ Mutex を main thread で待たない）
 fn list_ej_records(state: State<AppState>, date: Option<String>) -> Result<EjRecordDay, CmdError>
 
-#[tauri::command]
+#[tauri::command(async)] // 同上
 fn find_ej_records_by_no(state: State<AppState>, record_no: String) -> Result<Vec<EjRecordRef>, CmdError>
 
-#[tauri::command]
+#[tauri::command(async)] // 同上
 fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdError>
 ```
 
@@ -234,9 +234,9 @@ fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdE
 1. scan_token の UUID の形を検証し、`register_sd_scan_cache` から snapshot を取る。無い・30 分超は §45.6b 手順 2 と同じ kind・文。
 2. `app_data_dir` を §45.4 手順 3a と同じく取る。
 3. DB の接続を取り、BIZ-08 `commit_register_sd_bulk_import(conn, &snapshot, app_data_dir)` を呼ぶ。項目の成否は response の中で返し、`Err` だけを §45.7 で変える。
-4. 成功の後、日報の取込みの成功と同じ invalidation の対象（`src/lib/invalidation-contract.ts` の `dailyReportImport`）を UI が無効にする（UI-07-D17）。(B) の後は Z004 の取込みの対象（D-052 の product / list / detail）も、(A-2) の後は控えの query の prefix `queryKeys.ejRecords.root()`（`["ej-records"]`。UI-09c の日の一覧・番号で探す・控えの文の query をこの下に置く。(A-2) が `src/lib/query-keys.ts` にこの key を、`invalidation-contract.ts` に D-052 の entry を足す）も足す。snapshot は消さない（やり直しで同じ token を使える。確定済みの項目は飛ばされる。BIZ-08-D7）。
+4. 成功の後、UI が D-052 の C26（`src/lib/invalidation-contract.ts` の `sdBulkImport`。日報の取込みの C10 の 3 key と、控えの query の prefix `queryKeys.ejRecords.root()`〈`["ej-records"]`。UI-09c の日の一覧・番号で探す・控えの文の query をこの下に置く〉）を無効にする（UI-07-D17。今の契約は [UI_TECH_STACK](../UI_TECH_STACK.md) §2.5）。(B) の後は Z004 の取込みの対象（D-052 の product / list / detail）も足す。snapshot は消さない（やり直しで同じ token を使える。確定済みの項目は飛ばされる。BIZ-08-D7）。
 
-**処理ステップ（`import_ej_files`）**: 各 file の大きさを検証し（20MB を超えたら `validation`）、`EjSourceFile { filename, sd_relative_path: None, bytes }` にして BIZ-08 `import_ej_records` を呼ぶ。手で選んだ file は写さない（37 §37.11 手順 4）。SD の上の file かを確かめない（最後の記録を保留するかは BIZ が file 名で決める。37 §37.11 手順 2）。成功の後に UI が無効にするのは、上の手順 4 の控えの prefix `queryKeys.ejRecords.root()` だけ（日報・在庫・売上を変えない。key と D-052 の entry は (A-2) が足し、(A-1) では控えを読む query が無いので無効にするものが無い）。
+**処理ステップ（`import_ej_files`）**: 各 file の大きさを検証し（20MB を超えたら `validation`）、`EjSourceFile { filename, sd_relative_path: None, bytes }` にして BIZ-08 `import_ej_records` を呼ぶ。手で選んだ file は写さない（37 §37.11 手順 4）。SD の上の file かを確かめない（最後の記録を保留するかは BIZ が file 名で決める。37 §37.11 手順 2）。成功の後に UI が無効にするのは D-052 の C27（`invalidationContract.ejImport`。控えの prefix `queryKeys.ejRecords.root()` だけで、日報・在庫・売上を変えない。[UI_TECH_STACK](../UI_TECH_STACK.md) §2.5）。
 
 **CMD-12-D2**: 一括取込みと EJ の控えの command も CMD-12 に置く（同じ scan cache と SD の経路を使うため。閲覧の 3 command は読むだけ）。CMD は項目の順・飛ばす規則・EJ の比べ方を持たない（BIZ-08-D7・D9）。BIZ の `RegisterSdBulkOutcome::Failed(BizError)` は、CMD が §45.7 の `impl From<BizError> for CmdError` を 1 か所で当てて `Failed { kind, message }` にする（`SourceCopyFailed` は §45.7 の固定の文、`DatabaseError` は固定の文、`ImportError` などは BIZ の文のまま。io error の kind は診断にだけ出す。文字列の照合で種類を決めない）。有限の値は wire でも生成 enum にする（D-061・D-064）: `Failed` の `kind` は `CmdErrorKind`、`EjRecordSummary` の `kind`・`mode` は 37 §37.11 の `EjRecordKindCode`・`EjRecordModeCode`（response だけ）。`String` に戻さない。登録は §45.8 と同じく `collect_commands!` と `generate_handler!` の両方。
 
@@ -287,3 +287,4 @@ SPEC-SDI-D3を実装する同一commitでは `#[specta::specta]` と `specta::Ty
 | 2026-11-19 | docs の直し（PR #250 の base 同期の closure 987 の P3） | §45.8 の「既存の command と DTO の wire は `source_path` を足すほかは変えない」を外し、出力の field は §45.6a に任せ、入力の `source_path` の互換だけを書く形にした（`unreadable_reason`〈#274〉・`tidy_failure`〈#228〉と食い違っていた）。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | §45.6a 手順 2a・§45.6c の「SD 直読みの runtime が実装する」を実装済みの形にした |
 | 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | §45.6c の `commit_register_sd_bulk_import`・`import_ej_files` を `#[tauri::command(async)]` で実装し（§45.4 の「実行の thread」にも足した）、proposed の注記を外した。閲覧の 3 command と Z004 の分には未実装の印を残した。wire の tagged enum（`type`）と、(A-1) の invalidation（`dailyReportImport` だけ。控えの key は (A-2)）を書いた。 |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | §45.6c の閲覧の 3 command を `#[tauri::command(async)]` で実装し（§45.4 の「実行の thread」に理由を書いた）、(A-2) の未実装の印を外した。手順 4 と `import_ej_files` の成功の後の invalidation を、UI_TECH_STACK §2.5 の D-052 の C26・C27 を指す文に置き換えた（[Plan Packet](../plans/2026-11-24-ej-receipts-a2.md)）。 |

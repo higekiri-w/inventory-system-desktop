@@ -626,7 +626,8 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       expect(onBlockingChange).toHaveBeenLastCalledWith(false);
     });
     expect(screen.getByRole("button", { name: "まとめて取り込む" })).toBeEnabled();
-    expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.dailyReportImport());
+    // REQ-908 I2: 一括の成功は C26（C10 の 3 key + 控えの prefix。UI_TECH_STACK §2.5）
+    expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.sdBulkImport());
   });
 
   const IMPORTED_A: RegisterSdBulkItemDto = {

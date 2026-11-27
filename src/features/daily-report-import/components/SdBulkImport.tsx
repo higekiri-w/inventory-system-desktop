@@ -12,7 +12,7 @@ import type {
 } from "@/lib/bindings";
 import { formatMoney } from "./DailyReportRollbackConfirmDialog";
 
-/// 55 UI-07-D17（(A) の分）: 締めの一括取込みの操作と結果。控えの画面（UI-09c）への link は (A-2) が足す。
+/// 55 UI-07-D17: 締めの一括取込みの操作と結果と、控えの画面（UI-09c）への link。
 /// 状態は色だけで示さず、日本語の label と icon を併用する
 
 /** 押せる条件: 日報の NotImported が 1 件以上か、EJ の 4 つの数のどれかが 1 以上 */
@@ -75,8 +75,11 @@ function Label({ icon, label }: { icon: ReactNode; label: string }) {
   );
 }
 
-/** EJ の結果のうち欠け以外の名指し（読めない file・食い違い・保留）。件数が 0 の項目は出さない */
-function EjNotes({ result }: { result: EjImportResult }) {
+/**
+ * EJ の結果のうち欠け以外の名指し（読めない file・食い違い・保留）。件数が 0 の項目は出さない。
+ * 控えの画面（UI-09c-D5）も同じ文で名指す（TD-310）
+ */
+export function EjNotes({ result }: { result: EjImportResult }) {
   const savedConflicts = result.conflicts.filter((conflict) => conflict.saved);
   const unsavedConflicts = result.conflicts.filter((conflict) => !conflict.saved);
   const more = result.conflict_count - result.conflicts.length;
@@ -90,7 +93,23 @@ function EjNotes({ result }: { result: EjImportResult }) {
         </p>
       ))}
       {savedConflicts.length > 0 && (
-        <p>{`記録 ${numbers(savedConflicts)}: 前に取り込んだ控えと食い違う控えがあったため、前の控えを残しました。続くときは開発者に知らせてください`}</p>
+        <>
+          <p>{`記録 ${numbers(savedConflicts)}: 前に取り込んだ控えと食い違う控えがあったため、前の控えを残しました。続くときは開発者に知らせてください`}</p>
+          {/* saved が true の番号だけ（false はどの文も保存していないので見られる控えが無い） */}
+          <p className="flex flex-wrap items-center gap-x-2">
+            <span>前の控えは「レシートの控え」で見られます:</span>
+            {savedConflicts.map((conflict) => (
+              <Link
+                key={`${conflict.machine_prefix}-${conflict.record_no}`}
+                to="/reports/receipts"
+                search={{ no: conflict.record_no }}
+                className="text-primary underline underline-offset-4"
+              >
+                {conflict.record_no}
+              </Link>
+            ))}
+          </p>
+        </>
       )}
       {unsavedConflicts.length > 0 && (
         <p>{`記録 ${numbers(unsavedConflicts)}: 同じ番号の控えが食い違っていたため、保存していません。続くときは開発者に知らせてください`}</p>
@@ -104,7 +123,7 @@ function EjNotes({ result }: { result: EjImportResult }) {
   );
 }
 
-function inserted(result: EjImportResult, prefix = ""): string {
+export function inserted(result: EjImportResult, prefix = ""): string {
   return result.inserted_count > 0
     ? `${prefix}控え ${result.inserted_count.toLocaleString()} 件を取り込みました`
     : `${prefix}新しい控えはありませんでした`;
@@ -283,11 +302,16 @@ export function SdBulkImport({
               ),
             )}
           </ul>
-          <Button asChild variant="outline">
-            <Link to="/reports/daily" search={lastImportedDate ? { date: lastImportedDate } : {}}>
-              日次売上を見る
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <Link to="/reports/daily" search={lastImportedDate ? { date: lastImportedDate } : {}}>
+                日次売上を見る
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/reports/receipts">レシートの控えを見る</Link>
+            </Button>
+          </div>
         </div>
       )}
     </div>

@@ -43,10 +43,11 @@
 | REQ-905 | 設定管理（設定CRUD/エラー変換） | CMD-11, UI-11a | 開発拡張 | required |
 | REQ-906 | 画像管理（レシート画像保存） | IO-06 | 開発拡張 | required |
 | REQ-907 | PLU slot のレジ占有を毎日の SD の読取りで照合し、JAN ごとの永続割当を安全に管理できること | BIZ-04, BIZ-01, BIZ-08, UI-08 | 開発拡張（D-072、D-117） | required |
+| REQ-908 | レジの電子ジャーナル（EJ）の記録をレシートの控えとして日付と番号で探し、記録のまま見られること | BIZ-08, CMD-12, UI-09c | 開発拡張（D-121） | required |
 
 ## 補足
 
-- 開発拡張 ID（REQ-700, REQ-901〜907）は owner 保管原典の ID 集合には含まれない。REQ-907 は D-072 の design-first 契約として追加し、D-117 で解放・bulk onboarding・段階移行状態を外した（runtime は PLU の書出しの見直しの lane で入れた。D-168）。
+- 開発拡張 ID（REQ-700, REQ-901〜908）は owner 保管原典の ID 集合には含まれない。REQ-907 は D-072 の design-first 契約として追加し、D-117 で解放・bulk onboarding・段階移行状態を外した（runtime は PLU の書出しの見直しの lane で入れた。D-168）。REQ-908 は D-121 のレシートの控え（UI-09c）の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`）で採番した。
 - Design Phase 補足 ID（REQ-106 / REQ-107 / REQ-206〜210）は既存要求の実装・聞き取りで露出した横断要件である。
 - REQ-107 は取引先管理の実装により `coverage=required` とする。
 - REQ-208 は入出庫の記録の取消の実装（D-163）により `coverage=required` とする（訂正は取り消してから入れ直す。65 TRACE-D5）。

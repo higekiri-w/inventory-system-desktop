@@ -593,9 +593,9 @@ enum RegisterSdBulkOutcome {
 - 保証の範囲: アプリが先に読み、CV17 の取込みで原本の bytes が変わった場合（SD-23 の前提が外れた場合）も、日報・Z004 は精算回数で止まり、EJ は記録の文が違えば保存済みを上書きせず知らせる（§37.11 の conflict）。
 - (b) の lane の答え（D-149、§37.12 BIZ-08-D11）: 日報の 3 系列は上の約束のとおり各 file の hash で決め、同じ精算の名前の組の Z001・Z002・Z005 の全部が当たるときだけ組ごと移す（一部だけを移すと束が割れる）。Z004 は取込み済みでなく、その組に付けて一緒に移す（Z004 の取込みが main に無く、取込み済みを条件にすると `XZ` に溜まるため。D-149 の Why。owner の決定 TD-576 の J1）。EJ は EJ の取込み（§37.11）の前なので移さない（上の約束の最後の文のとおり）。保留した記録の確定と移す順、conflict を含む EJ の扱いは、EJ を片付けの対象へ足すときに決める（D-149 の Revisit）。
 
-### 37.11 EJ の記録の取込みと閲覧（BIZ-08-D9、D-121。取込みは実装済み、閲覧は未実装）
+### 37.11 EJ の記録の取込みと閲覧（BIZ-08-D9、D-121）
 
-取込み（`plan_ej_records`・`import_ej_records`、手順 1〜5）は (A-1) の runtime（`src-tauri/src/biz/daily_report_import_service/ej.rs`）で実装した。閲覧（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record`、下の「処理ステップ（閲覧）」と UI-09c）は [backlog](../backlog.md) の (A-2) で、未実装。
+取込み（`plan_ej_records`・`import_ej_records`、手順 1〜5）は (A-1) の runtime（`src-tauri/src/biz/daily_report_import_service/ej.rs`）で実装した。閲覧（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record`、下の「処理ステップ（閲覧）」と UI-09c）は (A-2) の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`、同じ `ej.rs`）で実装した。
 
 **関数要求**: EJ の file（SD の `XZ` 直下・`XZ_BKUP`、または利用者が選んだ file）を IO-08 `parse_ej` で記録に分け、まだ保存していない記録の文を `ej_records`（[pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」）に保存する。保存した記録を日付と記録の番号で引き、レシートの控えとして見せる（UI-09c、[SCREEN_DESIGN](../SCREEN_DESIGN.md) の「レシートの控え画面」）。EJ は在庫に使わない（ADR SPEC-STK-CNT-D11）。
 
@@ -610,7 +610,7 @@ fn import_ej_records(
 
 fn plan_ej_records(conn: &DbConnection, files: &[EjSourceFile]) -> Result<EjImportPlan, BizError> // DB へ書かない。scan の数え（「新しい控え N 件」）と下の手順 1〜3
 
-fn list_ej_records(conn: &DbConnection, date: Option<String>) -> Result<EjRecordDay, BizError> // 以下の 3 つは (A-2)、未実装
+fn list_ej_records(conn: &DbConnection, date: Option<String>) -> Result<EjRecordDay, BizError> // 以下の 3 つは閲覧（UI-09c）
 
 fn find_ej_records_by_no(conn: &DbConnection, record_no: String) -> Result<Vec<EjRecordRef>, BizError>
 
@@ -710,11 +710,11 @@ struct EjRecordDetail {
 4. 保存（`import_ej_records` だけ。入力: 手順 3 の結果。出力: 入れた記録）。`files_with_new` の file のうち `sd_relative_path` が `Some` のものを、IO-10 `save_pos_source_copy` で TX の前に書く。1 本でも失敗したら DB を変えずに `BizError::SourceCopyFailed` を返す（BIZ-08-D5 と同じ。手で選んだ file は写さない）。TX を始め、手順 3 を TX の中の保存済みの文でやり直し（plan の後に別の取込みが入った場合）、(c) の記録を 24 §14.25 `insert_ej_record` で入れて COMMIT。保存済みは増えるだけ（insert-only）なので、やり直しで鍵が (c) へ移ることは無く、写しの無い記録は入らない。COMMIT の前の失敗は ROLLBACK で何も入れず `DatabaseError` を返す（写しは残るが同じ bytes の写しで害は無い）。
 5. 結果の数と名指し（出力: `EjImportResult`）。`inserted_count` は入れた記録の数、`already_count`・`conflict_count`・`held_count` は手順 4 の TX の中の値、`conflicts` は (a) の鍵を 4 桁の欄・番号の昇順に先頭 100 件（`conflict_count` は全件の数）、`unreadable_files` は手順 1 の名前。操作ログ `ej_import` を best-effort で書く（件数だけ。番号・文・file 名を載せない）。欠けを 24 §14.25 `list_ej_number_gaps` で求めて `gaps` に入れる。COMMIT の後のこの読取りが失敗しても取込みは失敗にせず、`gaps` を空にして診断 WARN を記録する（保存は済んでいる。控えの画面を開くと求め直して出す〈UI-09c-D5〉）。
 
-**処理ステップ（閲覧）**（(A-2)、未実装）:
+**処理ステップ（閲覧）**:
 
-- `list_ej_records`: `date` が `None` なら記録のある最も新しい日（無ければ `date: None`・空の一覧）。`Some` は `YYYY-MM-DD` の暦日でなければ `BizError::ValidationFailed("日付の形が正しくありません")`。その日（`printed_at` の先頭 10 文字）の記録を記録の番号の順に最大 1000 件返し、超えたら `truncated = true`。`prev_date`・`next_date` は記録のある隣の日。`gaps` は手順 5 と同じ。
+- `list_ej_records`: `date` が `None` なら記録のある最も新しい日（無ければ `date: None`・空の一覧）。`Some` は `YYYY-MM-DD` の暦日でなければ `BizError::ValidationFailed("日付の形が正しくありません")`（既存の `crate::biz::inventory_service::validate_business_date` で 10 バイトの ASCII の形を先に見てから暦日を見て、その error をこの文に替える。`2026-1-1` を拒む。翌日は `chrono::NaiveDate` で求めて 24 §14.25 に渡す）。その日（`printed_at` の先頭 10 文字）の記録を記録の番号の順に最大 1000 件返し、超えたら `truncated = true`。`prev_date`・`next_date` は記録のある隣の日。`gaps` は手順 5 と同じ。
 - `find_ej_records_by_no`: 1〜6 桁の ASCII 数字でなければ `BizError::ValidationFailed("記録の番号は 6 桁までの数字で入れてください")`。先頭を 0 で埋めて 6 桁にし、同じ番号の記録を全ての 4 桁の欄から返す（レジが 1 台なら 0 件か 1 件）。
-- `get_ej_record`: 無ければ `BizError::NotFound`。
+- `get_ej_record`: 無ければ `BizError::NotFound("その控えはありません")`。
 
 **BIZ-08-D9（EJ の記録の取込みと閲覧）**:
 
@@ -801,3 +801,4 @@ enum RegisterSdTidyFailure { // 画面の固定の文を選ぶだけ（55 UI-07-
 | 2026-11-17 | number-parse-align（実装、PR #274、D-158） | BIZ-08-D2a を `invalid_number` へ広げ、文の後半を `この日の日報は読めません。管理者に知らせてください。` に置き換えた（§37.7 の行も）。§37.9 の候補に `unreadable_reason` を足し、手順 5 で数の列の誤りの束に同じ文を入れるようにした（[Plan Packet](../plans/2026-11-17-number-parse-align.md)）。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | §37.9 の BIZ-08-D3・D6 と preview への接続の SD-23 を、確かめた事実（2026-10-23・10-31、日報の 3 系列）に置き換え、前後比較を待つ再検討を外した（精算回数の照合は残す）。§37.9 手順 10・§37.10 の「SD 直読みの runtime が実装する」を実装済みの形にした |
 | 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | §37.10 の日報と EJ の分（(A)）と §37.11 の取込みを実装し、proposed の注記を外した（Z004 の分〈(B)〉と §37.11 の閲覧〈(A-2)〉は未実装の印を残した）。§37.3 手順 8 の同日追加の確認を BIZ-08-D8 への参照にし、BIZ-08-D8 の NULL の判定を取得済みの同じ日の一覧の行で決める形に直した（24 §14.18b を消した）。BIZ-08-D8 の「後続の runtime が直す所」を消した。scan の EJ は手順 10 が未実装なので手順 9 の後に読むと書いた。§37.9 手順 4・末尾の EJ の申し送りを §37.10・§37.11 への参照に、snapshot と wire の型に EJ の field を足した。 |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | §37.11 の閲覧（`list_ej_records`・`find_ej_records_by_no`・`get_ej_record` と `EjRecordDay`）を実装し、(A-2) の未実装の印を外した。日付の検査に使う既存の関数と、`NotFound` の文を書いた（[Plan Packet](../plans/2026-11-24-ej-receipts-a2.md)）。 |

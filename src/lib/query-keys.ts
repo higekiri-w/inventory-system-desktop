@@ -25,6 +25,13 @@ export const queryKeys = {
   dailyReportImports: (page: number, perPage: number) =>
     ["daily-report-imports", "list", { page, perPage }] as const,
   dailyReportImportLists: () => ["daily-report-imports", "list"] as const,
+  // UI-09c レシートの控え（80 §80.5）。取込みの成功は root() の prefix で無効にする（D-052 C26・C27）
+  ejRecords: {
+    root: () => ["ej-records"] as const,
+    day: (date: string | null) => ["ej-records", "day", { date }] as const,
+    byNo: (recordNo: string) => ["ej-records", "by-no", { recordNo }] as const,
+    detail: (id: number) => ["ej-records", "detail", { id }] as const,
+  },
   // UI-09b 月次売上レポート
   // 設計: docs/function-design/57-ui-monthly-sales.md §57.5 useMonthlySalesReport
   monthlySalesRoot: () => ["monthly-sales"] as const,

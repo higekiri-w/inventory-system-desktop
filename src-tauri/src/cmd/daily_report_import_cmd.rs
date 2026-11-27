@@ -5,11 +5,11 @@
 use crate::biz::daily_report_import_service::{
     self, CachedDailyReportPreview, DailyReportImportResult, DailyReportImportRow,
     DailyReportInputFile, DailyReportPreviewData, DailyReportRollbackResult, DailyReportSdScan,
-    DailyReportSdScanSnapshot, DailyReportSdSelection, EjImportResult, EjSourceFile,
+    DailyReportSdScanSnapshot, DailyReportSdSelection, EjImportResult, EjRecordDay, EjSourceFile,
     ListDailyReportImportsQuery, RegisterSdBulkOutcome, RegisterSdBulkSource,
 };
 use crate::biz::plu_export_service::{self, PluRegisterSnapshotRefresh};
-use crate::biz::PaginatedResult;
+use crate::biz::{EjRecordDetail, EjRecordRef, PaginatedResult};
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
 use crate::constants;
 use std::collections::HashMap;
@@ -527,6 +527,63 @@ fn import_ej_files_with_state(
         .map_err(CmdError::from)
 }
 
+// 控えの閲覧（§45.6c）。読むだけだが、import_ej_files が DB の Mutex を持つ間に main thread で Mutex を待つと
+// × と Alt+F4 の確かめの窓が止まるので main thread の外で動かす（45 §45.4 の「実行の thread」、UI-USW-D5 の 8）。
+// doc comment にしない（specta が doc comment を bindings.ts へ写す）。
+#[tauri::command(async)]
+#[specta::specta]
+pub fn list_ej_records(
+    state: State<AppState>,
+    date: Option<String>,
+) -> Result<EjRecordDay, CmdError> {
+    list_ej_records_with_state(&state, date)
+}
+
+fn list_ej_records_with_state(
+    state: &AppState,
+    date: Option<String>,
+) -> Result<EjRecordDay, CmdError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    daily_report_import_service::list_ej_records(&conn, date).map_err(CmdError::from)
+}
+
+#[tauri::command(async)] // 上の list_ej_records と同じ理由
+#[specta::specta]
+pub fn find_ej_records_by_no(
+    state: State<AppState>,
+    record_no: String,
+) -> Result<Vec<EjRecordRef>, CmdError> {
+    find_ej_records_by_no_with_state(&state, record_no)
+}
+
+fn find_ej_records_by_no_with_state(
+    state: &AppState,
+    record_no: String,
+) -> Result<Vec<EjRecordRef>, CmdError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    daily_report_import_service::find_ej_records_by_no(&conn, record_no).map_err(CmdError::from)
+}
+
+#[tauri::command(async)] // 上の list_ej_records と同じ理由
+#[specta::specta]
+pub fn get_ej_record(state: State<AppState>, id: i64) -> Result<EjRecordDetail, CmdError> {
+    get_ej_record_with_state(&state, id)
+}
+
+fn get_ej_record_with_state(state: &AppState, id: i64) -> Result<EjRecordDetail, CmdError> {
+    let conn = state
+        .db
+        .lock()
+        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
+    daily_report_import_service::get_ej_record(&conn, id).map_err(CmdError::from)
+}
+
 // transaction の間に window の close を受けられるよう main thread の外で動かす（45 §45.4 の「実行の thread」）。
 // doc comment にしない（specta が doc comment を bindings.ts へ写す）。
 #[tauri::command(async)]
@@ -695,15 +752,19 @@ mod tests {
 
     #[test]
     fn test_daily_report_cmd_req401_commit_and_rollback_run_off_main_thread() {
-        // REQ-401 / 45 §45.4「実行の thread」・§45.6c・UI-USW-D5 の 8: 進行中の止めがかかる 4 command は main thread で動かない
+        // REQ-401・REQ-908 / 45 §45.4「実行の thread」・§45.6c・UI-USW-D5 の 8: 進行中の止めがかかる 4 command と、
+        // その Mutex を待ちうる控えの閲覧の 3 command は main thread で動かない
         let commands = [
             "commit_daily_report_import",
             "rollback_daily_report_import",
             "commit_register_sd_bulk_import",
             "import_ej_files",
+            "list_ej_records",
+            "find_ej_records_by_no",
+            "get_ej_record",
         ];
-        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（45 §45.4・§45.6c が名指す 4 つ）を先に固定する
-        assert_eq!(commands.len(), 4);
+        // 一覧から外した command は検査から黙って落ちるので、契約の対象の数（45 §45.4・§45.6c が名指す 7 つ）を先に固定する
+        assert_eq!(commands.len(), 7);
         crate::cmd::assert_commands_run_off_main_thread(
             include_str!("daily_report_import_cmd.rs"),
             &commands,
@@ -1218,5 +1279,26 @@ mod tests {
             setting("plu_register_snapshot_settlement_no").as_deref(),
             Some("10")
         );
+    }
+
+    #[test]
+    fn test_req908_ej_view_cmd_k1_error_kinds() {
+        // REQ-908 / CMD-12-D2 §45.6c・§45.7（Test Plan K1）: 閲覧の 3 command の NotFound と ValidationFailed は
+        // not_found・validation で、BIZ の文のまま
+        let (_dir, state) = app_state();
+        let error = list_ej_records_with_state(&state, Some("2026-02-30".to_string())).unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+        assert_eq!(error.message, "日付の形が正しくありません");
+        let error = find_ej_records_by_no_with_state(&state, "1234567".to_string()).unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::Validation);
+        assert_eq!(error.message, "記録の番号は 6 桁までの数字で入れてください");
+        let error = get_ej_record_with_state(&state, 999).unwrap_err();
+        assert_eq!(error.kind, CmdErrorKind::NotFound);
+        assert_eq!(error.message, "その控えはありません");
+        let day = list_ej_records_with_state(&state, None).unwrap();
+        assert_eq!(day.date, None);
+        assert!(find_ej_records_by_no_with_state(&state, "12".to_string())
+            .unwrap()
+            .is_empty());
     }
 }
