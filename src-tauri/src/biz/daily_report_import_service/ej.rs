@@ -1,7 +1,10 @@
-//! BIZ-08-D9: EJ の記録の取込み（37 §37.11 手順 1〜5）。閲覧（UI-09c）は (A-2) が足す
+//! BIZ-08-D9: EJ の記録の取込み（37 §37.11 手順 1〜5）と閲覧（同「処理ステップ（閲覧）」、UI-09c）
 
 use crate::biz::BizError;
-use crate::db::ej_repo::{self, EjNumberGap, EjRecordKindCode, EjRecordModeCode, NewEjRecord};
+use crate::db::ej_repo::{
+    self, EjNumberGap, EjRecordDetail, EjRecordKindCode, EjRecordModeCode, EjRecordRef,
+    EjRecordSummary, NewEjRecord,
+};
 use crate::db::system_repo::{self, NewOperationLog};
 use crate::db::{DbConnection, DbError};
 use crate::io::ej_parser::{
@@ -20,6 +23,10 @@ use std::sync::OnceLock;
 const LOOKUP_CHUNK: usize = 400;
 /// 結果で名指しする conflict の数（37 §37.11 手順 5）
 const CONFLICT_LIMIT: usize = 100;
+/// 1 日に返す記録の数（37 §37.11 の閲覧。repo は 1 件多く返す）
+const DAY_LIMIT: usize = 1000;
+const DATE_MESSAGE: &str = "日付の形が正しくありません";
+const RECORD_NO_MESSAGE: &str = "記録の番号は 6 桁までの数字で入れてください";
 /// 安全な整数の範囲（2^53 − 1。37 §37.11 手順 2 の total_amount）
 const MAX_SAFE_AMOUNT: i64 = 9_007_199_254_740_991;
 
@@ -67,6 +74,84 @@ pub struct EjConflict {
     pub record_no: String,
     /// その鍵の記録が保存済みか。false は同じ呼出しの中の食い違いで、どの文も保存していない
     pub saved: bool,
+}
+
+/// 閲覧の 1 日（37 §37.11）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+pub struct EjRecordDay {
+    /// 見せる日（YYYY-MM-DD）。記録が 1 件も無ければ None
+    pub date: Option<String>,
+    pub prev_date: Option<String>,
+    pub next_date: Option<String>,
+    /// 記録の番号の順、最大 1000 件
+    pub records: Vec<EjRecordSummary>,
+    /// 1000 件を超えた（先頭 1000 件だけを返した）
+    pub truncated: bool,
+    /// 全期間の欠け
+    pub gaps: Vec<EjNumberGap>,
+}
+
+/// 37 §37.11 `list_ej_records`: `None` は記録のある最も新しい日
+pub fn list_ej_records(conn: &DbConnection, date: Option<String>) -> Result<EjRecordDay, BizError> {
+    let gaps = ej_repo::list_ej_number_gaps(conn)?;
+    let date = match date {
+        Some(date) => date,
+        None => match ej_repo::find_latest_ej_date(conn)? {
+            Some(date) => date,
+            None => {
+                return Ok(EjRecordDay {
+                    date: None,
+                    prev_date: None,
+                    next_date: None,
+                    records: Vec::new(),
+                    truncated: false,
+                    gaps,
+                })
+            }
+        },
+    };
+    // 形（ASCII の 10 バイト）を先に見てから暦日（`2026-1-1` を拒む）。文は §37.11 の閲覧の文
+    crate::biz::inventory_service::validate_business_date(&date)
+        .map_err(|_| BizError::ValidationFailed(DATE_MESSAGE.to_string()))?;
+    let next = chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .ok()
+        .and_then(|day| day.succ_opt())
+        .ok_or_else(|| BizError::ValidationFailed(DATE_MESSAGE.to_string()))?
+        .format("%Y-%m-%d")
+        .to_string();
+    let mut records = ej_repo::list_ej_records_on_date(conn, &date, &next)?;
+    let truncated = records.len() > DAY_LIMIT;
+    records.truncate(DAY_LIMIT);
+    let (prev_date, next_date) = ej_repo::find_ej_adjacent_dates(conn, &date, &next)?;
+    Ok(EjRecordDay {
+        date: Some(date),
+        prev_date,
+        next_date,
+        records,
+        truncated,
+        gaps,
+    })
+}
+
+/// 37 §37.11 `find_ej_records_by_no`: 1〜6 桁の ASCII 数字を 6 桁に 0 埋めして全ての 4 桁の欄から探す
+pub fn find_ej_records_by_no(
+    conn: &DbConnection,
+    record_no: String,
+) -> Result<Vec<EjRecordRef>, BizError> {
+    if record_no.is_empty() || record_no.len() > 6 || !record_no.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(BizError::ValidationFailed(RECORD_NO_MESSAGE.to_string()));
+    }
+    Ok(ej_repo::find_ej_records_by_no(
+        conn,
+        &format!("{record_no:0>6}"),
+    )?)
+}
+
+/// 37 §37.11 `get_ej_record`
+pub fn get_ej_record(conn: &DbConnection, id: i64) -> Result<EjRecordDetail, BizError> {
+    ej_repo::get_ej_record_detail(conn, id)?
+        .ok_or_else(|| BizError::NotFound("その控えはありません".to_string()))
 }
 
 /// 手順 1・2 を通った 1 file の記録（held は保留した記録）

@@ -317,8 +317,8 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - 印刷ボタン: 仕様未定のため Phase 2 では disabled（aria-disabled + Tooltip + cursor-not-allowed）
 - 失敗 4 状態: API fail = 画面全体 Alert / items 空 = 「当月データなし」/ prev_month_comparison 空 = サマリ「比較不可」+ 各行「—」/ 前月だけ fail = 構造的不可能（1 useQuery 設計、Q-5）
 
-**UI-09c レシートの控え（proposed・未実装、D-121）:**
-- 決定は [SCREEN_DESIGN](../SCREEN_DESIGN.md) の「レシートの控え画面」（UI-09c-D1〜D5）。BIZ は BIZ-08 §37.11、CMD は CMD-12 §45.6c。function-design の文書は runtime の lane が作る
+**UI-09c レシートの控え（D-121）:**
+- 決定は [SCREEN_DESIGN](../SCREEN_DESIGN.md) の「レシートの控え画面」（UI-09c-D1〜D5）。BIZ は BIZ-08 §37.11、CMD は CMD-12 §45.6c。画面の状態と key は [80](../function-design/80-ui-ej-receipts.md)（`src/features/ej-receipts/`、route `/reports/receipts`）
 - 日付と番号で EJ の記録を探し、控えの文を等幅で見せる。読むだけ。欠けを知らせ、EJ のファイルを手で選んで埋められる
 
 ### UI-10: 棚卸し画面
@@ -432,3 +432,4 @@ REQ-403 / SP-403 の POS 部門別売上照合は別の deferred 要求であり
 |---|---|---|
 | 2026-08-16 | PR #79 | SPEC-SDI-D5/D7: 両売上取込みタブの追加確認とper-import取消契約を正本化。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群（docs、AI の調べ 2026-11-19、TD-774・814） | UI-07 の利用者操作フロー 6 の「IO-02対応後に可能になる」を今の受理に合わせた |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | UI-09c の proposed・未実装の印を外し、function-design の文書を 80 への参照にした。 |

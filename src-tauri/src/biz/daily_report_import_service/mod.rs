@@ -18,7 +18,8 @@ pub use bulk::commit_register_sd_bulk_import;
 pub use commit::commit_daily_report_import;
 #[allow(unused_imports)]
 pub use ej::{
-    import_ej_records, plan_ej_records, EjConflict, EjImportPlan, EjImportResult, EjSourceFile,
+    find_ej_records_by_no, get_ej_record, import_ej_records, list_ej_records, plan_ej_records,
+    EjConflict, EjImportPlan, EjImportResult, EjRecordDay, EjSourceFile,
 };
 #[allow(unused_imports)]
 pub use list::list_daily_report_imports;

@@ -15,6 +15,7 @@ import {
   Package,
   PackagePlus,
   PackageSearch,
+  Receipt,
   RotateCcw,
   ScrollText,
   Scissors,
@@ -53,7 +54,7 @@ export interface NavArea {
   items: readonly NavItem[];
 }
 
-/// 4 エリア × 22 項目。全画面は route 実装済みで active。
+/// 4 エリア × 24 項目。全画面は route 実装済みで active。
 export const navigation: readonly NavArea[] = [
   {
     id: "daily",
@@ -102,6 +103,14 @@ export const navigation: readonly NavArea[] = [
         title: "月次売上",
         to: "/reports/monthly",
         icon: BarChartBig,
+        status: "active",
+      },
+      {
+        id: "ui-09c",
+        label: "レシートの控え",
+        title: "レシートの控え",
+        to: "/reports/receipts",
+        icon: Receipt,
         status: "active",
       },
     ],

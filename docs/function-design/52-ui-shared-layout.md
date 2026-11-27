@@ -27,7 +27,7 @@ UI 層の関数設計書は業務ロジック有無で 2 段階のテンプレ�
 
 | ファイル | 責務 |
 |---|---|
-| `src/config/navigation.ts` | NavStatus / NavItem / NavArea 型定義 + navigation 定数（4 エリア × 22 項目）。アイコンは lucide-react を import |
+| `src/config/navigation.ts` | NavStatus / NavItem / NavArea 型定義 + navigation 定数（4 エリア × 24 項目）。アイコンは lucide-react を import |
 | `src/components/layout/RootLayout.tsx` | 2 カラム grid + Outlet + Toaster + Devtools + ウィンドウタイトル更新 useEffect（§52.5）+ 自動バックアップ確認 hook の呼出し（UI-11b-D13。hook 本体と state は backup-restore feature が持つ）+ 印刷の案内の 1 行（[56](56-ui-daily-sales.md) UI-09a-D18。component は daily-sales feature が持つ）+ native の window の close の確認の窓 `WindowCloseDialog` の mount（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-USW-D5。止めの集合は `src/lib/window-close-guard.ts` が持つ） |
 | `src/components/layout/Sidebar.tsx` | aside + SidebarHeader + min-h-0 ScrollArea + 4 エリアの map（SidebarArea を呼ぶ） + DisplayScaleControl |
 | `src/components/layout/SidebarArea.tsx` | 1 エリア描画。h2 + アイコン + SidebarLink × N + Separator |
@@ -62,7 +62,7 @@ SidebarLink の active 判定も TanStack Router の `<Link activeProps>` で表
 
 ### 52.3 ルーティング定義
 
-全画面対応表（22 ナビ表示 + 2 ナビ非表示。UI-06b は UI-06a と `/stock` を共用するため route は 23）。この数と共用の関係は今の build の値で、D-138 の後（proposed・未実装）は「商品検索・一覧」のナビ表示が外れて 21 になり、UI-01a・UI-06a・UI-06b が `/products` を共用し、`/stock` の index は `/products` への寄せになる（UI-12-D1、[50](50-ui-product-list.md) UI-01a-D14・D19）。設計合意書 §2.1 を転記（D-047 反映済み）。各記録種別の記録詳細 route（`/inventory/receiving/records/$recordId` 等、入出庫履歴 6 種、いずれもナビ非表示）はこの表の集計対象外とし、[65-inventory-record-traceability.md](65-inventory-record-traceability.md) §65.3 を正本とする。
+全画面対応表（24 ナビ表示 + 2 ナビ非表示。UI-06b は UI-06a と `/stock` を共用するため route は 25。2026-11-25 に `rg -c 'id: "ui-' src/config/navigation.ts` で 24）。この数と共用の関係は今の build の値で、D-138 の後（proposed・未実装）は「商品検索・一覧」のナビ表示が外れて 23 になり、UI-01a・UI-06a・UI-06b が `/products` を共用し、`/stock` の index は `/products` への寄せになる（UI-12-D1、[50](50-ui-product-list.md) UI-01a-D14・D19）。設計合意書 §2.1 を転記（D-047 反映済み）。各記録種別の記録詳細 route（`/inventory/receiving/records/$recordId` 等、入出庫履歴 6 種、いずれもナビ非表示）はこの表の集計対象外とし、[65-inventory-record-traceability.md](65-inventory-record-traceability.md) §65.3 を正本とする。
 
 | UI-ID | 画面名 | URL パス | route ファイル | サイドバー4エリア | ナビ表示 | 備考 |
 |---|---|---|---|---|---|---|
@@ -71,6 +71,7 @@ SidebarLink の active 判定も TanStack Router の `<Link activeProps>` で表
 | UI-09a | 日次売上 | `/reports/daily` | `src/routes/reports/daily.tsx` | 毎日の業務 | ○ | 日次/月次は別 route（合意書 §7.3） |
 | UI-06a | 在庫照会 | `/stock` | `src/routes/stock/index.tsx` | 毎日の業務 | ○ | REQ-301/302/303 統合画面。D-138 で UI-01a と 1 つの画面「商品と在庫」（`/products`、毎日の業務のこの位置）にし、`/stock` は `/products` へ寄せる（[50](50-ui-product-list.md) UI-01a-D14・D19、proposed・未実装） |
 | UI-09b | 月次売上 | `/reports/monthly` | `src/routes/reports/monthly.tsx` | 毎日の業務 | ○ | |
+| UI-09c | レシートの控え | `/reports/receipts` | `src/routes/reports/receipts.tsx` | 毎日の業務 | ○ | 毎日の業務の末尾、月次売上の次（SCREEN_DESIGN UI-09c-D1、[80](80-ui-ej-receipts.md)） |
 | UI-01a | 商品検索・一覧 | `/products` | `src/routes/products/index.tsx` | 商品管理 | ○ | 商品管理の起点。D-138 で UI-06a と統合した「商品と在庫」の route になり、サイドバーの項目は毎日の業務の「商品と在庫」の 1 つ（商品管理のエリアから外す。proposed・未実装） |
 | UI-01b (新規) | 商品登録 | `/products/new` | `src/routes/products/new.tsx` | 商品管理 | ○ | |
 | UI-01b (編集) | 商品修正 | `/products/$code/edit` | `src/routes/products/$code.edit.tsx` | （ナビ非表示） | — | D-138 の後は商品と在庫の行の詳細の「商品修正」から遷移（今の build は一覧の「修正」or 在庫照会詳細から） |
@@ -134,20 +135,20 @@ export type NavArea = {
 export const navigation: readonly NavArea[] = [...] as const;
 ```
 
-#### 4 エリア × 22 項目
+#### 4 エリア × 24 項目
 
-下の表は今の build の項目。D-138 の後（proposed・未実装）は、毎日の業務の「在庫照会」が「商品と在庫」に、入出庫の「在庫少一覧」が「在庫切れ・在庫少」になり、商品管理から「商品検索・一覧」が外れて 4 項目（計 21 項目）になる（UI-12-D1、[50](50-ui-product-list.md) UI-01a-D14）。
+下の表は今の build の項目。D-138 の後（proposed・未実装）は、毎日の業務の「在庫照会」が「商品と在庫」に、入出庫の「在庫少一覧」が「在庫切れ・在庫少」になり、商品管理から「商品検索・一覧」が外れて 4 項目（計 23 項目）になる（UI-12-D1、[50](50-ui-product-list.md) UI-01a-D14）。
 
 | エリア | エリアアイコン | 項目数 | 項目（順序固定） |
 |---|---|---|---|
-| 毎日の業務 | `Sun` | 5 | ホーム / 売上データ取込み / 日次売上 / 在庫照会 / 月次売上 |
+| 毎日の業務 | `Sun` | 6 | ホーム / 売上データ取込み / 日次売上 / 在庫照会 / 月次売上 / レシートの控え |
 | 商品管理 | `Package` | 5 | 商品検索・一覧 / 商品登録 / 一括インポート / PLU書出し / 一括価格改定 |
-| 入出庫 | `ArrowLeftRight` | 7 | 入庫記録 / 返品・交換 / 手動販売出庫 / 廃棄・破損 / 入出庫履歴 / 在庫少一覧 / **棚卸し**（末尾、年次作業） |
+| 入出庫 | `ArrowLeftRight` | 8 | 入庫記録 / 返品・交換 / 手動販売出庫 / 廃棄・破損 / 詰め替え・切り分け / 入出庫履歴 / 在庫少一覧 / **棚卸し**（末尾、年次作業） |
 | システム管理 | `Wrench` | 5 | バックアップ・復元 / 操作ログ / 在庫少の基準 / 整合性検証 / 取引先管理 |
 
 #### 各項目アイコン（lucide-react ^1.8.0）
 
-項目名は今の build の名（D-138 の後の名は上の「4 エリア × 22 項目」の表の前の注記）。
+項目名は今の build の名（D-138 の後の名は上の「4 エリア × 24 項目」の表の前の注記）。
 
 | 項目 | アイコン | 項目 | アイコン |
 |---|---|---|---|
@@ -162,6 +163,7 @@ export const navigation: readonly NavArea[] = [...] as const;
 | PLU書出し | `FileDown` | 操作ログ | `ScrollText` |
 | 一括価格改定 | `CircleDollarSign` | 在庫少の基準 | `SlidersHorizontal` |
 | 取引先管理 | `Building2` | 整合性検証 | `ShieldCheck` |
+| レシートの控え | `Receipt` | 詰め替え・切り分け | `Scissors` |
 
 **アイコンスタイル**: `className="size-4 stroke-[1.5]"`（16px、線細め）。active 時は stone-700、inactive 時は stone-500（[../design-system/00-foundations.md](../design-system/00-foundations.md)「4色エリアモデルの扱い」準拠）。
 
@@ -271,4 +273,5 @@ UI-12 内で唯一「処理 + エラーハンドリング + 書式規約」を�
 | 2026-09-16 | ㉔ mockup-c 採用 | `NavItem.description` をホーム入口 card の 1 行説明として追加。sidebar は参照せず、既存の navigation 契約を維持 |
 | 2026-11-14 | window-close-guard（plan-first、PR #250） | §52.1 の RootLayout の行に native の window の close の確認の窓の mount、接続点に `main.tsx` の listener の登録を足した（UI_TECH_STACK UI-USW-D5、D-153）。未実装の注は実装の PR で外す |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §52.1 の RootLayout の行と接続点の「未実装」の注を外した（`WindowCloseDialog` の mount、`main.tsx` の `installWindowCloseGuard()`。UI_TECH_STACK UI-USW-D5、D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | §52.3 に UI-09c レシートの控え（`/reports/receipts`、毎日の業務の末尾）を足し、§52.2・§52.3・§52.4 の項目の数を実測（`rg -c 'id: "ui-' src/config/navigation.ts` で 24）で直した。§52.4 の入出庫の項目に、表から漏れていた詰め替え・切り分け（UI-16、D-143）を足した。 |
 | 2026-11-26 | context-menu（実装、PR #309） | §52.1 の接続点に `main.tsx` の `TextFieldContextMenu` の mount を足した（UI_TECH_STACK UI-CTX-D1〜D4、D-171。[Plan Packet](../plans/2026-11-25-context-menu.md)）。mount の位置は `TextFieldContextMenu.mount.test.ts` が source で見張る |

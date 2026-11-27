@@ -208,6 +208,9 @@ export const commands = {
 	parseAndValidateDailyReportFromSd: (scanToken: string, candidateKey: string) => typedError<DailyReportPreviewResponse, CmdError>(__TAURI_INVOKE("parse_and_validate_daily_report_from_sd", { scanToken, candidateKey })),
 	commitRegisterSdBulkImport: (scanToken: string) => typedError<RegisterSdBulkResponse, CmdError>(__TAURI_INVOKE("commit_register_sd_bulk_import", { scanToken })),
 	importEjFiles: (files: EjFileRequest[]) => typedError<EjImportResult, CmdError>(__TAURI_INVOKE("import_ej_files", { files })),
+	listEjRecords: (date: string | null) => typedError<EjRecordDay, CmdError>(__TAURI_INVOKE("list_ej_records", { date })),
+	findEjRecordsByNo: (recordNo: string) => typedError<EjRecordRef[], CmdError>(__TAURI_INVOKE("find_ej_records_by_no", { recordNo })),
+	getEjRecord: (id: number) => typedError<EjRecordDetail, CmdError>(__TAURI_INVOKE("get_ej_record", { id })),
 	/**
 	 *  PLUファイルを生成して返す。DB状態は更新しない。
 	 *
@@ -937,6 +940,53 @@ export type EjNumberGap = {
 	from_no: string,
 	// 6 桁。from_no と同じなら 1 つの番号
 	to_no: string,
+};
+
+// 閲覧の 1 日（37 §37.11）
+export type EjRecordDay = {
+	// 見せる日（YYYY-MM-DD）。記録が 1 件も無ければ None
+	date: string | null,
+	prev_date: string | null,
+	next_date: string | null,
+	// 記録の番号の順、最大 1000 件
+	records: EjRecordSummary[],
+	// 1000 件を超えた（先頭 1000 件だけを返した）
+	truncated: boolean,
+	// 全期間の欠け
+	gaps: EjNumberGap[],
+};
+
+// 控えの文（37 §37.11）。body_text は保存したまま（行末の空白を保つ）
+export type EjRecordDetail = {
+	summary: EjRecordSummary,
+	body_text: string,
+};
+
+// 記録の種類（IO-08 の `EjRecordKind`）。`ej_records.kind` の CHECK と同じ値
+export type EjRecordKindCode = "sale" | "cancelled" | "cash_movement" | "receipt" | "settlement" | "inspection" | "settings" | "training" | "unclassified";
+
+// 見出しのモード欄（IO-08 の `EjMode`）。wire と DB の値は snake_case で、`ej_records.mode` の CHECK と同じ
+export type EjRecordModeCode = "normal" | "return" | "training" | "settlement" | "inspection" | "program" | "program1" | "program3" | "off" | "unrecognized";
+
+// 番号で探した 1 件（37 §37.11）
+export type EjRecordRef = {
+	id: number,
+	// `YYYY-MM-DD`
+	date: string,
+};
+
+// 一覧の 1 行（37 §37.11）
+export type EjRecordSummary = {
+	id: number,
+	machine_prefix: string,
+	// 6 桁
+	record_no: string,
+	// `YYYY-MM-DD HH:MM`（記録のまま）
+	printed_at: string,
+	kind: EjRecordKindCode,
+	mode: EjRecordModeCode,
+	// 円。復元できた取引だけ
+	total_amount: number | null,
 };
 
 // エラー行（フロント送信 + キャッシュ兼用）
