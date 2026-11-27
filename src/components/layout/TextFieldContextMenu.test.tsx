@@ -10,6 +10,13 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { TextFieldContextMenu } from "./TextFieldContextMenu";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
+// 貼り付けは clipboard の plugin で読む（D-177）。呼ばれた時の activeElement を控え、中身は readText で差す
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
+  readText: vi.fn(() => {
+    readCalls.push(document.activeElement);
+    return readText();
+  }),
+}));
 
 interface Call {
   args: unknown[];
@@ -19,6 +26,7 @@ interface Call {
 let execCalls: Call[];
 let readCalls: (Element | null)[];
 let readText: () => Promise<string>;
+let browserReadText: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   execCalls = [];
@@ -63,13 +71,10 @@ function endCloseAnimation() {
 }
 
 // 開いている間 body は pointer-events: none になるので、user-event の確かめを外す。
-// setup は navigator.clipboard を自分の stub に差し替えるので、その後に readText を差す
+// setup は navigator.clipboard を自分の stub に差し替えるので、その後に spy を差す（WebView2 の許可の窓を通る読みを使わないことを見る）
 function user() {
   const setup = userEvent.setup({ pointerEventsCheck: 0 });
-  vi.spyOn(navigator.clipboard, "readText").mockImplementation(() => {
-    readCalls.push(document.activeElement);
-    return readText();
-  });
+  browserReadText = vi.spyOn(navigator.clipboard, "readText");
   return setup;
 }
 
@@ -296,7 +301,7 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     expect(commands("cut")[0].active).toBe(field);
   });
 
-  it("UI-CTX-D3: 貼り付けは閉じた後に欄に focus を戻してから読み、同じ欄のときだけ insertText で入れる（待たせて別の欄へ移った後は insertText の spy が呼ばれない。読んだ文字が空なら呼ばない）", async () => {
+  it("UI-CTX-D3: 貼り付けは閉じた後に欄に focus を戻してから clipboard の plugin で読み、同じ欄のときだけ insertText で入れる（待たせて別の欄へ移った後は insertText の spy が呼ばれない。読んだ文字が空なら呼ばない）", async () => {
     renderWith(
       <>
         <input aria-label="一つ目" defaultValue="abc" />
@@ -344,6 +349,7 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     });
     await act(() => Promise.resolve());
     expect(commands("insertText")).toHaveLength(1);
+    expect(browserReadText).not.toHaveBeenCalled();
   });
 
   it("UI-CTX-D3: 読めなかったら toast で Ctrl+V を案内し欄を変えない", async () => {

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { ContextMenu } from "radix-ui";
 import { toast } from "sonner";
 
 /// UI-12 / UI-CTX-D1〜D4: 文字の欄の右クリックの自前の小さなメニュー（切り取り・コピー・貼り付け・すべて選択）。
 /// 欄の外では何も出さず、WebView2 の既定のメニューは document の contextmenu で常に止める。
-/// 設計: docs/UI_TECH_STACK.md §6.13、docs/decision-log.md D-171
+/// 設計: docs/UI_TECH_STACK.md §6.13、docs/decision-log.md D-171・D-177
 
 type TextField = HTMLInputElement | HTMLTextAreaElement;
 type Action = "cut" | "copy" | "paste" | "selectAll";
@@ -37,7 +38,8 @@ function hasSelection(field: TextField): boolean {
 async function paste(field: TextField) {
   let text: string;
   try {
-    text = await navigator.clipboard.readText();
+    // Rust 側で読む（navigator.clipboard.readText は WebView2 の許可の窓を出す。D-177）
+    text = await readText();
   } catch {
     toast.error("貼り付けられませんでした。Ctrl+V で貼り付けてください。", {
       id: "text-field-paste-error",

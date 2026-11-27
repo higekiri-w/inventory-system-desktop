@@ -44,6 +44,7 @@ rand = "0.8"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-fs = "2.5.1"
 tauri-plugin-single-instance = "=2.4.3"
+tauri-plugin-clipboard-manager = "=2.3.3"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_WindowsProgramming", "Win32_UI_WindowsAndMessaging"] }
