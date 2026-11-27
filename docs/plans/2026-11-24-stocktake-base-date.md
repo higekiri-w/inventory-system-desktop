@@ -5,7 +5,7 @@
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: e624336d1576859490d3b55a2f546215466bd9d4
 - Amendments: none
 
 `Plan Commit`・`Amendments` は `scripts/plan-approve.sh` が書く（手で写さない）。
