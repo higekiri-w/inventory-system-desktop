@@ -2,7 +2,7 @@
 
 > **CV17 1.1.1 adapter profile（2026-07-03 field gate反映）**: 2026-04-08 オンライン調査の CV17 Ver.2.0.1 前提（10列TSV / 1始まり / product_code fallback）は、現場 CV17 1.1.1 の `スキャニングPLU(商品)` 取込みで受理されなかった。2026-07-02 field gate では、CV17 1.1.1 export template 由来の11列ヘッダ、`.txt` 拡張子、JAN/EAN互換のスキャニングコードが必要であることを確認した。2026-07-03 field gate では、この形状の `.txt` を `CV17 TXT import -> PC tool SD settings write -> SR-S4000 設定読み -> barcode/register behavior confirmation` の流れで反映できることを確認した。PLU総枠5000は通常PLUとスキャニングPLUで共有する。SR-S4000 本体取扱説明書（2026-07-03 確認）の工場出荷時配分は通常PLU 216 + スキャニングPLU 4,784 で、スキャニングPLU は通常PLU の最大登録数 216 の次の 217 から始まる（店の通常PLU で登録があるのは試しの 2 枠だけで、開始は登録の件数では決まらない）。開始メモリNo. は CV17 の設定で変えられる（CV17 の取説）が、店は 217 のまま変えていない（owner 回答、D-117 (7)）。設定UIには広げず、コード側 profile として memory No. `217..=5000` を保持する。店が開始を変えたときは profile を見直す。以下は SR-S4000 / CV17 1.1.1 用の現行 adapter profile とする。
 >
-> **D-072（2026-08-18）/ D-117（2026-10-16）**: memory No. は `plu_slots` に JAN 単位で永続割当し、入力行が保持する。Diff / Full とも CV17 へ投入でき、外部登録と free slot は出力しない（IO-04-D2、D4 / SPEC-PLS-D3、D5）。clear 行（枠を消す行）は書かない（D-117 (1)。IO-04-D3 の撤去。runtime の lane が code と test を外す）。
+> **D-072（2026-08-18）/ D-117（2026-10-16）**: memory No. は `plu_slots` に JAN 単位で永続割当し、入力行が保持する。Diff / Full とも CV17 へ投入でき、外部登録と free slot は出力しない（IO-04-D2、D4 / SPEC-PLS-D3、D5）。clear 行（枠を消す行）は書かない（D-117 (1)。IO-04-D3 の撤去）。
 
 ### 12.1 モジュール構成
 
@@ -154,6 +154,7 @@ fn generate_plu_tsv(rows: &[PluExportRow]) -> Result<PluFileOutput, PluFormatErr
 - 入力は PluExportRow のスライス、出力は PluFileOutput
 - 日付取得（suggested_filename用）のみ外部依存（chrono::Local::now()）
 - テスト安定化のため、suggested_filename 生成は内部ヘルパーに切り出し、テストでは固定日付を注入可能にする（例: `generate_plu_tsv_with_date(rows, date)` を内部関数として持ち、公開関数は Local::now() で呼ぶ）
+- 1 行の全 11 列（メモリNo.〜部門リンク。行末の CRLF は含まない）の CP932 の byte 列は、crate の中の関数 `format_plu_row(row)` の 1 つの出どころから作る。file に書く行（§12.3）と、BIZ-04 の confirm の照合の値（[33 §16.5](33-biz-plu-export-service.md)。この byte 列の SHA-256）は同じ関数を使うので、名称の 16 バイトの切り詰め（§12.4）で落ちる末尾は照合の値にも入らない（D-168）
 
 ---
 

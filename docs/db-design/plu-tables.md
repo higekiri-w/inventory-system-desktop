@@ -2,8 +2,6 @@
 
 > **親文書**: [DB_DESIGN.md](../DB_DESIGN.md)
 > **設計判断**: [decision-log.md D-072](../decision-log.md#d-072-plu-slot-永続割当と段階導入2026-08-18)、[D-117](../decision-log.md)
->
-> **runtime の状態（2026-10-16）**: 本書は D-117 の後の形。今の migration v5 の表は `release_pending` と `released_at` を持ち、partial UNIQUE は `external` / `reserved` / `active` にかかる。下の「migration（D-117、runtime の lane）」が置き換える。
 
 ---
 
@@ -26,14 +24,14 @@ SR-S4000 のスキャニング PLU 領域について、レジで観測した占
 
 `scanning_code` には `status IN ('reserved','active')` の行だけを対象とする partial UNIQUE index を置く。同じ JAN をアプリ管理の複数スロットへ割り当てる状態は DB が拒否する。`external` は対象外とし、同じコードの `external` が複数行あること、`external` と `reserved` / `active` が同じコードを持つこと（レジがアプリの JAN を別の枠にも持つ観測。[33 §16.3](../function-design/33-biz-plu-export-service.md)）を許す。
 
-### migration（D-117、runtime の lane）
+### migration（D-117）
 
-migration v5 は table と partial UNIQUE index を作り、memory No. 217〜5000 の **4,784 行**を `status='free'`, `scanning_code=NULL` で事前投入した（**MNT-03-D9 / SPEC-PLS-D1**）。D-117 の runtime の lane が、次の migration を足す（番号はその lane が決める）。
+migration v5 は table と partial UNIQUE index を作り、memory No. 217〜5000 の **4,784 行**を `status='free'`, `scanning_code=NULL` で事前投入した（**MNT-03-D9 / SPEC-PLS-D1**）。D-117 の runtime（PLU の書出しの見直し）が、次の migration を足した（版と形は [22 §24](../function-design/22-mnt-migration.md) の vP、MNT-03-D25）。
 
-1. status の CHECK を上の 4 値にする（SQLite は CHECK の変更に表の作り直しが要る）。作り直しで `released_at` を外す。
-2. 既存の `release_pending` の行を `external` にする（`scanning_code`・`reserved_at`・`activated_at` は変えない）。この行はレジに登録が残っていてアプリが書かない枠で、その JAN を再び対象にすると prepare の step 5 が同じ memory No. を採用する。
+1. status の CHECK を上の 4 値にする（SQLite は CHECK の変更に表の作り直しが要る）。作り直しで `released_at` を外す。1 つの TX で全行を新しい表へ写し、同じ TX で、作り直しの前の行と memory No. ごとに全部の列を比べ、違えば何も変えずに止める。
+2. 既存の `release_pending` の行を `external` にする（`scanning_code`・`reserved_at`・`activated_at` は変えない。対応づけは写しの `INSERT … SELECT` の `CASE` で行う。旧い表を `UPDATE` すると、旧い partial UNIQUE が `external` を含むので、同じ JAN の `release_pending` と `external` / `active` の組で UNIQUE 違反になる）。この行はレジに登録が残っていてアプリが書かない枠で、その JAN を再び対象にすると prepare の step 5 が同じ memory No. を採用する。
 3. partial UNIQUE index を `status IN ('reserved','active')` で作り直す。
-4. `app_settings` の key `plu_register_snapshot_summary` を消す（もう書かない・読まない）。
+4. `app_settings` の key `plu_register_snapshot_summary`（もう書かない・読まない）と `plu_register_snapshot_at` を消す。照合日時を消すのは、前の版の DB の照合日時で書出しの gate（`register_snapshot_required`）を通さないため（前の版の app が復元を終えた DB・復元の途中で止まった DB を含む。[33 §16.8](../function-design/33-biz-plu-export-service.md)、owner の決定 2026-11-26、repo 外の回答台帳 TD-912）。版を上げた DB は、書出しの前に SD を 1 回読む。
 
 本番の DB は無い（店は未導入）ので、対象は開発・demo・試験の DB と owner の PC の DB である。数量・在庫・売上・商品は変えない。
 

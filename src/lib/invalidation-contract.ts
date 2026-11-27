@@ -4,7 +4,7 @@ import { queryKeys } from "./query-keys";
 
 export type InvalidationKey = QueryKey;
 
-/** D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）、C26・C27（D-121、UI-09c）: mutation 成功時に stale 化する consumer query の SSOT。 */
+/** D-052-C1〜C22、C23（D-141）、C24（D-143）、C25（D-163）、C26・C27（D-121、UI-09c）: mutation 成功時に stale 化する consumer query の SSOT。C19 は欠番（D-168）。 */
 export const invalidationContract = {
   productCreate: () => [
     queryKeys.productList.root(),
@@ -215,14 +215,9 @@ export const invalidationContract = {
     queryKeys.lowStock(false),
     queryKeys.stockInquiryRoot(),
   ],
-  pluRegisterSnapshot: () => [queryKeys.pluSlotSummary()],
+  // C17（D-168）: SD の読取りの成功。占有の照合で最終照合日時と、missing・conflict の商品の未反映が変わりうる
+  registerSdScan: () => [queryKeys.pluSlotSummary(), queryKeys.pluDirty()],
   pluExportPrepare: () => [queryKeys.pluSlotSummary()],
-  pluBulkTarget: () => [
-    queryKeys.productList.root(),
-    queryKeys.pluDirty(),
-    queryKeys.productForm.root(),
-    queryKeys.pluSlotSummary(),
-  ],
   productPriceRevise: (productCode: string) => [
     queryKeys.productList.root(),
     queryKeys.productForm.product(productCode),

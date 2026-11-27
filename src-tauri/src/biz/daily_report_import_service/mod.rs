@@ -299,6 +299,8 @@ pub struct DailyReportSdScanSnapshot {
     pub ej_files: Vec<SdSourceFile>,
     /// bytes を得られなかった EJ の file 名（相対 path の最後の要素）
     pub ej_unreadable_files: Vec<String>,
+    /// 窓の中の Z004 の bytes（§37.9 手順 10）。CMD-12 が PLU の占有の照合へ渡した後に空にする
+    pub plu_register_z004s: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]

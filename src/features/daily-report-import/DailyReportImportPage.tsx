@@ -43,6 +43,7 @@ import {
 } from "./hooks/useDailyReportImportFlow";
 import { AdditionalImportConfirmDialog } from "../csv-import/components/AdditionalImportConfirmDialog";
 import { SdBulkImport, SdEjSummaryLine } from "./components/SdBulkImport";
+import type { DailyReportSdScanView } from "./types";
 import {
   DailyReportRollbackConfirmDialog,
   formatMoney,
@@ -212,6 +213,10 @@ const TIDY_FAILURE_TEXT: Record<RegisterSdTidyFailure, string> = {
     "取り込んだ分を SD の中で片付けられませんでした。もう一度「SD から読む」を押しても同じ表示なら、管理者に伝えてください。取込みとレジの精算には差し支えありません。",
 };
 
+/** UI-07-D15 (8): PLU の占有を照合しなかったとき（古い SD とレジの精算回数の戻りの両方に当たる文） */
+const PLU_SNAPSHOT_SKIPPED_OLDER_TEXT =
+  "この SD では、レジの登録状況（PLU の書出しに使う）を読みませんでした。この SD の精算回数が、前にレジの登録状況を読んだときより小さいためです。前に使った古い SD を読んだのでなければ、管理者に伝えてください。取込みとレジの精算には差し支えありません。";
+
 /** UI-07-D15 (3) の一覧の上の文（状態の数だけで決める） */
 function scanSummary(scan: DailyReportSdScan): string | null {
   const count = (status: DailyReportSdCandidateStatus) =>
@@ -244,7 +249,7 @@ function DailyReportSourceStep({
   onConfirmFiles,
 }: {
   scanning: boolean;
-  scan: DailyReportSdScan | null;
+  scan: DailyReportSdScanView | null;
   /** 応答を待つ間（一括・手で選ぶ EJ。ボタンを押せない） */
   busy: boolean;
   showCandidates: boolean;
@@ -297,6 +302,15 @@ function DailyReportSourceStep({
                 >
                   <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                   <span>{TIDY_FAILURE_TEXT[scan.tidy_failure]}</span>
+                </p>
+              )}
+              {scan.plu_snapshot_skipped_older && (
+                <p
+                  className="flex items-start gap-2 text-sm font-medium text-warning-strong"
+                  role="status"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                  <span>{PLU_SNAPSHOT_SKIPPED_OLDER_TEXT}</span>
                 </p>
               )}
               {bulk}

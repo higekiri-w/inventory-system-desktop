@@ -152,8 +152,14 @@ export function useDailyReportImportFlow() {
         cmd: "scan_register_sd",
       }),
     retry: 0,
-    onSuccess: (data) => {
-      dispatch({ type: "scan_succeeded", scan: data.scan, scanToken: data.scan_token });
+    onSuccess: async (data) => {
+      dispatch({
+        type: "scan_succeeded",
+        scan: { ...data.scan, plu_snapshot_skipped_older: data.plu_snapshot_skipped_older },
+        scanToken: data.scan_token,
+      });
+      // D-052-C17: SD の読取りの中の PLU の占有の照合で、最終照合日時と未反映が変わりうる
+      await invalidateByContract(queryClient, invalidationContract.registerSdScan());
     },
     onError: (error: unknown) => {
       // BIZ-08 §37.9 の固定の文を「SD から読む」の直下の 1 スロットに出す

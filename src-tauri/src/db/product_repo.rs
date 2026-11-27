@@ -138,7 +138,6 @@ pub struct ProductWithRelations {
     pub product: Product,
     pub department_name: String,
     pub supplier_name: Option<String>,
-    pub plu_memory_no: Option<i64>,
     /// 写しの要再確認と範囲（ADR SPEC-STK-CNT-D2・D9。範囲は要再確認のときだけ両端が値。40）
     pub stock_recheck: bool,
     pub stock_range_low: Option<i64>,
@@ -147,7 +146,7 @@ pub struct ProductWithRelations {
 
 /// 商品 + 部門名（INNER JOIN結果、PLU書出し用）
 ///
-/// 20-io-product-repo.md §2.3 find_active_products_for_plu / find_plu_dirty_products_for_plu
+/// 20-io-product-repo.md §2.3 find_active_products_for_plu
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProductForPlu {
     #[serde(flatten)]
@@ -277,33 +276,12 @@ pub struct ProductSearchQuery {
     pub include_unassigned: bool,
     /// None=全件、Some(false)=現行品のみ、Some(true)=廃番のみ
     pub is_discontinued: Option<bool>,
-    #[serde(default)]
-    pub plu: Option<PluMigrationFilter>,
     pub sort_key: SortKey,
     pub sort_order: SortOrder,
     /// 1始まり。0以下は DbError::QueryFailed
     pub page: u32,
     /// 1以上。0は DbError::QueryFailed。デフォルト50
     pub per_page: u32,
-}
-
-/// PLU 対象一括更新用の商品検索条件（ページングなし）
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
-pub struct ProductBulkFilter {
-    pub keyword: Option<String>,
-    pub department_id: Option<i64>,
-    pub is_discontinued: Option<bool>,
-    pub plu: Option<PluMigrationFilter>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum PluMigrationFilter {
-    All,
-    Target,
-    Pending,
-    Synced,
-    Excluded,
 }
 
 /// 検索ソートキー
@@ -350,17 +328,16 @@ fn row_to_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     })
 }
 
-/// rusqlite::Row → ProductWithRelations の変換（18カラム + dept_name + supplier_name + plu_memory_no + 写しの 3 列）
+/// rusqlite::Row → ProductWithRelations の変換（18カラム + dept_name + supplier_name + 写しの 3 列）
 fn row_to_product_with_relations(row: &rusqlite::Row) -> rusqlite::Result<ProductWithRelations> {
     let product = row_to_product(row)?;
     Ok(ProductWithRelations {
         product,
         department_name: row.get(18)?,
         supplier_name: row.get(19)?,
-        plu_memory_no: row.get(20)?,
-        stock_recheck: row.get(21)?,
-        stock_range_low: row.get(22)?,
-        stock_range_high: row.get(23)?,
+        stock_recheck: row.get(20)?,
+        stock_range_low: row.get(21)?,
+        stock_range_high: row.get(22)?,
     })
 }
 
@@ -664,12 +641,6 @@ pub fn find_by_product_code(
                 p.created_at, p.updated_at,
                 d.name AS dept_name,
                 s.name AS supplier_name,
-                (SELECT ps.memory_no FROM plu_slots ps
-                 WHERE ps.scanning_code = p.jan_code
-                   AND ps.status IN ('reserved','active','release_pending')
-                 ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
-                          ps.memory_no
-                 LIMIT 1) AS plu_memory_no,
                 p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
@@ -789,30 +760,6 @@ pub fn find_plu_dirty_products(conn: &DbConnection) -> Result<Vec<Product>, DbEr
     Ok(products)
 }
 
-/// plu_dirty=1 の商品一覧を部門名付きで返す（PLU書出し差分モード、IO-04入力用）
-///
-/// 20-io-product-repo.md §2.3 find_plu_dirty_products_for_plu
-pub fn find_plu_dirty_products_for_plu(conn: &DbConnection) -> Result<Vec<ProductForPlu>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT p.product_code, p.jan_code, p.name, p.department_id, p.supplier_id,
-                p.selling_price, p.cost_price_centi, p.tax_rate, p.maker_code,
-                p.stock_quantity, p.stock_unit, p.is_discontinued,
-                p.plu_dirty, p.plu_exported_at, p.plu_target, p.pos_stock_sync,
-                p.created_at, p.updated_at,
-                d.name as department_name
-         FROM products p
-         INNER JOIN departments d ON p.department_id = d.id
-         WHERE p.plu_dirty = 1 AND p.plu_target = 1
-         ORDER BY p.product_code ASC",
-    )?;
-    let rows = stmt.query_map([], row_to_product_for_plu)?;
-    let mut products = Vec::new();
-    for row in rows {
-        products.push(row?);
-    }
-    Ok(products)
-}
-
 /// 有効な（廃番でない）商品一覧を返す（PLU書出しの全件モード用）
 ///
 /// 20-io-product-repo.md §2.3 find_active_products
@@ -908,20 +855,6 @@ pub fn search_products(
         params.push(Box::new(discontinued));
     }
 
-    match query.plu {
-        Some(PluMigrationFilter::Target) => conditions.push("p.plu_target = 1".to_string()),
-        Some(PluMigrationFilter::Pending) => {
-            conditions.push("p.plu_target = 1 AND p.plu_dirty = 1".to_string());
-        }
-        Some(PluMigrationFilter::Synced) => {
-            conditions.push("p.plu_target = 1 AND p.plu_dirty = 0".to_string());
-        }
-        Some(PluMigrationFilter::Excluded) => {
-            conditions.push("p.plu_target = 0".to_string());
-        }
-        Some(PluMigrationFilter::All) | None => {}
-    }
-
     let where_clause = if conditions.is_empty() {
         String::new()
     } else {
@@ -959,12 +892,6 @@ pub fn search_products(
                 p.created_at, p.updated_at,
                 d.name AS dept_name,
                 s.name AS supplier_name,
-                (SELECT ps.memory_no FROM plu_slots ps
-                 WHERE ps.scanning_code = p.jan_code
-                   AND ps.status IN ('reserved','active','release_pending')
-                 ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
-                          ps.memory_no
-                 LIMIT 1) AS plu_memory_no,
                 p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
@@ -987,60 +914,6 @@ pub fn search_products(
         page: query.page,
         per_page,
     })
-}
-
-/// PLU 対象一括更新用に filter 一致全件をページングなしで返す。
-pub fn find_products_for_bulk_plu_target(
-    conn: &DbConnection,
-    filter: &ProductBulkFilter,
-) -> Result<Vec<Product>, DbError> {
-    let mut conditions = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-
-    if let Some(ref keyword) = filter.keyword {
-        let like = format!("%{}%", keyword);
-        let idx = params.len() + 1;
-        conditions.push(format!(
-            "(p.name LIKE ?{idx} OR p.product_code LIKE ?{idx} OR p.jan_code LIKE ?{idx} OR p.maker_code LIKE ?{idx})"
-        ));
-        params.push(Box::new(like));
-    }
-    if let Some(department_id) = filter.department_id {
-        conditions.push(format!("p.department_id = ?{}", params.len() + 1));
-        params.push(Box::new(department_id));
-    }
-    if let Some(is_discontinued) = filter.is_discontinued {
-        conditions.push(format!("p.is_discontinued = ?{}", params.len() + 1));
-        params.push(Box::new(is_discontinued));
-    }
-    match filter.plu {
-        Some(PluMigrationFilter::Target) => conditions.push("p.plu_target = 1".to_string()),
-        Some(PluMigrationFilter::Pending) => {
-            conditions.push("p.plu_target = 1 AND p.plu_dirty = 1".to_string());
-        }
-        Some(PluMigrationFilter::Synced) => {
-            conditions.push("p.plu_target = 1 AND p.plu_dirty = 0".to_string());
-        }
-        Some(PluMigrationFilter::Excluded) => conditions.push("p.plu_target = 0".to_string()),
-        Some(PluMigrationFilter::All) | None => {}
-    }
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
-    let sql = format!(
-        "SELECT p.product_code, p.jan_code, p.name, p.department_id, p.supplier_id,
-                p.selling_price, p.cost_price_centi, p.tax_rate, p.maker_code,
-                p.stock_quantity, p.stock_unit, p.is_discontinued,
-                p.plu_dirty, p.plu_exported_at, p.plu_target, p.pos_stock_sync,
-                p.created_at, p.updated_at
-         FROM products p {where_clause} ORDER BY p.product_code ASC"
-    );
-    let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_ref.as_slice(), row_to_product)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(DbError::from)
 }
 
 /// 商品の指定フィールドを更新する
@@ -1268,12 +1141,6 @@ pub fn get_stock_detail(conn: &DbConnection, product_code: &str) -> Result<Stock
                 p.created_at, p.updated_at,
                 d.name AS dept_name,
                 s.name AS supplier_name,
-                (SELECT ps.memory_no FROM plu_slots ps
-                 WHERE ps.scanning_code = p.jan_code
-                   AND ps.status IN ('reserved','active','release_pending')
-                 ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
-                          ps.memory_no
-                 LIMIT 1) AS plu_memory_no,
                 p.stock_recheck, p.stock_range_low, p.stock_range_high,
                 (SELECT MAX(rr.receiving_date)
                  FROM receiving_items ri
@@ -1294,8 +1161,8 @@ pub fn get_stock_detail(conn: &DbConnection, product_code: &str) -> Result<Stock
             let product = row_to_product_with_relations(row)?;
             Ok(StockDetail {
                 product,
-                last_receiving_date: row.get(24)?,
-                last_sale_date: row.get(25)?,
+                last_receiving_date: row.get(23)?,
+                last_sale_date: row.get(24)?,
             })
         }
         None => Err(DbError::NotFound),
@@ -1341,12 +1208,6 @@ pub fn list_low_stock_products(
                 p.created_at, p.updated_at,
                 d.name AS dept_name,
                 s.name AS supplier_name,
-                (SELECT ps.memory_no FROM plu_slots ps
-                 WHERE ps.scanning_code = p.jan_code
-                   AND ps.status IN ('reserved','active','release_pending')
-                 ORDER BY CASE WHEN ps.status IN ('reserved','active') THEN 0 ELSE 1 END,
-                          ps.memory_no
-                 LIMIT 1) AS plu_memory_no,
                 p.stock_recheck, p.stock_range_low, p.stock_range_high
          FROM products p
          LEFT JOIN departments d ON p.department_id = d.id
@@ -1791,7 +1652,6 @@ mod tests {
             supplier_id: None,
             include_unassigned: false,
             is_discontinued: None,
-            plu: None,
             sort_key: SortKey::ProductCode,
             sort_order: SortOrder::Asc,
             page: 1,
@@ -1800,74 +1660,22 @@ mod tests {
     }
 
     #[test]
-    fn test_search_products_req907_filters_plu_migration_states() {
-        let (_dir, conn) = setup_test_db();
-        let fixtures = [
-            ("PLU-EXCLUDED-A", false, false, false),
-            ("PLU-PENDING", true, true, false),
-            ("PLU-SYNCED", true, false, false),
-            ("PLU-EXCLUDED-D", false, false, true),
-        ];
-        for (code, target, dirty, discontinued) in fixtures {
-            let mut product = create_test_product(code, code, 1);
-            product.plu_target = target;
-            product.plu_dirty = dirty;
-            product.is_discontinued = discontinued;
-            insert_product(&conn, &product).unwrap();
+    fn test_product_search_query_req907_ignores_stale_plu_field() {
+        // REQ-907 / D-117 (2): 移行の絞り込みは無い。古い payload に残った `plu` は、値が何でも無視する
+        for plu in [serde_json::json!("pending"), serde_json::json!("bogus")] {
+            let query: ProductSearchQuery = serde_json::from_value(serde_json::json!({
+                "keyword": null,
+                "department_id": null,
+                "is_discontinued": null,
+                "plu": plu,
+                "sort_key": "ProductCode",
+                "sort_order": "Asc",
+                "page": 1,
+                "per_page": 50
+            }))
+            .unwrap();
+            assert_eq!(query.page, 1);
         }
-
-        let cases = [
-            (PluMigrationFilter::All, 4),
-            (PluMigrationFilter::Target, 2),
-            (PluMigrationFilter::Pending, 1),
-            (PluMigrationFilter::Synced, 1),
-            (PluMigrationFilter::Excluded, 2),
-        ];
-        for (filter, expected) in cases {
-            let mut query = default_search_query();
-            query.plu = Some(filter);
-            let result = search_products(&conn, &query).unwrap();
-            assert_eq!(result.total_count, expected, "filter={filter:?}");
-        }
-
-        let mut active_excluded = default_search_query();
-        active_excluded.plu = Some(PluMigrationFilter::Excluded);
-        active_excluded.is_discontinued = Some(false);
-        assert_eq!(
-            search_products(&conn, &active_excluded)
-                .unwrap()
-                .total_count,
-            1
-        );
-    }
-
-    #[test]
-    fn test_product_search_query_req907_deserializes_optional_plu_filter() {
-        let base = serde_json::json!({
-            "keyword": null,
-            "department_id": null,
-            "is_discontinued": null,
-            "sort_key": "ProductCode",
-            "sort_order": "Asc",
-            "page": 1,
-            "per_page": 50
-        });
-        let omitted: ProductSearchQuery = serde_json::from_value(base.clone()).unwrap();
-        assert_eq!(omitted.plu, None);
-
-        let mut with_null = base.clone();
-        with_null["plu"] = serde_json::Value::Null;
-        let with_null: ProductSearchQuery = serde_json::from_value(with_null).unwrap();
-        assert_eq!(with_null.plu, None);
-
-        let mut with_pending = base.clone();
-        with_pending["plu"] = serde_json::json!("pending");
-        let with_pending: ProductSearchQuery = serde_json::from_value(with_pending).unwrap();
-        assert_eq!(with_pending.plu, Some(PluMigrationFilter::Pending));
-
-        let mut bogus = base;
-        bogus["plu"] = serde_json::json!("bogus");
-        assert!(serde_json::from_value::<ProductSearchQuery>(bogus).is_err());
     }
 
     /// テストデータ（複数商品）を投入するヘルパー
@@ -2554,20 +2362,6 @@ mod tests {
     }
 
     #[test]
-    fn test_find_plu_dirty_products_for_plu_req402_returns_dirty_only() {
-        // REQ-402: PLU書出し（PLU対象商品/dirtyフラグ）
-        // BIZ-04: plu_dirty=1の商品のみ部門名付きで返ること
-        let (_dir, conn) = setup_test_db();
-        insert_test_product_for_plu(&conn, "PLU-D001", 1, false, true); // dirty
-        insert_test_product_for_plu(&conn, "PLU-D002", 1, false, false); // clean
-
-        let result = find_plu_dirty_products_for_plu(&conn).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].product.product_code, "PLU-D001");
-        assert_eq!(result[0].department_name, "その他小物");
-    }
-
-    #[test]
     fn test_find_plu_dirty_products_req402_returns_dirty_only() {
         // REQ-402: PLU書出し（PLU対象商品/dirtyフラグ）
         // BIZ-04: plu_dirty=1の商品のみ返ること（department_nameなし版）
@@ -2601,10 +2395,6 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].product.product_code, "PLU-TARGET");
 
-        let dirty_plu = find_plu_dirty_products_for_plu(&conn).unwrap();
-        assert_eq!(dirty_plu.len(), 1);
-        assert_eq!(dirty_plu[0].product.product_code, "PLU-TARGET");
-
         let dirty = find_plu_dirty_products(&conn).unwrap();
         assert_eq!(dirty.len(), 1);
         assert_eq!(dirty[0].product_code, "PLU-TARGET");
@@ -2619,9 +2409,6 @@ mod tests {
 
         let active = find_active_products_for_plu(&conn).unwrap();
         assert!(active.is_empty());
-
-        let dirty_plu = find_plu_dirty_products_for_plu(&conn).unwrap();
-        assert!(dirty_plu.is_empty());
 
         let dirty = find_plu_dirty_products(&conn).unwrap();
         assert!(dirty.is_empty());
@@ -2711,26 +2498,6 @@ mod tests {
             assert_eq!(result.items.len(), 1, "keyword={keyword}");
             assert_eq!(result.items[0].product.product_code, expected);
         }
-    }
-
-    #[test]
-    fn test_find_products_for_bulk_plu_target_req105_keyword_matches_maker_code() {
-        let (_dir, conn) = setup_test_db();
-        let mut product = create_test_product("BULK-MK-001", "合成商品", 1);
-        product.maker_code = Some("BULK-MAKER-Z9".to_string());
-        insert_product(&conn, &product).unwrap();
-        let result = find_products_for_bulk_plu_target(
-            &conn,
-            &ProductBulkFilter {
-                keyword: Some("MAKER-Z9".to_string()),
-                department_id: None,
-                is_discontinued: None,
-                plu: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].product_code, "BULK-MK-001");
     }
 
     fn insert_history_fixture(conn: &DbConnection, product_code: &str, count: u32) {

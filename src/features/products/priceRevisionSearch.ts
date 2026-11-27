@@ -129,7 +129,6 @@ export function buildPriceRevisionProductSearchQuery(
     supplier_id: normalized.supplier ?? null,
     include_unassigned: normalized.includeUnassigned,
     is_discontinued: normalized.discontinued ? null : false,
-    plu: "all",
     sort_key: sortKeyMap[normalized.sort],
     sort_order: "Asc",
     page: normalized.page,

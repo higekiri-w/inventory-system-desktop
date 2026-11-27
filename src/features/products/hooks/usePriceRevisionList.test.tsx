@@ -104,7 +104,6 @@ describe("usePriceRevisionList UI-14 / REQ-105", () => {
         "keyword",
         "page",
         "per_page",
-        "plu",
         "sort_key",
         "sort_order",
         "supplier_id",

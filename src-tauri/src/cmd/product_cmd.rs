@@ -3,10 +3,7 @@
 //! docs/function-design/40-cmd-product.md §5.4 + 42-cmd-sales-stocktake.md §22.6 に基づく実装。
 
 use crate::biz::product_service::{self, ImportRow};
-use crate::biz::{
-    Department, PaginatedResult, ProductBulkFilter, ProductSearchQuery, ProductWithRelations,
-    Supplier,
-};
+use crate::biz::{Department, PaginatedResult, ProductSearchQuery, ProductWithRelations, Supplier};
 use crate::cmd::{AppState, CmdError, CmdErrorKind};
 use crate::constants;
 use tauri::State;
@@ -83,21 +80,6 @@ pub fn search_products(
         .lock()
         .map_err(|error| CmdError::internal("DB接続エラー", error))?;
     product_service::search_products(&conn, query).map_err(CmdError::from)
-}
-
-/// 現在の filter 一致全件の PLU 対象状態を更新する。
-#[tauri::command]
-#[specta::specta]
-pub fn bulk_set_plu_target(
-    state: State<AppState>,
-    filter: ProductBulkFilter,
-    plu_target: bool,
-) -> Result<product_service::BulkPluTargetResult, CmdError> {
-    let mut conn = state
-        .db
-        .lock()
-        .map_err(|error| CmdError::internal("DB接続エラー", error))?;
-    product_service::bulk_set_plu_target(&mut conn, filter, plu_target).map_err(CmdError::from)
 }
 
 /// 部門選択候補を全件取得する

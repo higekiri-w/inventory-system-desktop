@@ -19,19 +19,12 @@ use crate::constants::{PLU_EXPORT_LIMIT, SCANNING_PLU_MEMORY_START};
 #[derive(Debug, Clone)]
 pub struct PluExportRow {
     pub memory_no: i64,
-    pub row_kind: PluExportRowKind,
     pub product_code: String,
     pub jan_code: Option<String>,
     pub name: String,
     pub selling_price: i64,
     pub tax_rate: String,
     pub department_name: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PluExportRowKind {
-    Product,
-    Clear,
 }
 
 /// PLUファイル生成結果
@@ -125,67 +118,7 @@ pub(crate) fn generate_plu_tsv_with_date(
 
     // データ行
     for row in rows {
-        if row.memory_no < SCANNING_PLU_MEMORY_START as i64
-            || row.memory_no > PLU_EXPORT_LIMIT as i64
-        {
-            return Err(PluFormatError::InvalidMemoryNo {
-                memory_no: row.memory_no,
-                message: format!("PLUメモリNo.が範囲外です: {}", row.memory_no),
-            });
-        }
-        if row.row_kind == PluExportRowKind::Clear {
-            let clear = format!(
-                "{:06}\t00000000000000\t\t\\0\t税1(内税)\tいいえ\tいいえ\tいいえ\tいいえ\t無し\tノンリンク",
-                row.memory_no
-            );
-            let (clear_bytes, _, had_replacements) = encoding_rs::SHIFT_JIS.encode(&clear);
-            debug_assert!(!had_replacements);
-            output.extend_from_slice(&clear_bytes);
-            output.extend_from_slice(b"\r\n");
-            continue;
-        }
-        let name_bytes = process_product_name(&row.name, &row.product_code)?;
-        let tax = map_tax_rate(&row.tax_rate, &row.product_code)?;
-        let scanning_code = validate_scanning_code(row)?;
-
-        // メモリNo. + タブ + スキャニングコード + タブ
-        let prefix = format!("{:06}\t{}\t", row.memory_no, scanning_code);
-        let (prefix_bytes, _, had_replacements) = encoding_rs::SHIFT_JIS.encode(&prefix);
-        if had_replacements {
-            let bad_char = find_unmappable_char(scanning_code).unwrap_or('?');
-            return Err(PluFormatError::EncodingError {
-                product_code: row.product_code.clone(),
-                char: bad_char,
-                message: format!(
-                    "商品 {} のスキャニングコードにCP932非対応文字 '{}' が含まれています",
-                    row.product_code, bad_char
-                ),
-            });
-        }
-        output.extend_from_slice(&prefix_bytes);
-
-        // 名称（CP932、16バイトパディング済み）
-        output.extend_from_slice(&name_bytes);
-
-        // タブ + 単価 + タブ + 課税方式 + 固定列 + 部門リンク
-        let suffix = format!(
-            "\t{}\t{}\tいいえ\tいいえ\tいいえ\tいいえ\t無し\t{}",
-            row.selling_price, tax, row.department_name
-        );
-        let (suffix_bytes, _, had_replacements) = encoding_rs::SHIFT_JIS.encode(&suffix);
-        if had_replacements {
-            // 固定文字列部分はCP932安全なので、department_name が原因
-            let bad_char = find_unmappable_char(&row.department_name).unwrap_or('?');
-            return Err(PluFormatError::EncodingError {
-                product_code: row.product_code.clone(),
-                char: bad_char,
-                message: format!(
-                    "商品 {} の部門名にCP932非対応文字 '{}' が含まれています",
-                    row.product_code, bad_char
-                ),
-            });
-        }
-        output.extend_from_slice(&suffix_bytes);
+        output.extend_from_slice(&format_plu_row(row)?);
         output.extend_from_slice(b"\r\n");
     }
 
@@ -195,6 +128,61 @@ pub(crate) fn generate_plu_tsv_with_date(
         content_type: "text/tab-separated-values",
         encoding: "CP932",
     })
+}
+
+/// 1 行の全 11 列（メモリNo.〜部門リンク）の CP932 の byte 列。行末の CRLF は含まない。
+/// file に書く行と、BIZ-04 の confirm の照合の値（33 §16.5）の入力は、この関数の 1 つの出どころから作る
+pub(crate) fn format_plu_row(row: &PluExportRow) -> Result<Vec<u8>, PluFormatError> {
+    let mut output = Vec::new();
+    if row.memory_no < SCANNING_PLU_MEMORY_START as i64 || row.memory_no > PLU_EXPORT_LIMIT as i64 {
+        return Err(PluFormatError::InvalidMemoryNo {
+            memory_no: row.memory_no,
+            message: format!("PLUメモリNo.が範囲外です: {}", row.memory_no),
+        });
+    }
+    let name_bytes = process_product_name(&row.name, &row.product_code)?;
+    let tax = map_tax_rate(&row.tax_rate, &row.product_code)?;
+    let scanning_code = validate_scanning_code(row)?;
+
+    // メモリNo. + タブ + スキャニングコード + タブ
+    let prefix = format!("{:06}\t{}\t", row.memory_no, scanning_code);
+    let (prefix_bytes, _, had_replacements) = encoding_rs::SHIFT_JIS.encode(&prefix);
+    if had_replacements {
+        let bad_char = find_unmappable_char(scanning_code).unwrap_or('?');
+        return Err(PluFormatError::EncodingError {
+            product_code: row.product_code.clone(),
+            char: bad_char,
+            message: format!(
+                "商品 {} のスキャニングコードにCP932非対応文字 '{}' が含まれています",
+                row.product_code, bad_char
+            ),
+        });
+    }
+    output.extend_from_slice(&prefix_bytes);
+
+    // 名称（CP932、16バイトパディング済み）
+    output.extend_from_slice(&name_bytes);
+
+    // タブ + 単価 + タブ + 課税方式 + 固定列 + 部門リンク
+    let suffix = format!(
+        "\t{}\t{}\tいいえ\tいいえ\tいいえ\tいいえ\t無し\t{}",
+        row.selling_price, tax, row.department_name
+    );
+    let (suffix_bytes, _, had_replacements) = encoding_rs::SHIFT_JIS.encode(&suffix);
+    if had_replacements {
+        // 固定文字列部分はCP932安全なので、department_name が原因
+        let bad_char = find_unmappable_char(&row.department_name).unwrap_or('?');
+        return Err(PluFormatError::EncodingError {
+            product_code: row.product_code.clone(),
+            char: bad_char,
+            message: format!(
+                "商品 {} の部門名にCP932非対応文字 '{}' が含まれています",
+                row.product_code, bad_char
+            ),
+        });
+    }
+    output.extend_from_slice(&suffix_bytes);
+    Ok(output)
 }
 
 fn validate_scanning_code(row: &PluExportRow) -> Result<&str, PluFormatError> {
@@ -463,7 +451,6 @@ mod tests {
     ) -> PluExportRow {
         PluExportRow {
             memory_no: 217,
-            row_kind: PluExportRowKind::Product,
             product_code: product_code.to_string(),
             jan_code: jan_code.map(String::from),
             name: name.to_string(),
@@ -856,30 +843,6 @@ mod tests {
         assert_eq!(map_tax_rate("10", "X").unwrap(), "税1(内税)");
         assert_eq!(map_tax_rate("8", "X").unwrap(), "税2(内税)");
         assert_eq!(map_tax_rate("0", "X").unwrap(), "非課税");
-    }
-
-    #[test]
-    fn test_clear_row_req907_exact_eleven_fields() {
-        // REQ-907: A-R5b independent exact oracle.
-        let row = PluExportRow {
-            memory_no: 217,
-            row_kind: PluExportRowKind::Clear,
-            product_code: String::new(),
-            jan_code: None,
-            name: String::new(),
-            selling_price: 0,
-            tax_rate: "10".to_string(),
-            department_name: String::new(),
-        };
-        let output = generate_plu_tsv_with_date(&[row], "20260818").unwrap();
-        let (decoded, _, _) = encoding_rs::SHIFT_JIS.decode(&output.bytes);
-        let line = decoded.split("\r\n").nth(1).unwrap();
-        assert_eq!(
-            line,
-            "000217\t00000000000000\t\t\\0\t税1(内税)\tいいえ\tいいえ\tいいえ\tいいえ\t無し\tノンリンク"
-        );
-        assert_eq!(line.split('\t').count(), 11);
-        assert_eq!(line.split('\t').nth(3), Some("\\0"));
     }
 
     #[test]

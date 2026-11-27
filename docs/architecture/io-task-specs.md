@@ -37,7 +37,7 @@ IO-02 は [23](../function-design/23-io-z004-parser.md) の精算の識別メタ
 - sales_repository: sale_records, csv_imports, csv_import_errors のCRUD
 - stocktake_repository: stocktakes, stocktake_items のCRUD
 - system_repository: operation_logs, app_settings のCRUD
-- plu_slot_repository: plu_slots の snapshot / reservation / confirm / release CRUD と products の JAN JOIN
+- plu_slot_repository: plu_slots の snapshot / reservation / confirm の CRUD と products の JAN JOIN
 
 **【制御構造】**
 - コネクションプールは不要（1人運用デスクトップアプリ、単一接続で十分）
@@ -122,9 +122,7 @@ IO-02 は [23](../function-design/23-io-z004-parser.md) の精算の識別メタ
 
 ### IO-04: PLUフォーマッター
 
-**タスク要求**: `plu_slots` 由来の memory No. を持つ product 行を、CV17 1.1.1 が受理する CP932・タブ区切り **11 列**へ変換する（IO-04-D2、D4 / SPEC-PLS-D3、D5。clear 行は D-117 で外す）。
-
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は Clear 行を書く（`src-tauri/src/constants.rs` の `PLU_CLEAR_ROW_ENABLED = true`、`io/plu_formatter.rs` の `PluExportRowKind::Clear`）。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
+**タスク要求**: `plu_slots` 由来の memory No. を持つ product 行を、CV17 1.1.1 が受理する CP932・タブ区切り **11 列**へ変換する（IO-04-D2、D4 / SPEC-PLS-D3、D5。clear 行は D-117 で外した）。
 
 **データ構造**: `PluExportRow` は `memory_no` を持つ。memory No. は 217〜5000 の入力値を 6 桁ゼロ埋めし、行順から生成しない。
 

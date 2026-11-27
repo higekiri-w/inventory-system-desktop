@@ -109,8 +109,6 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 4. 行クリックで商品編集画面へ遷移
 5. 「新規登録」ボタンでUI-01bへ遷移（新規モード）
 
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、一覧に「PLU」の列（`src/features/products/components/ProductTable.tsx` の `ProductTable`。対象外 / 未反映 / 反映済み の Badge）を持ち、`src/features/products/ProductListPage.tsx` に PLU の絞り込み（URL の `plu`）と、絞り込みに一致する全件の一括更新（`commands.bulkSetPluTarget`、CMD-01 の `bulk_set_plu_target`）がある。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
-
 ### UI-01b: 商品登録・修正
 
 **タスク要求**: 商品情報の入力・保存
@@ -138,8 +136,6 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 5. 保存 → バリデーション → 成功トースト → 一覧に戻る
 6. edit は memory No. を表示しない（D-117）。廃番解除で plu_target を自動復帰しない
 7. edit は第 5 セクション「価格履歴」で直近 10 件を表示し、「すべて表示」で 100 件を取得する。create では表示しない
-
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、edit で「レジメモリNo.」（`plu_memory_no`）を表示する（`src/features/products/ProductFormPage.tsx`）。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### UI-14: 一括価格改定
 
@@ -267,7 +263,7 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 - 書出しモード（'diff' / 'full'）。既定は 'diff'
 - レジ登録状況（未照合 / 最終照合日時。照合は売上データ取込みの SD の読取りで自動、D-117）
 - 差分対象商品（CMD-08 list_plu_dirty）
-- 書出し準備結果（bytes_base64, suggested_filename, target_product_codes, prepared_rows[memory_no], count, excluded）
+- 書出し準備結果（bytes_base64, suggested_filename, target_product_codes, prepared_rows[memory_no, content_hash], count, excluded）
 - 保存状態（'idle' / 'preparing' / 'save_dialog' / 'saved' / 'confirming_exported' / 'confirmed' / 'error'）
 
 **【CMD呼び出し】**
@@ -283,15 +279,13 @@ UI層の仕様は [画面設計書](../SCREEN_DESIGN.md) と各function-design�
 4. 保存失敗またはキャンセル時は `plu_dirty` を変更せず、再保存・再生成できる
 5. 保存成功後、画面上に「PCツールへ投入できない場合はこのまま再書出しできます」と表示する
 6. 利用者が保存したTSVをPCツールへ投入する対象として扱うことを確認したら、「この書出しを未反映から外す」で `confirm_plu_export_saved` を実行する
-7. 完了画面では更新件数、保存ファイル名、確認日時、未反映解除はアプリ側状態でありレジ反映の証明ではないことを表示する
+7. 完了画面では更新件数、保存ファイル名、確認日時、未反映解除はアプリ側状態でありレジ反映の証明ではないことを表示する。保存の後に内容が変わって未反映のまま残った商品があれば、名指しして書き出し直すよう知らせる（67 §67.9）
 
 **【制御構造】**
 - TSV生成と未反映解除は分離する。生成成功だけでは `plu_dirty` を落とさない
 - `target_product_codes` は prepare 結果から保持し、confirm ではその exact set だけを送る
 - prepare は slot 予約を永続化し、再 prepare でも同じ memory No. を使う。confirm は reserved→active を exact memory No. で確定する
 - Diff / Full とも CV17 へ投入できる。失敗時はどちらかを書き出し直す（前に保存した file は取り込まない。保存の後の照合で枠が変わりうる）
-
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build の `src/features/plu-export/PluExportPage.tsx` は、利用者が `FilePicker`（`@/components/FilePicker`）で選んだ Z004 を `commands.importPluRegisterSnapshot`（CMD-08 の `import_plu_register_snapshot`）へ渡して占有を照合し、`get_plu_slot_summary` の件数の要約（`free_count`・`release_pending_count` ほか）を出し、`prepare_plu_export` の `over_limit_warning` を `overLimitWarning` に持つ。売上データ取込みの SD の読取りでの自動の照合はまだ無い（CMD-12 の `scan_register_sd` は BIZ-04 を呼ばない）。操作フロー 1 の最終照合日時もまだ無い（今の画面は Z004 の「最終読込み日時」を出す）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### UI-09a/09b: 売上レポート画面群
 

@@ -49,22 +49,11 @@ describe("sanitizeProductListReturnTo (UI-01b-D2)", () => {
     });
   });
 
-  it("serializes the PLU filter into returnTo (SPEC-PLURT C1 / UI-01a-D10)", () => {
-    expect(
-      buildProductListReturnTo({
-        q: "毛糸",
-        plu: "pending",
-        page: 2,
-      }),
-    ).toBe("/products?q=%E6%AF%9B%E7%B3%B8&plu=pending&page=2");
-  });
-
-  it("round-trips all eight product list search params (SPEC-PLURT C1+C2 / UI-01a-D10)", () => {
+  it("round-trips all seven product list search params", () => {
     const returnTo = buildProductListReturnTo({
       q: "リボン",
       dept: 3,
       discontinued: "all",
-      plu: "synced",
       sort: "name",
       dir: "desc",
       page: 4,
@@ -75,7 +64,6 @@ describe("sanitizeProductListReturnTo (UI-01b-D2)", () => {
       q: "リボン",
       dept: 3,
       discontinued: "all",
-      plu: "synced",
       sort: "name",
       dir: "desc",
       page: 4,
@@ -83,16 +71,17 @@ describe("sanitizeProductListReturnTo (UI-01b-D2)", () => {
     });
   });
 
-  it("keeps PLU undefined for legacy returnTo values (SPEC-PLURT C2)", () => {
-    expect(parseProductListSearchFromReturnTo("/products?q=%E5%B8%83&page=2")).toEqual({
+  it("REQ-907 / UI-01a-D10〜D12（撤去）: 戻り先に残った plu を無視し、運ばない", () => {
+    const parsed = parseProductListSearchFromReturnTo("/products?q=%E5%B8%83&plu=pending&page=2");
+    expect(parsed).toEqual({
       q: "布",
       dept: undefined,
       discontinued: undefined,
-      plu: undefined,
       sort: undefined,
       dir: undefined,
       page: 2,
       perPage: undefined,
     });
+    expect(buildProductListReturnTo(parsed)).toBe("/products?q=%E5%B8%83&page=2");
   });
 });

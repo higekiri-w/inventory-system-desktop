@@ -191,14 +191,8 @@ export const d052InvalidationOracle = {
     queryKeys.lowStock(false),
     queryKeys.stockInquiryRoot(),
   ],
-  pluRegisterSnapshot: () => [queryKeys.pluSlotSummary()],
+  registerSdScan: () => [queryKeys.pluSlotSummary(), queryKeys.pluDirty()],
   pluExportPrepare: () => [queryKeys.pluSlotSummary()],
-  pluBulkTarget: () => [
-    queryKeys.productList.root(),
-    queryKeys.pluDirty(),
-    queryKeys.productForm.root(),
-    queryKeys.pluSlotSummary(),
-  ],
   productPriceRevise: (productCode: string) => [
     ["product-list"],
     ["product-form", "product", { productCode }],

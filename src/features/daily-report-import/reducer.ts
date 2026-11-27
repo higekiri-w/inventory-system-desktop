@@ -1,5 +1,10 @@
-import type { DailyReportSdScan, RegisterSdBulkResponse } from "@/lib/bindings";
-import type { DailyReportImportAction, DailyReportImportState, DailyReportSdOrigin } from "./types";
+import type { RegisterSdBulkResponse } from "@/lib/bindings";
+import type {
+  DailyReportImportAction,
+  DailyReportImportState,
+  DailyReportSdOrigin,
+  DailyReportSdScanView,
+} from "./types";
 
 /** SD の一覧の状態（UI-07-D15 (4)・(5)） */
 function sdList(origin: DailyReportSdOrigin): DailyReportImportState {
@@ -12,9 +17,9 @@ function sdList(origin: DailyReportSdOrigin): DailyReportImportState {
  * 次の一括は畳んだ scan を引き継ぐので、印は累積する
  */
 function foldBulkResponse(
-  scan: DailyReportSdScan,
+  scan: DailyReportSdScanView,
   response: RegisterSdBulkResponse,
-): DailyReportSdScan {
+): DailyReportSdScanView {
   const imported = new Set(
     response.items.flatMap((item) =>
       item.source.type === "DailyReport" && item.outcome.type === "ImportedDailyReport"

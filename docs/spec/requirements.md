@@ -47,7 +47,7 @@
 
 ## 補足
 
-- 開発拡張 ID（REQ-700, REQ-901〜908）は owner 保管原典の ID 集合には含まれない。REQ-907 は D-072 の design-first 契約として追加し、D-117 で解放・bulk onboarding・段階移行状態を外した（runtime は後続の lane）。REQ-908 は D-121 のレシートの控え（UI-09c）の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`）で採番した。
+- 開発拡張 ID（REQ-700, REQ-901〜908）は owner 保管原典の ID 集合には含まれない。REQ-907 は D-072 の design-first 契約として追加し、D-117 で解放・bulk onboarding・段階移行状態を外した（runtime は PLU の書出しの見直しの lane で入れた。D-168）。REQ-908 は D-121 のレシートの控え（UI-09c）の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`）で採番した。
 - Design Phase 補足 ID（REQ-106 / REQ-107 / REQ-206〜210）は既存要求の実装・聞き取りで露出した横断要件である。
 - REQ-107 は取引先管理の実装により `coverage=required` とする。
 - REQ-208 は入出庫の記録の取消の実装（D-163）により `coverage=required` とする（訂正は取り消してから入れ直す。65 TRACE-D5）。

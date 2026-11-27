@@ -1,8 +1,6 @@
 ## 16. BIZ-04: PLU書出しロジック
 
 > **D-072 / D-117 / REQ-907**: app 管理 slot は app、既存登録はレジを authority とする。毎日の締めの SD の読取りで Z004 の全スロットの占有を照合した後、JAN 単位の memory No. を永続予約し、Diff / Full とも CV17 へ投入できる（SPEC-PLS-D2、D3、D5）。アプリは枠を消さず（clear 行を書かない）、別の JAN に使い回さない（D-117 (1)）。
->
-> **runtime の状態（2026-10-16）**: 本節は D-117 の後の形。code には撤去の対象（clear 行・`release_pending`・解放の trigger・Z004 を選ぶ command・件数の要約・`over_limit_warning`）がまだあり、後続の runtime の lane が code・migration・bindings・test と一緒に外す。占有の自動の照合（§16.3）も同じ 1 本の lane が入れ（D-160 (1)）、それまで code は今の FilePicker の経路を残す。
 
 ### 16.1 モジュール構成
 
@@ -40,6 +38,7 @@ enum PluExcludedReason {
 struct PluPreparedRow {
     memory_no: i64,
     target_product_codes: Vec<String>,
+    content_hash: String, // 照合の値（下）
 }
 
 struct PluExportPreparedResult {
@@ -53,7 +52,20 @@ struct PluExportPreparedResult {
 struct PluRegisterSnapshotSummary {
     snapshot_at: Option<String>,
 }
+
+struct PluExportConfirmResult {
+    updated_count: usize,                         // 未反映から外した商品の数
+    confirmed_at: String,
+    remaining_products: Vec<PluRemainingProduct>, // 未反映のまま残した商品（§16.5）
+}
+
+struct PluRemainingProduct {
+    product_code: String,
+    name: String,
+}
 ```
+
+`content_hash`（照合の値）は、IO-04 が file に書くその行の全 11 列（メモリNo.〜部門リンク。[25 §12](25-io-plu-formatter.md)）の CP932 の byte 列（行末の CRLF を含まない）の SHA-256 の hex。prepare が行ごとに返し、confirm が今の商品から同じ値を求め直して比べる（§16.5、D-160 (5)・D-168）。入力はこの byte 列だけなので、名称を変えても CP932 の 16 バイトへの切り詰めで落ちる末尾だけの変更は同じ値になる。JAN・名称・価格の生の値を含まないので、UI の復帰状態（[67 §67.8.1](67-ui-plu-export.md)）に持てる。
 
 `PluRegisterSnapshotSummary` は最後に照合した日時だけを返す。空き・外部・アプリ管理・競合の件数は返さず、画面に出さない（D-117 (5)、UI-08-D11）。件数は照合の operation_logs にだけ残す（§16.3）。
 
@@ -97,7 +109,7 @@ fn import_plu_register_snapshot(
 ) -> Result<PluRegisterSnapshotSummary, BizError>
 ```
 
-BIZ の `import_plu_register_snapshot` は照合の本体として残し、`refresh_plu_register_snapshot_from_sd` だけが呼ぶ。同名の CMD（[41 §17.6](41-cmd-pos.md)、店主が FilePicker で選んだ Z004 を渡す command）は撤去する。
+BIZ の `import_plu_register_snapshot` は照合の本体として残し、`refresh_plu_register_snapshot_from_sd` だけが呼ぶ。同名の CMD（[41 §17.6](41-cmd-pos.md)、店主が FilePicker で選んだ Z004 を渡す command）は撤去した。
 
 IO-02 の全スロット占有読取り mode が返す `(memory_no, raw_code)` を、**1 transaction** で `plu_slots` と照合する。途中失敗時は slot、app_settings、operation_logs をまとめて rollback する。
 
@@ -140,13 +152,13 @@ fn prepare_plu_export(
 prepare は **1 transaction** で対象抽出、JAN bucket / dedup、slot 予約、IO-04 行生成まで行う。
 
 1. snapshot gate を検査する。
-2. `plu_target=1`、未廃番、13 桁数字かつ check digit 有効な JAN を対象にする。JAN 不備と同一 JAN の売価・税率不一致は理由付き `excluded` とし、既存 slot を変更せず出力もしない。
-3. 同一 JAN 群は D-028 の代表行規則を維持し、`target_product_codes` へ群の全 member を持つ。
+2. `plu_target=1`、未廃番、13 桁数字かつ check digit 有効な JAN を対象にする。出力の候補の JAN は、Full は対象の JAN の全部、Diff は未反映（`plu_dirty=1`）の対象の商品を 1 つでも持つ JAN。JAN 不備（Diff は未反映の商品だけ）と同一 JAN の売価・税率不一致は理由付き `excluded` とし、既存 slot を変更せず出力もしない。
+3. 同一 JAN 群は、Diff も Full も、その JAN の対象の商品の全員で作る（未反映の商品だけで作らない。共有 JAN の片方だけ売価・税率を直すと、未反映の商品だけの群は不一致を見逃して書き出す。D-168）。D-028 の代表行規則を維持し、`target_product_codes` へ群の全 member を持つ。
 4. 既存 `reserved` / `active` slot は sticky allocation として再利用する（対象外にした後に対象へ戻した商品も、前と同じ枠を使う）。
 5. `reserved` / `active` を持たない JAN は、同一コードの `external` slot があれば新規予約せず、memory No. が最小のその slot を `active`（activated_at=now）として採用する（レジ既存登録の app 管理への移行）。`external` も無ければ memory No. が最小の `free` slot を `reserved` にする。空きがなければ `NoFreeSlot` へ積み、他の JAN の生成を続ける。固定件数との比較で prepare 全体を拒否しない。
-6. Diff は dirty な対象 product 行、Full は対象の JAN の `reserved` / `active` slot の product 行を作る。`external` / `free` と、対象の商品を持たない JAN の slot（売るのをやめた商品・JAN を変えた商品の前の JAN）はどちらにも含めない。
+6. Diff は未反映の対象の商品を持つ JAN の product 行（手順 2 の候補）、Full は対象の JAN の `reserved` / `active` slot の product 行を作る。`external` / `free` と、対象の商品を持たない JAN の slot（売るのをやめた商品・JAN を変えた商品の前の JAN）はどちらにも含めない。
 7. 要修正判定中の JAN に既存 slot がある場合、その slot を維持し、Diff / Full とも出力しない。
-8. IO-04 へ `memory_no` 付き行を渡す。成功時に予約を commit し、同じ snapshot と商品状態での再 prepare は同じ memory No. を返す。
+8. IO-04 へ `memory_no` 付き行を渡し、行ごとの照合の値（§16.2 の `content_hash`）を `prepared_rows` に入れる。成功時に予約を commit し、同じ snapshot と商品状態での再 prepare は同じ memory No. を返す。
 
 対象行がない場合は validation error とする。prepare 成功は CV17 / レジ反映の証明ではなく、商品 `plu_dirty` と `plu_exported_at` は confirm まで変更しない。
 
@@ -161,9 +173,11 @@ fn confirm_plu_export_saved(
 
 prepare が返した exact `memory_no` / product_code set を **1 transaction** で再検証する。重複、範囲外、存在しない slot、期待 status と不一致の payload は全体を拒否する。
 
-- product 行: `reserved -> active`、`activated_at=now`（照合で既に active なら維持）。対象群を `plu_dirty=0`, `plu_exported_at=now` にする。
+- 出力の行の照合（D-160 (5)、D-168）: 行ごとに、その枠の JAN の今の対象の商品の全員から prepare と同じ規則（§16.4 手順 3 の代表行、IO-04 の 1 行）で照合の値を求め直し、request の `content_hash` と比べる。合否はこの値（file に書く行の byte 列）だけで決める。
+- 一致する product 行: `reserved -> active`、`activated_at=now`（照合で既に active なら維持）。対象群を `plu_dirty=0`, `plu_exported_at=now` にする。
+- 一致しない product 行（保存の後に名称・売価・税率・部門リンクのどれかが変わって行が変わった、群が不一致になった、対象の商品が無くなった）: 枠と商品を変えず、対象群を未反映のまま残して `remaining_products`（商品コードと名称）で返す。error にしない（ほかの行は外す）。UI がその場で名指しして、書き出し直すよう知らせる（[67 §67.9](67-ui-plu-export.md)）。保存した file はその商品の古い内容を持つので、外すと店主が直した値がレジへ行かないまま反映済みになる。
 - retry: 既に同じ結果へ遷移済みなら idempotent success とする。別 JAN / 別 status への変化は拒否する。
-- operation_logs: mode、product 件数、confirmed_at を記録し、実コードを記録しない。
+- operation_logs: 外した product 件数、残した件数、confirmed_at を記録し、実コードを記録しない。
 
 書出しと「未反映から外す」の 2 段は D-027 の理由で残す（CV17 の取込みに失敗しても、外すまでは同じ商品が差分に残る）。通常の経路では confirm で既に `active` なので、次の締めの照合は「同一コード × active」（維持）になり、反映したコードが観測で裏づく（照合はコードだけを比べる）。confirm をしなかった枠だけが、照合の「同一コード × reserved」で `reserved -> active` になる。単価・課税方式・部門リンクの反映は Z004 に無く、精算の前には分からないので、照合を「未反映から外す」の代わりにしない（D-117 (6)・(7)）。
 
@@ -179,11 +193,7 @@ prepare が返した exact `memory_no` / product_code set を **1 transaction** 
 
 前の JAN の枠のバーコードでレジが売った分は、次の Z004 にその JAN の行で出る。その JAN を持つ商品が無ければ、取込みは `unmatched_product` の行エラーで知らせる（[32](32-biz-csv-import-service.md) §15.3 手順 4 b〈Stage 2〉。黙って誤った商品へ付けない）。同じ商品へたどる経路は前の JAN の別名（D-122、proposed・未実装。[30](30-biz-product-service.md) BIZ-01-D9、[master-tables](../db-design/master-tables.md) §1a）: JAN を直すときに前の番号の現物が「ある」と答えた商品だけ、取込みがその JAN の行を別名で同じ商品へ入れる。別名は枠と独立で、本節の枠の扱い（状態を変えず残し、書き出さない）・§16.3 の照合・prepare・confirm は別名を読まず書かない。前の JAN の枠の値段はレジに残った前の値段のまま（売るのをやめた商品と同じ受け入れ済みの限界、D-117 の Guarantee range）。廃番解除は `plu_target` を自動復帰させない。
 
-撤去の対象（D-117 (1)。runtime の lane が code と一緒にこの signature を消す。それまでは設計照合 test〈`src-tauri/tests/design_compliance_test.rs`〉が code の pub fn と突き合わせるので signature だけを残す）:
-
-```rust
-pub fn release_plu_slot_for_jan(conn: &DbConnection, jan_code: &str) -> Result<(), BizError>
-```
+枠を解放する関数（`release_plu_slot_for_jan`）は D-117 (1) で撤去した。
 
 #### 16.6.1 list_plu_dirty
 
@@ -198,17 +208,17 @@ fn list_plu_dirty(conn: &DbConnection) -> Result<Vec<Product>, BizError>
 | 依存 | 用途 |
 |---|---|
 | `io::z004_parser::parse_plu_register_snapshot` | layout A 全スロット占有の読取り |
-| `io::z004_parser` の精算の識別メタ | 照合に使う Z004 の選択（§16.3 手順 1） |
+| `io::z004_parser::parse_z004` の `ParseResult.settlement_metadata`（精算の識別メタ） | 照合に使う Z004 の選択（§16.3 手順 1）。選ぶための関数を IO-02 に足さない（`extract_settlement_metadata` は private のまま）。`parse_z004` が `Err` の bytes は読めない bytes として使わない（D-168） |
 | `db::plu_slot_repo` | snapshot 照合、最小空き予約、sticky 取得、confirm の状態遷移 |
-| `db::product_repo` | PLU target 抽出、同一 JAN 群、dirty 更新、slot JOIN |
-| `io::plu_formatter::generate_plu_tsv` | memory No. 付き product 行の 11 field 出力 |
+| `db::product_repo` | PLU target 抽出、同一 JAN 群、dirty 更新 |
+| `io::plu_formatter::generate_plu_tsv` | memory No. 付き product 行の 11 field 出力（1 行の byte 列は IO-04 の `format_plu_row`。照合の値の入力も同じ関数。[25 §12.6](25-io-plu-formatter.md)） |
 | `db::operation_log_repo` | snapshot / prepare / confirm の要約記録 |
 
 ### 16.8 Error / Recovery
 
 - 保存キャンセル・保存失敗: 同じ mode を再 prepare すると予約済み memory No. を再利用する。
 - CV17 取込み失敗: Diff か Full を書き出し直す（前に保存した file は使わない。保存の後の SD の読取りの照合で枠が変わりうるため〈予約中の枠の `reservation_dropped`、対象の商品を持たない JAN の枠の external 化。§16.3〉。書き出し直しは sticky で同じ memory No. を使い、照合で枠が変わっていれば新しい枠を取る。`plu_dirty` は confirm まで残る〈D-027〉）。
-- DB の restore の後: `plu_register_snapshot_at` だけを消し、既存の gate（§16.3 の `register_snapshot_required`）で次に照合するまで書出しを止める。`plu_register_snapshot_settlement_no` は消さない（restore で戻った backup の時点の精算回数が、それより古い SD の照合を restore の直後も止める。D-160 (7)）。runtime の lane が 71 §71.7 `restore_backup` に足す（本 lane は 71 を触らない。D-117 の Guarantee range と backlog の runtime の項目の写し）。
+- DB の restore の後: `plu_register_snapshot_at` だけを消し、既存の gate（§16.3 の `register_snapshot_required`）で次に照合するまで書出しを止める。`plu_register_snapshot_settlement_no` は消さない（restore で戻った backup の時点の精算回数が、それより古い SD の照合を restore の直後も止める。D-160 (7)）。消す位置は [71 §71.7](71-mnt-backup.md) `restore_backup` のステップ 6a（復元した DB の接続を開いた後・manifest を `committed` にする前。消せなければ復元を失敗にして元の DB へ戻す。MNT-01-D13）。前の版の DB は、起動と復元の open が流す migration（[22 §24](22-mnt-migration.md) の手順 6）が同じ key を消すので、復元の中断・完了・manifest が読めない、のどの形でも接続を返す前に消える（D-168）。受け入れる限界: backup の時点の精算回数より大きく、restore の前の最後の照合より小さい精算回数の SD は、restore の後に照合しうる（D-168 の Guarantee range）。
 - snapshot conflict: active slot を勝手に external / free へ変えず、商品を dirty にする（次の書出しでアプリのコードを書き直す）。
 - 占有の照合の失敗: BIZ-08 は IO-09-D4 の形の検査で外れた Z004 と読めない Z004 を除いて渡す（37 §37.9 手順 10）。行数と中身の検査は IO-02 `parse_plu_register_snapshot` が行い、`ImportError` なら照合しない。どちらも前回の照合を保ち、CMD-12 の scan は失敗にしない（§16.3）。
 - `NoFreeSlot`: 該当 JAN だけを excluded とし、既存 slot と他の生成行を保持する。

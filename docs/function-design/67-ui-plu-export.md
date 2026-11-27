@@ -2,7 +2,7 @@
 
 > **親文書**: [FUNCTION_DESIGN.md](../FUNCTION_DESIGN.md)
 > **対応REQ**: REQ-402
-> **Design Phase**: 2026-08-18 D-072 / REQ-907 PLU slot 永続割当・Z004 占有読込みへ更新（SPEC-PLS-D2、D5、D7）。2026-10-16 D-117: 占有は毎日の締めの SD の読取りで自動で照合し、Z004 を選ぶ step・占有の件数の要約・clear 行の解除待ち・`over_limit_warning` を外す（runtime は後続の 1 本の lane、D-160 (1)。それまで code は今の FilePicker の step を残す）
+> **Design Phase**: 2026-08-18 D-072 / REQ-907 PLU slot 永続割当・Z004 占有読込みへ更新（SPEC-PLS-D2、D5、D7）。2026-10-16 D-117: 占有は毎日の締めの SD の読取りで自動で照合し、Z004 を選ぶ step・占有の件数の要約・clear 行の解除待ち・`over_limit_warning` を外す（runtime は PLU の書出しの見直しの lane で入れた。D-160 (1)、D-168）。2026-11-26 D-168: 保存の後に出力の行が変わった商品は「未反映から外す」で外さず、その場で名指しして知らせる
 
 ## 67.1 目的
 
@@ -27,13 +27,13 @@ function PluExportPage(): JSX.Element
 1. `commands.listPluDirty()` で未反映商品を取得し、その件数を Diff 対象件数として表示する
 2. 利用者がDiffまたはFullを選ぶ
 3. `getPluSlotSummary` を読み、`snapshot_at` があれば「レジの登録状況: {日時}（売上データ取込みで SD を読んだとき）」を above the fold に 1 行で出す。日時は `snapshot_at`（DB の時差なしの `YYYY-MM-DDTHH:MM:SS`）を `Date` に通さず、共有 `formatDateTime`（`src/lib/date-time.ts`）で `YYYY-MM-DD HH:mm:ss` にして出す。`snapshot_at` が無ければ、書出しの前に warning の Alert で「レジの登録状況がまだ読まれていません。売上データ取込みでレジの SD を一度読んでください。」と売上データ取込み（`/csv-import`）への導線を出す（UI-08-D11）。占有の件数は出さない
-4. `commands.preparePluExport({ mode })` を呼び、`bytes_base64`、memory No. 付き prepared rows、`target_product_codes`、`excluded`（要修正一覧）を受け取る。成功後は slot 状態が変わり得るため D-052-C18 の SSOT helper を適用する。`excluded` が空でなければ理由付き一覧を表示し、商品マスタ修正へ誘導する
+4. `commands.preparePluExport({ mode })` を呼び、`bytes_base64`、memory No. と照合の値（`content_hash`。[33 §16.2](33-biz-plu-export-service.md)）付き prepared rows、`target_product_codes`、`excluded`（要修正一覧）を受け取る。成功後は slot 状態が変わり得るため D-052-C18 の SSOT helper を適用する。`excluded` が空でなければ理由付き一覧を表示し、商品マスタ修正へ誘導する
 5. native save dialogで保存先を選び、CP932 PLUファイルバイト列を書き込む
 6. 保存キャンセルまたは保存失敗では `confirm_plu_export_saved` を呼ばず、未反映を残す
-7. 保存成功後は `target_product_codes`、保存先、件数、文字コード、保存日時を復帰用 `localStorage` に保存する。PLUファイル本文 (`bytes_base64`) は保存しない
+7. 保存成功後は `target_product_codes`、prepared rows（memory No. と照合の値）、保存先、件数、文字コード、保存日時を復帰用 `localStorage` に保存する。PLUファイル本文 (`bytes_base64`) は保存しない
 8. 画面再表示時に保存済み未確認の復帰状態があれば、ページ上部に `保存済みで未確認のPLU書出しがあります` を表示し、同じ exact product_code set で未反映解除できる導線を出す。保存日時は保存形の `savedAt`（`toISOString()` の UTC）を読むときだけローカル時刻へ直し、`YYYY-MM-DD HH:mm:ss` で出す（解釈できない値はそのまま出す）。保存する形は変えない
 9. 利用者が保存済み扱いを確認した場合だけ `commands.confirmPluExportSaved({ product_codes, prepared_rows })` を呼ぶ。復帰状態がある場合は復帰状態の `targetProductCodes` / `preparedRows` を使い、現在の差分一覧から再計算しない
-10. confirm成功後に D-052-C14 の SSOT helper を適用し、復帰状態を削除して未反映解除結果を表示する
+10. confirm成功後に D-052-C14 の SSOT helper を適用し、復帰状態を削除して未反映解除結果を表示する。結果の `remaining_products`（保存の後に出力の行が変わっていて、BIZ-04 が未反映のまま残した商品。33 §16.5）が空でなければ、その場で商品名と商品コードを名指しして書き出し直すよう知らせる（§67.9）。外した商品が 1 件も無ければ「未反映から外しました」は出さない
 
 ## 67.5 Design Decisions
 
@@ -43,7 +43,7 @@ function PluExportPage(): JSX.Element
 | REQ-402 / adapter boundary | UI-08-D2 | UI文言では「アプリで確認できるのはPLUファイル保存まで」と明示し、レジ反映済みとは書かない。 | D-011/D-023。アプリはその場では反映を確かめられず、次の締めの Z004 の照合で分かるのもコードだけ（単価・課税方式・部門リンクは分からない。D-117 (7)）。誤って反映確認済みに見せると運用リスクになる。 |
 | REQ-402 / CV17 1.1.1 | UI-08-D3 | UI-08 は CV17 1.1.1 `スキャニングPLU(商品)` adapter profile の `.txt` タブ区切りテキストを保存する。ヘッダは11列、memory No. は通常PLU の最大登録数 216 の次の 217 始まり、スキャニングコードは13桁JAN必須とし、product_code fallbackは禁止する。工場出荷時配分（SR-S4000 取説確認済み: PLU総枠 5,000 = 通常 216 + スキャニング 4,784）により217始まり。開始は CV17 の設定で変えられるが、店は 217 のまま（D-117 (7)）。 | 2026-07-03 field gate で、同形状の `.txt` は `CV17 TXT import -> PC tool SD settings write -> SR-S4000 設定読み -> barcode/register behavior confirmation` の流れで反映できることを確認した。CV17 import成功だけでは完了扱いにせず、実際のgateはレジ側バーコード確認までとする。 |
 | REQ-402 / recovery | UI-08-D4 | 保存キャンセル・保存失敗では `plu_dirty` と予約を残し、再保存または再生成を案内する。CV17取込み失敗以降は Diff / Full の書出し直しだけで回復する（前に保存した file は取り込まない）。 | 書き出し直しは memory No. が永続しているので同じ枠を使い、保存の後の照合で枠が変わっていれば新しい枠を取る。前に保存した file は、その間にレジ側で変わった枠を上書きしうる（33 §16.8）。`plu_dirty` は confirm まで残る（D-027）。 |
-| REQ-402 / safety | UI-08-D5 | 書くたびの SD 設定書込みの案内は出さない（D-160 (3)）。初回の書込みの前に SD の設定 file を PC へ写す（D-160 (2)。初期投入の手順の側）。実バックアップファイルはrepoに入れない。217〜5000 の **4,784 slot** は固定件数上限との比較ではなく、snapshot と永続状態で空き・管理範囲を判定する。件数の上限の警告は出さない（`over_limit_warning` は D-117 (5) で撤去）。 | owner の決定（TD-779 の 4）。CV17 はレジの設定を保持せず、読んだ SD の設定にファイルの行を重ねてレジへ書く。店の EJ には SD 設定書込みの正常終了がほぼ毎日残り、店は手でしていない（[project-memory](../project-memory.md) の設定の file の行き来と SD 設定書込みの行）。 |
+| REQ-402 / safety | UI-08-D5 | 書くたびの SD 設定書込みの案内は出さない（D-160 (3)）。初回の書込みの前に SD の設定 file を PC へ写す（D-160 (2)。初期投入の手順の側）。実バックアップファイルはrepoに入れない。217〜5000 の **4,784 slot** は固定件数上限との比較ではなく、snapshot と永続状態で空き・管理範囲を判定する。件数の上限の警告は出さない（`over_limit_warning` は D-117 (5) で撤去）。 | owner の決定（TD-779 の 4）。案内を外した後に残る限界（CV17 が読む SD の設定 file が、レジで後から変えた設定を持たなければ、その設定は書込みで消える。初回の前に写しを取る）は [decision-log](../decision-log.md) D-160 の Guarantee range が持つ。 |
 | REQ-402 / D-028 | UI-08-D8 | PLU書出し対象は三分バケットで表示する。対象外（`plu_target=0`）は差分一覧・書出しに現れない。要修正（`plu_target=1` かつ JAN不備・同一JAN価格不一致）は prepare 結果の `excluded` として理由付き一覧で表示し、商品マスタ修正へ誘導する。生成はブロックしない。 | JANなし商品が1件あるだけでPLU書出し全体が止まる構造（Full恒久失敗・Diff恒久残留・通知汚染）を解消する。decision-log D-028。 |
 | REQ-402 / D-072 | UI-08-D9 | Diff / Full とも CV17 へ投入できる。Full は対象の商品の app 管理 slot 全体の再同期、Diff は未反映の対象と説明する。前に保存した file は取り込まない（UI-08-D4）。 | `plu_slots` により memory No. が固定され、部分 import の暫定リスクを解消した。旧 file にはこの保証がない。 |
 | REQ-402 / status visibility | UI-08-D6 | PLUファイル保存、保存失敗、キャンセル、未反映解除結果はページ上部の注意文直下に表示し、状態遷移後はページ先頭へスクロールする。ページ全体は既存業務画面と同じ内側余白を持つ。confirm失敗は成功色の保存済み表示に混ぜず、失敗タイトルと再試行導線を持つ別 Alert にする。 | 保存後の `この書出しを未反映から外す` は次操作の要であり、下部に出すと利用者が見落とす。confirm失敗が成功表示に混ざると未反映解除に失敗した事実を見落とす。UI-02/03/04/05 の保存結果 visibility follow-up と DSR-01 の共通レイアウト継承に合わせる。 |
@@ -86,8 +86,8 @@ function PluExportPage(): JSX.Element
 |---|---|---|---|
 | `commands.listPluDirty()` | none | `ProductResponse[]` | 差分対象一覧（`plu_target=1` かつ `plu_dirty=1`、D-028）。0件は空状態でエラーではない |
 | `commands.getPluSlotSummary()` | なし | `snapshot_at` | 最終照合日時を above the fold に表示。null なら売上データ取込みへの導線 |
-| `commands.preparePluExport({ mode })` | `"diff"` / `"full"` | `bytes_base64`, `suggested_filename`, `content_type`, `encoding`, `count`, `target_product_codes`, `prepared_rows[memory_no]`, `excluded` | 未照合は `register_snapshot_required`。`no_free_slot` を含む要修正は生成から除外。slot 予約・external の採用は永続化し、成功後は D-052-C18 の SSOT helper を適用 |
-| `commands.confirmPluExportSaved({ product_codes, prepared_rows })` | prepare結果の `target_product_codes` / `prepared_rows` | `updated_count`, `confirmed_at` | 保存済み確認。成功後は D-052-C14 の SSOT helper を適用 |
+| `commands.preparePluExport({ mode })` | `"diff"` / `"full"` | `bytes_base64`, `suggested_filename`, `content_type`, `encoding`, `count`, `target_product_codes`, `prepared_rows[memory_no, content_hash]`, `excluded` | 未照合は `register_snapshot_required`。`no_free_slot` を含む要修正は生成から除外。slot 予約・external の採用は永続化し、成功後は D-052-C18 の SSOT helper を適用 |
+| `commands.confirmPluExportSaved({ product_codes, prepared_rows })` | prepare結果の `target_product_codes` / `prepared_rows` | `updated_count`, `confirmed_at`, `remaining_products[product_code, name]` | 保存済み確認。成功後は D-052-C14 の SSOT helper を適用。`remaining_products` が空でなければ名指しで知らせる |
 
 `target_product_codes` はprepare時のexact setである。confirm時にUIが現在の差分一覧から再計算しない。
 
@@ -107,12 +107,14 @@ function PluExportPage(): JSX.Element
   "count": 1,
   "encoding": "CP932",
   "targetProductCodes": ["BT0001"],
-  "preparedRows": [{ "memory_no": 217, "target_product_codes": ["BT0001"] }]
+  "preparedRows": [
+    { "memory_no": 217, "target_product_codes": ["BT0001"], "content_hash": "（SHA-256 の hex）" }
+  ]
 }
 ```
 
-- 保存しないもの: `bytes_base64`、PLUファイル本文、JAN、商品名、価格、実PLUファイル、PCツール/SDカード/レジ側の結果
-- 読込み時にJSON不正、schema不一致、対象コード空なら削除して通常の `idle` として扱う。D-117 の前の形（`overLimitWarning` を持つ）は schema 不一致として消え、通常の画面に戻る（memory No. は永続なので、書き出し直せば同じ番号になる）
+- 保存しないもの: `bytes_base64`、PLUファイル本文、JAN、商品名、価格、実PLUファイル、PCツール/SDカード/レジ側の結果。照合の値（`content_hash`）は file の 1 行の hash で、JAN・商品名・価格の生の値を含まない
+- 読込み時にJSON不正、schema不一致、対象コード空なら削除して通常の `idle` として扱う。D-117・D-168 の前の形（`overLimitWarning` を持つ、行が `row_kind` を持つ、行が照合の値を持たない）は schema 不一致として消え、通常の画面に戻る（memory No. は永続なので、書き出し直せば同じ番号になる）
 - 復帰状態の confirm は `targetProductCodes` を使い、画面上の現在の差分一覧や再prepare結果から対象を再計算しない
 - confirm成功時と `破棄して再書出し` 実行時に削除する。confirm失敗時は保持し、再試行できるようにする
 
@@ -125,13 +127,14 @@ function PluExportPage(): JSX.Element
 - confirm button: `この書出しを未反映から外す`
 - result note: `アプリで確認できるのはPLUファイル保存までです。PCツールへの取込み、SDカード書出し、レジ読込みは手動で確認してください。`
 - snapshot status: `レジの登録状況: {YYYY-MM-DD HH:mm:ss}（売上データ取込みで SD を読んだとき）`
-- snapshot required: `レジの登録状況がまだ読まれていません。売上データ取込みでレジの SD を一度読んでください。` / action `売上データ取込みへ`
+- snapshot required: `レジの登録状況がまだ読まれていません。売上データ取込みでレジの SD を一度読んでください。` / action `売上データ取込みへ`（warning の Alert。1 文目を title、2 文目を本文にする）
 - failure note before confirm: `PCツールに取り込めなかった場合は、差分または全件を書き出し直してください。前に保存したファイルは取り込まないでください（保存の後にレジの登録状況が変わっていると、レジの登録を上書きします）。`（UI-08-D10: 独立 warning Alert と restored pending Alert の両方に出る 1 つの文字列）
 - excluded list lead: `これらの商品は今回のPLUファイルに含めていません。商品マスタでJANコード・売価・税率を修正すると、次回の書出しから含まれます。`（UI-08-D10 L3 P3: 修正対象を除外理由の全種（JAN不備 / 同一JANの売価・税率不一致）と一致させ、後半の行動文を強調表示して muted 一色の見落としを防ぐ）
 - format validation note: `JANコードが未登録または不正な商品は、スキャニングPLU書出しに含められません。商品マスタで13桁JANを確認してください。`
 - excluded list title: `書出しに含めなかった商品（要修正）`
 - excluded reasons: `JAN未登録` / `JANが13桁ではありません` / `JANのチェックディジットが不正です` / `同じJANの商品で売価または税率が一致していません`
 - import note: `Diff / Full ともレジへ投入できます。`
+- remaining after confirm（33 §16.5、D-168。warning の Alert）: title `未反映のまま残した商品があります`、本文 `保存の後に商品の内容（名称・売価・税率・部門）が変わったため、次の商品は未反映から外していません。差分をもう一度書き出して、レジスターツールで取り込んでください。前に保存したファイルは取り込まないでください。` と、残した商品の `{商品名}（{商品コード}）` の一覧
 - restored pending title: `保存済みで未確認のPLU書出しがあります`
 - discard button: `破棄して再書出し`
 
@@ -142,7 +145,7 @@ function PluExportPage(): JSX.Element
 ## 67.10 Query Invalidation
 
 - prepare成功: D-052-C18 の SSOT helper で slot summary を invalidate する。`plu_dirty` は変わらないが、予約・external採用で slot status が変わり得る
-- 売上データ取込みの SD の読取り（CMD-12 `scan_register_sd`）成功: 占有の照合で `snapshot_at` と、missing・conflict の商品の `plu_dirty` が変わり得るので slot summary と未反映一覧を stale 化する。D-052 の C17（Z004 を選ぶ snapshot の取込み）はこの規則に置き換わり、runtime の lane が D-052 の Contract 行・production SSOT・独立 oracle を同じ PR で直す（D-117 の Compatibility）
+- 売上データ取込みの SD の読取り（CMD-12 `scan_register_sd`）成功: 占有の照合で `snapshot_at` と、missing・conflict の商品の `plu_dirty` が変わり得るので slot summary と未反映一覧を stale 化する（D-052 の C17。Z004 を選ぶ snapshot の取込みの C17 をこの規則に置き換えた。D-168）
 - save cancel / save failure: invalidateしない
 - 商品 update / 廃番 toggle 成功: D-052-C2、confirm成功: D-052-C14 を適用し、いずれも slot summary を stale 化する。具体的な query key 集合と除外判断は本書へ複製しない。
 
@@ -174,10 +177,12 @@ UI-08 implementation PRでは Windows native L3 と外部手順確認を必須�
 - 復帰Alertから `この書出しを未反映から外す` と `破棄して再書出し` の両方を選べる
 - confirm後に未反映件数が減り、ホーム通知も更新される
 - 画面文言が「レジ反映済み」と誤読されない
-- CV17 1.1.1へ保存済み `.txt` を投入し、受理可否、列差異、エラー文言を匿名化して記録する
-- CV17 import が通っても、SD-card書出し / SR-S4000設定読込 / register scan-call が通るまで外部manual gateは未通過とする
+- （PLU の file の行の形を変える PR だけ。下の適用範囲）CV17 1.1.1へ保存済み `.txt` を投入し、受理可否、列差異、エラー文言を匿名化して記録する
+- （同上）CV17 import が通っても、SD-card書出し / SR-S4000設定読込 / register scan-call が通るまで外部manual gateは未通過とする
 
 **適用範囲（D-073、2026-08-19）**: CV17 / SR-S4000 を伴う Windows native L3 は、(1) PLU file 形状（IO-04 出力の header / field / 値）、(2) レジ向け field 値（固定列・課税方式・部門リンク等）、(3) UI-08 の書出し・confirm・復帰の operator flow、のいずれかに触れる PR に必須とする。いずれにも触れない PR（商品 CSV の `PLU対象` 列等）は human visual confirmation で足り、レジ実機と CV17 を要さない。
+
+**適用範囲の改訂（D-168、2026-11-26。owner の決定、repo 外の回答台帳 TD-902）**: PLU の file の行の形（IO-04 の出力の header・field・値の形。(1)(2)）を変えない PR は、記録のある前の実機の確かめ（[plu-export-and-real-csv-verification](../plu-export-and-real-csv-verification.md) の PLU-21 の行）で CV17 の受理を受け、CV17・レジの実機の L3 を置かない。(3) の operator flow は開発の build の Windows native L3 で見る。行の形を変える PR は今までどおり CV17・レジの実機の L3 を置く。前の実機の確かめが支える範囲と未実測の範囲は D-168 の Guarantee range。
 
 ## 67.13 Non-scope
 

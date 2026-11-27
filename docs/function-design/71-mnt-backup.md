@@ -10,7 +10,7 @@ src-tauri/src/
     restore.rs    -- リストアの本体と起動時の reconcile（§71.7、MNT-01-D1・D4・D5）
     offsite.rs    -- PC の外の控え（§71.11、MNT-01-D8・D11。D-114・D-130、runtime (b) で実装）
   db/
-    system_repo.rs -- get_setting, upsert_setting, insert_operation_log を使用
+    system_repo.rs -- get_setting, upsert_setting, delete_setting, insert_operation_log を使用
   lib.rs          -- setup hook に check_auto_backup 呼び出しを追加
 ```
 
@@ -283,6 +283,7 @@ fn restore_backup(
 6. `db::init_database(db_path)` で新しい接続を作成
    - PRAGMA再設定＋マイグレーション実行が含まれる
    - 新しすぎる版の backup は差し替え後の open で拒否され、現在の DB に戻る（MNT-03-D11、22 §3.2。ステップ8の巻き戻しで `RestoreError::Recovered`）
+6a. 復元した DB の `app_settings` から key `plu_register_snapshot_at`（PLU の占有の最終照合日時）だけを消す（MNT-01-D13、D-160 (7)。`system_repo::delete_setting`。key が無ければ成功）。消せなければ新しい接続を閉じ、ステップ 8 の巻き戻しへ進む（`RestoreError::Recovered`。復元した DB の接続を公開しない）
 7. 成功の場合（**committed manifest は operation_log 記録完了まで durable な pending marker として保持する** — manifest を log より先に消すと「7d INSERT 前の中断で manifest / temp / 退避が全て無く reconcile 非起動 → log 恒久欠落」の反例が成立する。Codex 第 6 round P2）:
    a. manifest の phase を `committed` へ原子的に durable 更新する（MNT-01-D5: 退避ファイル削除より前が必須。**更新失敗時は新接続を公開せず退避も削除しない** — 失敗点により「rename 前 = active 確定の Err」と「rename 後 sync 失敗 = durability 不明の unrecoverable」に分類する。D5 durability 契約 (e)）
    b. 退避ファイルを削除（`.restore_backup` ファイル群の unlink 完了後、**親 directory sync で永続化**してから次へ進む — D5 durability 契約 (d)）
@@ -293,12 +294,20 @@ fn restore_backup(
    d. manifest を durable 削除する（unlink + 親 directory sync）。**7b〜7d の失敗は復元成功を覆さない** — committed manifest を残して warn 記録、新接続を返す（次回起動の reconcile が退避掃除・log 補完・manifest 削除を冪等に再処理）。manifest unlink 成功後の親 directory sync 失敗の事後状態は「committed 残置 / absent」の二値であり、どちらも安全に収束する（D5 (e)）
    e. 新しい `DbConnection` を返す
    - 注: 7c INSERT 前に中断しても committed manifest が durable に残るため、次回起動の reconcile → 起動シーケンスが補完処理（`AlreadyPresent | Inserted | Failed` — reconcile committed 分岐の定義参照）で回収する。中断のみでは log は欠落しない。ただし補完 `Failed` が持続する障害下では best-effort（committed 例外の escape hatch で manifest が削除され得る — 詳細と fallback は reconcile committed 分岐参照）
-8. 失敗の場合（ステップ5-6でエラー）: 巻き戻しは **MNT-01-D5 reconcile の「一致」分岐と同一手順**で行う（存在する退避だけを戻す方式は、`init_database` の部分 migration が生成した新世代 WAL/SHM を元名側に残し、旧 main と混在させるため禁止 — Codex 再々レビュー P1-1）:
+8. 失敗の場合（ステップ5-6aでエラー）: 巻き戻しは **MNT-01-D5 reconcile の「一致」分岐と同一手順**で行う（存在する退避だけを戻す方式は、`init_database` の部分 migration が生成した新世代 WAL/SHM を元名側に残し、旧 main と混在させるため禁止 — Codex 再々レビュー P1-1）:
    a. 元名側の DB 一式（main / WAL / SHM すべて — この attempt が生成した信頼できない世代）を削除し、親 directory sync で永続化する
    b. manifest 記録集合の退避ファイルを rename で元名へ復帰する（`{db_path}.restore_backup` → `{db_path}`、WAL / SHM も記録集合に従う）
    c. 巻き戻し完了後に manifest を durable 削除する
    d. `RestoreError::Recovered` を返す（元のDBファイルは復元済みだが、接続は呼び出し元が再確立する必要がある）
    e. 巻き戻し（8a-8b）が失敗した場合 → `RestoreError::Unrecoverable` で致命的エラー（manifest は削除しない — 次回起動の reconcile が解消する）
+
+**MNT-01-D13: restore は復元した DB の PLU の最終照合日時を、接続を公開する前に消す（D-160 (7)、D-168）**
+
+- 決定: ステップ 6a のとおり。消すのは `plu_register_snapshot_at` だけで、`plu_register_snapshot_settlement_no` は消さない。位置は復元した DB の open の後・manifest を `committed` にする前。削除の失敗は復元の失敗（ステップ 8 の巻き戻し）にする
+- Why: backup の時点の照合日時が残ると、backup の後にレジで埋まった枠を空きとして予約しうる（[33 §16.3](33-biz-plu-export-service.md) の gate は照合日時の有無だけを見る）。消せば、次に SD を読んで照合するまで書出しが `register_snapshot_required` で止まる。精算回数を残すのは、backup の時点より古い SD の照合を restore の直後も止めるため（33 §16.8）。`committed` の後には元の DB へ戻す経路が無い（7b 以降の失敗は復元の成功を覆さない）ので、失敗を戻せる位置は `committed` の前だけ
+- Rejected alternatives: `committed` の後・`cleanup_committed` の中で消す（失敗しても接続を返すので、古い照合日時の接続を公開しうる）/ 起動時の補完（`complete_reconciled_restore`）にも削除を足す（前の版の app が残した `committed` の manifest が読めないときに通らない。前の版の DB は、起動と復元の open が流す migration〈[22 §24](22-mnt-migration.md) の手順 6〉が同じ key を消すので、復元の中断・完了・manifest が読めない、のどの形でも接続を返す前に消える。owner の決定 2026-11-26、repo 外の回答台帳 TD-912）/ 2 つの key を両方消す（restore の直後に、backup の時点より古い SD を照合しうる）
+- Guarantee range: backup の時点の精算回数より大きく、restore の前の最後の照合より小さい精算回数の SD は、restore の後に照合しうる（D-168 の Guarantee range。締めで今の SD を読む普通の流れでは起きない）。同じ日の backup を restore した後は、同じ精算回数の SD を読んでも照合されず（33 §16.3 手順 2 の「等しければ照合しない」）、次の精算まで書出しが止まる
+- 見直し契機: 照合済みの記録の持ち方（精算回数だけ）を変えるとき
 
 **重要: 失敗時の契約**
 - `restore_backup` は失敗時に「退避復元済み」か「状態不明/未復旧」かを区別できる `Err` を返す（MNT-01-D4）。有効なDbConnectionは返さない
@@ -510,6 +519,7 @@ pub fn resolve_backup_dir(conn: &DbConnection, app_data: &Path) -> Result<PathBu
 
 | 対象 | 検証内容 |
 |---|---|
+| MNT-01-D13 restore の後の照合日時 | 今の版の backup（`plu_register_snapshot_at` と `plu_register_snapshot_settlement_no` を持つ）を復元すると、返った接続に照合日時が無く、精算回数は backup の値のまま、PLU の書出しが `register_snapshot_required` で拒まれる。照合日時の `DELETE` を拒む trigger を置いた backup では `RestoreError::Recovered` で元の DB に戻り、復元した DB の接続を返さない（`test_restore_backup_req907_clears_snapshot_at_keeps_settlement_no`。fixture を前の版の DB にすると、復元の open の migration が先に key を消すか trigger に当たるので、今の版で作る） |
 | MNT-01-D7 作業名 | `VACUUM INTO` の失敗・検査の失敗を注入し、正式名の file が無く、作業名の file が消え、成功の操作ログが無い。作業名の削除の失敗も注入すると `tracing::warn!` で、次の `create_backup` の手順 3 が消す（中断の残りと同じ）。前回の作業名の掃除は規約に合う名前の `.partial` だけを消し、`notes.db.partial` 等を残す |
 | MNT-01-D7 公開 | 同じ名前の正式名が既にあるとき、既存の file の bytes が前後で同じで、作業名が消え、`DbError::QueryFailed`（§71.4.1）。注入した file 操作の記録で `sync_file` → 上書きしない公開 → `sync_parent` の順。sync・公開・親 directory の sync の各点の失敗で、成功の操作ログが無い |
 | MNT-01-D7 今日の判定 | 作業名 `inventory_backup_{今日}_{HHMMSS}.db.partial` だけ、または規約外の `inventory_backup_{今日}_manual.db` だけがある dir で `check_auto_backup` が backup を作る（今日の backup と数えない） |

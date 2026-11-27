@@ -90,6 +90,7 @@ beforeEach(() => {
         tidy_failure: null,
         ej: { new_count: 1, held_count: 0, conflict_count: 0, unreadable_file_count: 0 },
       },
+      plu_snapshot_skipped_older: false,
     }),
   );
 });

@@ -35,9 +35,6 @@ pub const SCANNING_PLU_MEMORY_START: usize =
 pub const SCANNING_PLU_EXPORT_LIMIT: usize =
     scanning_plu_export_limit(DEFAULT_STANDARD_PLU_MEMORY_COUNT);
 
-/// release_pending の clear 行を出力・confirm 時に解放する。
-pub const PLU_CLEAR_ROW_ENABLED: bool = true;
-
 // --- CSV取込み ---
 /// Z004ファイルのサイズ上限（バイト数）
 pub const CSV_IMPORT_FILE_SIZE_LIMIT: usize = 20 * 1024 * 1024; // 20MB

@@ -110,6 +110,12 @@ pub fn upsert_setting(conn: &DbConnection, key: &str, value: &str) -> Result<(),
 /// 操作ログをページング付きで取得する（第6段階追加）
 ///
 /// 20-io-product-repo.md §2.8
+/// app_settings の 1 行を消す。key が無くても成功（20-io-product-repo.md §2.3 delete_setting）
+pub fn delete_setting(conn: &DbConnection, key: &str) -> Result<(), DbError> {
+    conn.execute("DELETE FROM app_settings WHERE key = ?1", [key])?;
+    Ok(())
+}
+
 pub fn list_operation_logs(
     conn: &DbConnection,
     page: u32,

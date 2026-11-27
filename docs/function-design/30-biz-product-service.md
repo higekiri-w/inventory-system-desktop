@@ -187,7 +187,7 @@ step 3〜5 の読み書きは呼び出し元の TX の中で行う。登録が�
 
 ### 4.4 update_product
 
-**関数要求**: 商品情報を更新する。売価/原価が変わった場合はprice_historyに記録し、売価・名称・部門・税率の変更時はplu_dirty=1にする（名称・部門・税率は D-160 (5)、未実装）。原価のみの変更では plu_dirty を立てない
+**関数要求**: 商品情報を更新する。売価/原価が変わった場合はprice_historyに記録し、売価・名称・部門・税率の変更時はplu_dirty=1にする（名称・部門・税率は D-160 (5)）。原価のみの変更では plu_dirty を立てない
 
 **シグネチャ**:
 ```
@@ -223,7 +223,7 @@ Rustでは通常fieldを `Option<T>`、clear可能fieldを `Option<Option<T>>` �
    - plu_target が Some で既存値 0 → 1 に変わる場合 → updatesにplu_dirty=trueを追加（レジ登録が新たに必要になったため）
    - 1 → 0 の場合は PLU の枠を変えない（BIZ-04 を呼ばない。枠は残り、書出しに出なくなる。[33 §16.6](33-biz-plu-export-service.md)）
    - CSV 上書き等の許可された経路で jan_code が変わる場合も、旧 JAN の枠を変えない。変更後の plu_target が 1 なら updatesにplu_dirty=trueを追加（新しい JAN のレジ登録が要るため）
-4c. **PLU の file の欄の変更チェック**（D-160 (5)。出所は AI の review、owner が採った〈TD-779 の 5〉。未実装: 今の code〈`src-tauri/src/biz/product_service.rs` の `update_product`〉は売価の変更と 0 → 1 だけで立てる。PLU の書出しの見直しの runtime が red の test から入れる）
+4c. **PLU の file の欄の変更チェック**（D-160 (5)。出所は AI の review、owner が採った〈TD-779 の 5〉）
    - name・department_id・tax_rate のどれかが Some で既存値と異なる場合 → updatesにplu_dirty=trueを追加（PLU の file の `名称`・`部門リンク`・`課税方式` が変わり、書き出さないとレジの登録が古いまま残るため。[25 §12](25-io-plu-formatter.md)）
 5. **productsをUPDATE**
    - ProductUpdatesを構築してproduct_repo::update_product()を呼ぶ
@@ -612,17 +612,9 @@ struct ImportResult {
 
 ---
 
-### 4.9.1 bulk_set_plu_target（BIZ-01-D4。撤去の対象、D-117 (2)）
+### 4.9.1 bulk_set_plu_target（BIZ-01-D4。D-117 (2) で撤去）
 
-商品一覧の絞り込みに一致する全件を「PLU 対象にする / 外す」段階導入の道具は撤去する。どの商品をレジで売るかは、商品ごとの `plu_target`（UI-01b）と商品 CSV の任意列 `PLU対象`（§4.8、UI-01c）で決める。runtime の lane が code・command・bindings・UI・test と一緒に消す。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
-
-```rust
-fn bulk_set_plu_target(
-    conn: &mut DbConnection,
-    filter: ProductBulkFilter,
-    plu_target: bool,
-) -> Result<BulkPluTargetResult, BizError>
-```
+商品一覧の絞り込みに一致する全件を「PLU 対象にする / 外す」段階導入の道具は撤去した（関数・command・bindings・UI・test も無い）。どの商品をレジで売るかは、商品ごとの `plu_target`（UI-01b）と商品 CSV の任意列 `PLU対象`（§4.8、UI-01c）で決める。
 
 ### 4.9.2 前の JAN の別名（BIZ-01-D9、proposed・未実装、D-122）
 

@@ -270,11 +270,6 @@ const DB_IO_REEXPORT_ALLOWLIST: &[(&str, &str, &str)] = &[
     ), // :19
     (
         "biz/mod.rs",
-        "ProductBulkFilter",
-        "crate::db::product_repo::ProductBulkFilter",
-    ), // :21
-    (
-        "biz/mod.rs",
         "ProductSearchQuery",
         "crate::db::product_repo::ProductSearchQuery",
     ), // :21

@@ -9,7 +9,6 @@ pub enum PluSlotStatus {
     External,
     Reserved,
     Active,
-    ReleasePending,
 }
 
 impl PluSlotStatus {
@@ -19,7 +18,6 @@ impl PluSlotStatus {
             Self::External => "external",
             Self::Reserved => "reserved",
             Self::Active => "active",
-            Self::ReleasePending => "release_pending",
         }
     }
 
@@ -29,7 +27,6 @@ impl PluSlotStatus {
             "external" => Ok(Self::External),
             "reserved" => Ok(Self::Reserved),
             "active" => Ok(Self::Active),
-            "release_pending" => Ok(Self::ReleasePending),
             other => Err(rusqlite::Error::FromSqlConversionFailure(
                 0,
                 rusqlite::types::Type::Text,
@@ -46,7 +43,6 @@ pub struct PluSlot {
     pub status: PluSlotStatus,
     pub reserved_at: Option<String>,
     pub activated_at: Option<String>,
-    pub released_at: Option<String>,
     pub updated_at: String,
 }
 
@@ -56,7 +52,6 @@ pub struct PluSlotUpdate<'a> {
     pub status: PluSlotStatus,
     pub reserved_at: Option<&'a str>,
     pub activated_at: Option<&'a str>,
-    pub released_at: Option<&'a str>,
     pub updated_at: &'a str,
 }
 
@@ -68,13 +63,12 @@ fn row_to_slot(row: &rusqlite::Row<'_>) -> rusqlite::Result<PluSlot> {
         status: PluSlotStatus::parse(&status)?,
         reserved_at: row.get(3)?,
         activated_at: row.get(4)?,
-        released_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        updated_at: row.get(5)?,
     })
 }
 
 const SLOT_COLUMNS: &str =
-    "memory_no, scanning_code, status, reserved_at, activated_at, released_at, updated_at";
+    "memory_no, scanning_code, status, reserved_at, activated_at, updated_at";
 
 pub fn list_slots(conn: &DbConnection) -> Result<Vec<PluSlot>, DbError> {
     let mut stmt = conn.prepare(&format!(
@@ -140,8 +134,7 @@ pub fn find_min_free_slot(conn: &DbConnection) -> Result<Option<PluSlot>, DbErro
 pub fn update_slot(conn: &DbConnection, update: PluSlotUpdate<'_>) -> Result<(), DbError> {
     let changed = conn.execute(
         "UPDATE plu_slots
-         SET scanning_code=?2, status=?3, reserved_at=?4, activated_at=?5,
-             released_at=?6, updated_at=?7
+         SET scanning_code=?2, status=?3, reserved_at=?4, activated_at=?5, updated_at=?6
          WHERE memory_no=?1",
         params![
             update.memory_no,
@@ -149,7 +142,6 @@ pub fn update_slot(conn: &DbConnection, update: PluSlotUpdate<'_>) -> Result<(),
             update.status.as_str(),
             update.reserved_at,
             update.activated_at,
-            update.released_at,
             update.updated_at
         ],
     )?;
@@ -187,7 +179,6 @@ mod tests {
                     status: PluSlotStatus::Free,
                     reserved_at: None,
                     activated_at: None,
-                    released_at: None,
                     updated_at: "2026-08-18T00:00:00",
                 },
             )
@@ -206,7 +197,6 @@ mod tests {
                 status: PluSlotStatus::Reserved,
                 reserved_at: Some("2026-08-18T00:00:00"),
                 activated_at: None,
-                released_at: None,
                 updated_at: "2026-08-18T00:00:00",
             },
         )
@@ -225,7 +215,6 @@ mod tests {
                 status: PluSlotStatus::Reserved,
                 reserved_at: Some("2026-08-18T00:00:00"),
                 activated_at: None,
-                released_at: None,
                 updated_at: "2026-08-18T00:00:00",
             },
         )

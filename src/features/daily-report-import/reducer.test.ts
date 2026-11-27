@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 import type {
   DailyReportImportResult,
   DailyReportPreviewData,
-  DailyReportSdScan,
   RegisterSdBulkResponse,
 } from "@/lib/bindings";
 import type { InvokeError } from "@/lib/invoke";
 import { dailyReportImportReducer } from "./reducer";
-import type { DailyReportImportState, DailyReportSdOrigin } from "./types";
+import type { DailyReportImportState, DailyReportSdOrigin, DailyReportSdScanView } from "./types";
 
 const preview = {} as DailyReportPreviewData;
 const result = {} as DailyReportImportResult;
@@ -95,7 +94,8 @@ describe("dailyReportImportReducer REQ-401", () => {
 });
 
 // UI-07-D15 (4)〜(6)（D-111）: SD から来たことの持ち越しと一覧へ戻る遷移
-const scan: DailyReportSdScan = {
+const scan: DailyReportSdScanView = {
+  plu_snapshot_skipped_older: false,
   volume_label: "E:",
   scanned_from: "2026-02-20",
   skipped_unknown_count: 0,
@@ -233,7 +233,7 @@ describe("dailyReportImportReducer UI-07-D15 REQ-401", () => {
   });
 
   it("REQ-401 / UI-07-D17（closure round 2 #1）: bulk_succeeded folds the response into the same scan, and the next bulk accumulates", () => {
-    const withEj: DailyReportSdScan = {
+    const withEj: DailyReportSdScanView = {
       ...scan,
       ej: { new_count: 4, held_count: 0, conflict_count: 0, unreadable_file_count: 1 },
     };

@@ -197,7 +197,7 @@ pub fn parse_plu_register_snapshot(raw_bytes: &[u8]) -> Result<Vec<PluRegisterSl
 
 この mode は occupancy snapshot 専用であり、`ParsedRow`、`sale_records`、`inventory_movements`、日報集計へ入力しない（SPEC-PLS-D8）。
 
-入力は毎日の締めの SD の読取り（BIZ-08 §37.9）が読んだ窓の中の Z004 で、BIZ-04 が精算の識別メタの `settlement_no` が最大の 1 本を選んで渡す（[33 §16.3](33-biz-plu-export-service.md)、D-117 (3)。未実装: PLU の書出しの見直しの runtime。今は店主が FilePicker で選んだ Z004 を読む）。店主が FilePicker で選ぶ経路は撤去する（runtime の lane）。mode の形は変えない。
+入力は毎日の締めの SD の読取り（BIZ-08 §37.9）が読んだ窓の中の Z004 で、BIZ-04 が精算の識別メタの `settlement_no` が最大の 1 本を選んで渡す（[33 §16.3](33-biz-plu-export-service.md)、D-117 (3)）。精算の識別メタは `parse_z004` の `ParseResult.settlement_metadata` から読む（選ぶための関数を IO-02 に足さない。`parse_z004` が `Err` の bytes は使わない。D-168）。店主が FilePicker で選ぶ経路は撤去した。mode の形は変えない。
 
 ---
 

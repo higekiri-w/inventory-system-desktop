@@ -134,7 +134,10 @@ function renderPage() {
 }
 
 async function scanWith(scan: DailyReportSdScan) {
-  mockScan.mockResolvedValueOnce({ status: "ok", data: { scan, scan_token: "scan-token" } });
+  mockScan.mockResolvedValueOnce({
+    status: "ok",
+    data: { scan, scan_token: "scan-token", plu_snapshot_skipped_older: false },
+  });
   const user = userEvent.setup();
   renderPage();
   await user.click(screen.getByRole("button", { name: "SD から読む" }));
@@ -202,7 +205,10 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
     const scanning = await screen.findByRole("button", { name: SCANNING });
     expect(scanning).toBeDisabled();
     expect(screen.queryByText(/いつもの取込み/)).not.toBeInTheDocument();
-    resolveScan({ status: "ok", data: { scan: makeScan([]), scan_token: "scan-token" } });
+    resolveScan({
+      status: "ok",
+      data: { scan: makeScan([]), scan_token: "scan-token", plu_snapshot_skipped_older: false },
+    });
     expect(await screen.findByText(READ_DONE)).toBeInTheDocument();
     expect(screen.queryByText(/いつもの取込み/)).not.toBeInTheDocument();
   });
@@ -226,6 +232,45 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
   it("REQ-401 / UI-07-D15 (7): shows nothing when tidy_failure is null", async () => {
     await scanWith(makeScan([candidate("A", "Imported")]));
     expect(screen.queryByText(/片付け/)).not.toBeInTheDocument();
+  });
+
+  it("REQ-907 / UI-07-D15 (8): PLU の占有を照合しなかった知らせは flag が true のときだけ出て、読み直すと消える", async () => {
+    // 55 UI-07-D15 (8) の文（設計正本から独立に写す）
+    const SKIPPED_OLDER =
+      "この SD では、レジの登録状況（PLU の書出しに使う）を読みませんでした。この SD の精算回数が、前にレジの登録状況を読んだときより小さいためです。前に使った古い SD を読んだのでなければ、管理者に伝えてください。取込みとレジの精算には差し支えありません。";
+    const respond = (skippedOlder: boolean) =>
+      mockScan.mockResolvedValueOnce({
+        status: "ok",
+        data: {
+          scan: makeScan([candidate("A", "Imported")]),
+          scan_token: "scan-token",
+          plu_snapshot_skipped_older: skippedOlder,
+        },
+      });
+    const user = userEvent.setup();
+    renderPage();
+
+    // false: 出ない
+    respond(false);
+    await user.click(screen.getByRole("button", { name: "SD から読む" }));
+    await screen.findByText(READ_DONE);
+    expect(screen.queryByText(SKIPPED_OLDER)).not.toBeInTheDocument();
+
+    // true: (7) と同じ形（role="status" の注意）で出て、日報の一覧は今までどおり出る
+    respond(true);
+    await user.click(screen.getByRole("button", { name: "SD から読む" }));
+    const notice = await screen.findByText(SKIPPED_OLDER);
+    expect(notice.closest('[role="status"]')).not.toBeNull();
+    expect(notice.closest('[role="status"]')?.querySelector("svg")).not.toBeNull();
+    expect(row("A")).toHaveTextContent("取込み済み");
+
+    // 読み直して false: 消える
+    respond(false);
+    await user.click(screen.getByRole("button", { name: "SD から読む" }));
+    await waitFor(() => {
+      expect(screen.queryByText(SKIPPED_OLDER)).not.toBeInTheDocument();
+    });
+    expect(screen.getByText(READ_DONE)).toBeInTheDocument();
   });
 
   it("REQ-401 / UI-07-D15 (3) / UI-07-D19 O3 / TD-592: only a same-settlement row names 精算 {n}, the fix and the records link", async () => {
@@ -334,7 +379,11 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
     mockOpen.mockResolvedValueOnce("D:\\SDの写し\\CASIO");
     mockScan.mockResolvedValueOnce({
       status: "ok",
-      data: { scan: makeScan([candidate("A", "NotImported")]), scan_token: "scan-token" },
+      data: {
+        scan: makeScan([candidate("A", "NotImported")]),
+        scan_token: "scan-token",
+        plu_snapshot_skipped_older: false,
+      },
     });
     await user.click(screen.getByRole("button", { name: "場所を選ぶ" }));
     await screen.findByText(READ_DONE);
@@ -373,7 +422,11 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
 
       mockScan.mockResolvedValueOnce({
         status: "ok",
-        data: { scan: makeScan([candidate("A", "NotImported")]), scan_token: "scan-token-2" },
+        data: {
+          scan: makeScan([candidate("A", "NotImported")]),
+          scan_token: "scan-token-2",
+          plu_snapshot_skipped_older: false,
+        },
       });
       await user.click(screen.getByRole("button", { name: "SD から読む" }));
       await waitFor(() => {
@@ -511,6 +564,7 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
       data: {
         scan: makeScan([candidate("A", "NotImported"), candidate("B", "NotImported", "22")]),
         scan_token: "scan-token",
+        plu_snapshot_skipped_older: false,
       },
     });
     const queryClient = new QueryClient({
@@ -526,6 +580,11 @@ describe("DailyReportImportPage SD UI-07-D15 REQ-401", () => {
     );
     await user.click(screen.getByRole("button", { name: "SD から読む" }));
     await screen.findByText(READ_DONE);
+    // SD の読取りの成功の invalidate（D-052-C17）は読取りの分。以下は一括の分だけを見る
+    await waitFor(() => {
+      expectExactInvalidations(invalidateSpy.mock.calls, d052InvalidationOracle.registerSdScan());
+    });
+    invalidateSpy.mockClear();
     expect(screen.getByRole("list", { name: "SD の精算の一覧" })).toBeInTheDocument();
     const bulk = screen.getByRole("button", { name: "まとめて取り込む" });
     expect(bulk).toBeEnabled();

@@ -484,17 +484,18 @@ struct PluExportPrepareResponse {
     encoding: String,                // PluFileOutput.encoding
     count: usize,                    // 書出し行数（dedup 後）
     target_product_codes: Vec<String>,  // confirm対象。dedup 群の全メンバーを含むため count と長さが一致しないことがある（D-028）
-    prepared_rows: Vec<PluPreparedRow>, // memory_no、exact product set（BIZ の型をそのまま wire に出す）
+    prepared_rows: Vec<PluPreparedRow>, // memory_no、exact product set、照合の値（BIZ の型をそのまま wire に出す）
     excluded: Vec<PluExcludedProductResponse>,  // 要修正一覧（D-028）
 }
 
 struct PluPreparedRow {
     memory_no: i64,
     target_product_codes: Vec<String>,
+    content_hash: String, // 照合の値（33 §16.2・§16.5。IO-04 が file に書いたこの行の全 11 列の CP932 の byte 列の SHA-256、hex）
 }
 ```
 
-D-117 (1)・(5) で `over_limit_warning`（常に false の互換 field）と `row_kind`（`PluPreparedRowKind` の product | clear）を外した。runtime の lane が code・bindings・UI・test と一緒に外す（wire の変更）。
+D-117 (1)・(5) で `over_limit_warning`（常に false の互換 field）と `row_kind`（product | clear）を外した。`content_hash` は D-168 で足した（UI は中身を解釈せず、confirm へそのまま返す）。
 
 ```
 
@@ -566,14 +567,20 @@ fn confirm_plu_export_saved(
 **入力型**:
 ```
 product_codes: Vec<String>   // prepare_plu_exportが返したtarget_product_codes
-prepared_rows: Vec<PluPreparedRow> // prepare が返した exact memory_no / product set
+prepared_rows: Vec<PluPreparedRow> // prepare が返した exact memory_no / product set / 照合の値
 ```
 
 **出力型**:
 ```
 struct PluExportConfirmResponse {
-    updated_count: usize,
+    updated_count: usize,            // 未反映から外した商品の数
     confirmed_at: String,
+    remaining_products: Vec<PluRemainingProduct>, // 保存の後に出力の行が変わっていて、未反映のまま残した商品（33 §16.5）。UI がその場で名指しして知らせる（67 §67.9）
+}
+
+struct PluRemainingProduct {
+    product_code: String,
+    name: String,
 }
 ```
 
@@ -588,21 +595,13 @@ struct PluExportConfirmResponse {
 - `prepare_plu_export` はファイル生成だけであり、保存キャンセル、保存失敗、PCツール投入失敗を回復できるように `plu_dirty` を残す
 - `confirm_plu_export_saved` は利用者が保存済み扱いにすると明示した後だけ呼ぶ
 - product_codes と memory_no は prepare 結果の exact set とし、prepare後に別商品・別 slot が変化しても巻き込まない
+- 保存の後に出力の行が変わった商品（照合の値が今の商品と合わない行の商品）は未反映のまま残し、error にせず結果の `remaining_products` で返す（外せる行は外す。D-168）
 
 ---
 
-#### import_plu_register_snapshot（CMD-08-D4。撤去の対象、D-117 (3)）
+#### import_plu_register_snapshot（CMD-08-D4。D-117 (3) で撤去）
 
-占有は毎日の締めの SD の読取り（CMD-12 [§45.6a](45-cmd-daily-report-import.md) `scan_register_sd`）が BIZ-04 `refresh_plu_register_snapshot_from_sd` を呼んで照合する（[33 §16.3](33-biz-plu-export-service.md)）。店主が FilePicker で Z004 を選ぶこの command は撤去する。runtime の lane が code・specta の登録・bindings・UI・test と一緒に消す（それまで code は今の形のまま）。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
-
-```rust
-#[tauri::command]
-#[specta::specta]
-fn import_plu_register_snapshot(
-    state: State<AppState>,
-    file_bytes: Vec<u8>,
-) -> Result<PluRegisterSnapshotSummary, CmdError>
-```
+占有は毎日の締めの SD の読取り（CMD-12 [§45.6a](45-cmd-daily-report-import.md) `scan_register_sd`）が BIZ-04 `refresh_plu_register_snapshot_from_sd` を呼んで照合する（[33 §16.3](33-biz-plu-export-service.md)）。店主が FilePicker で Z004 を選ぶ command は撤去した（command・specta の登録・bindings・UI・test も無い）。
 
 #### get_plu_slot_summary（CMD-08-D5 / SPEC-PLS-D2、D7）
 
@@ -614,7 +613,7 @@ fn get_plu_slot_summary(
 ) -> Result<PluRegisterSnapshotSummary, CmdError>
 ```
 
-`app_settings` から最後に照合した日時（`snapshot_at`）だけを read-only で返す。未照合は null。BIZ の `PluRegisterSnapshotSummary` をそのまま wire に出し、件数の field（free / external / app managed / conflict / `release_pending_count`）を外す（D-117 (5)。wire の変更は runtime の lane）。prepare の gate 判定は BIZ-04 が行う。
+`app_settings` から最後に照合した日時（`snapshot_at`）だけを read-only で返す。未照合は null。BIZ の `PluRegisterSnapshotSummary` をそのまま wire に出し、件数の field（free / external / app managed / conflict / 解除待ち）は持たない（D-117 (5)）。prepare の gate 判定は BIZ-04 が行う。
 
 ---
 
@@ -645,8 +644,6 @@ Vec<ProductResponse>
 4. Err(BizError) → CmdError に変換して返す
 
 **設計判断 — 戻り値の型**: BIZ層が返す `Vec<Product>` をそのままフロントエンドに返さず、`ProductResponse` に変換する。CMD-01と同じ商品レスポンス型を使うことで、フロントエンドの型定義を統一する。
-
-D-117 の撤去（`import_plu_register_snapshot`、summary の件数、`over_limit_warning`、`row_kind`、`plu_memory_no`）は runtime の lane が specta 登録と bindings 再生成を行う。本 design PR（D-117）は `src/lib/bindings.ts` を変更しない。
 
 **入力例**: なし（引数なし）
 
@@ -730,7 +727,6 @@ CMD-07/CMD-08が**やらないこと**を明示する。
     // CMD-08（新規）
     cmd::plu_export_cmd::prepare_plu_export,
     cmd::plu_export_cmd::confirm_plu_export_saved,
-    cmd::plu_export_cmd::import_plu_register_snapshot,
     cmd::plu_export_cmd::get_plu_slot_summary,
     cmd::plu_export_cmd::list_plu_dirty,
 ])

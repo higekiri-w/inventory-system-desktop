@@ -25,8 +25,6 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | create_supplier | name | BIZ-01 取引先（メーカー/ブランド）追加 | Supplier（同名は既存行） |
 | list_price_history | product_code, limit | BIZ-01 価格履歴参照 | PriceHistoryEntry[]（DESC、既定10・上限100） |
 
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`search_products`（`src-tauri/src/cmd/product_cmd.rs`）の入力 `ProductSearchQuery`（`src-tauri/src/db/product_repo.rs`）が PLU の絞り込み `plu`（`PluMigrationFilter`）を持ち、絞り込みに一致する全件の PLU 対象を一括で変える `bulk_set_plu_target`（`src-tauri/src/cmd/product_cmd.rs`。入力は `ProductBulkFilter` と `plu_target`、[40](../function-design/40-cmd-product.md) CMD-01-D4。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。外すのは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
-
 ### CMD-02: 入庫コマンド群
 
 | コマンド名 | 入力 | 呼び出すBIZ | 出力 |
@@ -95,11 +93,9 @@ CMD層は薄いラッパーのため、各コマンドの仕様は「どのBIZ�
 | コマンド名 | 入力 | 呼び出すBIZ | 出力 |
 |-----------|------|-----------|------|
 | get_plu_slot_summary | なし | BIZ-04 | PluRegisterSnapshotSummary（snapshot_at。占有の照合は CMD-12 scan_register_sd が BIZ-04 を呼ぶ、D-117） |
-| prepare_plu_export | ExportMode（'full' / 'diff'） | BIZ-04 | PluExportPreparedResult（tsv_output, count, target_product_codes, prepared_rows[memory_no], excluded〈no_free_slot含む〉） |
-| confirm_plu_export_saved | product_codes[], prepared_rows[memory_no] | BIZ-04 | PluExportConfirmResult（updated_count, confirmed_at） |
+| prepare_plu_export | ExportMode（'full' / 'diff'） | BIZ-04 | PluExportPreparedResult（tsv_output, count, target_product_codes, prepared_rows[memory_no, content_hash], excluded〈no_free_slot含む〉） |
+| confirm_plu_export_saved | product_codes[], prepared_rows[memory_no, content_hash] | BIZ-04 | PluExportConfirmResult（updated_count, confirmed_at, remaining_products〈保存の後に出力の行が変わって未反映のまま残した商品〉） |
 | list_plu_dirty | なし | BIZ-04経由 | Vec\<ProductResponse\>（plu_target=1 かつ plu_dirty=1 の商品一覧。D-028） |
-
-> **runtime の状態**: 上は D-117 の後の形（採用済み）。今の build は、`get_plu_slot_summary` が件数の要約（`src-tauri/src/biz/plu_export_service.rs` の `PluRegisterSnapshotSummary`。`free_count`・`release_pending_count` ほか）を返し、`prepare_plu_export` の結果（同じ file の `PluExportPreparedResult` と `src-tauri/src/cmd/plu_export_cmd.rs` の `PluExportPrepareResponse`）が `over_limit_warning` を持ち、利用者が選ぶ Z004 で占有を照合する `import_plu_register_snapshot`（`src-tauri/src/cmd/plu_export_cmd.rs`。`src-tauri/src/lib.rs` の `collect_commands` に登録）がある。CMD-12 の `scan_register_sd` は占有を照合しない（BIZ-04 を呼ばない）。撤去と SD の読取りでの照合への切替えは PLU の書出しの見直しの runtime（[33](../function-design/33-biz-plu-export-service.md) §16 の冒頭の「runtime の状態」の注記）。
 
 ### CMD-09: 売上集計コマンド群
 

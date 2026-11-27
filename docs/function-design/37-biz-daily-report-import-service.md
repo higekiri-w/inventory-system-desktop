@@ -371,7 +371,7 @@ fn list_daily_report_imports(
 
 ### 37.9 scan_register_sd_daily_reports（SD から読む候補、BIZ-08-D3）
 
-**関数要求**: レジの SD（IO-09、[29 §29.7](29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）から Z001 / Z002 / Z005 を読み、精算ごとの束を取込みの候補として、取込み済みかの状態つきで返す。読んだ bytes は返り値の snapshot に持ち、preview はその snapshot から作る（SD を読み終えたら抜いてよい。SD-18）。窓の中の Z004 も読み、PLU の占有の照合のために snapshot に持つ（手順 10、D-117 (3)。未実装、手順 10 の末尾）。DB へは書かない。
+**関数要求**: レジの SD（IO-09、[29 §29.7](29-io-daily-report-parser.md#297-io-09-レジの-sd-の列挙と読取りd-111)）から Z001 / Z002 / Z005 を読み、精算ごとの束を取込みの候補として、取込み済みかの状態つきで返す。読んだ bytes は返り値の snapshot に持ち、preview はその snapshot から作る（SD を読み終えたら抜いてよい。SD-18）。窓の中の Z004 も読み、PLU の占有の照合のために snapshot に持つ（手順 10、D-117 (3)）。DB へは書かない。
 
 **シグネチャ**:
 
@@ -429,7 +429,7 @@ struct DailyReportSdScanSnapshot {
     files_by_candidate: HashMap<String, Vec<DailyReportInputFile>>, // NotImported の束だけ
     ej_files: Vec<SdSourceFile>,          // §37.10 の「§37.9 に足すもの」(A)
     ej_unreadable_files: Vec<String>,     // 同上
-    plu_register_z004s: Vec<Vec<u8>>, // 窓の中の Z004 の bytes（PLU の占有の照合へ渡す。D-117 (3)。未実装、手順 10）
+    plu_register_z004s: Vec<Vec<u8>>, // 窓の中の Z004 の bytes（PLU の占有の照合へ渡す。D-117 (3)、手順 10。CMD-12 が照合の後に空にする）
 }
 ```
 
@@ -445,7 +445,7 @@ struct DailyReportSdScanSnapshot {
 7. 状態を決める: 同じ `bundle_hash` の `completed` があれば `Imported`。無く、`settlement_no` が `None` なら `Unreadable`（BIZ-08-D6。snapshot に入れない）。`Some` で同じ `report_date`・`settlement_no` の別 `bundle_hash` の `completed` があれば（24 §14.18a）`SameSettlementImported`。それ以外は `NotImported`。`rolled_back` だけの束は `NotImported`（取消の後の取り込み直しを今どおり許す）。
 8. 候補を `path_date` の新しい順、同じ日は精算回数の大きい順（読めない束は後ろ、その中は相対 path の順）に並べる。
 9. `NotImported` の束の 3 本の bytes を `snapshot.files_by_candidate` に入れる。
-10. 窓の中の Z004（`XZ` と `XZ_BKUP`。名前の規則に合うもの）を IO-09 `read_register_sd_file` で読み（上限は手順 5 と同じ）、`Io`・`TooLarge` の file と、手順 5 と同じ形の検査（IO-09-D4）で外れた file を除いて続け、残りの bytes を `snapshot.plu_register_z004s` に入れて返す（同じ bytes は 1 つにまとめる）。行数と中身の検査は BIZ-04 が IO-02 `parse_plu_register_snapshot` で行い、`ImportError` なら照合しない（前回を保つ。33 §16.3）。Z004 の中身の解釈と選択は BIZ-04（[33 §16.3](33-biz-plu-export-service.md)）が行い、ここでは読まない。CMD-12 は scan の成功の後に BIZ-04 `refresh_plu_register_snapshot_from_sd` へ渡す（[45 §45.6a](45-cmd-daily-report-import.md)）。DB への書込みはその BIZ-04 の TX で、本関数は DB へ書かない（D-117 (3)。Z004 の業務の取込み〈BIZ-03〉とは別）。本手順と snapshot の `plu_register_z004s` は PLU の書出しの見直しの runtime の lane（[backlog](../backlog.md) の同名の項目）が実装する。SD 直読みの runtime（D-111）で実装したのは手順 1〜9 で、今の snapshot は `plu_register_z004s` を持たない（手順 9 の後に返す）。
+10. 窓の中の Z004（`XZ` と `XZ_BKUP`。名前の規則に合うもの）を IO-09 `read_register_sd_file` で読み（上限は手順 5 と同じ）、`Io`・`TooLarge` の file と、手順 5 と同じ形の検査（IO-09-D4）で外れた file を除いて続け、残りの bytes を `snapshot.plu_register_z004s` に入れて返す（同じ bytes は 1 つにまとめる）。行数と中身の検査は BIZ-04 が IO-02 `parse_plu_register_snapshot` で行い、`ImportError` なら照合しない（前回を保つ。33 §16.3）。Z004 の中身の解釈と選択は BIZ-04（[33 §16.3](33-biz-plu-export-service.md)）が行い、ここでは読まない。CMD-12 は scan の成功の後に BIZ-04 `refresh_plu_register_snapshot_from_sd` へ渡す（[45 §45.6a](45-cmd-daily-report-import.md)）。DB への書込みはその BIZ-04 の TX で、本関数は DB へ書かない（D-117 (3)。Z004 の業務の取込み〈BIZ-03〉とは別）。読む本数は窓の中の全部で、絞る規則は持たない（D-168。形の検査は手順 5 と同じ関数）。
 
 **preview への接続**: 利用者が `NotImported` の候補を選ぶと、CMD-12 が snapshot の 3 本を §37.3 `parse_and_validate_daily_report` に渡す。preview・commit・同日追加の確認・BIZ-08-D4 は手でファイルを選んだ経路と同じで、SD の経路だけに足す規則は BIZ-08-D6（精算回数のある束だけ）と BIZ-08-D5（写し）の 2 つ。同じ scan の中で同じ精算の別の bytes の束が 2 つ `NotImported` になる場合（原本と取込み後の file が同じ bytes であること〈SD-23。2026-10-31 に日報の 3 系列の 2 つの束で確かめた〉が外れ、CV17 の取込みも使った場合）、先に取り込んだ方の後のもう一方は §37.3 手順 8 の BIZ-08-D4 で止まる。
 
@@ -494,7 +494,7 @@ fn commit_register_sd_bulk_import(
 ```rust
 // §37.9 に足すもの（(A) は実装済み、(B) は未実装。SD 直読みの runtime の契約は変えない）
 // (A) §37.9 の scan は手順 9 の後に、IO-09 で EJ を読む（`XZ` 直下は全部、`XZ_BKUP` は窓の中。上限は手順 5 と同じ）。
-//     手順 10 は未実装なので 9 の後（手順 10 が入っても順は結果を変えない）。
+//     手順 10（Z004 の読取り）は EJ の後に行う（順は結果を変えない）。
 //     読めた file は全部 ej_files に入れ、`Io`・`TooLarge` で bytes を得られなかった file は名前だけを ej_unreadable_files に入れる。
 //     `InvalidPath` は手順 5 と同じく全体の失敗。形の検査は scan でしない（§37.11 手順 1 の 1 か所だけで行う）。ej_files で §37.11 plan_ej_records を呼ぶ
 // (A) IO-09 の bytes を受ける純関数 `measure_register_sd_shape(bytes: &[u8]) -> RegisterSdShape`（29 §29.7.6 手順 3）を、

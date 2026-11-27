@@ -32,7 +32,6 @@ vi.mock("@/lib/bindings", () => ({
     searchProducts: vi.fn(),
     listDepartments: vi.fn(),
     listSuppliers: vi.fn(),
-    bulkSetPluTarget: vi.fn(),
   },
 }));
 vi.mock("@tauri-apps/api/window", () => ({

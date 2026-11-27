@@ -120,7 +120,7 @@ fn toggle_discontinue(state: State<AppState>, product_code: String) -> Result<bo
 
 #### search_products コマンド
 
-**処理ステップ**: biz::product_service::search_products()を呼ぶ。PLU の移行 filter（`ProductSearchQuery.plu`）は D-117 (2) で撤去した（runtime の lane が DTO・bindings・UI と一緒に外す）。`supplier_id` / `include_unassigned` は UI-14 の取引先 filter としてそのまま BIZ-01 wrapper を通し、抽出判断は IO-01 が所有する（SPEC-PRVB-D1）。
+**処理ステップ**: biz::product_service::search_products()を呼ぶ。PLU の移行 filter（`ProductSearchQuery.plu`）は D-117 (2) で撤去した（古い payload に残った `plu` は無視する）。`supplier_id` / `include_unassigned` は UI-14 の取引先 filter としてそのまま BIZ-01 wrapper を通し、抽出判断は IO-01 が所有する（SPEC-PRVB-D1）。
 
 #### list_departments コマンド
 
@@ -281,18 +281,8 @@ struct PriceHistoryEntry {
 
 #### get_product コマンド
 
-**処理ステップ**: product_repo::find_by_product_code()を呼ぶ。None → CmdError { kind: CmdErrorKind::NotFound }。応答型 `ProductWithRelations`（[20-io](20-io-product-repo.md) の JOIN 結果。`41-cmd` の `ProductResponse` は PLU dirty 一覧用の別型）は memory No. を含めない（CMD-01-D3 の `plu_memory_no` は D-117 (5) で撤去。runtime の lane が DTO・bindings・UI と一緒に外す）。
+**処理ステップ**: product_repo::find_by_product_code()を呼ぶ。None → CmdError { kind: CmdErrorKind::NotFound }。応答型 `ProductWithRelations`（[20-io](20-io-product-repo.md) の JOIN 結果。`41-cmd` の `ProductResponse` は PLU dirty 一覧用の別型）は memory No. を含めない（CMD-01-D3 の `plu_memory_no` は D-117 (5) で撤去）。
 
-#### bulk_set_plu_target コマンド（CMD-01-D4。撤去の対象、D-117 (2)）
+#### bulk_set_plu_target コマンド（CMD-01-D4。D-117 (2) で撤去）
 
-商品一覧の絞り込みに一致する全件の PLU 対象化（段階導入の道具）は撤去する（[30 §4.9.1](30-biz-product-service.md)）。runtime の lane が code・specta の登録・bindings・UI・test と一緒に消す。設計照合 test（`src-tauri/tests/design_compliance_test.rs`）が code の pub fn と突き合わせるので、撤去までは signature だけを残す。
-
-```rust
-#[tauri::command]
-#[specta::specta]
-fn bulk_set_plu_target(
-    state: State<AppState>,
-    filter: ProductBulkFilter,
-    plu_target: bool,
-) -> Result<BulkPluTargetResult, CmdError>
-```
+商品一覧の絞り込みに一致する全件の PLU 対象化（段階導入の道具）は撤去した（[30 §4.9.1](30-biz-product-service.md)。command・specta の登録・bindings・UI・test も無い）。
