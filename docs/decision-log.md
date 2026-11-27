@@ -1563,3 +1563,11 @@ Use concise ADR-style entries.
 - Alternatives: 既定のメニューの項目を減らす（WebView2 の `ContextMenuRequested` を Rust から直に使う要があり、`webview2-com` を直の依存に足す Windows だけの code になり、Tauri・wry からは届かないので棄却）; Rust の `with_webview` から `ICoreWebView2Settings` で既定のメニューを止める（同じく `webview2-com` を直の依存に足す）; 貼り付けのために `enable_clipboard_access` で window を作り直す・clipboard の plugin を足す（P1 の実測で `readText()` が許可の窓なしに通ったので棄却）; 汎用の `src/components/ui/context-menu.tsx` を置く（使う所が 1 つなので置かない）。
 - Guarantee range: 自動 test（`src/components/layout/TextFieldContextMenu.test.tsx`）は happy-dom で `execCommand`・`readText` を spy にして順序と対象の欄を固定する。clipboard の実の読み書き・release の build での許可の窓・`display: contents` の高さは Windows の L3 で確かめる。
 - Revisit: `contentEditable` の要素を使う画面が出たとき。配る build で `readText()` が許可の窓を出す・読めないと分かったとき。Tauri・wry が既定のメニューの設定を公開したとき。
+
+## D-175: 画面の振舞いは使い手の操作から自然に期待する結果を正とし、review の指摘で設計を変える直しは owner が選ぶ（2026-11-27）
+
+- Status: accepted（owner の原則と決定、repo 外の回答台帳 TD-936・TD-937・TD-939・TD-942・TD-943・TD-944・TD-945・TD-946）
+- Context: PR #305（EJ の控えの画面）の Final の closure round 7 で、reviewer が「番号の欄に打って未送信のまま『前の日』を押した後の Enter で番号の検索が走る」を回帰とし、前の版の「Enter でボタンがもう一度押されて 1 日進む」を正とした。Coordinator は、直すと Enter で 1 日進むことを owner に見せないまま、round 7 の指摘を受けて是正 `3c732b7f` で test に固定し、round 8 で approve した。Windows の L3 で owner が「番号を打って Enter したらその番号へ移るのが正、行動に自然と意図した結果が伴うのが正」と示し、その是正を戻した。owner は機能面で何を採るかの基準をこれまで明示していなかったと述べた。待ちの間・失敗の後の止め方と文は UI の刷新の入力に束ねた（TD-943、`docs/backlog.md` の UI の刷新の入力の (j)）。
+- Decision: AGENTS.md の「使い手に押しつけない（D-127）」の項目に 2 文を足す。画面の振舞いは使い手がした操作から自然に期待する結果が出るものを正とする（ボタンは名のとおりに動く、番号を打って Enter を押せばその番号を探す）。review の指摘で使い手に見える振舞いが変わるときは、設計で決めた振舞いに戻す直しはそのまま入れ、設計を変える直しは、操作・今の結果・直した後の結果を並べて owner が選ぶ。共通の決まりなのでモデルごとに書き分けない（モデル固有の補助は `CLAUDE.md` と `docs/agent-guidance/`）。
+- Alternatives: 新しい項目を立てる（D-127 と同じ向きで、継ぎ足しになる）; 除外なしの形（Codex 1171。保存日数 0 を拒む仕様に戻す直しまで選択待ちになる）; 安全要件だけを除く形（設計どおりに戻す直しまで選択待ちになる。計画の review round 1 の 2 本の P2）; review を Claude 側だけにする（owner は採らない、TD-942。見つける力は残し、受け口を締める）; Coordinator の手元の checklist だけに置く（reviewer の発注に効かない）。
+- Revisit: この原則で決めた振舞いを店の L3 や実運用で owner が覆したとき。
