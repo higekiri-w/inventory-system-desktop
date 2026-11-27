@@ -241,6 +241,7 @@
 
 ### 記録目的（受容済みリスク・revisit 条件付き）
 
+- 右クリックのメニュー（UI-12、D-171）: 欄の祖先が `contextmenu` を `preventDefault()` すると、控えた欄が空に戻らず以後どの欄でもメニューが開かない（今の app に経路は無い〈`src` の `onContextMenu` 0 件〉。直すなら `TextFieldContextMenu.tsx` の開く条件の先頭に `event.defaultPrevented ||`。PR #309 の Final closure round 2 の Fable の P3）。
 - `0a83374b` の時点で `docs/function-design/40-cmd-product.md:279` の言い換えで field 名の明示が落ちた件（Opus P3-3、衛生 batch 4 Final Review round 2、2026-09-15）: per_page check の否定文脈検出を直す際に元の精度へ戻す。
 - `ponytail:` comment の配置（Opus P3-4、衛生 batch 4 Final Review round 2、2026-09-15）: test 側だけでなく checker の `case` 行の直上にも置く。
 - `Badge` / `Button` の base に `shrink-0` があり、`StocktakeProgressHeader` の明示 `shrink-0` と test の `toHaveClass("shrink-0")` は恒真（fresh broad Opus P3-3、PR #63、2026-09-15）。挙動影響なし、明示 class と assert を外すか base 依存を明記する

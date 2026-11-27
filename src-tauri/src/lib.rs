@@ -1459,6 +1459,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // UI-CTX-D3: 右クリックのメニューの貼り付けを WebView2 の許可の窓なしに読む（D-177）
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             // app_data_dir: tauri.conf.json の identifier から自動解決
             // Linux: ~/.local/share/com.inventory-system.desktop/

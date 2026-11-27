@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,7 @@ import {
   clearRestoreSuccessPending,
   consumeRestoreSuccessPending,
 } from "@/lib/restore-success-notification";
+import { TextFieldContextMenu } from "@/components/layout/TextFieldContextMenu";
 import { BackupRestorePage } from "./BackupRestorePage";
 import {
   holdAutoBackupCheckForRestore,
@@ -573,6 +574,39 @@ describe("BackupRestorePage (UI-11b / QR-05 / REQ-901)", () => {
       expect(mockUpdateSetting).toHaveBeenCalledWith({ key: "backup_retention_days", value: "7" });
     });
     expect(await screen.findByText("設定を保存しました")).toBeInTheDocument();
+  });
+
+  it("REQ-901 / UI-CTX-D3: 保存日数の欄で右クリックのメニューを開いても打ちかけの値を保存せず、離れたときに保存する", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    renderWithClient(
+      <TextFieldContextMenu>
+        <BackupRestorePage />
+      </TextFieldContextMenu>,
+    );
+    const field = await screen.findByLabelText("保存日数");
+    await user.clear(field);
+    await user.type(field, "1");
+    fireEvent.contextMenu(field);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(field).toHaveFocus();
+    });
+    expect(mockUpdateSetting).not.toHaveBeenCalled();
+
+    await user.type(field, "4");
+    await user.tab();
+    await waitFor(() => {
+      expect(mockUpdateSetting).toHaveBeenCalledWith({
+        key: "backup_retention_days",
+        value: "14",
+      });
+    });
+    expect(mockUpdateSetting).toHaveBeenCalledTimes(1);
   });
 
   it("QR-05 REQ-901 shows effective backup dir returned by backend", async () => {

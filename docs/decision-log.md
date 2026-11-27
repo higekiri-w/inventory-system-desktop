@@ -1554,6 +1554,17 @@ Use concise ADR-style entries.
 - Alternatives: 予定どおり届いた日の runtime を入れる（B。店の流れに無い場面のために列と操作と migration を足す）; 何もしない（C。欄の名が入庫日のままでは、後から打つときに打った日を選びやすい）; その日に打つ決まりを店に課す（owner の所感 TD-890 で採らない）。
 - Revisit: 届く前に入庫を打つ場面が店で出たとき。
 
+## D-171: 右クリックの WebView2 の既定のメニューは frontend の `contextmenu` で止め、文字の欄だけに自前の 4 項目（切り取り・コピー・貼り付け・すべて選択）を出し、貼り付けは `navigator.clipboard.readText()` で読む（2026-11-26）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-905〈4 項目と欄の外は何も出さない〉・TD-907〈O1 = C、P1 の実測〉・TD-909〈O2 = a〉、Contract Probe の実測 TD-913。Plan Packet `docs/plans/2026-11-25-context-menu.md`。正本は [UI_TECH_STACK](UI_TECH_STACK.md) §6.13 UI-CTX-D1〜D4）
+- Context: 右クリックで WebView2 の既定のメニュー（絵文字・パスワードのインポート・元に戻す・プレーンテキストとして貼り付け・書き込み方向・開発者ツールで調査する等）が出ていた（2026-11-25、開発の build の入荷の画面で owner が観測）。wry 0.55.1 は `SetAreDefaultContextMenusEnabled` を持つが、tauri-runtime-wry 2.11.3 は `with_default_context_menus` を呼ばず、Tauri 2.11 の window の設定にも項目が無い。
+- Decision: (1) 既定のメニューは `document` の `contextmenu` の listener（bubble）で常に `preventDefault()` して止める。(2) 文字の欄（textarea と、input の型が未指定・text・search・number）の中だけに `radix-ui` の `ContextMenu` で 4 項目を出し、欄の外（日付・月・時刻の欄を含む）では何も出さない。(3) 操作は閉じた後に欄へ focus だけを戻して打ち（選択は開く前のまま）、切り取り・コピー・入れるは `document.execCommand`、貼り付けは `navigator.clipboard.readText()` で読み、読めなければ toast で Ctrl+V を案内する。
+- Why: 既定のメニューの項目の多くは店の業務に要らず、開発者ツールは開かせたくない。frontend の 1 か所で止めれば Rust・設定・依存に触れず、全画面と確認の窓に効く。P1 の実測（TD-907）で `readText()` は許可の窓なしに通った。
+- Alternatives: 既定のメニューの項目を減らす（WebView2 の `ContextMenuRequested` を Rust から直に使う要があり、`webview2-com` を直の依存に足す Windows だけの code になり、Tauri・wry からは届かないので棄却）; Rust の `with_webview` から `ICoreWebView2Settings` で既定のメニューを止める（同じく `webview2-com` を直の依存に足す）; 貼り付けのために `enable_clipboard_access` で window を作り直す・clipboard の plugin を足す（P1 の実測で `readText()` が許可の窓なしに通ったので棄却）; 汎用の `src/components/ui/context-menu.tsx` を置く（使う所が 1 つなので置かない）。
+- Guarantee range: 自動 test（`src/components/layout/TextFieldContextMenu.test.tsx`）は happy-dom で `execCommand`・`readText` を spy にして順序と対象の欄を固定する。clipboard の実の読み書き・release の build での許可の窓・`display: contents` の高さは Windows の L3 で確かめる。
+- Revisit: `contentEditable` の要素を使う画面が出たとき。配る build で `readText()` が許可の窓を出す・読めないと分かったとき。Tauri・wry が既定のメニューの設定を公開したとき。
+- Superseded in part by: D-177（2026-11-28。Decision (3) と Why・Alternatives の貼り付けの読み方。`navigator.clipboard.readText()` をやめ、Tauri の公式の clipboard の plugin の `readText` で読む。読めないときの toast の文も、Ctrl+V の案内をやめて「貼り付ける文字がありません」に改めた〈TD-958〉）
+
 ## D-175: 画面の振舞いは使い手の操作から自然に期待する結果を正とし、review の指摘で設計を変える直しは owner が選ぶ（2026-11-27）
 
 - Status: accepted（owner の原則と決定、repo 外の回答台帳 TD-936・TD-937・TD-939・TD-942・TD-943・TD-944・TD-945・TD-946）
@@ -1561,3 +1572,13 @@ Use concise ADR-style entries.
 - Decision: AGENTS.md の「使い手に押しつけない（D-127）」の項目に 2 文を足す。画面の振舞いは使い手がした操作から自然に期待する結果が出るものを正とする（ボタンは名のとおりに動く、番号を打って Enter を押せばその番号を探す）。review の指摘で使い手に見える振舞いが変わるときは、設計で決めた振舞いに戻す直しはそのまま入れ、設計を変える直しは、操作・今の結果・直した後の結果を並べて owner が選ぶ。共通の決まりなのでモデルごとに書き分けない（モデル固有の補助は `CLAUDE.md` と `docs/agent-guidance/`）。
 - Alternatives: 新しい項目を立てる（D-127 と同じ向きで、継ぎ足しになる）; 除外なしの形（Codex 1171。保存日数 0 を拒む仕様に戻す直しまで選択待ちになる）; 安全要件だけを除く形（設計どおりに戻す直しまで選択待ちになる。計画の review round 1 の 2 本の P2）; review を Claude 側だけにする（owner は採らない、TD-942。見つける力は残し、受け口を締める）; Coordinator の手元の checklist だけに置く（reviewer の発注に効かない）。
 - Revisit: この原則で決めた振舞いを店の L3 や実運用で owner が覆したとき。
+
+## D-177: 右クリックのメニューの貼り付けは Tauri の公式の clipboard の plugin の `readText` で Rust 側から読む（D-171 の貼り付けの読み方を置き換える）（2026-11-28）
+
+- Status: accepted（owner の決定、repo 外の回答台帳 TD-952。Plan Packet `docs/plans/2026-11-25-context-menu.md` の Gated Amendment。正本は [UI_TECH_STACK](UI_TECH_STACK.md) §6.13 UI-CTX-D3）
+- Context: Windows の L3（PR #309 の head `ac1123b6`、`tauri dev`）で、右クリックのメニューの「貼り付け」に WebView2 の許可の窓（「クリップボードにコピーされたテキストや画像の参照」ブロック / 許可）が最初の貼り付けから出て、× で閉じると貼り付けが全部拒まれた（Ctrl+V は効く）。D-171 が根拠にした TD-907 は DevTools の Console からの呼出しの実測で、メニューからの呼出しには当たらなかった（D-171 の Revisit「配る build で `readText()` が許可の窓を出す・読めないと分かったとき」に当たる）。
+- Decision: 貼り付けの読みだけを `@tauri-apps/plugin-clipboard-manager` 2.3.3 の `readText()`（Rust の `tauri-plugin-clipboard-manager` =2.3.3 を `run()` の builder に登録）に置き換える。capability は `clipboard-manager:allow-read-text` の 1 つだけを許し、書込み・画像の読取り・消去は許さない。読めないとき（reject。plugin は何もコピーしていない・画像だけのときも reject する）の toast は「貼り付ける文字がありません。貼り付けたい文字をコピーしてから、もう一度お試しください。」に改め、Ctrl+V の案内は消す（Ctrl+V でも入らない。owner の決定、TD-958）。読み終えた時点で同じ欄のときだけ `insertText` で入れる形は D-171 のまま。切り取り・コピー・すべて選択は `execCommand`・`select()` のまま。
+- Why: plugin は Rust 側（`arboard`）で OS の clipboard を読むので、WebView2 の clipboard の許可を通らず、許可の窓が出ない。2.3.3 は lockfile の `tauri` 2.11.1 のまま入る最新の版（2.4.0 以降の crate は `tauri ^2.12` を求める）。
+- Alternatives: `navigator.clipboard.readText()` のまま（許可の窓が出て、閉じると貼り付けが効かなくなる）; window を `enable_clipboard_access` で作る（window の作り直しになり、WebView2 の許可の窓が出なくなる根拠が無い）; plugin の 2.4 以降にして `tauri` を 2.12 へ上げる（貼り付けのために本体の版を動かすことになる）。
+- Guarantee range: 自動 test は plugin の `readText` を mock にして、それで読むこと・`navigator.clipboard.readText` を呼ばないこと（`TextFieldContextMenu.test.tsx`）と、plugin の登録と capability の許可が読取りの 1 つだけであること（`TextFieldContextMenu.mount.test.ts`）を固定する。配る build（release）で許可の窓なしに読めることは Windows の L3-2 で確かめる。
+- Revisit: 配る build で plugin の読取りが読めない・窓を出すと分かったとき。`tauri` を 2.12 以降に上げるとき（plugin の版も合わせて上げる）。

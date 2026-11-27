@@ -41,6 +41,7 @@ UI 層の関数設計書は業務ロジック有無で 2 段階のテンプレ�
 
 - `src/routes/__root.tsx` で `<RootLayout>` を mount。既存の暫定レイアウトを差し替え
 - `src/main.tsx` が render の前に native の window の close の listener を 1 回だけ登録する（`installWindowCloseGuard()`、`src/lib/window-close-listener.ts`。UI-USW-D5）
+- `src/main.tsx` が `<RouterProvider>` を `TextFieldContextMenu`（`src/components/layout/TextFieldContextMenu.tsx`）で包み、全画面と root の `errorComponent` の右クリックで既定のメニューを止め、文字の欄だけに自前のメニューを出す（[UI_TECH_STACK](../UI_TECH_STACK.md) UI-CTX-D1〜D4、D-171）
 - `notFoundComponent` から `min-h-screen` を削除（RootLayout の `h-screen` 枠内で 404 描画、サイドバーから戻れる 404 = Nielsen #3 整合）
 
 ---
@@ -273,3 +274,4 @@ UI-12 内で唯一「処理 + エラーハンドリング + 書式規約」を�
 | 2026-11-14 | window-close-guard（plan-first、PR #250） | §52.1 の RootLayout の行に native の window の close の確認の窓の mount、接続点に `main.tsx` の listener の登録を足した（UI_TECH_STACK UI-USW-D5、D-153）。未実装の注は実装の PR で外す |
 | 2026-11-15 | window-close-guard（実装、PR #250） | §52.1 の RootLayout の行と接続点の「未実装」の注を外した（`WindowCloseDialog` の mount、`main.tsx` の `installWindowCloseGuard()`。UI_TECH_STACK UI-USW-D5、D-153。[Plan Packet](../plans/2026-11-13-window-close-guard.md)） |
 | 2026-11-25 | ej-receipts-a2（実装、PR #305） | §52.3 に UI-09c レシートの控え（`/reports/receipts`、毎日の業務の末尾）を足し、§52.2・§52.3・§52.4 の項目の数を実測（`rg -c 'id: "ui-' src/config/navigation.ts` で 24）で直した。§52.4 の入出庫の項目に、表から漏れていた詰め替え・切り分け（UI-16、D-143）を足した。 |
+| 2026-11-26 | context-menu（実装、PR #309） | §52.1 の接続点に `main.tsx` の `TextFieldContextMenu` の mount を足した（UI_TECH_STACK UI-CTX-D1〜D4、D-171。[Plan Packet](../plans/2026-11-25-context-menu.md)）。mount の位置は `TextFieldContextMenu.mount.test.ts` が source で見張る |

@@ -4,6 +4,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import "./styles/globals.css";
+import { TextFieldContextMenu } from "./components/layout/TextFieldContextMenu";
 import { router } from "./lib/app-router";
 import { createAppQueryClient } from "./lib/query-client";
 import { installWindowCloseGuard } from "./lib/window-close-listener";
@@ -22,7 +23,10 @@ if (!rootElement) {
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* UI-CTX-D1: root の errorComponent（RootLayout の外）も同じ Trigger の木に入れるため RouterProvider を包む */}
+      <TextFieldContextMenu>
+        <RouterProvider router={router} />
+      </TextFieldContextMenu>
       {import.meta.env.DEV && <ReactQueryDevtools buttonPosition="bottom-left" />}
     </QueryClientProvider>
   </React.StrictMode>,
