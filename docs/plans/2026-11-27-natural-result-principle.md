@@ -5,7 +5,7 @@ wave に属さない単独の lane（PR #314）。出所は owner の原則と�
 ## Workflow State
 
 - Risk: R3
-- Plan Commit: pending
+- Plan Commit: 9c9018b2f50b14ed760567c4ff4458079db40752
 - Amendments: none
 
 ## Risk
