@@ -1563,7 +1563,7 @@ Use concise ADR-style entries.
 - Alternatives: 既定のメニューの項目を減らす（WebView2 の `ContextMenuRequested` を Rust から直に使う要があり、`webview2-com` を直の依存に足す Windows だけの code になり、Tauri・wry からは届かないので棄却）; Rust の `with_webview` から `ICoreWebView2Settings` で既定のメニューを止める（同じく `webview2-com` を直の依存に足す）; 貼り付けのために `enable_clipboard_access` で window を作り直す・clipboard の plugin を足す（P1 の実測で `readText()` が許可の窓なしに通ったので棄却）; 汎用の `src/components/ui/context-menu.tsx` を置く（使う所が 1 つなので置かない）。
 - Guarantee range: 自動 test（`src/components/layout/TextFieldContextMenu.test.tsx`）は happy-dom で `execCommand`・`readText` を spy にして順序と対象の欄を固定する。clipboard の実の読み書き・release の build での許可の窓・`display: contents` の高さは Windows の L3 で確かめる。
 - Revisit: `contentEditable` の要素を使う画面が出たとき。配る build で `readText()` が許可の窓を出す・読めないと分かったとき。Tauri・wry が既定のメニューの設定を公開したとき。
-- Superseded in part by: D-177（2026-11-28。Decision (3) と Why・Alternatives の貼り付けの読み方。`navigator.clipboard.readText()` をやめ、Tauri の公式の clipboard の plugin の `readText` で読む）
+- Superseded in part by: D-177（2026-11-28。Decision (3) と Why・Alternatives の貼り付けの読み方。`navigator.clipboard.readText()` をやめ、Tauri の公式の clipboard の plugin の `readText` で読む。読めないときの toast の文も、Ctrl+V の案内をやめて「貼り付ける文字がありません」に改めた〈TD-958〉）
 
 ## D-175: 画面の振舞いは使い手の操作から自然に期待する結果を正とし、review の指摘で設計を変える直しは owner が選ぶ（2026-11-27）
 
