@@ -36,6 +36,8 @@ const EXCLUDED_PAGES = [
     path: "src/features/daily-report-import/DailyReportImportRecordsPage.tsx",
   },
   { component: "DailySalesPage", path: "src/features/daily-sales/DailySalesPage.tsx" },
+  // 未保存の編集を持たない。手で選ぶ EJ の取込み中の止めは共有の hook（useImportEjFiles）が持つ
+  { component: "EjReceiptsPage", path: "src/features/ej-receipts/EjReceiptsPage.tsx" },
   { component: "HomePage", path: "src/features/home/HomePage.tsx" },
   {
     component: "IntegrityCheckPage",
@@ -115,6 +117,7 @@ describe("unsaved changes guard sweep (UI-12/UI-USW-D3 / SPEC-UISN-2)", () => {
       "src/features/csv-import/hooks/useCsvImportFlow.ts",
       "src/features/csv-import/hooks/useRollbackCsvImport.ts",
       "src/features/daily-report-import/hooks/useDailyReportImportFlow.ts",
+      "src/features/daily-report-import/hooks/useImportEjFiles.ts",
       "src/features/daily-report-import/hooks/useRollbackDailyReportImport.ts",
       "src/features/inventory-records/useRecordCancel.ts",
       "src/hooks/useUnsavedChangesWarning.ts",

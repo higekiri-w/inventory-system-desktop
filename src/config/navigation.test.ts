@@ -87,3 +87,19 @@ describe("navigation config sidebar pending links", () => {
     );
   });
 });
+
+describe("navigation config REQ-908 / UI-09c", () => {
+  it("test_navigation_req908_ui09c_active_at_reports_receipts_after_ui09b", () => {
+    // U2（SCREEN_DESIGN UI-09c-D1・52 §52.3）: 「毎日の業務」の末尾、月次売上の次に「レシートの控え」
+    const dailyArea = navigation.find((area) => area.id === "daily");
+    const ids = dailyArea?.items.map((entry) => entry.id) ?? [];
+    expect(ids.indexOf("ui-09c")).toBe(ids.indexOf("ui-09b") + 1);
+    expect(ids[ids.length - 1]).toBe("ui-09c");
+    expect(dailyArea?.items.find((entry) => entry.id === "ui-09c")).toMatchObject({
+      label: "レシートの控え",
+      title: "レシートの控え",
+      status: "active",
+      to: "/reports/receipts",
+    });
+  });
+});

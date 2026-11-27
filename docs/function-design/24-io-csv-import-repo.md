@@ -751,9 +751,9 @@ fn get_monthly_official_report_dates(
 - **D-025**: 日報取込みは sale_records / inventory_movements へ擬似展開しない — daily_report_imports のrollbackは親status更新のみで完結する
 - **D-071 / SPEC-SDI-D1〜D8**: business date は group key であり uniqueness key ではない。active content hash 単位の identity、指定 ID 単位の rollback、同日の全 active imports の additive read を維持する（Z001 の行は全 active import を読むが加算せず取込みごとに返す、D-096）
 
-### 14.25 EJ の記録の保存と照会（D-121、BIZ-08-D9。保存は実装済み、照会の一部は未実装）
+### 14.25 EJ の記録の保存と照会（D-121、BIZ-08-D9）
 
-`ej_records`（[pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」）を読み書きする。呼ぶのは BIZ-08 §37.11 だけ。TX は BIZ-08 が持つ。置き場は `src-tauri/src/db/ej_repo.rs`（`design_compliance_test.rs` の本書の行に `db::ej_repo`）。(A-1) の runtime が `NewEjRecord`・`EjNumberGap`・`EjRecordModeCode`・`EjRecordKindCode` と `find_ej_record_texts`・`insert_ej_record`・`list_ej_number_gaps` を実装した。閲覧の型（`EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`）と関数（`list_ej_records_on_date`・`find_ej_adjacent_dates`・`find_latest_ej_date`・`find_ej_records_by_no`・`get_ej_record_detail`）と、DB の TEXT から mode・kind を読む match は (A-2) が足す（未実装）。
+`ej_records`（[pos-tables](../db-design/pos-tables.md) の「SD の一括取込みと EJ の控えの契約」）を読み書きする。呼ぶのは BIZ-08 §37.11 だけ。TX は BIZ-08 が持つ。置き場は `src-tauri/src/db/ej_repo.rs`（`design_compliance_test.rs` の本書の行に `db::ej_repo`）。(A-1) の runtime が `NewEjRecord`・`EjNumberGap`・`EjRecordModeCode`・`EjRecordKindCode` と `find_ej_record_texts`・`insert_ej_record`・`list_ej_number_gaps` を、(A-2) の runtime（Plan Packet `docs/plans/2026-11-24-ej-receipts-a2.md`）が閲覧の型（`EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`）と関数（`list_ej_records_on_date`・`find_ej_adjacent_dates`・`find_latest_ej_date`・`find_ej_records_by_no`・`get_ej_record_detail`）と、DB の TEXT から mode・kind を読む match（`EjRecordModeCode::from_db`・`EjRecordKindCode::from_db`）を実装した。
 
 型の所有: repo が受け返しする型（下の `NewEjRecord` と、37 §37.11 に形を書いた `EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`・`EjNumberGap`・`EjRecordModeCode`・`EjRecordKindCode`）は db の module に定義し、`src-tauri/src/biz/mod.rs` で re-export する（既存の形: `CsvImport`〈`src-tauri/src/biz/mod.rs`〉、`Stocktake` ほか〈同 `stocktake_repo` の re-export〉）。CMD は BIZ の re-export を使い db を直接参照しない。BIZ だけが組み立てる型（`EjImportPlan`・`EjImportResult`・`EjConflict`・`EjRecordDay`・`EjSourceFile`）は BIZ-08 に置く。mode・kind は db の列では TEXT + CHECK のまま、型では enum で持ち、書くときは enum の文字列、読むときは明示の match で変える（外れた値は `DbError`。D-061 (c)、先例 `CsvImportStatus`〈`src-tauri/src/db/sales_repo.rs` の `CsvImportStatus` と `row_to_csv_import` の `match`〉）。
 
@@ -779,9 +779,9 @@ fn find_ej_record_texts(
 
 fn insert_ej_record(conn: &DbConnection, record: &NewEjRecord, imported_at: &str) -> Result<i64, DbError>
 
-fn list_ej_records_on_date(conn: &DbConnection, date: &str) -> Result<Vec<EjRecordSummary>, DbError> // 最大 1001 件（BIZ が 1000 件を超えたかを知るため）。ここから get_ej_record_detail までの 5 つは (A-2)、未実装
+fn list_ej_records_on_date(conn: &DbConnection, date: &str, next_date: &str) -> Result<Vec<EjRecordSummary>, DbError> // 最大 1001 件（BIZ が 1000 件を超えたかを知るため）。next_date は date の翌日（BIZ が chrono で求める。下の SQL の ?2）
 
-fn find_ej_adjacent_dates(conn: &DbConnection, date: &str) -> Result<(Option<String>, Option<String>), DbError>
+fn find_ej_adjacent_dates(conn: &DbConnection, date: &str, next_date: &str) -> Result<(Option<String>, Option<String>), DbError>
 
 fn find_latest_ej_date(conn: &DbConnection) -> Result<Option<String>, DbError>
 
@@ -821,3 +821,4 @@ fn list_ej_number_gaps(conn: &DbConnection) -> Result<Vec<EjNumberGap>, DbError>
 | 2026-11-14 | z001-row-guard（実装） | §14.21 手順 6 に、行を親 id で分け並びの一致に依らないこと、親に無い id の行を読まないことを書いた（[Plan Packet](../plans/2026-11-13-z001-row-guard.md)）。 |
 | 2026-11-19 | 仕様の見直しの POS の取込みの群、AI の調べ 2026-11-19、TD-774・814 | §14.7 の関数要求を、呼ぶのが test だけの今の形に直し、同日追加の確認の文を外した。 |
 | 2026-11-20 | sd-bulk-ej-runtime-a1（実装、PR #294） | §14.25 の保存の分（`NewEjRecord`・`EjNumberGap`・mode・kind の enum、`find_ej_record_texts`・`insert_ej_record`・`list_ej_number_gaps`。`src-tauri/src/db/ej_repo.rs`）を実装し、閲覧の分に (A-2) の未実装の印を残した。§14.18b を消した（BIZ-08-D8 は取得済みの同じ日の一覧の行で決める。37 §37.10）。 |
+| 2026-11-25 | ej-receipts-a2（実装、PR #305） | §14.25 の閲覧の分（`EjRecordSummary`・`EjRecordDetail`・`EjRecordRef`、5 つの関数と mode・kind を読む match）を実装し、(A-2) の未実装の印を外した。`list_ej_records_on_date`・`find_ej_adjacent_dates` のシグネチャに翌日の `next_date` を足した（SQL 方針の `?2` を BIZ が渡す形。SQL 方針は変えていない）。 |
