@@ -488,16 +488,19 @@ fn test_db_check_matches_enum_values_d143_e1() {
             EjRecordKindCode::as_str
         )
     );
+    // REQ-908（Test Plan R5）: 読む側の明示の match も全 variant で as_str と往復する
     for value in std::iter::successors(Some(EjRecordModeCode::Normal), |v| next_ej_mode(*v)) {
         assert_eq!(
             serde_json::to_string(&value).unwrap(),
             format!("\"{}\"", value.as_str())
         );
+        assert_eq!(EjRecordModeCode::from_db(0, value.as_str()).unwrap(), value);
     }
     for value in std::iter::successors(Some(EjRecordKindCode::Sale), |v| next_ej_kind(*v)) {
         assert_eq!(
             serde_json::to_string(&value).unwrap(),
             format!("\"{}\"", value.as_str())
         );
+        assert_eq!(EjRecordKindCode::from_db(0, value.as_str()).unwrap(), value);
     }
 }
