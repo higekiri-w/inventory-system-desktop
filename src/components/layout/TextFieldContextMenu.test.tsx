@@ -352,7 +352,7 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     expect(browserReadText).not.toHaveBeenCalled();
   });
 
-  it("UI-CTX-D3: 読めなかったら toast で Ctrl+V を案内し欄を変えない", async () => {
+  it("UI-CTX-D3: 読めなかったら toast でコピーし直しを案内し欄を変えない", async () => {
     renderWith(<input aria-label="商品名" defaultValue="abc" />);
     const field = screen.getByRole<HTMLInputElement>("textbox");
     readText = () => Promise.reject(new DOMException("denied", "NotAllowedError"));
@@ -360,7 +360,7 @@ describe("TextFieldContextMenu (UI-12 / UI-CTX-D1〜D4)", () => {
     await user().click(item("貼り付け"));
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
-        "貼り付けられませんでした。Ctrl+V で貼り付けてください。",
+        "貼り付ける文字がありません。貼り付けたい文字をコピーしてから、もう一度お試しください。",
         { id: "text-field-paste-error", duration: 8000 },
       );
     });

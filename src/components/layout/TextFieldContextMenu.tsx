@@ -41,10 +41,14 @@ async function paste(field: TextField) {
     // Rust 側で読む（navigator.clipboard.readText は WebView2 の許可の窓を出す。D-177）
     text = await readText();
   } catch {
-    toast.error("貼り付けられませんでした。Ctrl+V で貼り付けてください。", {
-      id: "text-field-paste-error",
-      duration: 8000,
-    });
+    // 空・画像だけのクリップボードでも reject する（arboard の ContentNotAvailable。TD-958）
+    toast.error(
+      "貼り付ける文字がありません。貼り付けたい文字をコピーしてから、もう一度お試しください。",
+      {
+        id: "text-field-paste-error",
+        duration: 8000,
+      },
+    );
     return;
   }
   // 読みの間に別の欄へ移っていたら、どちらの欄も変えない
