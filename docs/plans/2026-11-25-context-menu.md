@@ -6,7 +6,7 @@ wave に属さない単独の lane。出所は owner の決定（repo 外の回�
 
 - Risk: R3
 - Plan Commit: 6b8c786c218e33c636b33f198bb7f9819441bc96
-- Amendments: none
+- Amendments: 1f7b6ac120c841455569b4809120da60089ee2ec
 
 `Plan Commit`・`Amendments` は `scripts/plan-approve.sh` が書く（手で写さない）。
 
